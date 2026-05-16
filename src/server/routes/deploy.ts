@@ -1,37 +1,20 @@
+/**
+ * Deploy routes only.
+ * Integration management has moved to src/server/routes/integrations.ts.
+ */
+
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { projects, buildSessions, integrations, type McpProvider as DbMcpProvider } from "../../db/schema.js";
+import { projects, buildSessions, integrations } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
-import { getGateway } from "../../mcp/gateway.js";
 import { getDeployPipeline } from "../../deploy/pipeline.js";
 import { runSmokeTests } from "../../deploy/smoke.js";
-import { type McpProvider } from "../../mcp/types.js";
 import { logger } from "../logger.js";
 
 // ── Validation ────────────────────────────────────────────────────────────────
-
-const MCP_PROVIDERS = ["vercel", "supabase", "github", "railway"] as const;
-
-const connectBodySchema = z.object({
-  provider: z.enum(MCP_PROVIDERS),
-  credentials: z.object({
-    token:      z.string().min(1).optional(),
-    apiKey:     z.string().min(1).optional(),
-    teamId:     z.string().optional(),
-    orgId:      z.string().optional(),
-    projectRef: z.string().optional(),
-    serviceId:  z.string().optional(),
-    repoOwner:  z.string().optional(),
-  }),
-});
-
-const executeToolBodySchema = z.object({
-  toolName: z.string().min(1),
-  args:     z.record(z.string(), z.unknown()).default({}),
-});
 
 const deployBodySchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
@@ -43,16 +26,6 @@ const smokeQuerySchema = z.object({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function requireProjectOwner(projectId: string, userId: string) {
-  const rows = await db
-    .select({ id: projects.id, slug: projects.slug })
-    .from(projects)
-    .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
-    .limit(1);
-  if (!rows[0]) throw new AppError(403, "Not authorized", "FORBIDDEN");
-  return rows[0];
-}
-
 async function requireSession(sessionId: string, userId: string) {
   const rows = await db
     .select()
@@ -62,106 +35,6 @@ async function requireSession(sessionId: string, userId: string) {
   if (!rows[0]) throw new AppError(404, "Build session not found", "NOT_FOUND");
   return rows[0];
 }
-
-function parseProvider(raw: string): McpProvider {
-  const r = z.enum(MCP_PROVIDERS).safeParse(raw);
-  if (!r.success) {
-    throw new AppError(400, `Invalid provider '${raw}'. Must be one of: ${MCP_PROVIDERS.join(", ")}`, "VALIDATION_ERROR");
-  }
-  return r.data;
-}
-
-// ── Integrations router (mounted at /api/projects/:id/integrations) ───────────
-
-export const integrationsRouter = new Hono();
-integrationsRouter.use("/*", requireAuth);
-
-// GET /api/projects/:id/integrations
-integrationsRouter.get("/", async (c) => {
-  const authUser = c.get("authUser");
-  const projectId = c.req.param("id") ?? "";
-  await requireProjectOwner(projectId, authUser.id);
-
-  const rows = await db
-    .select({
-      id:            integrations.id,
-      provider:      integrations.provider,
-      status:        integrations.status,
-      tier:          integrations.tier,
-      lastTestedAt:  integrations.lastTestedAt,
-      lastDeployedAt: integrations.lastDeployedAt,
-      error:         integrations.error,
-      createdAt:     integrations.createdAt,
-    })
-    .from(integrations)
-    .where(eq(integrations.projectId, projectId));
-
-  return c.json({ projectId, integrations: rows });
-});
-
-// POST /api/projects/:id/integrations
-integrationsRouter.post("/", async (c) => {
-  const authUser = c.get("authUser");
-  const projectId = c.req.param("id") ?? "";
-  await requireProjectOwner(projectId, authUser.id);
-
-  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
-  const parsed = connectBodySchema.safeParse(body);
-  if (!parsed.success) {
-    throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
-  }
-
-  const { provider, credentials } = parsed.data;
-  const gateway = getGateway();
-  const result = await gateway.connect(projectId, authUser.id, provider, credentials);
-
-  return c.json(result, result.ok ? 201 : 200);
-});
-
-// DELETE /api/projects/:id/integrations/:provider
-integrationsRouter.delete("/:provider", async (c) => {
-  const authUser = c.get("authUser");
-  const projectId = c.req.param("id") ?? "";
-  await requireProjectOwner(projectId, authUser.id);
-
-  const provider = parseProvider(c.req.param("provider") ?? "");
-  const gateway = getGateway();
-  await gateway.disconnect(projectId, provider);
-
-  return c.json({ ok: true, provider, projectId });
-});
-
-// POST /api/projects/:id/integrations/:provider/test
-integrationsRouter.post("/:provider/test", async (c) => {
-  const authUser = c.get("authUser");
-  const projectId = c.req.param("id") ?? "";
-  await requireProjectOwner(projectId, authUser.id);
-
-  const provider = parseProvider(c.req.param("provider") ?? "");
-  const gateway = getGateway();
-  const result = await gateway.testConnection(projectId, provider);
-
-  return c.json(result);
-});
-
-// POST /api/projects/:id/integrations/:provider/execute
-integrationsRouter.post("/:provider/execute", async (c) => {
-  const authUser = c.get("authUser");
-  const projectId = c.req.param("id") ?? "";
-  await requireProjectOwner(projectId, authUser.id);
-
-  const provider = parseProvider(c.req.param("provider") ?? "");
-  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
-  const parsed = executeToolBodySchema.safeParse(body);
-  if (!parsed.success) {
-    throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
-  }
-
-  const gateway = getGateway();
-  const result = await gateway.executeTool(projectId, provider, parsed.data.toolName, parsed.data.args as Record<string, unknown>);
-
-  return c.json(result);
-});
 
 // ── Deploy router (mounted at /api/deploy) ────────────────────────────────────
 

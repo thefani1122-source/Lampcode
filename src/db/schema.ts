@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   doublePrecision,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -377,6 +378,93 @@ export const integrationsRelations = relations(integrations, ({ one }) => ({
   user: one(user, { fields: [integrations.userId], references: [user.id] }),
 }));
 
+// ── User preferences ──────────────────────────────────────────────────────────
+
+export type UserPreferenceData = {
+  theme?: "light" | "dark" | "system" | undefined;
+  emailNotifications?: boolean | undefined;
+  buildNotifications?: boolean | undefined;
+  weeklyDigest?: boolean | undefined;
+  defaultModel?: string | undefined;
+  timezone?: string | undefined;
+};
+
+export const userPreferences = pgTable("user_preferences", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  theme: text("theme").notNull().default("system"),
+  emailNotifications: boolean("email_notifications").notNull().default(true),
+  buildNotifications: boolean("build_notifications").notNull().default(true),
+  weeklyDigest: boolean("weekly_digest").notNull().default(false),
+  defaultModel: text("default_model"),
+  timezone: text("timezone"),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+// ── Encrypted project env vars ────────────────────────────────────────────────
+
+export const envEnvironmentEnum = pgEnum("env_environment", [
+  "development",
+  "preview",
+  "production",
+]);
+
+// Composite unique: (projectId, environment, key) enforced at the application layer.
+export const projectEnvVars = pgTable(
+  "project_env_vars",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environment: envEnvironmentEnum("environment").notNull().default("production"),
+    key: text("key").notNull(),
+    encryptedValue: text("encrypted_value").notNull(),
+    iv: text("iv").notNull(),
+    tag: text("tag").notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("env_vars_unique_key").on(t.projectId, t.environment, t.key)],
+);
+
+// ── User billing ──────────────────────────────────────────────────────────────
+
+export const billingPlanEnum = pgEnum("billing_plan", ["free", "pro", "enterprise"]);
+
+export const PLAN_CREDITS: Record<"free" | "pro" | "enterprise", number> = {
+  free:       100,
+  pro:        2_000,
+  enterprise: 50_000,
+};
+
+export const userBilling = pgTable("user_billing", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  plan: billingPlanEnum("plan").notNull().default("free"),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  creditsLimit: integer("credits_limit").notNull().default(100),
+  creditsUsed: integer("credits_used").notNull().default(0),
+  currentPeriodStart: timestamp("current_period_start", { mode: "date" }),
+  currentPeriodEnd: timestamp("current_period_end", { mode: "date" }),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+// ── New relations ─────────────────────────────────────────────────────────────
+
+export const userPreferencesRelations = relations(userPreferences, ({ one }) => ({
+  user: one(user, { fields: [userPreferences.userId], references: [user.id] }),
+}));
+
+export const projectEnvVarsRelations = relations(projectEnvVars, ({ one }) => ({
+  project: one(projects, { fields: [projectEnvVars.projectId], references: [projects.id] }),
+}));
+
+export const userBillingRelations = relations(userBilling, ({ one }) => ({
+  user: one(user, { fields: [userBilling.userId], references: [user.id] }),
+}));
+
 // ── Inferred types ───────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -404,3 +492,9 @@ export type IntegrationStatus = (typeof integrationStatusEnum.enumValues)[number
 export type SharedBrainFile = typeof sharedBrainFiles.$inferSelect;
 export type NewSharedBrainFile = typeof sharedBrainFiles.$inferInsert;
 export type BrainFileType = (typeof brainFileTypeEnum.enumValues)[number];
+export type UserPreferences = typeof userPreferences.$inferSelect;
+export type ProjectEnvVar = typeof projectEnvVars.$inferSelect;
+export type NewProjectEnvVar = typeof projectEnvVars.$inferInsert;
+export type UserBilling = typeof userBilling.$inferSelect;
+export type BillingPlan = (typeof billingPlanEnum.enumValues)[number];
+export type EnvEnvironment = (typeof envEnvironmentEnum.enumValues)[number];

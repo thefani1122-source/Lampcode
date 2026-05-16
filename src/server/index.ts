@@ -12,7 +12,11 @@ import { projectsRouter } from "./routes/projects.js";
 import { buildRouter } from "./routes/build.js";
 import { planRouter } from "./routes/plan.js";
 import { brainRouter } from "./routes/brain.js";
-import { integrationsRouter, deployRouter } from "./routes/deploy.js";
+import { deployRouter } from "./routes/deploy.js";
+import { integrationsRouter, providersRouter } from "./routes/integrations.js";
+import { settingsRouter, userSettingsRouter } from "./routes/settings.js";
+import { envRouter } from "./routes/env.js";
+import { billingRouter } from "./routes/billing.js";
 import { createWebSocketServer } from "../websocket/server.js";
 
 const app = new Hono();
@@ -47,6 +51,11 @@ app.route("/api/build", buildRouter);
 app.route("/api/plan", planRouter);
 app.route("/api/projects/:id/brain", brainRouter);
 app.route("/api/projects/:id/integrations", integrationsRouter);
+app.route("/api/projects/:id/settings", settingsRouter);
+app.route("/api/projects/:id/env", envRouter);
+app.route("/api/integrations", providersRouter);
+app.route("/api/users/me/settings", userSettingsRouter);
+app.route("/api/users/me/billing", billingRouter);
 app.route("/api/deploy", deployRouter);
 
 // 404 handler
