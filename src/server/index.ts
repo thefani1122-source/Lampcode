@@ -6,6 +6,8 @@ import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+import { authRouter } from "./routes/auth.js";
+import { usersRouter } from "./routes/users.js";
 
 const app = new Hono();
 
@@ -26,10 +28,14 @@ app.use("*", honoLogger((message, ...rest) => logger.info({ msg: message }, ...r
 // Rate limiting
 app.use("*", rateLimitMiddleware);
 
-// Health check
+// Health check (public)
 app.get("/health", (c) =>
   c.json({ status: "ok", timestamp: new Date().toISOString() }),
 );
+
+// API routes
+app.route("/api/auth", authRouter);
+app.route("/api/users", usersRouter);
 
 // 404 handler
 app.notFound((c) =>

@@ -8,7 +8,12 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1),
   REDIS_URL: z.string().url(),
   BETTER_AUTH_SECRET: z.string().min(32),
+  BASE_URL: z.string().url().optional(),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
+  GITHUB_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),
