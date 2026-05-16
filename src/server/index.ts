@@ -11,6 +11,7 @@ import { usersRouter } from "./routes/users.js";
 import { projectsRouter } from "./routes/projects.js";
 import { buildRouter } from "./routes/build.js";
 import { planRouter } from "./routes/plan.js";
+import { brainRouter } from "./routes/brain.js";
 import { createWebSocketServer } from "../websocket/server.js";
 
 const app = new Hono();
@@ -43,6 +44,7 @@ app.route("/api/users", usersRouter);
 app.route("/api/projects", projectsRouter);
 app.route("/api/build", buildRouter);
 app.route("/api/plan", planRouter);
+app.route("/api/projects/:id/brain", brainRouter);
 
 // 404 handler
 app.notFound((c) =>

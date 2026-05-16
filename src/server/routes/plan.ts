@@ -21,6 +21,7 @@ import { getDispatcher } from "../../agents/dispatcher.js";
 import { streamEvents, type StreamEventPayload } from "../../agents/stream-handler.js";
 import { FreezeManager } from "../../orchestrator/freeze-contract.js";
 import { getWebSocketServer } from "../../websocket/server.js";
+import { getBrainManager } from "../../brain/manager.js";
 import { logger } from "../logger.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -223,7 +224,7 @@ async function runAgent(opts: {
   taskDescription: string;
   contextFiles?: string[];
   phase: string;
-}): Promise<{ content: string; costUsd: number; taskId: string; durationMs: number }> {
+}): Promise<{ content: string; costUsd: number; taskId: string; durationMs: number; modelUsed: string }> {
   const { sessionId, userId, projectId, agentType, taskDescription, phase } = opts;
   const server = ws();
   const taskId = crypto.randomUUID();
@@ -284,7 +285,7 @@ async function runAgent(opts: {
       timestamp: now(),
     });
 
-    return { content: result.content, costUsd: result.costUsd, taskId, durationMs: result.durationMs };
+    return { content: result.content, costUsd: result.costUsd, taskId, durationMs: result.durationMs, modelUsed: result.modelUsed };
   } catch (err) {
     streamEvents.off("chunk", chunkHandler);
     server?.agentError(sessionId, {
@@ -386,6 +387,7 @@ async function runPlanPhase(
     let allFiles: string[] = [];
     let allContents: string[] = [];
     let totalCost = 0;
+    const brain = getBrainManager();
 
     if (config.isParallel) {
       const results = await Promise.all(
@@ -406,6 +408,10 @@ async function runPlanPhase(
         allContents.push(result.content);
         const written = await writePhaseFiles(sessionId, projectId, phase, result.content, agentType);
         allFiles = allFiles.concat(written);
+        // Auto-save CURRENT_STATE after every agent
+        void brain.createVersion(projectId, "CURRENT_STATE", result.content, {
+          agentType, modelUsed: result.modelUsed, sessionId,
+        });
       }
     } else {
       for (const agentType of config.agentTypes) {
@@ -421,6 +427,23 @@ async function runPlanPhase(
         allContents.push(result.content);
         const written = await writePhaseFiles(sessionId, projectId, phase, result.content, agentType);
         allFiles = allFiles.concat(written);
+
+        // Auto-save phase-specific brain documents
+        if (phase === "FOUNDATION") {
+          if (agentType === "db") {
+            void brain.createVersion(projectId, "DB_SCHEMA", result.content, {
+              agentType, modelUsed: result.modelUsed, sessionId,
+            });
+          } else if (agentType === "backend") {
+            void brain.createVersion(projectId, "API_CONTRACTS", result.content, {
+              agentType, modelUsed: result.modelUsed, sessionId,
+            });
+          }
+        }
+        // Auto-save CURRENT_STATE after every agent
+        void brain.createVersion(projectId, "CURRENT_STATE", result.content, {
+          agentType, modelUsed: result.modelUsed, sessionId,
+        });
       }
     }
 
@@ -722,6 +745,12 @@ planRouter.post("/interview", async (c) => {
   await mkdir(contractDir, { recursive: true });
   await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
 
+  // Auto-save CONTRACT.md to shared brain
+  void getBrainManager().createVersion(session.projectId, "CONTRACT", contract, {
+    agentType: "planning",
+    sessionId,
+  });
+
   await db.update(buildSessions).set({
     planStatus: "waiting_approval",
     contractContent: contract,
@@ -776,6 +805,12 @@ planRouter.post("/approve", async (c) => {
     const contractDir = join(WORKSPACE_BASE, session.projectId, sessionId);
     await mkdir(contractDir, { recursive: true });
     await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
+
+    // Auto-save revised contract to shared brain
+    void getBrainManager().createVersion(session.projectId, "CONTRACT", contract, {
+      agentType: "planning",
+      sessionId,
+    });
 
     await db.update(buildSessions).set({
       contractContent: contract,

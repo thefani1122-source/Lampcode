@@ -251,6 +251,29 @@ export const agentTasks = pgTable("agent_tasks", {
   error: text("error"),
 });
 
+// ── Shared Brain ─────────────────────────────────────────────────────────────
+
+export const brainFileTypeEnum = pgEnum("brain_file_type", [
+  "CONTRACT",
+  "DB_SCHEMA",
+  "API_CONTRACTS",
+  "CURRENT_STATE",
+]);
+
+export const sharedBrainFiles = pgTable("shared_brain_files", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  sessionId: text("session_id"),
+  fileType: brainFileTypeEnum("file_type").notNull(),
+  version: integer("version").notNull(),
+  content: text("content").notNull(),
+  agentType: text("agent_type"),
+  modelUsed: text("model_used"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 // ── Relations ────────────────────────────────────────────────────────────────
 
 export const userRelations = relations(user, ({ many }) => ({
@@ -303,6 +326,10 @@ export const agentTasksRelations = relations(agentTasks, ({ one }) => ({
   project: one(projects, { fields: [agentTasks.projectId], references: [projects.id] }),
 }));
 
+export const sharedBrainFilesRelations = relations(sharedBrainFiles, ({ one }) => ({
+  project: one(projects, { fields: [sharedBrainFiles.projectId], references: [projects.id] }),
+}));
+
 // ── Inferred types ───────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -323,3 +350,6 @@ export type AgentTaskStatus = (typeof agentTaskStatusEnum.enumValues)[number];
 export type BuildSession = typeof buildSessions.$inferSelect;
 export type NewBuildSession = typeof buildSessions.$inferInsert;
 export type BuildSessionStatus = (typeof buildSessionStatusEnum.enumValues)[number];
+export type SharedBrainFile = typeof sharedBrainFiles.$inferSelect;
+export type NewSharedBrainFile = typeof sharedBrainFiles.$inferInsert;
+export type BrainFileType = (typeof brainFileTypeEnum.enumValues)[number];
