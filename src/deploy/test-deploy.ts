@@ -96,7 +96,7 @@ test("VercelProvider: cliCommands rollback includes deployment id", () => {
 
 test("VercelProvider: cliCommands unknown tool returns comment", () => {
   const cmds = vercel.cliCommands("unknownTool", {});
-  expectTrue(cmds[0]?.startsWith("#"), "Should return a comment for unknown tool");
+  expectTrue(cmds[0]?.startsWith("#") === true, "Should return a comment for unknown tool");
 });
 
 // ── Supabase CLI commands ─────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ test("RailwayProvider: cliCommands setEnvVars formats KEY=VALUE pairs", () => {
 
 test("RailwayProvider: cliCommands empty vars returns no-op comment", () => {
   const cmds = railway.cliCommands("setEnvVars", { envVars: {} });
-  expectTrue(cmds.length > 0 && (cmds[0]?.startsWith("#") || cmds[0]?.includes("No")));
+  expectTrue(cmds.length > 0 && (cmds[0]?.startsWith("#") === true || cmds[0]?.includes("No") === true));
 });
 
 // ── Tier fallback mock gateway ────────────────────────────────────────────────
