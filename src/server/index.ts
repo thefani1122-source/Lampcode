@@ -8,6 +8,7 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
+import { projectsRouter } from "./routes/projects.js";
 
 const app = new Hono();
 
@@ -36,6 +37,7 @@ app.get("/health", (c) =>
 // API routes
 app.route("/api/auth", authRouter);
 app.route("/api/users", usersRouter);
+app.route("/api/projects", projectsRouter);
 
 // 404 handler
 app.notFound((c) =>
