@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   jsonb,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -152,6 +153,29 @@ export const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const agentTaskStatusEnum = pgEnum("agent_task_status", [
+  "running",
+  "complete",
+  "failed",
+]);
+
+export const agentTasks = pgTable("agent_tasks", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull(),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  agentType: text("agent_type").notNull(),
+  modelUsed: text("model_used").notNull(),
+  tierUsed: integer("tier_used").notNull().default(1),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  costUsd: doublePrecision("cost_usd"),
+  status: agentTaskStatusEnum("status").notNull().default("running"),
+  startedAt: timestamp("started_at", { mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { mode: "date" }),
+  error: text("error"),
+});
+
 // ── Relations ────────────────────────────────────────────────────────────────
 
 export const userRelations = relations(user, ({ many }) => ({
@@ -161,6 +185,7 @@ export const userRelations = relations(user, ({ many }) => ({
   projectMembers: many(projectMembers),
   buildJobs: many(buildJobs),
   auditLogs: many(auditLog),
+  agentTasks: many(agentTasks),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -193,6 +218,11 @@ export const auditLogRelations = relations(auditLog, ({ one }) => ({
   project: one(projects, { fields: [auditLog.projectId], references: [projects.id] }),
 }));
 
+export const agentTasksRelations = relations(agentTasks, ({ one }) => ({
+  user: one(user, { fields: [agentTasks.userId], references: [user.id] }),
+  project: one(projects, { fields: [agentTasks.projectId], references: [projects.id] }),
+}));
+
 // ── Inferred types ───────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -208,3 +238,5 @@ export type BuildStatus = (typeof buildStatusEnum.enumValues)[number];
 export type ProjectMode = (typeof projectModeEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type MemberRole = (typeof memberRoleEnum.enumValues)[number];
+export type AgentTask = typeof agentTasks.$inferSelect;
+export type AgentTaskStatus = (typeof agentTaskStatusEnum.enumValues)[number];
