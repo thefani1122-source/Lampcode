@@ -9,6 +9,7 @@ import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
 import { projectsRouter } from "./routes/projects.js";
+import { createWebSocketServer } from "../websocket/server.js";
 
 const app = new Hono();
 
@@ -51,9 +52,12 @@ app.notFound((c) =>
 app.onError(errorHandler);
 
 // Start server
-serve(
+const httpServer = serve(
   { fetch: app.fetch, port: config.PORT },
   (info) => logger.info({ port: info.port }, "Server listening"),
 );
+
+// Attach WebSocket server to the same HTTP server
+createWebSocketServer(httpServer);
 
 export { app };
