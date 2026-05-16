@@ -251,6 +251,48 @@ export const agentTasks = pgTable("agent_tasks", {
   error: text("error"),
 });
 
+// ── MCP Integrations ─────────────────────────────────────────────────────────
+
+export const mcpProviderEnum = pgEnum("mcp_provider", [
+  "vercel",
+  "supabase",
+  "github",
+  "railway",
+]);
+
+export const integrationStatusEnum = pgEnum("integration_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+
+export type IntegrationCredentials = {
+  token?: string | undefined;
+  apiKey?: string | undefined;
+  teamId?: string | undefined;
+  orgId?: string | undefined;
+  projectRef?: string | undefined;
+  serviceId?: string | undefined;
+  repoOwner?: string | undefined;
+};
+
+export const integrations = pgTable("integrations", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+  provider: mcpProviderEnum("provider").notNull(),
+  status: integrationStatusEnum("status").notNull().default("connected"),
+  tier: integer("tier").notNull().default(1),
+  credentials: jsonb("credentials").$type<IntegrationCredentials>(),
+  lastTestedAt: timestamp("last_tested_at", { mode: "date" }),
+  lastDeployedAt: timestamp("last_deployed_at", { mode: "date" }),
+  error: text("error"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 // ── Shared Brain ─────────────────────────────────────────────────────────────
 
 export const brainFileTypeEnum = pgEnum("brain_file_type", [
@@ -330,6 +372,11 @@ export const sharedBrainFilesRelations = relations(sharedBrainFiles, ({ one }) =
   project: one(projects, { fields: [sharedBrainFiles.projectId], references: [projects.id] }),
 }));
 
+export const integrationsRelations = relations(integrations, ({ one }) => ({
+  project: one(projects, { fields: [integrations.projectId], references: [projects.id] }),
+  user: one(user, { fields: [integrations.userId], references: [user.id] }),
+}));
+
 // ── Inferred types ───────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -350,6 +397,10 @@ export type AgentTaskStatus = (typeof agentTaskStatusEnum.enumValues)[number];
 export type BuildSession = typeof buildSessions.$inferSelect;
 export type NewBuildSession = typeof buildSessions.$inferInsert;
 export type BuildSessionStatus = (typeof buildSessionStatusEnum.enumValues)[number];
+export type Integration = typeof integrations.$inferSelect;
+export type NewIntegration = typeof integrations.$inferInsert;
+export type McpProvider = (typeof mcpProviderEnum.enumValues)[number];
+export type IntegrationStatus = (typeof integrationStatusEnum.enumValues)[number];
 export type SharedBrainFile = typeof sharedBrainFiles.$inferSelect;
 export type NewSharedBrainFile = typeof sharedBrainFiles.$inferInsert;
 export type BrainFileType = (typeof brainFileTypeEnum.enumValues)[number];
