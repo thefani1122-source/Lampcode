@@ -20,6 +20,11 @@ import {
   emitProgress,
   emitPhaseComplete,
   emitBuildFailed,
+  emitPlanPhaseStart,
+  emitVerifyResult,
+  emitFixRequired,
+  emitDeployStart,
+  emitDeployComplete,
 } from "./handlers/build-handler.js";
 import { emitNotification, emitCreditLow, emitBuildComplete } from "./handlers/user-handler.js";
 import { emitMemberJoined, emitSettingsChanged, emitIntegrationConnected } from "./handlers/project-handler.js";
@@ -38,6 +43,11 @@ import {
   type PhaseCompleteEvent,
   type BuildFailedEvent,
   type FileUpdateEvent,
+  type PlanPhaseStartEvent,
+  type VerifyResultEvent,
+  type FixRequiredEvent,
+  type DeployStartEvent,
+  type DeployCompleteEvent,
   type MemberJoinedEvent,
   type SettingsChangedEvent,
   type IntegrationConnectedEvent,
@@ -156,6 +166,26 @@ export class WebSocketServer {
 
   buildFailed(sessionId: string, event: BuildFailedEvent): void {
     emitBuildFailed(this.buildNsp, sessionId, event);
+  }
+
+  planPhaseStart(sessionId: string, event: PlanPhaseStartEvent): void {
+    emitPlanPhaseStart(this.buildNsp, sessionId, event);
+  }
+
+  verifyResult(sessionId: string, event: VerifyResultEvent): void {
+    emitVerifyResult(this.buildNsp, sessionId, event);
+  }
+
+  fixRequired(sessionId: string, event: FixRequiredEvent): void {
+    emitFixRequired(this.buildNsp, sessionId, event);
+  }
+
+  deployStart(sessionId: string, event: DeployStartEvent): void {
+    emitDeployStart(this.buildNsp, sessionId, event);
+  }
+
+  deployComplete(sessionId: string, event: DeployCompleteEvent): void {
+    emitDeployComplete(this.buildNsp, sessionId, event);
   }
 
   // ── Project events ────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
 import { projectsRouter } from "./routes/projects.js";
 import { buildRouter } from "./routes/build.js";
+import { planRouter } from "./routes/plan.js";
 import { createWebSocketServer } from "../websocket/server.js";
 
 const app = new Hono();
@@ -41,6 +42,7 @@ app.route("/api/auth", authRouter);
 app.route("/api/users", usersRouter);
 app.route("/api/projects", projectsRouter);
 app.route("/api/build", buildRouter);
+app.route("/api/plan", planRouter);
 
 // 404 handler
 app.notFound((c) =>

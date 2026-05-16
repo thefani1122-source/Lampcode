@@ -64,6 +64,44 @@ export const verification = pgTable("verification", {
 
 // ── Domain types for JSONB columns ───────────────────────────────────────────
 
+export type PlanQuestion = {
+  id: string;
+  text: string;
+  type: "text" | "choice" | "multiChoice";
+  options?: string[] | undefined;
+  required?: boolean | undefined;
+};
+
+export type PlanAnswer = {
+  questionId: string;
+  answer: string;
+};
+
+export type InterviewData = {
+  questions: PlanQuestion[];
+  answers: PlanAnswer[];
+};
+
+export type PlanTask = {
+  agent: string;
+  task: string;
+  estimatedTokens: number;
+  phase: string;
+};
+
+export type VerifyCheck = {
+  name: string;
+  passed: boolean;
+  severity?: string | undefined;
+  detail: string;
+};
+
+export type VerifyReport = {
+  passed: boolean;
+  round: number;
+  checks: VerifyCheck[];
+};
+
 export type ProjectSettings = {
   buildCommand?: string | undefined;
   outputDir?: string | undefined;
@@ -177,6 +215,14 @@ export const buildSessions = pgTable("build_sessions", {
   creditsUsed: doublePrecision("credits_used").notNull().default(0),
   attachments: jsonb("attachments").$type<string[]>(),
   error: text("error"),
+  // Plan-mode extra columns (null for fast mode sessions)
+  planStatus: text("plan_status"),
+  currentPlanPhase: text("current_plan_phase"),
+  interviewData: jsonb("interview_data").$type<InterviewData>(),
+  contractContent: text("contract_content"),
+  planTasks: jsonb("plan_tasks").$type<PlanTask[]>(),
+  verifyRound: integer("verify_round").notNull().default(0),
+  verifyReport: jsonb("verify_report").$type<VerifyReport>(),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { mode: "date" }),
   completedAt: timestamp("completed_at", { mode: "date" }),

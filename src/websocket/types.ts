@@ -76,6 +76,44 @@ export interface BuildFailedEvent {
   timestamp: string;
 }
 
+export interface PlanPhaseStartEvent {
+  sessionId: string;
+  phase: string;
+  agents: string[];
+  isParallel: boolean;
+  timestamp: string;
+}
+
+export interface VerifyResultEvent {
+  sessionId: string;
+  passed: boolean;
+  round: number;
+  report: {
+    checks: Array<{ name: string; passed: boolean; severity?: string | undefined; detail: string }>;
+  };
+  timestamp: string;
+}
+
+export interface FixRequiredEvent {
+  sessionId: string;
+  failedChecks: string[];
+  round: number;
+  maxRounds: number;
+  timestamp: string;
+}
+
+export interface DeployStartEvent {
+  sessionId: string;
+  target: string;
+  timestamp: string;
+}
+
+export interface DeployCompleteEvent {
+  sessionId: string;
+  url: string | null;
+  timestamp: string;
+}
+
 // Server → client events for the build namespace
 export interface BuildServerEvents {
   agent_start: (event: AgentStartEvent) => void;
@@ -86,6 +124,11 @@ export interface BuildServerEvents {
   progress: (event: ProgressEvent) => void;
   phase_complete: (event: PhaseCompleteEvent) => void;
   build_failed: (event: BuildFailedEvent) => void;
+  plan_phase_start: (event: PlanPhaseStartEvent) => void;
+  verify_result: (event: VerifyResultEvent) => void;
+  fix_required: (event: FixRequiredEvent) => void;
+  deploy_start: (event: DeployStartEvent) => void;
+  deploy_complete: (event: DeployCompleteEvent) => void;
 }
 
 // Client → server events for the build namespace

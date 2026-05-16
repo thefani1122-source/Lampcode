@@ -104,3 +104,43 @@ export function emitBuildFailed(
 ): void {
   nsp.to(SESSION_ROOM(sessionId)).emit("build_failed", data);
 }
+
+export function emitPlanPhaseStart(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["plan_phase_start"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("plan_phase_start", data);
+}
+
+export function emitVerifyResult(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["verify_result"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("verify_result", data);
+}
+
+export function emitFixRequired(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["fix_required"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("fix_required", data);
+}
+
+export function emitDeployStart(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["deploy_start"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("deploy_start", data);
+}
+
+export function emitDeployComplete(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["deploy_complete"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("deploy_complete", data);
+}
