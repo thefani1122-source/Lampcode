@@ -1,0 +1,51 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger as honoLogger } from "hono/logger";
+import { serve } from "@hono/node-server";
+import { config } from "./config.js";
+import { logger } from "./logger.js";
+import { errorHandler } from "./middleware/error-handler.js";
+import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+
+const app = new Hono();
+
+// CORS
+app.use(
+  "*",
+  cors({
+    origin: config.FRONTEND_ORIGIN,
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Request-ID"],
+    credentials: true,
+  }),
+);
+
+// Request logging
+app.use("*", honoLogger((message, ...rest) => logger.info({ msg: message }, ...rest)));
+
+// Rate limiting
+app.use("*", rateLimitMiddleware);
+
+// Health check
+app.get("/health", (c) =>
+  c.json({ status: "ok", timestamp: new Date().toISOString() }),
+);
+
+// 404 handler
+app.notFound((c) =>
+  c.json(
+    { error: { message: "Route not found", code: "NOT_FOUND" } },
+    404,
+  ),
+);
+
+// Global error handler
+app.onError(errorHandler);
+
+// Start server
+serve(
+  { fetch: app.fetch, port: config.PORT },
+  (info) => logger.info({ port: info.port }, "Server listening"),
+);
+
+export { app };
