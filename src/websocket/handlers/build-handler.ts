@@ -81,6 +81,14 @@ export function emitFileUpdate(
   nsp.to(SESSION_ROOM(sessionId)).emit("file_update", data);
 }
 
+export function emitProgress(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildServerEvents["progress"] extends (e: infer E) => void ? E : never,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("progress", data);
+}
+
 export function emitPhaseComplete(
   nsp: BuildNamespace,
   sessionId: string,

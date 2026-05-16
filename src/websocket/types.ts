@@ -49,6 +49,14 @@ export interface FileUpdateEvent {
   path: string;
   content: string;
   diff?: string | undefined;
+  linesChanged: number;
+  timestamp: string;
+}
+
+export interface ProgressEvent {
+  sessionId: string;
+  percent: number;
+  message: string;
   timestamp: string;
 }
 
@@ -75,6 +83,7 @@ export interface BuildServerEvents {
   agent_complete: (event: AgentCompleteEvent) => void;
   agent_error: (event: AgentErrorEvent) => void;
   file_update: (event: FileUpdateEvent) => void;
+  progress: (event: ProgressEvent) => void;
   phase_complete: (event: PhaseCompleteEvent) => void;
   build_failed: (event: BuildFailedEvent) => void;
 }

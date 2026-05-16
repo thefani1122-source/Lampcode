@@ -153,6 +153,35 @@ export const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const buildSessionStatusEnum = pgEnum("build_session_status", [
+  "running",
+  "success",
+  "failed",
+  "cancelled",
+]);
+
+export const buildSessions = pgTable("build_sessions", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  mode: projectModeEnum("mode").notNull().default("fast"),
+  status: buildSessionStatusEnum("status").notNull().default("running"),
+  phase: integer("phase").notNull().default(0),
+  outputDir: text("output_dir"),
+  previewUrl: text("preview_url"),
+  creditsUsed: doublePrecision("credits_used").notNull().default(0),
+  attachments: jsonb("attachments").$type<string[]>(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { mode: "date" }),
+  completedAt: timestamp("completed_at", { mode: "date" }),
+});
+
 export const agentTaskStatusEnum = pgEnum("agent_task_status", [
   "running",
   "complete",
@@ -218,6 +247,11 @@ export const auditLogRelations = relations(auditLog, ({ one }) => ({
   project: one(projects, { fields: [auditLog.projectId], references: [projects.id] }),
 }));
 
+export const buildSessionsRelations = relations(buildSessions, ({ one }) => ({
+  project: one(projects, { fields: [buildSessions.projectId], references: [projects.id] }),
+  user: one(user, { fields: [buildSessions.userId], references: [user.id] }),
+}));
+
 export const agentTasksRelations = relations(agentTasks, ({ one }) => ({
   user: one(user, { fields: [agentTasks.userId], references: [user.id] }),
   project: one(projects, { fields: [agentTasks.projectId], references: [projects.id] }),
@@ -240,3 +274,6 @@ export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type MemberRole = (typeof memberRoleEnum.enumValues)[number];
 export type AgentTask = typeof agentTasks.$inferSelect;
 export type AgentTaskStatus = (typeof agentTaskStatusEnum.enumValues)[number];
+export type BuildSession = typeof buildSessions.$inferSelect;
+export type NewBuildSession = typeof buildSessions.$inferInsert;
+export type BuildSessionStatus = (typeof buildSessionStatusEnum.enumValues)[number];

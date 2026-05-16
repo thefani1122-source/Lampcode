@@ -17,6 +17,7 @@ import {
   emitAgentComplete,
   emitAgentError,
   emitFileUpdate,
+  emitProgress,
   emitPhaseComplete,
   emitBuildFailed,
 } from "./handlers/build-handler.js";
@@ -33,6 +34,7 @@ import {
   type AgentStartEvent,
   type AgentCompleteEvent,
   type AgentErrorEvent,
+  type ProgressEvent,
   type PhaseCompleteEvent,
   type BuildFailedEvent,
   type FileUpdateEvent,
@@ -142,6 +144,10 @@ export class WebSocketServer {
 
   fileUpdate(sessionId: string, event: FileUpdateEvent): void {
     emitFileUpdate(this.buildNsp, sessionId, event);
+  }
+
+  progress(sessionId: string, event: ProgressEvent): void {
+    emitProgress(this.buildNsp, sessionId, event);
   }
 
   phaseComplete(sessionId: string, event: PhaseCompleteEvent): void {
