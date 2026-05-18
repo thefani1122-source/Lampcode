@@ -4,6 +4,29 @@ import { type AgentTaskType } from "../agents/model-gateway.js";
 
 // ── Build namespace events ────────────────────────────────────────────────────
 
+export interface BuildStartEvent {
+  sessionId: string;
+  projectId: string;
+  mode: "fast" | "plan";
+  timestamp: string;
+}
+
+export interface PhaseStartEvent {
+  sessionId: string;
+  phase: Phase;
+  agents: string[];
+  isParallel: boolean;
+  timestamp: string;
+}
+
+export interface CreditBurnEvent {
+  sessionId: string;
+  userId: string;
+  creditsUsed: number;
+  totalCreditsUsed: number;
+  timestamp: string;
+}
+
 export interface AgentStartEvent {
   taskId: string;
   sessionId: string;
@@ -116,10 +139,13 @@ export interface DeployCompleteEvent {
 
 // Server → client events for the build namespace
 export interface BuildServerEvents {
+  build_start: (event: BuildStartEvent) => void;
+  phase_start: (event: PhaseStartEvent) => void;
   agent_start: (event: AgentStartEvent) => void;
   agent_progress: (event: AgentProgressEvent) => void;
   agent_complete: (event: AgentCompleteEvent) => void;
   agent_error: (event: AgentErrorEvent) => void;
+  credit_burn: (event: CreditBurnEvent) => void;
   file_update: (event: FileUpdateEvent) => void;
   progress: (event: ProgressEvent) => void;
   phase_complete: (event: PhaseCompleteEvent) => void;

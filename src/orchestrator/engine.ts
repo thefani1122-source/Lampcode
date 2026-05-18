@@ -42,6 +42,24 @@ export interface BuildContext {
   prompt: string;
 }
 
+/**
+ * Minimal event sink the orchestrator fires into — decoupled from the WS layer.
+ * The WebSocketServer satisfies this via makeOrchestratorEmitter().
+ * All methods are fire-and-forget; failures must be swallowed by the implementor.
+ */
+export interface BuildEmitter {
+  onBuildStart(sessionId: string, projectId: string, mode: "fast" | "plan"): void;
+  onPhaseStart(sessionId: string, phase: Phase, agents: readonly string[], isParallel: boolean): void;
+  onPhaseComplete(sessionId: string, phase: Phase, nextPhase: Phase | null, creditsUsed: number): void;
+  onAgentStart(sessionId: string, agentType: string, taskName: string): void;
+  onAgentComplete(sessionId: string, agentType: string, creditsUsed: number, filesModified: string[]): void;
+  onAgentError(sessionId: string, agentType: string, error: string): void;
+  onBuildComplete(sessionId: string, userId: string, projectId: string, creditsUsed: number): void;
+  onBuildFailed(sessionId: string, phase: Phase, reason: string): void;
+  onCreditBurn(sessionId: string, userId: string, creditsUsed: number, totalCreditsUsed: number): void;
+  onProgress(sessionId: string, percent: number, message: string): void;
+}
+
 // ── Status response ───────────────────────────────────────────────────────────
 
 export interface BuildStatus {
@@ -70,8 +88,10 @@ export class BuildOrchestrator {
   private readonly queue: Queue<PhaseJobData>;
   private worker: Worker<PhaseJobData> | null = null;
   private agentRunner: AgentRunner | null = null;
+  private readonly emitter: BuildEmitter | null;
 
-  constructor(redisUrl: string) {
+  constructor(redisUrl: string, emitter?: BuildEmitter) {
+    this.emitter = emitter ?? null;
     // Separate connections: BullMQ requires maxRetriesPerRequest: null
     this.stateRedis = new Redis(redisUrl, {
       maxRetriesPerRequest: null,
@@ -149,6 +169,8 @@ export class BuildOrchestrator {
 
     await this.writeSession(session);
 
+    this.emitter?.onBuildStart(sessionId, projectId, mode);
+
     // Kick off into PLANNING
     await this.transitionPhase(sessionId, "IDLE", "PLANNING");
 
@@ -213,8 +235,23 @@ export class BuildOrchestrator {
 
     await this.writeSession(updated);
 
-    // Enqueue the phase job (skip IDLE — nothing to run)
-    if (to !== "IDLE") {
+    if (to === "IDLE") {
+      // Build complete — arriving at IDLE means all phases done
+      this.emitter?.onBuildComplete(
+        sessionId,
+        session.userId,
+        session.projectId,
+        updated.creditsUsed,
+      );
+    } else {
+      const phaseDef = PHASE_DEFINITIONS[to];
+      this.emitter?.onPhaseStart(
+        sessionId,
+        to,
+        phaseDef.requiredAgents as unknown as readonly string[],
+        phaseDef.isParallel,
+      );
+
       const job = await this.queue.add(
         to,
         { sessionId, phase: to, projectId: session.projectId, userId: session.userId },
@@ -332,63 +369,80 @@ export class BuildOrchestrator {
 
     const agentStates = { ...session.agentStates };
 
+    const totalAgents = phaseDef.requiredAgents.length;
+    let completedAgents = 0;
+
+    const runAgent = async (agentType: string): Promise<{ agentType: string; result: AgentResult }> => {
+      const taskName = `${phase}:${agentType}`;
+      this.emitter?.onAgentStart(sessionId, agentType, taskName);
+
+      const startMs = Date.now();
+      const startedAt = new Date().toISOString();
+      agentStates[agentType] = { status: "running", startedAt, creditsUsed: 0 };
+
+      const result = await runner.run(sessionId, phase, context);
+      const durationMs = Date.now() - startMs;
+      const completedAt = new Date().toISOString();
+
+      agentStates[agentType] = {
+        status: result.success ? "complete" : "failed",
+        startedAt,
+        completedAt,
+        creditsUsed: result.creditsUsed,
+        ...(result.error !== undefined ? { error: result.error } : {}),
+      };
+
+      const filesModified = typeof result.outputs["outputPath"] === "string"
+        ? [result.outputs["outputPath"]]
+        : [];
+
+      if (result.success) {
+        this.emitter?.onAgentComplete(sessionId, agentType, result.creditsUsed, filesModified);
+        completedAgents++;
+        const totalSoFar = session.creditsUsed + result.creditsUsed;
+        this.emitter?.onCreditBurn(sessionId, session.userId, result.creditsUsed, totalSoFar);
+        const pct = Math.round((completedAgents / totalAgents) * 100);
+        this.emitter?.onProgress(sessionId, pct, `${agentType} complete (${durationMs}ms)`);
+      } else {
+        this.emitter?.onAgentError(sessionId, agentType, result.error ?? "Unknown error");
+      }
+
+      return { agentType, result };
+    };
+
     if (phaseDef.isParallel) {
       // Run all required agents concurrently
       const results = await Promise.allSettled(
-        phaseDef.requiredAgents.map(async (agentType) => {
-          const startedAt = new Date().toISOString();
-          agentStates[agentType] = { status: "running", startedAt, creditsUsed: 0 };
-
-          const result = await runner.run(sessionId, phase, context);
-          const completedAt = new Date().toISOString();
-
-          agentStates[agentType] = {
-            status: result.success ? "complete" : "failed",
-            startedAt,
-            completedAt,
-            creditsUsed: result.creditsUsed,
-            ...(result.error !== undefined ? { error: result.error } : {}),
-          };
-
-          return { agentType, result };
-        }),
+        phaseDef.requiredAgents.map((agentType) => runAgent(agentType)),
       );
 
       const anyFailed = results.some((r) => r.status === "rejected");
       if (anyFailed) {
+        const failReason = `One or more parallel agents failed in phase ${phase}`;
         await this.writeSession({
           ...session,
           agentStates,
           status: "failed",
           updatedAt: new Date().toISOString(),
         });
-        throw new Error(`One or more parallel agents failed in phase ${phase}`);
+        this.emitter?.onBuildFailed(sessionId, phase, failReason);
+        throw new Error(failReason);
       }
     } else {
       // Run required agents sequentially
       for (const agentType of phaseDef.requiredAgents) {
-        const startedAt = new Date().toISOString();
-        agentStates[agentType] = { status: "running", startedAt, creditsUsed: 0 };
-
-        const result = await runner.run(sessionId, phase, context);
-        const completedAt = new Date().toISOString();
-
-        agentStates[agentType] = {
-          status: result.success ? "complete" : "failed",
-          startedAt,
-          completedAt,
-          creditsUsed: result.creditsUsed,
-          ...(result.error !== undefined ? { error: result.error } : {}),
-        };
+        const { result } = await runAgent(agentType);
 
         if (!result.success) {
+          const failReason = `Agent ${agentType} failed in phase ${phase}`;
           await this.writeSession({
             ...session,
             agentStates,
             status: "failed",
             updatedAt: new Date().toISOString(),
           });
-          throw new Error(`Agent ${agentType} failed in phase ${phase}`);
+          this.emitter?.onBuildFailed(sessionId, phase, failReason);
+          throw new Error(failReason);
         }
       }
     }
@@ -399,12 +453,16 @@ export class BuildOrchestrator {
       0,
     );
 
+    const newTotal = session.creditsUsed + phaseCredits;
+
     await this.writeSession({
       ...session,
       agentStates,
-      creditsUsed: session.creditsUsed + phaseCredits,
+      creditsUsed: newTotal,
       updatedAt: new Date().toISOString(),
     });
+
+    this.emitter?.onPhaseComplete(sessionId, phase, null, newTotal);
 
     logger.info({ sessionId, phase, phaseCredits }, "Phase job finished");
   }

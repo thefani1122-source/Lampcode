@@ -6,12 +6,16 @@ import { type StreamBroadcaster } from "../agents/stream-handler.js";
 import { type StreamChunk } from "../agents/model-gateway.js";
 import { type Phase } from "../orchestrator/state-machine.js";
 import { type AgentTaskType } from "../agents/model-gateway.js";
+import { type BuildEmitter } from "../orchestrator/engine.js";
 import { wsAuthMiddleware } from "./middleware/auth.js";
 import { wsRateLimitMiddleware } from "./middleware/rate-limit.js";
 import { registerBuildHandlers } from "./handlers/build-handler.js";
 import { registerProjectHandlers } from "./handlers/project-handler.js";
 import { registerUserHandlers } from "./handlers/user-handler.js";
 import {
+  emitBuildStart,
+  emitPhaseStart,
+  emitCreditBurn,
   emitAgentProgress,
   emitAgentStart,
   emitAgentComplete,
@@ -32,6 +36,9 @@ import {
   type SocketData,
   type BuildServerEvents,
   type BuildClientEvents,
+  type BuildStartEvent,
+  type PhaseStartEvent,
+  type CreditBurnEvent,
   type ProjectServerEvents,
   type ProjectClientEvents,
   type UserServerEvents,
@@ -127,7 +134,113 @@ export class WebSocketServer {
     };
   }
 
+  // ── Orchestrator emitter adapter ──────────────────────────────────────────────
+
+  /**
+   * Returns a BuildEmitter the orchestrator engine can use to fire WS events.
+   * All errors are swallowed (WS emission is best-effort).
+   */
+  makeOrchestratorEmitter(): BuildEmitter {
+    const buildNsp = this.buildNsp;
+    const userNsp  = this.userNsp;
+    const ts = () => new Date().toISOString();
+    return {
+      onBuildStart(sessionId, projectId, mode) {
+        const ev: BuildStartEvent = { sessionId, projectId, mode, timestamp: ts() };
+        emitBuildStart(buildNsp, sessionId, ev);
+      },
+      onPhaseStart(sessionId, phase, agents, isParallel) {
+        const ev: PhaseStartEvent = {
+          sessionId, phase,
+          agents: agents as string[],
+          isParallel,
+          timestamp: ts(),
+        };
+        emitPhaseStart(buildNsp, sessionId, ev);
+      },
+      onPhaseComplete(sessionId, phase, nextPhase, creditsUsed) {
+        emitPhaseComplete(buildNsp, sessionId, {
+          sessionId, phase, nextPhase, creditsUsed, timestamp: ts(),
+        });
+      },
+      onAgentStart(sessionId, agentType, taskName) {
+        const ev: AgentStartEvent = {
+          taskId:    `${sessionId}:${agentType}`,
+          sessionId,
+          agentType: agentType as AgentTaskType,
+          taskName,
+          model:     "",
+          tier:      1,
+          timestamp: ts(),
+        };
+        emitAgentStart(buildNsp, sessionId, ev);
+      },
+      onAgentComplete(sessionId, agentType, creditsUsed, filesModified) {
+        const ev: AgentCompleteEvent = {
+          taskId:      `${sessionId}:${agentType}`,
+          sessionId,
+          agentType:   agentType as AgentTaskType,
+          taskName:    agentType,
+          outputPath:  filesModified[0] ?? "",
+          durationMs:  0,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd:     creditsUsed / 1_000,
+          timestamp:   ts(),
+        };
+        emitAgentComplete(buildNsp, sessionId, ev);
+      },
+      onAgentError(sessionId, agentType, error) {
+        const ev: AgentErrorEvent = {
+          taskId:    `${sessionId}:${agentType}`,
+          sessionId,
+          agentType: agentType as AgentTaskType,
+          error,
+          timestamp: ts(),
+        };
+        emitAgentError(buildNsp, sessionId, ev);
+      },
+      onBuildFailed(sessionId, phase, reason) {
+        emitBuildFailed(buildNsp, sessionId, {
+          sessionId, phase, reason, logs: "", timestamp: ts(),
+        });
+      },
+      onBuildComplete(sessionId, userId, _projectId, creditsUsed) {
+        emitBuildComplete(userNsp, userId, {
+          userId,
+          sessionId,
+          projectId:   _projectId,
+          projectName: "",
+          durationMs:  0,
+          creditsUsed,
+          timestamp:   ts(),
+        });
+      },
+      onCreditBurn(sessionId, userId, creditsUsed, totalCreditsUsed) {
+        const ev: CreditBurnEvent = {
+          sessionId, userId, creditsUsed, totalCreditsUsed, timestamp: ts(),
+        };
+        emitCreditBurn(buildNsp, sessionId, ev);
+      },
+      onProgress(sessionId, percent, message) {
+        emitProgress(buildNsp, sessionId, { sessionId, percent, message, timestamp: ts() });
+      },
+    };
+  }
+
   // ── Build events ─────────────────────────────────────────────────────────────
+
+  buildStart(sessionId: string, event: BuildStartEvent): void {
+    emitBuildStart(this.buildNsp, sessionId, event);
+  }
+
+  phaseStart(sessionId: string, event: PhaseStartEvent): void {
+    emitPhaseStart(this.buildNsp, sessionId, event);
+  }
+
+  creditBurn(sessionId: string, event: CreditBurnEvent): void {
+    emitCreditBurn(this.buildNsp, sessionId, event);
+  }
 
   agentStart(sessionId: string, event: AgentStartEvent): void {
     emitAgentStart(this.buildNsp, sessionId, event);
@@ -260,3 +373,4 @@ export function getWebSocketServer(): WebSocketServer {
 
 export type { Phase };
 export type { AgentTaskType };
+export type { BuildEmitter };

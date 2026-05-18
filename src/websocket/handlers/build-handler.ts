@@ -3,6 +3,9 @@ import { logger } from "../../server/logger.js";
 import {
   type BuildServerEvents,
   type BuildClientEvents,
+  type BuildStartEvent,
+  type PhaseStartEvent,
+  type CreditBurnEvent,
   type SocketData,
 } from "../types.js";
 
@@ -35,6 +38,30 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
 }
 
 // ── Emitter helpers called from other modules ─────────────────────────────────
+
+export function emitBuildStart(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: BuildStartEvent,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("build_start", data);
+}
+
+export function emitPhaseStart(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: PhaseStartEvent,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("phase_start", data);
+}
+
+export function emitCreditBurn(
+  nsp: BuildNamespace,
+  sessionId: string,
+  data: CreditBurnEvent,
+): void {
+  nsp.to(SESSION_ROOM(sessionId)).emit("credit_burn", data);
+}
 
 /**
  * Broadcast an agent_start event to all sockets in a session room.
