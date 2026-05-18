@@ -1,3 +1,4 @@
+import { join } from "path";
 import { z } from "zod";
 import {
   ModelGateway,
@@ -17,6 +18,12 @@ import {
 } from "../orchestrator/engine.js";
 import { type Phase, type AgentType } from "../orchestrator/state-machine.js";
 import { logger } from "../server/logger.js";
+
+// Workspace root: one directory per project
+const WORKSPACE_BASE = join(process.cwd(), "workspace");
+
+// Max retries per tier before falling back to the next tier
+const RETRIES_PER_TIER = 2;
 
 // ── AgentTaskType re-exported for external consumers ─────────────────────────
 export { type AgentTaskType } from "./model-gateway.js";
@@ -95,7 +102,7 @@ export class AgentDispatcher implements AgentRunner {
     this.streamHandler = new StreamHandler(broadcaster);
   }
 
-  /** Primary dispatch method — tries tier 1 → 2 → 3 on fallback errors. */
+  /** Primary dispatch method — tries tier 1 → 2 → 3 on fallback errors, with per-tier retries. */
   async dispatch(options: DispatchOptions): Promise<DispatchResult> {
     const parsed = dispatchOptionsSchema.parse(options);
     const tiers = MODEL_TIERS[parsed.agentType];
@@ -107,7 +114,7 @@ export class AgentDispatcher implements AgentRunner {
       const model = tierModel(parsed.agentType, tier as 1 | 2 | 3);
 
       try {
-        return await this.callModel(parsed, task, model, tier as 1 | 2 | 3);
+        return await this.callModelWithRetry(parsed, task, model, tier as 1 | 2 | 3);
       } catch (err) {
         if (
           err instanceof GatewayError &&
@@ -128,6 +135,27 @@ export class AgentDispatcher implements AgentRunner {
     }
 
     throw lastError ?? new Error(`All tiers failed for ${parsed.agentType}`);
+  }
+
+  /** Trigger the fix agent after empty/malformed output from another agent. */
+  async triggerFixAgent(
+    failedAgentType: AgentTaskType,
+    errorContext: string,
+    sessionId: string,
+    projectId?: string | undefined,
+    userId?: string | undefined,
+  ): Promise<DispatchResult> {
+    logger.warn({ failedAgentType, sessionId }, "Auto-triggering fix agent");
+    return this.dispatch({
+      agentType: "fix",
+      task: {
+        description: `The ${failedAgentType} agent produced no valid output. Context: ${errorContext.slice(0, 1_000)}. Diagnose the issue and regenerate the expected output.`,
+        outputFormat: "code",
+      },
+      sessionId,
+      projectId,
+      userId,
+    });
   }
 
   /** Implements AgentRunner — called by the BuildOrchestrator worker. */
@@ -178,6 +206,31 @@ export class AgentDispatcher implements AgentRunner {
 
   // ── Private ─────────────────────────────────────────────────────────────────
 
+  /** Retry up to RETRIES_PER_TIER times on NETWORK errors before re-throwing. */
+  private async callModelWithRetry(
+    options: DispatchOptions,
+    task: TaskInput,
+    model: string,
+    tier: 1 | 2 | 3,
+  ): Promise<DispatchResult> {
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt <= RETRIES_PER_TIER; attempt++) {
+      try {
+        return await this.callModel(options, task, model, tier);
+      } catch (err) {
+        if (err instanceof GatewayError && err.code === "NETWORK" && attempt < RETRIES_PER_TIER) {
+          const delay = Math.pow(2, attempt) * 1_000; // 1 s, 2 s
+          logger.warn({ model, tier, attempt: attempt + 1, delay }, "Network error — retrying");
+          await sleep(delay);
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr ?? new Error("All retries exhausted");
+  }
+
   private async callModel(
     options: DispatchOptions,
     task: TaskInput,
@@ -188,6 +241,11 @@ export class AgentDispatcher implements AgentRunner {
 
     logger.info({ agentType, model, tier, sessionId }, "Dispatching agent");
 
+    // Resolve workspace directory for project-specific brain files
+    const workspaceDir = projectId !== undefined
+      ? join(WORKSPACE_BASE, projectId)
+      : undefined;
+
     // Build prompt
     const { systemPrompt, userMessage, estimatedInputTokens } =
       await this.promptBuilder.build(agentType, task, {
@@ -195,7 +253,7 @@ export class AgentDispatcher implements AgentRunner {
         userId: userId ?? "anonymous",
         mode: "fast",
         prompt: task.description,
-      });
+      }, workspaceDir);
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker

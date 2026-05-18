@@ -90,9 +90,10 @@ export class PromptBuilder {
     agentType: AgentTaskType,
     task: TaskInput,
     context: BuildContext,
+    workspaceDir?: string | undefined,
   ): Promise<BuiltPrompt> {
     const systemPrompt = this.buildSystemPrompt(agentType, task.outputFormat);
-    const contextBlock = await this.buildContextBlock(agentType);
+    const contextBlock = await this.buildContextBlock(agentType, workspaceDir);
     const taskBlock = this.buildTaskBlock(task, context);
 
     const userMessage = this.truncate(
@@ -123,12 +124,22 @@ export class PromptBuilder {
     return base + jsonInstruction;
   }
 
-  private async buildContextBlock(agentType: AgentTaskType): Promise<string> {
+  private async buildContextBlock(agentType: AgentTaskType, workspaceDir?: string | undefined): Promise<string> {
     const files = this.relevantFiles(agentType);
     const sections: string[] = [];
 
+    // Read from workspace dir first (project-specific brain files), fallback to contractsDir
+    const dirs = workspaceDir !== undefined ? [workspaceDir, this.contractsDir] : [this.contractsDir];
+    const seen = new Set<string>();
+
     for (const filename of files) {
-      const content = await this.readContractFile(filename);
+      if (seen.has(filename)) continue;
+      seen.add(filename);
+      let content: string | null = null;
+      for (const dir of dirs) {
+        content = await this.readFileFrom(dir, filename);
+        if (content !== null) break;
+      }
       if (content !== null) {
         sections.push(`## ${filename}\n${content}`);
       }
@@ -166,28 +177,26 @@ export class PromptBuilder {
   }
 
   private relevantFiles(agentType: AgentTaskType): string[] {
-    const always = ["CONTRACT.md"];
     const byType: Record<AgentTaskType, string[]> = {
-      planning:   ["CONTRACT.md", "DB_SCHEMA.md", "API_CONTRACTS.md"],
-      frontend:   ["CONTRACT.md", "API_CONTRACTS.md"],
-      backend:    ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md"],
-      db:         ["CONTRACT.md", "DB_SCHEMA.md"],
-      security:   ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md"],
-      connection: ["CONTRACT.md", "API_CONTRACTS.md"],
-      fix:        ["CONTRACT.md"],
-      deploy:     ["CONTRACT.md"],
-      monitor:    ["CONTRACT.md"],
+      planning:   ["CONTRACT.md", "DB_SCHEMA.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
+      frontend:   ["CONTRACT.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
+      backend:    ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],
+      db:         ["CONTRACT.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],
+      security:   ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],
+      connection: ["CONTRACT.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
+      fix:        ["CONTRACT.md", "CURRENT_STATE.md"],
+      deploy:     ["CONTRACT.md", "CURRENT_STATE.md"],
+      monitor:    ["CONTRACT.md", "CURRENT_STATE.md"],
     };
-    return [...new Set([...always, ...(byType[agentType] ?? [])])];
+    return [...new Set(byType[agentType] ?? ["CONTRACT.md"])];
   }
 
-  private async readContractFile(filename: string): Promise<string | null> {
-    const filepath = join(this.contractsDir, filename);
+  private async readFileFrom(dir: string, filename: string): Promise<string | null> {
+    const filepath = join(dir, filename);
     try {
       const content = await readFile(filepath, "utf8");
       return content.trim();
     } catch {
-      // File doesn't exist yet — skip silently
       return null;
     }
   }

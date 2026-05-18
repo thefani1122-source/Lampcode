@@ -8,15 +8,15 @@ export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 // Tier arrays: [tier1, tier2, tier3]
 export const MODEL_TIERS = {
-  planning:   ["anthropic/claude-opus-4-5",   "anthropic/claude-sonnet-4-5",  "openai/gpt-4o"] as const,
-  frontend:   ["moonshotai/kimi-k2",           "anthropic/claude-sonnet-4-5",  "deepseek/deepseek-chat"] as const,
-  backend:    ["anthropic/claude-sonnet-4-5",  "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  db:         ["anthropic/claude-sonnet-4-5",  "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  security:   ["deepseek/deepseek-r1",         "anthropic/claude-sonnet-4-5",  "openai/gpt-4o-mini"] as const,
-  connection: ["deepseek/deepseek-chat",       "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
-  fix:        ["anthropic/claude-sonnet-4-5",  "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  deploy:     ["deepseek/deepseek-chat",       "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
-  monitor:    ["deepseek/deepseek-chat",       "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
+  planning:   ["anthropic/claude-opus-4-6",    "anthropic/claude-sonnet-4-6",  "openai/gpt-4o"] as const,
+  frontend:   ["moonshotai/kimi-k2.6",          "anthropic/claude-sonnet-4-6",  "deepseek/deepseek-chat"] as const,
+  backend:    ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
+  db:         ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
+  security:   ["deepseek/deepseek-v4-pro",      "anthropic/claude-sonnet-4-6",  "openai/gpt-4o-mini"] as const,
+  connection: ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
+  fix:        ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
+  deploy:     ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
+  monitor:    ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
 } as const satisfies Record<string, readonly [string, string, string]>;
 
 export type AgentTaskType = keyof typeof MODEL_TIERS;
@@ -302,6 +302,7 @@ export class ModelGateway {
 
     switch (response.status) {
       case 401:
+      case 403:
         return new GatewayError("INVALID_KEY", "Invalid OpenRouter API key");
       case 429:
         return new GatewayError("RATE_LIMIT", "Rate limit exceeded", retryMs ?? 60_000);

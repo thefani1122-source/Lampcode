@@ -6,12 +6,22 @@ import { logger } from "../server/logger.js";
 // ── Pricing table (USD per 1M tokens) ────────────────────────────────────────
 
 const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> = {
+  // Claude 4.x
+  "anthropic/claude-opus-4-6":   { inputPerM: 15.00, outputPerM: 75.00 },
+  "anthropic/claude-sonnet-4-6": { inputPerM: 3.00,  outputPerM: 15.00 },
+  "anthropic/claude-haiku-4-5":  { inputPerM: 0.25,  outputPerM: 1.25  },
+  // Legacy 4.5 entries
   "anthropic/claude-opus-4-5":   { inputPerM: 15.00, outputPerM: 75.00 },
   "anthropic/claude-sonnet-4-5": { inputPerM: 3.00,  outputPerM: 15.00 },
-  "anthropic/claude-haiku-4-5":  { inputPerM: 0.25,  outputPerM: 1.25  },
+  // Kimi
+  "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
   "moonshotai/kimi-k2":          { inputPerM: 0.60,  outputPerM: 2.50  },
+  // DeepSeek
+  "deepseek/deepseek-v4-pro":    { inputPerM: 0.55,  outputPerM: 2.19  },
+  "deepseek/deepseek-v4-flash":  { inputPerM: 0.14,  outputPerM: 0.28  },
   "deepseek/deepseek-r1":        { inputPerM: 0.55,  outputPerM: 2.19  },
   "deepseek/deepseek-chat":      { inputPerM: 0.27,  outputPerM: 1.10  },
+  // OpenAI
   "openai/gpt-4o":               { inputPerM: 5.00,  outputPerM: 15.00 },
   "openai/gpt-4o-mini":          { inputPerM: 0.15,  outputPerM: 0.60  },
 };
