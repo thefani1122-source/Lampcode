@@ -18,6 +18,8 @@ import { settingsRouter, userSettingsRouter } from "./routes/settings.js";
 import { envRouter } from "./routes/env.js";
 import { billingRouter } from "./routes/billing.js";
 import { createWebSocketServer } from "../websocket/server.js";
+import { startFastBuildWorker } from "../build/worker.js";
+import { runFastBuild } from "./routes/build.js";
 
 const app = new Hono();
 
@@ -77,5 +79,8 @@ const httpServer = serve(
 
 // Attach WebSocket server to the same HTTP server
 createWebSocketServer(httpServer);
+
+// Start BullMQ worker for fast builds
+startFastBuildWorker(runFastBuild);
 
 export { app };

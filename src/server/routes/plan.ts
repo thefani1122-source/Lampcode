@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq, sum } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, stat } from "fs/promises";
 import { join, dirname, relative } from "path";
 import { db } from "../../db/client.js";
@@ -20,6 +20,7 @@ import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { streamEvents, type StreamEventPayload } from "../../agents/stream-handler.js";
 import { FreezeManager } from "../../orchestrator/freeze-contract.js";
+import { deductCredits, refundCredits } from "../../build/credits.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { getBrainManager } from "../../brain/manager.js";
 import { logger } from "../logger.js";
@@ -29,8 +30,7 @@ import { logger } from "../logger.js";
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 const FREEZE_BASE = join(process.cwd(), ".buildforge", "freezes");
 const MAX_VERIFY_ROUNDS = 3;
-const PLAN_CREDIT_ESTIMATE = 100;
-const FREE_PLAN_CREDIT_LIMIT = 100;
+const PLAN_CREDIT_ESTIMATE = 150;
 
 // ── Phase configuration ───────────────────────────────────────────────────────
 
@@ -139,19 +139,6 @@ function extractJson(content: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function checkPlanCredits(userId: string): Promise<void> {
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
-  const rows = await db
-    .select({ total: sum(agentTasks.costUsd) })
-    .from(agentTasks)
-    .where(and(eq(agentTasks.userId, userId), eq(agentTasks.status, "complete")));
-  const usedCredits = (parseFloat(rows[0]?.total ?? "0") || 0) * 1_000;
-  if (FREE_PLAN_CREDIT_LIMIT - usedCredits < PLAN_CREDIT_ESTIMATE) {
-    throw new AppError(402, "Insufficient credits for Plan Mode build", "INSUFFICIENT_CREDITS");
-  }
-}
 
 async function getOwnedSession(sessionId: string, userId: string) {
   const rows = await db
@@ -625,21 +612,26 @@ planRouter.post("/start", async (c) => {
   if (project.isArchived) throw new AppError(400, "Project is archived", "PROJECT_ARCHIVED");
   if (project.status === "building") throw new AppError(409, "A build is already running", "BUILD_IN_PROGRESS");
 
-  await checkPlanCredits(authUser.id);
+  // Atomically deduct credits; refund on any subsequent failure
+  await deductCredits(authUser.id, PLAN_CREDIT_ESTIMATE);
 
-  // Create session
   const sessionId = crypto.randomUUID();
-  await db.insert(buildSessions).values({
-    id: sessionId,
-    projectId,
-    userId: authUser.id,
-    prompt,
-    mode: "plan",
-    status: "running",
-    phase: 0,
-    planStatus: "interviewing",
-  });
-  await db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId));
+  try {
+    await db.insert(buildSessions).values({
+      id: sessionId,
+      projectId,
+      userId: authUser.id,
+      prompt,
+      mode: "plan",
+      status: "running",
+      phase: 0,
+      planStatus: "interviewing",
+    });
+    await db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId));
+  } catch (err) {
+    await refundCredits(authUser.id, PLAN_CREDIT_ESTIMATE);
+    throw err;
+  }
 
   // Dispatch planning agent to generate interview questions
   let questions: PlanQuestion[];
@@ -905,6 +897,151 @@ planRouter.get("/:sessionId/status", async (c) => {
     startedAt: session.startedAt,
     completedAt: session.completedAt,
   });
+});
+
+// POST /api/plan/:id/interview  (path-param variant)
+planRouter.post("/:id/interview", async (c) => {
+  const authUser = c.get("authUser");
+  const { id: sessionId } = c.req.param();
+
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
+  const answersSchema = z.object({
+    answers: z.array(z.object({
+      questionId: z.string().min(1),
+      answer: z.string().min(1).max(2_000),
+    })).min(1),
+  });
+  const parsed = answersSchema.safeParse(body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
+  const { answers } = parsed.data;
+
+  const session = await getOwnedSession(sessionId, authUser.id);
+  if (session.planStatus !== "interviewing") {
+    throw new AppError(409, `Session is in status '${session.planStatus}', expected 'interviewing'`, "INVALID_STATE");
+  }
+
+  const interviewData = session.interviewData ?? { questions: [], answers: [] };
+  const updatedAnswers: PlanAnswer[] = answers.map((a) => ({ questionId: a.questionId, answer: a.answer }));
+
+  const qaContext = (interviewData.questions as PlanQuestion[]).map((q) => {
+    const ans = updatedAnswers.find((a) => a.questionId === q.id);
+    return `Q: ${q.text}\nA: ${ans?.answer ?? "(not answered)"}`;
+  }).join("\n\n");
+
+  await db.update(buildSessions).set({
+    planStatus: "contracting",
+    interviewData: { questions: interviewData.questions as PlanQuestion[], answers: updatedAnswers },
+  }).where(eq(buildSessions.id, sessionId));
+
+  let contract: string;
+  let tasks: PlanTask[];
+  try {
+    const result = await getDispatcher().dispatch({
+      agentType: "planning",
+      task: {
+        description: `Project: "${session.prompt}"\n\nInterview Q&A:\n${qaContext}\n\nGenerate a complete CONTRACT.md and task breakdown. Return ONLY valid JSON:\n{"contract":"# BuildForge Contract\\n...","tasks":[{"agent":"db","task":"...","estimatedTokens":3000,"phase":"FOUNDATION"}]}`,
+        outputFormat: "json",
+      },
+      sessionId,
+      userId: authUser.id,
+      projectId: session.projectId,
+    });
+    const raw = extractJson(result.content);
+    const validated = contractResponseSchema.safeParse(raw);
+    if (!validated.success) throw new Error("Invalid contract format");
+    contract = validated.data.contract;
+    tasks = validated.data.tasks as PlanTask[];
+  } catch (err) {
+    logger.warn({ sessionId, err }, "Contract generation failed, generating stub");
+    contract = `# BuildForge Contract\n\n## Project\n${session.prompt}\n\n## Q&A\n${qaContext}`;
+    tasks = [
+      { agent: "db",       task: "Design database schema",     estimatedTokens: 3_000, phase: "FOUNDATION" },
+      { agent: "backend",  task: "Implement backend skeleton", estimatedTokens: 4_000, phase: "FOUNDATION" },
+      { agent: "frontend", task: "Build frontend UI",          estimatedTokens: 4_000, phase: "BUILD"      },
+      { agent: "security", task: "Security audit",             estimatedTokens: 2_000, phase: "VERIFY"     },
+      { agent: "deploy",   task: "Generate deployment config", estimatedTokens: 1_500, phase: "DEPLOY"     },
+    ];
+  }
+
+  const contractDir = join(WORKSPACE_BASE, session.projectId, sessionId);
+  await mkdir(contractDir, { recursive: true });
+  await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
+
+  await db.update(buildSessions).set({
+    planStatus: "waiting_approval",
+    contractContent: contract,
+    planTasks: tasks,
+  }).where(eq(buildSessions.id, sessionId));
+
+  return c.json({ sessionId, contract, tasks, status: "waiting_approval" });
+});
+
+// POST /api/plan/:id/approve  (path-param variant)
+planRouter.post("/:id/approve", async (c) => {
+  const authUser = c.get("authUser");
+  const { id: sessionId } = c.req.param();
+
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
+  const parsed = approveBodySchema.safeParse(body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
+  const { approved, modifications } = parsed.data;
+
+  const session = await getOwnedSession(sessionId, authUser.id);
+  if (session.planStatus !== "waiting_approval") {
+    throw new AppError(409, `Session is in status '${session.planStatus}', expected 'waiting_approval'`, "INVALID_STATE");
+  }
+
+  if (!approved && modifications) {
+    const prevContract = session.contractContent ?? "";
+    let contract: string;
+    let tasks: PlanTask[];
+    try {
+      const result = await getDispatcher().dispatch({
+        agentType: "planning",
+        task: {
+          description: `Revise the following contract based on user feedback.\n\nCurrent contract:\n${prevContract}\n\nFeedback:\n${modifications}\n\nReturn ONLY valid JSON:\n{"contract":"...","tasks":[...]}`,
+          outputFormat: "json",
+        },
+        sessionId,
+        userId: authUser.id,
+        projectId: session.projectId,
+      });
+      const raw = extractJson(result.content);
+      const validated = contractResponseSchema.safeParse(raw);
+      if (!validated.success) throw new Error("Invalid contract format");
+      contract = validated.data.contract;
+      tasks = validated.data.tasks as PlanTask[];
+    } catch (err) {
+      logger.warn({ sessionId, err }, "Contract revision failed, keeping previous");
+      contract = prevContract;
+      tasks = (session.planTasks ?? []) as PlanTask[];
+    }
+
+    const contractDir = join(WORKSPACE_BASE, session.projectId, sessionId);
+    await mkdir(contractDir, { recursive: true });
+    await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
+
+    await db.update(buildSessions).set({
+      contractContent: contract,
+      planTasks: tasks,
+      planStatus: "waiting_approval",
+    }).where(eq(buildSessions.id, sessionId));
+
+    return c.json({ sessionId, contract, tasks, status: "waiting_approval", revised: true });
+  }
+
+  if (!approved) {
+    // Rejected with no modifications — cancel
+    await db.update(buildSessions).set({ status: "cancelled", planStatus: "cancelled", completedAt: new Date() })
+      .where(eq(buildSessions.id, sessionId));
+    await db.update(projects).set({ status: "inactive" }).where(eq(projects.id, session.projectId));
+    return c.json({ sessionId, status: "cancelled" });
+  }
+
+  // Approved — kick off FOUNDATION phase in background
+  void runPlanPhase(sessionId, authUser.id, session.projectId, "FOUNDATION", session.contractContent ?? session.prompt);
+
+  return c.json({ sessionId, status: "building", message: "Build started. Monitor via GET /api/plan/:id/status" });
 });
 
 // POST /api/plan/:sessionId/phase/:phase/approve

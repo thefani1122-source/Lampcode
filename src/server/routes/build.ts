@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq, gte, sum } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
 import { join, dirname, relative, extname } from "path";
 import { db } from "../../db/client.js";
@@ -8,7 +8,6 @@ import {
   projects,
   buildSessions,
   agentTasks,
-  type BuildSession,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -17,15 +16,14 @@ import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser
 import { streamEvents, type StreamEventPayload } from "../../agents/stream-handler.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
+import { deductCredits, refundCredits } from "../../build/credits.js";
+import { enqueueFastBuild } from "../../build/queue.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
-// Credit estimate for a single fast-mode frontend dispatch (credits = $0.001 each)
-const FAST_BUILD_CREDIT_COST = 25;
-// Free plan monthly limit in credits
-const FREE_PLAN_CREDIT_LIMIT = 100;
+const FAST_BUILD_CREDIT_COST = 20;
 
 // ── In-memory cancel registry ─────────────────────────────────────────────────
 
@@ -84,44 +82,14 @@ async function walkDirectory(base: string, dir: string): Promise<FileEntry[]> {
   return entries;
 }
 
-// ── Credit check ──────────────────────────────────────────────────────────────
-
-async function checkFastBuildCredits(userId: string): Promise<void> {
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
-
-  const rows = await db
-    .select({ totalCost: sum(agentTasks.costUsd) })
-    .from(agentTasks)
-    .where(
-      and(
-        eq(agentTasks.userId, userId),
-        gte(agentTasks.startedAt, monthStart),
-        eq(agentTasks.status, "complete"),
-      ),
-    );
-
-  const usedUsd = parseFloat(rows[0]?.totalCost ?? "0") || 0;
-  const usedCredits = usedUsd * 1_000; // 1 credit = $0.001
-  const remaining = FREE_PLAN_CREDIT_LIMIT - usedCredits;
-
-  if (remaining < FAST_BUILD_CREDIT_COST) {
-    throw new AppError(
-      402,
-      `Insufficient credits. ${Math.floor(remaining)} remaining, ${FAST_BUILD_CREDIT_COST} required.`,
-      "INSUFFICIENT_CREDITS",
-    );
-  }
-}
-
 // ── Background build runner ───────────────────────────────────────────────────
 
-async function runFastBuild(
-  session: BuildSession,
+export async function runFastBuild(
+  sessionId: string,
+  projectId: string,
+  prompt: string,
   userId: string,
 ): Promise<void> {
-  const { id: sessionId, projectId, prompt } = session;
   const server = ws();
 
   // Mark started
@@ -359,31 +327,13 @@ buildRouter.post("/fast", async (c) => {
     throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
   }
 
-  // ── Credit check ──────────────────────────────────────────────────────────
-  await checkFastBuildCredits(authUser.id);
+  // ── Atomically deduct credits ─────────────────────────────────────────────
+  await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
 
-  // ── Create build session ──────────────────────────────────────────────────
   const sessionId = crypto.randomUUID();
-  await db.insert(buildSessions).values({
-    id: sessionId,
-    projectId,
-    userId: authUser.id,
-    prompt,
-    mode: "fast",
-    status: "running",
-    phase: 0,
-    attachments: attachments ?? null,
-  });
-
-  // Mark project as building
-  await db
-    .update(projects)
-    .set({ status: "building" })
-    .where(eq(projects.id, projectId));
-
-  // ── Fire background build (do not await) ──────────────────────────────────
-  void runFastBuild(
-    {
+  try {
+    // ── Create build session ────────────────────────────────────────────────
+    await db.insert(buildSessions).values({
       id: sessionId,
       projectId,
       userId: authUser.id,
@@ -391,26 +341,24 @@ buildRouter.post("/fast", async (c) => {
       mode: "fast",
       status: "running",
       phase: 0,
-      outputDir: null,
-      previewUrl: null,
-      creditsUsed: 0,
       attachments: attachments ?? null,
-      error: null,
-      planStatus: null,
-      currentPlanPhase: null,
-      interviewData: null,
-      contractContent: null,
-      planTasks: null,
-      verifyRound: 0,
-      verifyReport: null,
-      createdAt: new Date(),
-      startedAt: null,
-      completedAt: null,
-    },
-    authUser.id,
-  );
+    });
 
-  return c.json({ sessionId, status: "running", previewUrl: null }, 202);
+    // Mark project as building
+    await db
+      .update(projects)
+      .set({ status: "building" })
+      .where(eq(projects.id, projectId));
+
+    // ── Enqueue via BullMQ ──────────────────────────────────────────────────
+    await enqueueFastBuild({ sessionId, projectId, userId: authUser.id, prompt });
+  } catch (err) {
+    // Refund credits if we failed to queue the job
+    await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+    throw err;
+  }
+
+  return c.json({ sessionId, status: "queued", estimatedTime: "2-5 min" }, 202);
 });
 
 // GET /api/build/:sessionId/status
