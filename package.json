@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
-    "build": "tsup src/server/index.ts --format esm --dts --out-dir dist",
+    "build": "tsup src/server/index.ts --format esm --out-dir dist",
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
