@@ -91,9 +91,10 @@ export class PromptBuilder {
     task: TaskInput,
     context: BuildContext,
     workspaceDir?: string | undefined,
+    contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
     const systemPrompt = this.buildSystemPrompt(agentType, task.outputFormat);
-    const contextBlock = await this.buildContextBlock(agentType, workspaceDir);
+    const contextBlock = await this.buildContextBlock(agentType, workspaceDir, contextFiles);
     const taskBlock = this.buildTaskBlock(task, context);
 
     const userMessage = this.truncate(
@@ -124,9 +125,33 @@ export class PromptBuilder {
     return base + jsonInstruction;
   }
 
-  private async buildContextBlock(agentType: AgentTaskType, workspaceDir?: string | undefined): Promise<string> {
+  private async buildContextBlock(
+    agentType: AgentTaskType,
+    workspaceDir?: string | undefined,
+    contextFiles?: Array<{ path: string; content: string }> | undefined,
+  ): Promise<string> {
     const files = this.relevantFiles(agentType);
     const sections: string[] = [];
+
+    // Pre-selected context files from ContextManager (injected before standard brain files)
+    if (contextFiles !== undefined && contextFiles.length > 0) {
+      const seenPaths = new Set(contextFiles.map((f) => f.path));
+      for (const { path, content } of contextFiles) {
+        sections.push(`## ${path}\n${content}`);
+      }
+      // Exclude already-included brain files from the standard block
+      const remainingBrainFiles = files.filter((name) => !seenPaths.has(name));
+      for (const filename of remainingBrainFiles) {
+        const dirs = workspaceDir !== undefined ? [workspaceDir, this.contractsDir] : [this.contractsDir];
+        let content: string | null = null;
+        for (const dir of dirs) {
+          content = await this.readFileFrom(dir, filename);
+          if (content !== null) break;
+        }
+        if (content !== null) sections.push(`## ${filename}\n${content}`);
+      }
+      return sections.join("\n\n");
+    }
 
     // Read from workspace dir first (project-specific brain files), fallback to contractsDir
     const dirs = workspaceDir !== undefined ? [workspaceDir, this.contractsDir] : [this.contractsDir];

@@ -17,6 +17,7 @@ import { integrationsRouter, providersRouter } from "./routes/integrations.js";
 import { settingsRouter, userSettingsRouter } from "./routes/settings.js";
 import { envRouter } from "./routes/env.js";
 import { billingRouter } from "./routes/billing.js";
+import { contextRouter } from "./routes/context.js";
 import { createWebSocketServer } from "../websocket/server.js";
 import { startFastBuildWorker } from "../build/worker.js";
 import { runFastBuild } from "./routes/build.js";
@@ -59,6 +60,7 @@ app.route("/api/integrations", providersRouter);
 app.route("/api/users/me/settings", userSettingsRouter);
 app.route("/api/users/me/billing", billingRouter);
 app.route("/api/deploy", deployRouter);
+app.route("/api/context", contextRouter);
 
 // 404 handler
 app.notFound((c) =>

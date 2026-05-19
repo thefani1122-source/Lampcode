@@ -63,7 +63,11 @@ export const dispatchOptionsSchema = z.object({
   userId: z.string().optional(),
   projectId: z.string().optional(),
 });
-export type DispatchOptions = z.infer<typeof dispatchOptionsSchema>;
+
+// contextFiles is injected internally after ContextManager.select() — not user-facing
+export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
+  contextFiles?: Array<{ path: string; content: string }> | undefined;
+};
 
 export interface DispatchResult {
   taskId: string;
@@ -107,6 +111,8 @@ export class AgentDispatcher implements AgentRunner {
     const parsed = dispatchOptionsSchema.parse(options);
     const tiers = MODEL_TIERS[parsed.agentType];
     const task = parsed.task as TaskInput;
+    // contextFiles is not in the Zod schema so read from original options
+    const contextFiles = options.contextFiles;
 
     let lastError: Error | null = null;
 
@@ -114,7 +120,7 @@ export class AgentDispatcher implements AgentRunner {
       const model = tierModel(parsed.agentType, tier as 1 | 2 | 3);
 
       try {
-        return await this.callModelWithRetry(parsed, task, model, tier as 1 | 2 | 3);
+        return await this.callModelWithRetry({ ...parsed, contextFiles }, task, model, tier as 1 | 2 | 3);
       } catch (err) {
         if (
           err instanceof GatewayError &&
@@ -237,7 +243,7 @@ export class AgentDispatcher implements AgentRunner {
     model: string,
     tier: 1 | 2 | 3,
   ): Promise<DispatchResult> {
-    const { agentType, sessionId, userId, projectId } = options;
+    const { agentType, sessionId, userId, projectId, contextFiles } = options;
 
     logger.info({ agentType, model, tier, sessionId }, "Dispatching agent");
 
@@ -253,7 +259,7 @@ export class AgentDispatcher implements AgentRunner {
         userId: userId ?? "anonymous",
         mode: "fast",
         prompt: task.description,
-      }, workspaceDir);
+      }, workspaceDir, contextFiles);
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker
