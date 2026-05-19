@@ -13,6 +13,12 @@ import { registerBuildHandlers } from "./handlers/build-handler.js";
 import { registerProjectHandlers } from "./handlers/project-handler.js";
 import { registerUserHandlers } from "./handlers/user-handler.js";
 import {
+  registerInterviewHandlers,
+  emitInterviewQuestion,
+  emitInterviewContract,
+  emitInterviewApproved,
+} from "./handlers/interview-handler.js";
+import {
   emitBuildStart,
   emitPhaseStart,
   emitCreditBurn,
@@ -61,6 +67,11 @@ import {
   type NotificationEvent,
   type CreditLowEvent,
   type BuildCompleteEvent,
+  type InterviewServerEvents,
+  type InterviewClientEvents,
+  type InterviewQuestionEvent,
+  type InterviewContractEvent,
+  type InterviewApprovedEvent,
 } from "./types.js";
 
 // ── Namespace type aliases ────────────────────────────────────────────────────
@@ -68,6 +79,7 @@ import {
 type BuildNsp = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
 type ProjectNsp = Namespace<ProjectClientEvents, ProjectServerEvents, object, SocketData>;
 type UserNsp = Namespace<UserClientEvents, UserServerEvents, object, SocketData>;
+type InterviewNsp = Namespace<InterviewClientEvents, InterviewServerEvents, object, SocketData>;
 
 // ── WebSocketServer ───────────────────────────────────────────────────────────
 
@@ -76,6 +88,7 @@ export class WebSocketServer {
   private readonly buildNsp: BuildNsp;
   private readonly projectNsp: ProjectNsp;
   private readonly userNsp: UserNsp;
+  private readonly interviewNsp: InterviewNsp;
 
   constructor(httpServer: ServerType) {
     this.io = new Server(httpServer, {
@@ -94,10 +107,11 @@ export class WebSocketServer {
     this.buildNsp = this.io.of("/build") as BuildNsp;
     this.projectNsp = this.io.of("/project") as ProjectNsp;
     this.userNsp = this.io.of("/user") as UserNsp;
+    this.interviewNsp = this.io.of("/interview") as InterviewNsp;
 
     // ── Auth + rate-limit middleware per namespace ─────────────────────────────
     // Socket.io middleware types use `any` internally; cast is unavoidable
-    for (const nsp of [this.buildNsp, this.projectNsp, this.userNsp]) {
+    for (const nsp of [this.buildNsp, this.projectNsp, this.userNsp, this.interviewNsp]) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsAuthMiddleware as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -107,8 +121,9 @@ export class WebSocketServer {
     registerBuildHandlers(this.buildNsp);
     registerProjectHandlers(this.projectNsp);
     registerUserHandlers(this.userNsp);
+    registerInterviewHandlers(this.interviewNsp);
 
-    logger.info("WebSocket server initialised (namespaces: /build /project /user)");
+    logger.info("WebSocket server initialised (namespaces: /build /project /user /interview)");
   }
 
   // ── StreamBroadcaster implementation ────────────────────────────────────────
@@ -327,6 +342,20 @@ export class WebSocketServer {
 
   notifyBuildComplete(userId: string, event: BuildCompleteEvent): void {
     emitBuildComplete(this.userNsp, userId, event);
+  }
+
+  // ── Interview events ──────────────────────────────────────────────────────
+
+  emitInterviewQuestion(sessionId: string, event: InterviewQuestionEvent): void {
+    emitInterviewQuestion(this.interviewNsp, sessionId, event);
+  }
+
+  emitInterviewContract(sessionId: string, event: InterviewContractEvent): void {
+    emitInterviewContract(this.interviewNsp, sessionId, event);
+  }
+
+  emitInterviewApproved(sessionId: string, event: InterviewApprovedEvent): void {
+    emitInterviewApproved(this.interviewNsp, sessionId, event);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

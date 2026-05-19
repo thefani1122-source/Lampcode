@@ -247,3 +247,43 @@ export interface SocketData {
   userId: string;
   email?: string | undefined;
 }
+
+// ── Interview namespace events ─────────────────────────────────────────────────
+
+import type { InterviewQuestion, SecurityContract, TaskItem } from "../server/types/interview.js";
+
+export interface InterviewQuestionEvent {
+  sessionId: string;
+  question: InterviewQuestion;
+  progress: string;
+  timestamp: string;
+}
+
+export interface InterviewContractEvent {
+  sessionId: string;
+  contract: SecurityContract;
+  tasks: TaskItem[];
+  totalEstimatedMinutes: number;
+  timestamp: string;
+}
+
+export interface InterviewApprovedEvent {
+  sessionId: string;
+  buildSessionId: string;
+  tasks: TaskItem[];
+  totalEstimatedMinutes: number;
+  timestamp: string;
+}
+
+// Server → client events for the interview namespace
+export interface InterviewServerEvents {
+  "interview:question": (event: InterviewQuestionEvent) => void;
+  "interview:contract": (event: InterviewContractEvent) => void;
+  "interview:approved": (event: InterviewApprovedEvent) => void;
+}
+
+// Client → server events for the interview namespace
+export interface InterviewClientEvents {
+  join_session: (sessionId: string, ack: (joined: boolean) => void) => void;
+  leave_session: (sessionId: string) => void;
+}
