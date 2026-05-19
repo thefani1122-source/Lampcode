@@ -1,0 +1,45 @@
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
+import { config } from "../server/config.js";
+
+export interface FastBuildJobData {
+  sessionId: string;
+  projectId: string;
+  userId: string;
+  prompt: string;
+}
+
+let _queue: Queue<FastBuildJobData> | null = null;
+
+function getFastBuildQueue(): Queue<FastBuildJobData> {
+  if (_queue !== null) return _queue;
+  _queue = new Queue<FastBuildJobData>("fast-build", {
+    connection: new Redis(config.REDIS_URL, {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+      lazyConnect: true,
+    }),
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: { count: 500 },
+      removeOnFail: { count: 200 },
+    },
+  });
+  return _queue;
+}
+
+export async function enqueueFastBuild(data: FastBuildJobData): Promise<string> {
+  const queue = getFastBuildQueue();
+  const job = await queue.add("fast-build", data, {
+    jobId: `fast:${data.sessionId}`,
+  });
+  return job.id ?? data.sessionId;
+}
+
+export async function closeFastBuildQueue(): Promise<void> {
+  if (_queue !== null) {
+    await _queue.close();
+    _queue = null;
+  }
+}
