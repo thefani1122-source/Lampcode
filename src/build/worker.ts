@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { Redis } from "ioredis";
+import { createRedis } from "../lib/redis.js";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import type { FastBuildJobData } from "./queue.js";
@@ -27,11 +27,7 @@ export function startFastBuildWorker(runner: FastBuildRunner): void {
       await runner(sessionId, projectId, prompt, userId);
     },
     {
-      connection: new Redis(config.REDIS_URL, {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-        lazyConnect: true,
-      }),
+      connection: createRedis(),
       concurrency: 3,
     },
   );

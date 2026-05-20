@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { Redis } from "ioredis";
+import { createRedis } from "../lib/redis.js";
 import { config } from "../server/config.js";
 
 export interface FastBuildJobData {
@@ -14,11 +14,7 @@ let _queue: Queue<FastBuildJobData> | null = null;
 function getFastBuildQueue(): Queue<FastBuildJobData> {
   if (_queue !== null) return _queue;
   _queue = new Queue<FastBuildJobData>("fast-build", {
-    connection: new Redis(config.REDIS_URL, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-      lazyConnect: true,
-    }),
+    connection: createRedis(),
     defaultJobOptions: {
       attempts: 2,
       backoff: { type: "exponential", delay: 5_000 },

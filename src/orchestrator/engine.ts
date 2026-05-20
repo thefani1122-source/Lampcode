@@ -1,5 +1,6 @@
 import { Queue, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
+import { createRedis } from "../lib/redis.js";
 import { z } from "zod";
 import {
   phaseSchema,
@@ -90,21 +91,13 @@ export class BuildOrchestrator {
   private agentRunner: AgentRunner | null = null;
   private readonly emitter: BuildEmitter | null;
 
-  constructor(redisUrl: string, emitter?: BuildEmitter) {
+  constructor(_redisUrl?: string, emitter?: BuildEmitter) {
     this.emitter = emitter ?? null;
     // Separate connections: BullMQ requires maxRetriesPerRequest: null
-    this.stateRedis = new Redis(redisUrl, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-      lazyConnect: true,
-    });
+    this.stateRedis = createRedis();
 
     this.queue = new Queue<PhaseJobData>(QUEUE_NAME, {
-      connection: new Redis(redisUrl, {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-        lazyConnect: true,
-      }),
+      connection: createRedis(),
       defaultJobOptions: {
         attempts: 3,
         backoff: { type: "exponential", delay: 2000 },
@@ -116,17 +109,13 @@ export class BuildOrchestrator {
 
   // ── Worker startup ──────────────────────────────────────────────────────────
 
-  startWorker(redisUrl: string, runner: AgentRunner): void {
-    this.agentRunner = runner;
+  startWorker(_redisUrl?: string, runner?: AgentRunner): void {
+    if (runner) this.agentRunner = runner;
     this.worker = new Worker<PhaseJobData>(
       QUEUE_NAME,
       (job) => this.processPhaseJob(job),
       {
-        connection: new Redis(redisUrl, {
-          maxRetriesPerRequest: null,
-          enableReadyCheck: false,
-          lazyConnect: true,
-        }),
+        connection: createRedis(),
         concurrency: 5,
       },
     );

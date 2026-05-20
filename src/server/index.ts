@@ -30,6 +30,9 @@ console.log("ENV CHECK:", {
   BETTER_AUTH_SECRET_LENGTH: process.env["BETTER_AUTH_SECRET"]?.length,
   BETTER_AUTH_URL: process.env["BETTER_AUTH_URL"],
   DATABASE_URL: process.env["DATABASE_URL"] ? "SET" : "MISSING",
+  REDIS_URL: process.env["REDIS_URL"]
+    ? process.env["REDIS_URL"].replace(/:\/\/[^@]+@/, "://***@")
+    : "MISSING",
   FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"],
   GOOGLE_CLIENT_ID: process.env["GOOGLE_CLIENT_ID"] ? "SET" : "MISSING",
   GITHUB_CLIENT_ID: process.env["GITHUB_CLIENT_ID"] ? "SET" : "MISSING",

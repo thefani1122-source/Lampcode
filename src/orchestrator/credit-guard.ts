@@ -1,4 +1,5 @@
 import { Redis } from "ioredis";
+import { createRedis } from "../lib/redis.js";
 import { z } from "zod";
 import { type Phase, type AgentType } from "./state-machine.js";
 import { logger } from "../server/logger.js";
@@ -62,12 +63,8 @@ const MONTH_TTL_SECONDS = 60 * 60 * 24 * 35; // 35 days — covers full calendar
 export class CreditGuard {
   private readonly redis: Redis;
 
-  constructor(redisUrl: string) {
-    this.redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-      lazyConnect: true,
-    });
+  constructor(_redisUrl?: string) {
+    this.redis = createRedis();
   }
 
   /** Estimate total credit cost for a full build and check if it's within budget. */

@@ -1,4 +1,4 @@
-import { Redis } from "ioredis";
+import { createRedis } from "../../lib/redis.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { INTERVIEW_QUESTIONS, TOTAL_QUESTIONS } from "../data/interview-questions.js";
@@ -13,16 +13,13 @@ import type {
 
 // ── Redis client (lazy) ───────────────────────────────────────────────────────
 
+import { type Redis } from "ioredis";
+
 let _redis: Redis | null = null;
 
 function getRedis(): Redis {
   if (_redis !== null) return _redis;
-  if (!config.REDIS_URL) throw new Error("REDIS_URL is not configured");
-  _redis = new Redis(config.REDIS_URL, {
-    maxRetriesPerRequest: 3,
-    enableReadyCheck: false,
-    lazyConnect: true,
-  });
+  _redis = createRedis({ maxRetriesPerRequest: 3 });
   _redis.on("error", (err) => logger.warn({ err }, "Interview Redis error"));
   return _redis;
 }
