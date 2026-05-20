@@ -24,6 +24,17 @@ import { createWebSocketServer } from "../websocket/server.js";
 import { startFastBuildWorker } from "../build/worker.js";
 import { runFastBuild } from "./routes/build.js";
 
+// ── Startup diagnostics ───────────────────────────────────────────────────────
+console.log("ENV CHECK:", {
+  BETTER_AUTH_SECRET: process.env["BETTER_AUTH_SECRET"] ? "SET" : "MISSING",
+  BETTER_AUTH_SECRET_LENGTH: process.env["BETTER_AUTH_SECRET"]?.length,
+  BETTER_AUTH_URL: process.env["BETTER_AUTH_URL"],
+  DATABASE_URL: process.env["DATABASE_URL"] ? "SET" : "MISSING",
+  FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"],
+  GOOGLE_CLIENT_ID: process.env["GOOGLE_CLIENT_ID"] ? "SET" : "MISSING",
+  GITHUB_CLIENT_ID: process.env["GITHUB_CLIENT_ID"] ? "SET" : "MISSING",
+});
+
 const app = new Hono();
 
 // CORS — allow all configured origins with credentials
@@ -49,10 +60,9 @@ app.get("/health", (c) =>
 );
 
 // API routes
-// Custom auth routes (register, login, logout, me, refresh) come first.
+// authRouter handles custom routes (register/login/logout/me/refresh) and
+// has a catch-all at the bottom that forwards everything else to auth.handler.
 app.route("/api/auth", authRouter);
-// Better Auth handler catches everything else: OAuth callbacks, internal APIs, etc.
-app.on(["GET", "POST"], "/api/auth/**", (c) => auth.handler(c.req.raw));
 app.route("/api/users", usersRouter);
 app.route("/api/projects", projectsRouter);
 app.route("/api/build", buildRouter);

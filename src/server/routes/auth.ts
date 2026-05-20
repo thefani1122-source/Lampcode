@@ -72,4 +72,10 @@ authRouter.post("/refresh", async (c) => {
   });
 });
 
+// Better Auth handles everything else: OAuth callbacks, get-session, sign-out, etc.
+// This MUST be last — specific routes above take precedence.
+// Note: app.route() in Hono does NOT fall through to parent handlers on 404,
+// so this catch-all is the only way to forward unmatched /api/auth/* to Better Auth.
+authRouter.on(["GET", "POST"], "/*", (c) => auth.handler(c.req.raw));
+
 export { authRouter };

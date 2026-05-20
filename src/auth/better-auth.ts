@@ -49,6 +49,16 @@ function getAuth(): BetterAuthInstance {
     trustedOrigins: ALLOWED_ORIGINS,
   } as BetterAuthOptions);
 
+  console.log("AUTH INIT:", {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    baseURL: ((_auth as any).options as any)?.baseURL ?? BACKEND_URL,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    basePath: ((_auth as any).options as any)?.basePath ?? "/api/auth",
+    secretSet: !!config.BETTER_AUTH_SECRET,
+    socialProviders: Object.keys(socialProviders),
+    trustedOrigins: ALLOWED_ORIGINS,
+  });
+
   return _auth;
 }
 
