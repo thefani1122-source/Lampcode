@@ -18,6 +18,7 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   REDIS_URL: z.string().url().optional(),
   BETTER_AUTH_SECRET: z.string().min(1).optional(),
+  BETTER_AUTH_URL: z.string().url().optional(),
   BASE_URL: z.string().url().optional(),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
   GITHUB_CLIENT_ID: z.string().min(1).optional(),
@@ -92,13 +93,22 @@ export const config = _env as Omit<typeof _env, (typeof REQUIRED_VARS)[number]> 
 
 export type Config = typeof config;
 
+// Canonical backend URL — used as Better Auth's baseURL.
+// Set BETTER_AUTH_URL in Railway; falls back to BASE_URL, then localhost.
+export const BACKEND_URL =
+  _env.BETTER_AUTH_URL ??
+  _env.BASE_URL ??
+  `http://localhost:${_env.PORT}`;
+
 // Origins allowed to make credentialed requests.
-// Always includes the Vercel deployment and local dev; FRONTEND_ORIGIN covers
-// any additional origin set via Railway env vars.
+// Includes the Railway backend itself (needed for OAuth redirect validation),
+// the Vercel frontend, localhost dev, and whatever FRONTEND_ORIGIN is set to.
 export const ALLOWED_ORIGINS = [
   ...new Set([
+    "https://lampcode-production.up.railway.app",
     "https://vibe-coder-suite.vercel.app",
     "http://localhost:3000",
+    "http://localhost:5173",
     _env.FRONTEND_ORIGIN,
   ]),
 ];
