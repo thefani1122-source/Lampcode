@@ -2,7 +2,7 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "../db/client.js";
 import { user, session, account, verification } from "../db/schema.js";
-import { config } from "../server/config.js";
+import { config, ALLOWED_ORIGINS } from "../server/config.js";
 
 type BetterAuthInstance = ReturnType<typeof betterAuth>;
 type SocialProviders = NonNullable<BetterAuthOptions["socialProviders"]>;
@@ -46,7 +46,7 @@ function getAuth(): BetterAuthInstance {
     socialProviders,
     secret: config.BETTER_AUTH_SECRET,
     baseURL: config.BASE_URL ?? `http://localhost:${config.PORT}`,
-    trustedOrigins: [config.FRONTEND_ORIGIN],
+    trustedOrigins: ALLOWED_ORIGINS,
   } as BetterAuthOptions);
 
   return _auth;

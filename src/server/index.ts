@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
 import { serve } from "@hono/node-server";
-import { config } from "./config.js";
+import { config, ALLOWED_ORIGINS } from "./config.js";
+import { auth } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
@@ -25,11 +26,11 @@ import { runFastBuild } from "./routes/build.js";
 
 const app = new Hono();
 
-// CORS
+// CORS — allow all configured origins with credentials
 app.use(
   "*",
   cors({
-    origin: config.FRONTEND_ORIGIN,
+    origin: (origin) => (ALLOWED_ORIGINS.includes(origin) ? origin : null),
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization", "X-Request-ID"],
     credentials: true,
@@ -48,7 +49,10 @@ app.get("/health", (c) =>
 );
 
 // API routes
+// Custom auth routes (register, login, logout, me, refresh) come first.
 app.route("/api/auth", authRouter);
+// Better Auth handler catches everything else: OAuth callbacks, internal APIs, etc.
+app.on(["GET", "POST"], "/api/auth/**", (c) => auth.handler(c.req.raw));
 app.route("/api/users", usersRouter);
 app.route("/api/projects", projectsRouter);
 app.route("/api/build", buildRouter);

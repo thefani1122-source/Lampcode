@@ -91,3 +91,14 @@ export const config = _env as Omit<typeof _env, (typeof REQUIRED_VARS)[number]> 
 };
 
 export type Config = typeof config;
+
+// Origins allowed to make credentialed requests.
+// Always includes the Vercel deployment and local dev; FRONTEND_ORIGIN covers
+// any additional origin set via Railway env vars.
+export const ALLOWED_ORIGINS = [
+  ...new Set([
+    "https://vibe-coder-suite.vercel.app",
+    "http://localhost:3000",
+    _env.FRONTEND_ORIGIN,
+  ]),
+];

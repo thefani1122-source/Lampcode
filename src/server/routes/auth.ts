@@ -72,7 +72,4 @@ authRouter.post("/refresh", async (c) => {
   });
 });
 
-// Pass-through for Better-Auth's internal routes (OAuth callbacks, email verification, etc.)
-authRouter.on(["GET", "POST"], "/*", (c) => auth.handler(c.req.raw));
-
 export { authRouter };
