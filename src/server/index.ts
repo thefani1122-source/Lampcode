@@ -101,7 +101,11 @@ const httpServer = serve(
 // Attach WebSocket server to the same HTTP server
 createWebSocketServer(httpServer);
 
-// Start BullMQ worker for fast builds
-startFastBuildWorker(runFastBuild);
+// Start BullMQ worker — non-blocking: a Redis failure here must not take down the HTTP server.
+try {
+  startFastBuildWorker(runFastBuild);
+} catch (err) {
+  logger.warn({ err }, "Fast build worker could not start (Redis unavailable?) — will retry on redeploy");
+}
 
 export { app };

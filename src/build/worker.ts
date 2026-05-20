@@ -41,6 +41,11 @@ export function startFastBuildWorker(runner: FastBuildRunner): void {
     logger.error({ sessionId: sid, err: err.message }, "Fast build job failed");
   });
 
+  // Without this handler Node would crash on Redis connection errors.
+  _worker.on("error", (err) => {
+    logger.error({ err: err.message }, "Fast build worker error");
+  });
+
   logger.info("Fast build worker started (concurrency: 3)");
 }
 

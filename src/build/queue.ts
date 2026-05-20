@@ -22,6 +22,10 @@ function getFastBuildQueue(): Queue<FastBuildJobData> {
       removeOnFail: { count: 200 },
     },
   });
+  // Without this handler Node would crash on Redis connection errors.
+  _queue.on("error", (err) => {
+    console.error(`[bullmq:queue] error: ${err.message}`);
+  });
   return _queue;
 }
 
