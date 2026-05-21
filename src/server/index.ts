@@ -25,14 +25,21 @@ import { startFastBuildWorker } from "../build/worker.js";
 import { runFastBuild } from "./routes/build.js";
 
 // ── Startup diagnostics ───────────────────────────────────────────────────────
+// Log enough detail to diagnose connection issues without exposing credentials.
+const _dbUrl = process.env["DATABASE_URL"];
+const _dbEndpoint = (() => {
+  try {
+    const p = new URL(_dbUrl ?? "");
+    return `${p.hostname}:${p.port || "5432"}`;
+  } catch { return _dbUrl ? "SET (unparseable)" : "MISSING"; }
+})();
 console.log("ENV CHECK:", {
   BETTER_AUTH_SECRET: process.env["BETTER_AUTH_SECRET"] ? "SET" : "MISSING",
   BETTER_AUTH_SECRET_LENGTH: process.env["BETTER_AUTH_SECRET"]?.length,
   BETTER_AUTH_URL: process.env["BETTER_AUTH_URL"],
-  DATABASE_URL: process.env["DATABASE_URL"] ? "SET" : "MISSING",
-  REDIS_URL: process.env["REDIS_URL"]
-    ? process.env["REDIS_URL"].replace(/:\/\/[^@]+@/, "://***@")
-    : "MISSING",
+  DATABASE_URL: _dbEndpoint,          // shows host:port, never the password
+  REDIS_URL: (process.env["REDIS_URL"] ?? process.env["REDIS_PUBLIC_URL"])
+    ?.replace(/:\/\/[^@]+@/, "://***@") ?? "MISSING",
   FRONTEND_URL: process.env["FRONTEND_URL"],
   FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"],
   GOOGLE_CLIENT_ID: process.env["GOOGLE_CLIENT_ID"] ? "SET" : "MISSING",
