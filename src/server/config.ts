@@ -20,6 +20,7 @@ const envSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(1).optional(),
   BETTER_AUTH_URL: z.string().url().optional(),
   BASE_URL: z.string().url().optional(),
+  FRONTEND_URL: z.string().url().optional(),    // alias accepted alongside FRONTEND_ORIGIN
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
   GITHUB_CLIENT_ID: z.string().min(1).optional(),
   GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
@@ -109,6 +110,7 @@ export const ALLOWED_ORIGINS = [
     "https://vibe-coder-suite.vercel.app",
     "http://localhost:3000",
     "http://localhost:5173",
-    _env.FRONTEND_ORIGIN,
-  ]),
+    _env.FRONTEND_ORIGIN,   // from FRONTEND_ORIGIN env var
+    _env.FRONTEND_URL,      // alias — accepted if FRONTEND_URL is set instead
+  ].filter(Boolean) as string[]),
 ];

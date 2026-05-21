@@ -33,6 +33,7 @@ console.log("ENV CHECK:", {
   REDIS_URL: process.env["REDIS_URL"]
     ? process.env["REDIS_URL"].replace(/:\/\/[^@]+@/, "://***@")
     : "MISSING",
+  FRONTEND_URL: process.env["FRONTEND_URL"],
   FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"],
   GOOGLE_CLIENT_ID: process.env["GOOGLE_CLIENT_ID"] ? "SET" : "MISSING",
   GITHUB_CLIENT_ID: process.env["GITHUB_CLIENT_ID"] ? "SET" : "MISSING",
