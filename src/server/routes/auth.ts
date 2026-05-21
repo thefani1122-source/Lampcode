@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { auth } from "../../auth/better-auth.js";
 import { requireAuth } from "../../auth/middleware.js";
+import { ALLOWED_ORIGINS } from "../config.js";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -72,10 +73,35 @@ authRouter.post("/refresh", async (c) => {
   });
 });
 
+// Explicit OPTIONS preflight handler — ensures CORS headers reach the browser even
+// when the browser probes /api/auth/* before Hono's parent cors middleware can act.
+authRouter.options("/*", (c) => {
+  const origin = c.req.header("origin") ?? "";
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    c.header("Access-Control-Allow-Origin", origin);
+    c.header("Access-Control-Allow-Credentials", "true");
+    c.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    c.header("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Request-ID,Cookie");
+    c.header("Vary", "Origin");
+  }
+  return c.text("", 204);
+});
+
 // Better Auth handles everything else: OAuth callbacks, get-session, sign-out, etc.
 // This MUST be last — specific routes above take precedence.
 // Note: app.route() in Hono does NOT fall through to parent handlers on 404,
 // so this catch-all is the only way to forward unmatched /api/auth/* to Better Auth.
-authRouter.on(["GET", "POST"], "/*", (c) => auth.handler(c.req.raw));
+// Better Auth returns a raw Response — we inject CORS headers explicitly so they are
+// guaranteed to be present regardless of how Hono propagates sub-router responses.
+authRouter.on(["GET", "POST"], "/*", async (c) => {
+  const response = await auth.handler(c.req.raw);
+  const origin = c.req.header("origin") ?? "";
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.set("Access-Control-Allow-Credentials", "true");
+    response.headers.set("Vary", "Origin");
+  }
+  return response;
+});
 
 export { authRouter };
