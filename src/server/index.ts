@@ -3,7 +3,6 @@ import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
 import { serve } from "@hono/node-server";
 import { config, ALLOWED_ORIGINS } from "./config.js";
-import { auth } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
@@ -34,16 +33,12 @@ const _dbEndpoint = (() => {
   } catch { return _dbUrl ? "SET (unparseable)" : "MISSING"; }
 })();
 console.log("ENV CHECK:", {
-  BETTER_AUTH_SECRET: process.env["BETTER_AUTH_SECRET"] ? "SET" : "MISSING",
-  BETTER_AUTH_SECRET_LENGTH: process.env["BETTER_AUTH_SECRET"]?.length,
-  BETTER_AUTH_URL: process.env["BETTER_AUTH_URL"],
-  DATABASE_URL: _dbEndpoint,          // shows host:port, never the password
+  DATABASE_URL: _dbEndpoint,
+  SUPABASE_URL: process.env["SUPABASE_URL"] ? "SET" : "MISSING",
+  SUPABASE_SERVICE_KEY: process.env["SUPABASE_SERVICE_KEY"] ? "SET" : "MISSING",
   REDIS_URL: (process.env["REDIS_URL"] ?? process.env["REDIS_PUBLIC_URL"])
     ?.replace(/:\/\/[^@]+@/, "://***@") ?? "MISSING",
-  FRONTEND_URL: process.env["FRONTEND_URL"],
-  FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"],
-  GOOGLE_CLIENT_ID: process.env["GOOGLE_CLIENT_ID"] ? "SET" : "MISSING",
-  GITHUB_CLIENT_ID: process.env["GITHUB_CLIENT_ID"] ? "SET" : "MISSING",
+  FRONTEND_ORIGIN: process.env["FRONTEND_ORIGIN"] ?? process.env["FRONTEND_URL"] ?? "default",
 });
 
 const app = new Hono();
