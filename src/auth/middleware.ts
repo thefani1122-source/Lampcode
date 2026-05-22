@@ -51,16 +51,19 @@ export const requireAuth: MiddlewareHandler = createMiddleware(async (c, next) =
   } catch { /* leave default */ }
 
   const name: string =
-    (user.user_metadata?.["full_name"] as string | undefined) ??
-    (user.user_metadata?.["name"] as string | undefined) ??
+    (user.user_metadata?.["full_name"] as string | undefined) ||
+    (user.user_metadata?.["name"] as string | undefined) ||
     user.email.split("@")[0]!;
+
+  const image: string | null =
+    (user.user_metadata?.["avatar_url"] as string | undefined) || null;
 
   const authUser: AuthUser = {
     id: user.id,
     email: user.email,
     name,
     emailVerified: !!user.email_confirmed_at,
-    image: (user.user_metadata?.["avatar_url"] as string | undefined) ?? null,
+    image,
     createdAt: new Date(user.created_at),
   };
 
@@ -82,7 +85,7 @@ export const requireAuth: MiddlewareHandler = createMiddleware(async (c, next) =
         email: authUser.email,
         name: authUser.name,
         emailVerified: authUser.emailVerified,
-        image: authUser.image,
+        image,
         updatedAt: new Date(),
       },
     });
