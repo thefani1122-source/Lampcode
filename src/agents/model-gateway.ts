@@ -5,6 +5,16 @@ import { logger } from "../server/logger.js";
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+export const MOONSHOT_BASE   = "https://api.moonshot.cn/v1";
+
+// Models that can be served by the Moonshot API directly (when KIMI_API_KEY is set).
+// OpenRouter prefixes them with "moonshotai/"; the native Moonshot API uses bare names.
+const MOONSHOT_MODEL_MAP: Record<string, string> = {
+  "moonshotai/kimi-k2.6": "kimi-k2-0711-preview",
+  "moonshotai/kimi-k2":   "kimi-k2-0711-preview",
+  "kimi-k2-6":            "kimi-k2-0711-preview",
+  "kimi-k2":              "kimi-k2-0711-preview",
+};
 
 // Tier arrays: [tier1, tier2, tier3]
 export const MODEL_TIERS = {
@@ -121,23 +131,39 @@ export class ModelGateway {
     this.timeoutMs = timeoutMs;
   }
 
-  /** Yield parsed SSE chunks from an OpenRouter streaming completion. */
+  // Route Kimi/Moonshot models directly to api.moonshot.cn when KIMI_API_KEY is
+  // available — avoids OpenRouter markup and latency for that model family.
+  private resolveEndpoint(model: string): { baseUrl: string; apiKey: string; resolvedModel: string } {
+    const kimiKey = process.env["KIMI_API_KEY"];
+    const nativeModel = MOONSHOT_MODEL_MAP[model];
+    if (kimiKey && nativeModel !== undefined) {
+      return { baseUrl: MOONSHOT_BASE, apiKey: kimiKey, resolvedModel: nativeModel };
+    }
+    return { baseUrl: OPENROUTER_BASE, apiKey: this.apiKey, resolvedModel: model };
+  }
+
+  /** Yield parsed SSE chunks from an OpenAI-compatible streaming completion. */
   async *stream(req: GatewayRequest): AsyncGenerator<StreamChunk> {
+    const { baseUrl, apiKey, resolvedModel } = this.resolveEndpoint(req.model);
+    const isMoonshot = baseUrl === MOONSHOT_BASE;
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    logger.debug({ model: resolvedModel, baseUrl }, "ModelGateway routing");
+
     let response: Response;
     try {
-      response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://buildforge.dev",
-          "X-Title": "BuildForge",
+          // OpenRouter-specific headers are no-ops on Moonshot but harmless.
+          ...(!isMoonshot && { "HTTP-Referer": "https://buildforge.dev", "X-Title": "BuildForge" }),
         },
         body: JSON.stringify({
-          model: req.model,
+          model: resolvedModel,
           messages: req.messages,
           stream: true,
           temperature: req.temperature ?? 0.2,
@@ -298,7 +324,7 @@ export class ModelGateway {
       // ignore
     }
 
-    logger.warn({ status: response.status, body }, "OpenRouter HTTP error");
+    logger.warn({ status: response.status, body }, "LLM API HTTP error");
 
     switch (response.status) {
       case 401:
