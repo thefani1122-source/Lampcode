@@ -83,15 +83,17 @@ async function uniqueSlug(base: string): Promise<string> {
 async function writeAudit(
   userId: string,
   action: string,
-  projectId: string | null,
-  metadata?: Record<string, unknown>,
+  projectId: string,
+  details?: Record<string, unknown>,
 ): Promise<void> {
   await db.insert(auditLog).values({
     id: crypto.randomUUID(),
     userId,
     projectId,
     action,
-    metadata: metadata ?? null,
+    entityType: "project",
+    entityId: projectId,
+    details: details ?? {},
     createdAt: new Date(),
   });
 }

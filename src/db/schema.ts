@@ -140,6 +140,13 @@ export const buildStatusEnum = pgEnum("build_status", [
 
 export const memberRoleEnum = pgEnum("member_role", ["owner", "member", "viewer"]);
 
+export const auditSeverityEnum = pgEnum("audit_severity", [
+  "info",
+  "warning",
+  "error",
+  "critical",
+]);
+
 // ── BuildForge tables (dependency order) ─────────────────────────────────────
 
 export const projects = pgTable("projects", {
@@ -188,10 +195,15 @@ export const buildJobs = pgTable("build_jobs", {
 
 export const auditLog = pgTable("audit_log", {
   id: text("id").primaryKey(),
-  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   action: text("action").notNull(),
-  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  severity: auditSeverityEnum("severity").notNull().default("info"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
@@ -479,6 +491,7 @@ export type NewProject = typeof projects.$inferInsert;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type BuildJob = typeof buildJobs.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
+export type AuditSeverity = (typeof auditSeverityEnum.enumValues)[number];
 export type BuildStatus = (typeof buildStatusEnum.enumValues)[number];
 export type ProjectMode = (typeof projectModeEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
