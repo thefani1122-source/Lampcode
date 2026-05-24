@@ -38,11 +38,23 @@ function ws() {
 
 // ── Input schemas ─────────────────────────────────────────────────────────────
 
-const fastBuildBodySchema = z.object({
-  projectId: z.string().min(1),
-  prompt: z.string().min(1).max(4_000),
-  attachments: z.array(z.string()).max(10).optional(),
-});
+// Accept both camelCase and snake_case for projectId to handle frontend naming conventions
+const fastBuildBodySchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const obj = raw as Record<string, unknown>;
+      if (obj["projectId"] === undefined && obj["project_id"] !== undefined) {
+        return { ...obj, projectId: obj["project_id"] };
+      }
+    }
+    return raw;
+  },
+  z.object({
+    projectId: z.string().min(1),
+    prompt: z.string().min(1).max(4_000),
+    attachments: z.array(z.string()).max(10).optional(),
+  }),
+);
 
 // ── File tree walker ──────────────────────────────────────────────────────────
 
@@ -301,7 +313,9 @@ buildRouter.post("/fast", async (c) => {
   });
   const parsed = fastBuildBodySchema.safeParse(bodyRaw);
   if (!parsed.success) {
-    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    const msg = parsed.error.issues
+      .map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message))
+      .join("; ");
     throw new AppError(400, msg, "VALIDATION_ERROR");
   }
   const { projectId, prompt, attachments } = parsed.data;
