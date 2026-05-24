@@ -236,7 +236,7 @@ export async function runFastBuild(
 
     await db
       .update(projects)
-      .set({ status: "active" })
+      .set({ status: "live" })
       .where(eq(projects.id, projectId));
 
     // ── Emit complete ───────────────────────────────────────────────────────
@@ -439,7 +439,7 @@ buildRouter.post("/:sessionId/cancel", async (c) => {
 
   await db
     .update(projects)
-    .set({ status: "active" })
+    .set({ status: "live" })
     .where(eq(projects.id, session.projectId));
 
   // Best-effort: delete partial workspace files

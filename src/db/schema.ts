@@ -121,10 +121,13 @@ export type ProjectBranding = {
 export const projectModeEnum = pgEnum("project_mode", ["fast", "plan"]);
 
 export const projectStatusEnum = pgEnum("project_status", [
-  "active",
-  "inactive",
+  "idle",
   "building",
-  "error",
+  "verifying",
+  "deploying",
+  "live",
+  "failed",
+  "archived",
 ]);
 
 export const buildStatusEnum = pgEnum("build_status", [
@@ -148,7 +151,7 @@ export const projects = pgTable("projects", {
   slug: text("slug").notNull().unique(),
   description: text("description"),
   mode: projectModeEnum("mode").notNull(),
-  status: projectStatusEnum("status").notNull().default("active"),
+  status: projectStatusEnum("status").notNull().default("idle"),
   techStack: text("tech_stack").array(),
   settings: jsonb("settings").$type<ProjectSettings>(),
   branding: jsonb("branding").$type<ProjectBranding>(),

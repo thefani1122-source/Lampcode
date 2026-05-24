@@ -481,7 +481,7 @@ async function runPlanPhase(
     }).where(eq(buildSessions.id, sessionId));
 
     if (phase === "DEPLOY") {
-      await db.update(projects).set({ status: "active" }).where(eq(projects.id, projectId));
+      await db.update(projects).set({ status: "live" }).where(eq(projects.id, projectId));
       const previewUrl = `/preview/${projectId}/${sessionId}`;
       await db.update(buildSessions).set({ previewUrl }).where(eq(buildSessions.id, sessionId));
       server?.deployComplete(sessionId, { sessionId, url: previewUrl, timestamp: now() });
@@ -506,7 +506,7 @@ async function runPlanPhase(
       error: errorMsg,
       completedAt: new Date(),
     }).where(eq(buildSessions.id, sessionId));
-    await db.update(projects).set({ status: "error" }).where(eq(projects.id, projectId));
+    await db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId));
     server?.buildFailed(sessionId, {
       sessionId,
       phase: phase as Parameters<typeof server.buildFailed>[1]["phase"],
