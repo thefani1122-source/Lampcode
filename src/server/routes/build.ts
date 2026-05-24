@@ -311,11 +311,21 @@ buildRouter.post("/fast", async (c) => {
   const bodyRaw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
   });
+
+  logger.info({
+    route: "POST /api/build/fast",
+    userId: authUser.id,
+    bodyKeys: Object.keys(bodyRaw as object),
+    projectId: (bodyRaw as Record<string, unknown>)["projectId"] ?? (bodyRaw as Record<string, unknown>)["project_id"],
+    hasPrompt: !!(bodyRaw as Record<string, unknown>)["prompt"],
+  }, "fast-build request received");
+
   const parsed = fastBuildBodySchema.safeParse(bodyRaw);
   if (!parsed.success) {
     const msg = parsed.error.issues
       .map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message))
       .join("; ");
+    logger.warn({ userId: authUser.id, validationError: msg, bodyKeys: Object.keys(bodyRaw as object) }, "fast-build validation failed");
     throw new AppError(400, msg, "VALIDATION_ERROR");
   }
   const { projectId, prompt, attachments } = parsed.data;
