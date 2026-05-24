@@ -19,6 +19,7 @@ import { envRouter } from "./routes/env.js";
 import { billingRouter } from "./routes/billing.js";
 import { contextRouter } from "./routes/context.js";
 import { interviewRouter } from "./routes/interview.js";
+import { webhooksRouter } from "./routes/webhooks.js";
 import { createWebSocketServer } from "../websocket/server.js";
 import { startFastBuildWorker } from "../build/worker.js";
 import { runFastBuild } from "./routes/build.js";
@@ -83,6 +84,7 @@ app.route("/api/users/me/billing", billingRouter);
 app.route("/api/deploy", deployRouter);
 app.route("/api/context", contextRouter);
 app.route("/api/interview", interviewRouter);
+app.route("/api/webhooks", webhooksRouter);
 
 // 404 handler
 app.notFound((c) =>
