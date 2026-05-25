@@ -117,13 +117,14 @@ export class WebSocketServer {
     }
 
     // ── Namespaces ────────────────────────────────────────────────────────────
-    this.buildNsp = this.io.of("/build") as BuildNsp;
+    // Build uses root namespace (/) so frontend can connect without a path prefix.
+    this.buildNsp = this.io.of("/") as BuildNsp;
     this.projectNsp = this.io.of("/project") as ProjectNsp;
     this.userNsp = this.io.of("/user") as UserNsp;
     this.interviewNsp = this.io.of("/interview") as InterviewNsp;
 
     // ── Auth + rate-limit middleware per namespace ─────────────────────────────
-    // /build is auth-optional: only sessionId query param needed to stream progress.
+    // Root (/) is auth-optional: only sessionId query param needed to stream progress.
     // All other namespaces require a valid JWT.
     // Socket.io middleware types use `any` internally; cast is unavoidable
     for (const nsp of [this.projectNsp, this.userNsp, this.interviewNsp]) {
@@ -132,14 +133,14 @@ export class WebSocketServer {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsRateLimitMiddleware as any);
     }
-    // /build: no auth or rate-limit — unauthenticated clients stream build progress via sessionId
+    // Root (/): no auth or rate-limit — clients join session rooms via sessionId query param
 
     registerBuildHandlers(this.buildNsp);
     registerProjectHandlers(this.projectNsp);
     registerUserHandlers(this.userNsp);
     registerInterviewHandlers(this.interviewNsp);
 
-    logger.info("WebSocket server initialised (namespaces: /build /project /user /interview)");
+    logger.info("WebSocket server initialised (namespaces: / /project /user /interview)");
   }
 
   // ── StreamBroadcaster implementation ────────────────────────────────────────
