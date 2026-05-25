@@ -19,9 +19,18 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
     const userId = socket.data.userId;
     logger.info({ socketId: socket.id, userId }, "Build WS connected");
 
+    // Auto-join session room if sessionId provided in handshake query
+    const querySid = socket.handshake.query["sessionId"];
+    if (typeof querySid === "string" && querySid.length > 0) {
+      void socket.join(SESSION_ROOM(querySid));
+      console.log(`[WS JOIN] auto-join sessionId=${querySid} socketId=${socket.id} userId=${userId}`);
+      logger.info({ socketId: socket.id, sessionId: querySid }, "Auto-joined build session room from query");
+    }
+
     // Client joins a session room to receive updates for that build
     socket.on("join_session", (sessionId, ack) => {
       void socket.join(SESSION_ROOM(sessionId));
+      console.log(`[WS JOIN] join_session sessionId=${sessionId} socketId=${socket.id} userId=${userId}`);
       logger.debug({ socketId: socket.id, sessionId }, "Joined build session room");
       ack(true);
     });
@@ -44,7 +53,10 @@ export function emitBuildStart(
   sessionId: string,
   data: BuildStartEvent,
 ): void {
-  nsp.to(SESSION_ROOM(sessionId)).emit("build_start", data);
+  const room = SESSION_ROOM(sessionId);
+  const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+  console.log(`[WS EMIT] build_start room=${room} clients=${size}`);
+  nsp.to(room).emit("build_start", data);
 }
 
 export function emitPhaseStart(
@@ -81,7 +93,12 @@ export function emitAgentProgress(
   sessionId: string,
   data: BuildServerEvents["agent_progress"] extends (e: infer E) => void ? E : never,
 ): void {
-  nsp.to(SESSION_ROOM(sessionId)).emit("agent_progress", data);
+  const room = SESSION_ROOM(sessionId);
+  const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+  if (size === 0) {
+    console.log(`[WS EMIT] agent_progress room=${room} clients=0 — no subscribers!`);
+  }
+  nsp.to(room).emit("agent_progress", data);
 }
 
 export function emitAgentComplete(
@@ -113,7 +130,10 @@ export function emitProgress(
   sessionId: string,
   data: BuildServerEvents["progress"] extends (e: infer E) => void ? E : never,
 ): void {
-  nsp.to(SESSION_ROOM(sessionId)).emit("progress", data);
+  const room = SESSION_ROOM(sessionId);
+  const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+  console.log(`[WS EMIT] progress room=${room} clients=${size} msg="${data.message}"`);
+  nsp.to(room).emit("progress", data);
 }
 
 export function emitPhaseComplete(
@@ -129,7 +149,10 @@ export function emitBuildFailed(
   sessionId: string,
   data: BuildServerEvents["build_failed"] extends (e: infer E) => void ? E : never,
 ): void {
-  nsp.to(SESSION_ROOM(sessionId)).emit("build_failed", data);
+  const room = SESSION_ROOM(sessionId);
+  const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+  console.log(`[WS EMIT] build_failed room=${room} clients=${size} reason="${data.reason}"`);
+  nsp.to(room).emit("build_failed", data);
 }
 
 export function emitPlanPhaseStart(
