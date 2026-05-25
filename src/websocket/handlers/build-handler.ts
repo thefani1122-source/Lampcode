@@ -9,8 +9,10 @@ import {
   type SocketData,
 } from "../types.js";
 
-type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
-type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, SocketData>;
+// /build namespace is auth-optional, so userId may be undefined
+type BuildSocketData = Partial<SocketData>;
+type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
+type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
 
 const SESSION_ROOM = (sessionId: string) => `session:${sessionId}`;
 

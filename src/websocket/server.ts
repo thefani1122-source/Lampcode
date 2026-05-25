@@ -76,7 +76,7 @@ import {
 
 // ── Namespace type aliases ────────────────────────────────────────────────────
 
-type BuildNsp = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
+type BuildNsp = Namespace<BuildClientEvents, BuildServerEvents, object, Partial<SocketData>>;
 type ProjectNsp = Namespace<ProjectClientEvents, ProjectServerEvents, object, SocketData>;
 type UserNsp = Namespace<UserClientEvents, UserServerEvents, object, SocketData>;
 type InterviewNsp = Namespace<InterviewClientEvents, InterviewServerEvents, object, SocketData>;
@@ -110,13 +110,18 @@ export class WebSocketServer {
     this.interviewNsp = this.io.of("/interview") as InterviewNsp;
 
     // ── Auth + rate-limit middleware per namespace ─────────────────────────────
+    // /build is auth-optional: only sessionId query param needed to stream progress.
+    // All other namespaces require a valid JWT.
     // Socket.io middleware types use `any` internally; cast is unavoidable
-    for (const nsp of [this.buildNsp, this.projectNsp, this.userNsp, this.interviewNsp]) {
+    for (const nsp of [this.projectNsp, this.userNsp, this.interviewNsp]) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsAuthMiddleware as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsRateLimitMiddleware as any);
     }
+    // /build: no auth required — allow any client with a sessionId to watch their build
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.buildNsp.use(wsRateLimitMiddleware as any);
 
     registerBuildHandlers(this.buildNsp);
     registerProjectHandlers(this.projectNsp);
