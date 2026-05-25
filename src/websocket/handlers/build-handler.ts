@@ -17,22 +17,34 @@ const SESSION_ROOM = (sessionId: string) => `session:${sessionId}`;
 export function registerBuildHandlers(nsp: BuildNamespace): void {
   nsp.on("connection", (socket: BuildSocket) => {
     const userId = socket.data.userId;
+    // Step 3: log every connection with full query so we can confirm the client reaches us
+    console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
     logger.info({ socketId: socket.id, userId }, "Build WS connected");
 
-    // Auto-join session room if sessionId provided in handshake query
+    // Auto-join session room if sessionId provided in handshake query (Step 1)
     const querySid = socket.handshake.query["sessionId"];
     if (typeof querySid === "string" && querySid.length > 0) {
-      void socket.join(SESSION_ROOM(querySid));
-      console.log(`[WS JOIN] auto-join sessionId=${querySid} socketId=${socket.id} userId=${userId}`);
-      logger.info({ socketId: socket.id, sessionId: querySid }, "Auto-joined build session room from query");
+      const room = SESSION_ROOM(querySid);
+      socket.join(room).then(() => {
+        const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+        console.log(`[WS JOIN] auto-join room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
+        logger.info({ socketId: socket.id, sessionId: querySid, totalClients: size }, "Auto-joined build session room from query");
+      }).catch((err: unknown) => {
+        console.error(`[WS JOIN] auto-join failed room=${room}`, err);
+      });
+    } else {
+      console.log(`[WS CONNECT] no sessionId in query — client must emit join_session manually`);
     }
 
     // Client joins a session room to receive updates for that build
     socket.on("join_session", (sessionId, ack) => {
-      void socket.join(SESSION_ROOM(sessionId));
-      console.log(`[WS JOIN] join_session sessionId=${sessionId} socketId=${socket.id} userId=${userId}`);
-      logger.debug({ socketId: socket.id, sessionId }, "Joined build session room");
-      ack(true);
+      const room = SESSION_ROOM(sessionId);
+      socket.join(room).then(() => {
+        const size = nsp.adapter.rooms.get(room)?.size ?? 0;
+        console.log(`[WS JOIN] join_session room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
+        logger.debug({ socketId: socket.id, sessionId, totalClients: size }, "Joined build session room");
+        ack(true);
+      }).catch(() => ack(false));
     });
 
     socket.on("leave_session", (sessionId) => {
