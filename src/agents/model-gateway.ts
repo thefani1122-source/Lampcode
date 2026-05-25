@@ -127,6 +127,17 @@ export class ModelGateway {
     const apiKey = this.apiKey;
     const resolvedModel = req.model;
 
+    // ── Debug: log every outbound LLM call so we can confirm it reaches OpenRouter ──
+    console.log("=== LLM CALL DEBUG ===");
+    console.log("URL:", `${baseUrl}/chat/completions`);
+    console.log("Model:", resolvedModel);
+    console.log("API key present:", !!apiKey);
+    console.log("API key prefix:", apiKey ? apiKey.substring(0, 12) : "(none)");
+    console.log("OPENROUTER_API_KEY env:", !!process.env["OPENROUTER_API_KEY"]);
+    console.log("KIMI_API_KEY env:", !!process.env["KIMI_API_KEY"]);
+    console.log("Messages count:", req.messages.length);
+    console.log("======================");
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -158,6 +169,8 @@ export class ModelGateway {
       }
       throw new GatewayError("NETWORK", `Fetch failed: ${String(err)}`);
     }
+
+    console.log("=== LLM RESPONSE ===", response.status, response.statusText);
 
     if (!response.ok) {
       clearTimeout(timeoutId);

@@ -36,7 +36,7 @@ export type StreamEventPayload = {
 // ── StreamHandler ─────────────────────────────────────────────────────────────
 
 const BASE_DIR = join(process.cwd(), ".buildforge", "sessions");
-const CHUNK_TIMEOUT_MS = 30_000; // pause the stream if no chunk arrives for 30s
+const CHUNK_TIMEOUT_MS = 10_000; // fail fast if no chunk arrives for 10s
 
 export class StreamHandler {
   private readonly broadcaster: StreamBroadcaster | null;
@@ -69,15 +69,7 @@ export class StreamHandler {
     let chunkCount = 0;
 
     try {
-      let lastChunkAt = Date.now();
-
-      for await (const chunk of source) {
-        // Timeout: abort if no data received for CHUNK_TIMEOUT_MS
-        const now = Date.now();
-        if (now - lastChunkAt > CHUNK_TIMEOUT_MS) {
-          throw new Error(`Stream stalled: no data for ${CHUNK_TIMEOUT_MS}ms`);
-        }
-        lastChunkAt = now;
+      for await (const chunk of this.withStallTimeout(source, CHUNK_TIMEOUT_MS)) {
 
         await this.processChunk(chunk, sessionId, taskId, outputPath, {
           content: (c) => { content += c; },
@@ -117,6 +109,21 @@ export class StreamHandler {
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
+
+  /** Wrap a generator so it throws if no chunk arrives within `ms` milliseconds. */
+  private async *withStallTimeout<T>(
+    source: AsyncGenerator<T>,
+    ms: number,
+  ): AsyncGenerator<T> {
+    while (true) {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Stream stalled: no data for ${ms}ms`)), ms),
+      );
+      const result = await Promise.race([source.next(), timeoutPromise]);
+      if (result.done) return;
+      yield result.value;
+    }
+  }
 
   private async processChunk(
     chunk: StreamChunk,
