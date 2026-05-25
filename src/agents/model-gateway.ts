@@ -190,6 +190,9 @@ export class ModelGateway {
     // Accumulate tool call argument fragments keyed by call index
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
 
+    let totalBytesReceived = 0;
+    let totalChunksRead = 0;
+
     try {
       outer: while (true) {
         let result: Awaited<ReturnType<typeof reader.read>>;
@@ -202,13 +205,22 @@ export class ModelGateway {
           throw new GatewayError("NETWORK", `Stream read error: ${String(err)}`);
         }
 
-        if (result.done) break;
+        if (result.done) {
+          console.log(`=== STREAM DONE === totalBytes=${totalBytesReceived} reads=${totalChunksRead}`);
+          break;
+        }
 
-        buffer += decoder.decode(result.value, { stream: true });
+        totalBytesReceived += result.value.byteLength;
+        totalChunksRead++;
+        const raw = decoder.decode(result.value, { stream: true });
+        console.log(`[stream read #${totalChunksRead}] bytes=${result.value.byteLength} preview=${JSON.stringify(raw.slice(0, 120))}`);
+
+        buffer += raw;
 
         // SSE events are delimited by \n\n
         const events = buffer.split("\n\n");
         buffer = events.pop() ?? "";
+        console.log(`[stream parse] events=${events.length} bufferRemainder=${buffer.length}`);
 
         for (const event of events) {
           for (const line of event.split("\n")) {

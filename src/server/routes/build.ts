@@ -286,7 +286,7 @@ export async function runFastBuild(
 
     await db
       .update(projects)
-      .set({ status: "error" })
+      .set({ status: "failed" })
       .where(eq(projects.id, projectId));
 
     server?.buildFailed(sessionId, {

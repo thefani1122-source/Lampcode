@@ -36,7 +36,7 @@ export type StreamEventPayload = {
 // ── StreamHandler ─────────────────────────────────────────────────────────────
 
 const BASE_DIR = join(process.cwd(), ".buildforge", "sessions");
-const CHUNK_TIMEOUT_MS = 10_000; // fail fast if no chunk arrives for 10s
+const CHUNK_TIMEOUT_MS = 60_000; // wait up to 60s for the first/next chunk
 
 export class StreamHandler {
   private readonly broadcaster: StreamBroadcaster | null;
