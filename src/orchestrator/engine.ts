@@ -244,7 +244,7 @@ export class BuildOrchestrator {
       const job = await this.queue.add(
         to,
         { sessionId, phase: to, projectId: session.projectId, userId: session.userId },
-        { jobId: `${sessionId}:${to}:${Date.now()}` },
+        { jobId: `${sessionId}--${to}--${Date.now()}` },
       );
 
       // Store job ID for pause/resume
@@ -297,7 +297,7 @@ export class BuildOrchestrator {
           projectId: session.projectId,
           userId: session.userId,
         },
-        { jobId: `${sessionId}:${currentPhase}:resume:${Date.now()}` },
+        { jobId: `${sessionId}--${currentPhase}--resume--${Date.now()}` },
       );
     }
 

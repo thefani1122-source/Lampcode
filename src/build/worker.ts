@@ -1,6 +1,5 @@
 import { Worker } from "bullmq";
 import { createRedis } from "../lib/redis.js";
-import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import type { FastBuildJobData } from "./queue.js";
 

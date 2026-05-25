@@ -1,6 +1,5 @@
 import { Queue } from "bullmq";
 import { createRedis } from "../lib/redis.js";
-import { config } from "../server/config.js";
 
 export interface FastBuildJobData {
   sessionId: string;
@@ -32,7 +31,7 @@ function getFastBuildQueue(): Queue<FastBuildJobData> {
 export async function enqueueFastBuild(data: FastBuildJobData): Promise<string> {
   const queue = getFastBuildQueue();
   const job = await queue.add("fast-build", data, {
-    jobId: `fast:${data.sessionId}`,
+    jobId: `fast--${data.sessionId}`,
   });
   return job.id ?? data.sessionId;
 }
