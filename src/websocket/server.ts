@@ -1,6 +1,6 @@
 import { Server, type Namespace } from "socket.io";
 import { type ServerType } from "@hono/node-server";
-import { config } from "../server/config.js";
+import { config, ALLOWED_ORIGINS } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { type StreamBroadcaster } from "../agents/stream-handler.js";
 import { type StreamChunk } from "../agents/model-gateway.js";
@@ -93,7 +93,7 @@ export class WebSocketServer {
   constructor(httpServer: ServerType) {
     this.io = new Server(httpServer, {
       cors: {
-        origin: config.FRONTEND_ORIGIN,
+        origin: ALLOWED_ORIGINS,
         credentials: true,
       },
       // Ping every 25s, disconnect if no pong within 20s
