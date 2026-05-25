@@ -306,11 +306,13 @@ buildRouter.use("/*", requireAuth);
 
 // POST /api/build/fast
 buildRouter.post("/fast", async (c) => {
+  const t0 = Date.now();
   const authUser = c.get("authUser");
 
   const bodyRaw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
   });
+  console.log(`[FAST t+${Date.now()-t0}ms] body parsed`);
 
   logger.info({
     route: "POST /api/build/fast",
@@ -337,6 +339,7 @@ buildRouter.post("/fast", async (c) => {
     .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
     .limit(1);
   const project = projectRows[0];
+  console.log(`[FAST t+${Date.now()-t0}ms] project lookup done`);
   if (!project) throw new AppError(404, "Project not found", "NOT_FOUND");
 
   if (project.mode !== "fast") {
@@ -353,6 +356,7 @@ buildRouter.post("/fast", async (c) => {
 
   // ── Atomically deduct credits ─────────────────────────────────────────────
   await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+  console.log(`[FAST t+${Date.now()-t0}ms] credits deducted`);
 
   const sessionId = crypto.randomUUID();
   try {
@@ -367,15 +371,18 @@ buildRouter.post("/fast", async (c) => {
       phase: 0,
       attachments: attachments ?? null,
     });
+    console.log(`[FAST t+${Date.now()-t0}ms] session created id=${sessionId}`);
 
     // Mark project as building
     await db
       .update(projects)
       .set({ status: "building" })
       .where(eq(projects.id, projectId));
+    console.log(`[FAST t+${Date.now()-t0}ms] project status=building`);
 
     // ── Enqueue via BullMQ ──────────────────────────────────────────────────
     await enqueueFastBuild({ sessionId, projectId, userId: authUser.id, prompt });
+    console.log(`[FAST t+${Date.now()-t0}ms] job enqueued — returning 202`);
   } catch (err) {
     // Refund credits if we failed to queue the job
     await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);

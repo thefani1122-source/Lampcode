@@ -1,7 +1,9 @@
 import { Server, type Namespace } from "socket.io";
+import { createAdapter } from "@socket.io/redis-adapter";
 import { type ServerType } from "@hono/node-server";
 import { config, ALLOWED_ORIGINS } from "../server/config.js";
 import { logger } from "../server/logger.js";
+import { createRedis } from "../lib/redis.js";
 import { type StreamBroadcaster } from "../agents/stream-handler.js";
 import { type StreamChunk } from "../agents/model-gateway.js";
 import { type Phase } from "../orchestrator/state-machine.js";
@@ -102,6 +104,17 @@ export class WebSocketServer {
       // Allow 1MB payloads (for file content chunks)
       maxHttpBufferSize: 1e6,
     });
+
+    // ── Redis adapter — required for multi-instance deployments ──────────────
+    // Each call creates a dedicated connection; ioredis handles reconnection.
+    try {
+      const pubClient = createRedis();
+      const subClient = createRedis();
+      this.io.adapter(createAdapter(pubClient, subClient));
+      logger.info("Socket.IO Redis adapter attached");
+    } catch (err) {
+      logger.warn({ err }, "Socket.IO Redis adapter failed to attach — falling back to in-memory adapter");
+    }
 
     // ── Namespaces ────────────────────────────────────────────────────────────
     this.buildNsp = this.io.of("/build") as BuildNsp;

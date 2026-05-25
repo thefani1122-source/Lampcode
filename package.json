@@ -23,6 +23,7 @@
   "license": "ISC",
   "dependencies": {
     "@hono/node-server": "^2.0.2",
+    "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/supabase-js": "^2.106.1",
     "bullmq": "^5.76.8",
     "drizzle-orm": "^0.45.2",
