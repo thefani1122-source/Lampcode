@@ -9,6 +9,20 @@ import { AppError } from "../server/middleware/error-handler.js";
  * Throws 402 INSUFFICIENT_CREDITS if the deduction cannot be applied.
  */
 export async function deductCredits(userId: string, amount: number): Promise<void> {
+  // Auto-provision a free billing record for users created before billing was set up.
+  // ON CONFLICT DO NOTHING makes this a safe no-op when the row already exists.
+  await db
+    .insert(userBilling)
+    .values({
+      userId,
+      plan: "free",
+      creditsLimit: 500,
+      creditsUsed: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .onConflictDoNothing();
+
   const rows = await db
     .update(userBilling)
     .set({
