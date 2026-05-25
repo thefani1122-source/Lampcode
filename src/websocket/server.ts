@@ -119,9 +119,7 @@ export class WebSocketServer {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsRateLimitMiddleware as any);
     }
-    // /build: no auth required — allow any client with a sessionId to watch their build
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.buildNsp.use(wsRateLimitMiddleware as any);
+    // /build: no auth or rate-limit — unauthenticated clients stream build progress via sessionId
 
     registerBuildHandlers(this.buildNsp);
     registerProjectHandlers(this.projectNsp);
