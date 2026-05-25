@@ -396,7 +396,7 @@ async function runPlanPhase(
         const written = await writePhaseFiles(sessionId, projectId, phase, result.content, agentType);
         allFiles = allFiles.concat(written);
         // Auto-save CURRENT_STATE after every agent
-        void brain.createVersion(projectId, "CURRENT_STATE", result.content, {
+        void brain.createVersion(projectId, "current_state", result.content, {
           agentType, modelUsed: result.modelUsed, sessionId,
         });
       }
@@ -418,17 +418,17 @@ async function runPlanPhase(
         // Auto-save phase-specific brain documents
         if (phase === "FOUNDATION") {
           if (agentType === "db") {
-            void brain.createVersion(projectId, "DB_SCHEMA", result.content, {
+            void brain.createVersion(projectId, "db_schema", result.content, {
               agentType, modelUsed: result.modelUsed, sessionId,
             });
           } else if (agentType === "backend") {
-            void brain.createVersion(projectId, "API_CONTRACTS", result.content, {
+            void brain.createVersion(projectId, "api_contracts", result.content, {
               agentType, modelUsed: result.modelUsed, sessionId,
             });
           }
         }
         // Auto-save CURRENT_STATE after every agent
-        void brain.createVersion(projectId, "CURRENT_STATE", result.content, {
+        void brain.createVersion(projectId, "current_state", result.content, {
           agentType, modelUsed: result.modelUsed, sessionId,
         });
       }
@@ -738,7 +738,7 @@ planRouter.post("/interview", async (c) => {
   await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
 
   // Auto-save CONTRACT.md to shared brain
-  void getBrainManager().createVersion(session.projectId, "CONTRACT", contract, {
+  void getBrainManager().createVersion(session.projectId, "contract", contract, {
     agentType: "planning",
     sessionId,
   });
@@ -799,7 +799,7 @@ planRouter.post("/approve", async (c) => {
     await writeFile(join(contractDir, "CONTRACT.md"), contract, "utf8");
 
     // Auto-save revised contract to shared brain
-    void getBrainManager().createVersion(session.projectId, "CONTRACT", contract, {
+    void getBrainManager().createVersion(session.projectId, "contract", contract, {
       agentType: "planning",
       sessionId,
     });

@@ -73,8 +73,8 @@ export class BrainManager {
     await db.insert(sharedBrainFiles).values({
       id,
       projectId,
-      sessionId: opts.sessionId,
       fileType,
+      fileName: `${fileType}-v${version}`,
       version,
       content,
       agentType: opts.agentType,

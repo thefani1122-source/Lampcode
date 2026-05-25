@@ -9,7 +9,10 @@ import { getBrainManager } from "../../brain/manager.js";
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-const BRAIN_FILE_TYPES = ["CONTRACT", "DB_SCHEMA", "API_CONTRACTS", "CURRENT_STATE"] as const;
+const BRAIN_FILE_TYPES = [
+  "contract", "db_schema", "api_contracts", "current_state",
+  "deploy_checklist", "security_checklist", "connection_checklist", "provenance_log",
+] as const;
 
 const fileTypeSchema = z.enum(BRAIN_FILE_TYPES);
 

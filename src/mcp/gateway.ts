@@ -101,7 +101,7 @@ export class McpGateway {
   async disconnect(projectId: string, provider: McpProvider): Promise<void> {
     await db
       .update(integrations)
-      .set({ status: "disconnected", credentials: {}, updatedAt: new Date() })
+      .set({ status: "disconnected", config: {}, updatedAt: new Date() })
       .where(
         and(
           eq(integrations.projectId, projectId),
@@ -116,7 +116,7 @@ export class McpGateway {
   async testConnection(projectId: string, provider: McpProvider): Promise<ConnectionResult> {
     const impl = this.provider(provider);
     const integration = await this.loadIntegration(projectId, provider);
-    const creds = (integration?.credentials ?? {}) as IntegrationCredentials;
+    const creds = (integration?.config ?? {}) as IntegrationCredentials;
     const t0 = Date.now();
 
     const result = await impl.testConnection(creds);
@@ -134,7 +134,7 @@ export class McpGateway {
         .where(eq(integrations.id, integration.id));
     }
 
-    return { ok: result.ok, tier: (integration?.tier ?? 3) as ConnectionTier, provider, latencyMs, detail: result.detail };
+    return { ok: result.ok, tier: 1 as ConnectionTier, provider, latencyMs, detail: result.detail };
   }
 
   // ── Execute tool ───────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ export class McpGateway {
   ): Promise<ToolResult> {
     const impl = this.provider(provider);
     const integration = await this.loadIntegration(projectId, provider);
-    const userCreds = (integration?.credentials ?? {}) as IntegrationCredentials;
+    const userCreds = (integration?.config ?? {}) as IntegrationCredentials;
 
     // ── Tier 1: user's credentials ────────────────────────────────────────
     if (userCreds.token ?? userCreds.apiKey) {
@@ -241,10 +241,9 @@ export class McpGateway {
       await db
         .update(integrations)
         .set({
-          credentials: credentials as DbCreds,
-          tier,
+          config: credentials as DbCreds,
           status,
-          error: error ?? null,
+          lastError: error ?? null,
           updatedAt: now,
         })
         .where(eq(integrations.id, existing[0].id));
@@ -254,22 +253,17 @@ export class McpGateway {
         projectId,
         userId,
         provider: provider as DbMcpProvider,
-        credentials: credentials as DbCreds,
-        tier,
+        config: credentials as DbCreds,
         status,
-        error: error ?? null,
+        lastError: error ?? null,
         createdAt: now,
         updatedAt: now,
       });
     }
   }
 
-  private async markTier(integrationId: string | undefined, tier: ConnectionTier) {
-    if (!integrationId) return;
-    await db
-      .update(integrations)
-      .set({ tier, updatedAt: new Date() })
-      .where(eq(integrations.id, integrationId));
+  private async markTier(_integrationId: string | undefined, _tier: ConnectionTier) {
+    // tier is no longer persisted separately; connection_type is set during upsert
   }
 }
 

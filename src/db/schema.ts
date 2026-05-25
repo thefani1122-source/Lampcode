@@ -138,7 +138,7 @@ export const buildStatusEnum = pgEnum("build_status", [
   "cancelled",
 ]);
 
-export const memberRoleEnum = pgEnum("member_role", ["owner", "member", "viewer"]);
+export const memberRoleEnum = pgEnum("member_role", ["owner", "admin", "editor", "viewer"]);
 
 export const auditSeverityEnum = pgEnum("audit_severity", [
   "info",
@@ -167,6 +167,12 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const memberStatusEnum = pgEnum("member_status", [
+  "pending",
+  "accepted",
+  "declined",
+]);
+
 export const projectMembers = pgTable("project_members", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -175,8 +181,13 @@ export const projectMembers = pgTable("project_members", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  role: memberRoleEnum("role").notNull().default("member"),
+  invitedBy: text("invited_by").references(() => user.id, { onDelete: "set null" }),
+  role: memberRoleEnum("role").notNull().default("viewer"),
+  status: memberStatusEnum("status").notNull().default("pending"),
+  invitedAt: timestamp("invited_at", { mode: "date" }).notNull().defaultNow(),
+  joinedAt: timestamp("joined_at", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
 export const buildJobs = pgTable("build_jobs", {
@@ -207,14 +218,17 @@ export const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
-export const buildSessionStatusEnum = pgEnum("build_session_status", [
+export const buildSessionStatusEnum = pgEnum("session_status", [
   "running",
+  "paused",
   "success",
+  "completed",
   "failed",
   "cancelled",
 ]);
 
 export const buildSessions = pgTable("build_sessions", {
+  // ── Core columns (from DB) ────────────────────────────────────────────────
   id: text("id").primaryKey(),
   projectId: text("project_id")
     .notNull()
@@ -222,16 +236,31 @@ export const buildSessions = pgTable("build_sessions", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  prompt: text("prompt").notNull(),
   mode: projectModeEnum("mode").notNull().default("fast"),
-  status: buildSessionStatusEnum("status").notNull().default("running"),
   phase: integer("phase").notNull().default(0),
+  status: buildSessionStatusEnum("status").notNull().default("running"),
+  // DB native columns
+  contractMd: text("contract_md"),
+  currentStateMd: text("current_state_md"),
+  agentStates: jsonb("agent_states").$type<Record<string, unknown>>().notNull().default({}),
+  totalInputTokens: integer("total_input_tokens").notNull().default(0),
+  totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+  estimatedCostUsd: doublePrecision("estimated_cost_usd").notNull().default(0),
+  actualCostUsd: doublePrecision("actual_cost_usd").notNull().default(0),
+  startedAt: timestamp("started_at", { mode: "date" }),
+  completedAt: timestamp("completed_at", { mode: "date" }),
+  failedAt: timestamp("failed_at", { mode: "date" }),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  // ── Added columns (to match schema/code expectations) ────────────────────
+  prompt: text("prompt"),
+  attachments: jsonb("attachments").$type<string[]>(),
   outputDir: text("output_dir"),
   previewUrl: text("preview_url"),
-  creditsUsed: doublePrecision("credits_used").notNull().default(0),
-  attachments: jsonb("attachments").$type<string[]>(),
+  creditsUsed: integer("credits_used").notNull().default(0),
   error: text("error"),
-  // Plan-mode extra columns (null for fast mode sessions)
+  // Plan-mode columns
   planStatus: text("plan_status"),
   currentPlanPhase: text("current_plan_phase"),
   interviewData: jsonb("interview_data").$type<InterviewData>(),
@@ -239,31 +268,39 @@ export const buildSessions = pgTable("build_sessions", {
   planTasks: jsonb("plan_tasks").$type<PlanTask[]>(),
   verifyRound: integer("verify_round").notNull().default(0),
   verifyReport: jsonb("verify_report").$type<VerifyReport>(),
-  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
-  startedAt: timestamp("started_at", { mode: "date" }),
-  completedAt: timestamp("completed_at", { mode: "date" }),
 });
 
-export const agentTaskStatusEnum = pgEnum("agent_task_status", [
+export const agentTaskStatusEnum = pgEnum("task_status", [
+  "pending",
   "running",
   "complete",
+  "done",
   "failed",
+  "skipped",
 ]);
 
 export const agentTasks = pgTable("agent_tasks", {
+  // ── Core columns (from DB) ────────────────────────────────────────────────
   id: text("id").primaryKey(),
   sessionId: text("session_id").notNull(),
   userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   agentType: text("agent_type").notNull(),
-  modelUsed: text("model_used").notNull(),
-  tierUsed: integer("tier_used").notNull().default(1),
-  inputTokens: integer("input_tokens"),
-  outputTokens: integer("output_tokens"),
-  costUsd: doublePrecision("cost_usd"),
+  taskName: text("task_name").notNull().default("agent-task"),
   status: agentTaskStatusEnum("status").notNull().default("running"),
-  startedAt: timestamp("started_at", { mode: "date" }).notNull().defaultNow(),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  costUsd: doublePrecision("cost_usd").notNull().default(0),
+  modelUsed: text("model_used"),
+  startedAt: timestamp("started_at", { mode: "date" }),
   completedAt: timestamp("completed_at", { mode: "date" }),
+  errorMessage: text("error_message"),
+  outputSummary: text("output_summary"),
+  filesModified: text("files_modified").array().notNull().default([]),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  // ── Added columns (to match code expectations) ────────────────────────────
+  tierUsed: integer("tier_used").notNull().default(1),
   error: text("error"),
 });
 
@@ -276,10 +313,28 @@ export const mcpProviderEnum = pgEnum("mcp_provider", [
   "railway",
 ]);
 
+export const providerTypeEnum = pgEnum("provider_type", [
+  "deploy",
+  "database",
+  "code",
+  "payment",
+  "email",
+  "analytics",
+  "auth",
+  "ai",
+]);
+
+export const connectionTypeEnum = pgEnum("connection_type", [
+  "mcp",
+  "oauth",
+  "api_key",
+]);
+
 export const integrationStatusEnum = pgEnum("integration_status", [
   "connected",
   "disconnected",
   "error",
+  "refreshing",
 ]);
 
 export type IntegrationCredentials = {
@@ -294,17 +349,17 @@ export type IntegrationCredentials = {
 
 export const integrations = pgTable("integrations", {
   id: text("id").primaryKey(),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
-  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
-  provider: mcpProviderEnum("provider").notNull(),
-  status: integrationStatusEnum("status").notNull().default("connected"),
-  tier: integer("tier").notNull().default(1),
-  credentials: jsonb("credentials").$type<IntegrationCredentials>(),
+  provider: text("provider").notNull(),
+  providerType: providerTypeEnum("provider_type").notNull().default("deploy"),
+  connectionType: connectionTypeEnum("connection_type").notNull().default("api_key"),
+  config: jsonb("config").$type<IntegrationCredentials>().notNull().default({}),
+  status: integrationStatusEnum("status").notNull().default("disconnected"),
   lastTestedAt: timestamp("last_tested_at", { mode: "date" }),
-  lastDeployedAt: timestamp("last_deployed_at", { mode: "date" }),
-  error: text("error"),
+  lastError: text("last_error"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
@@ -312,10 +367,14 @@ export const integrations = pgTable("integrations", {
 // ── Shared Brain ─────────────────────────────────────────────────────────────
 
 export const brainFileTypeEnum = pgEnum("brain_file_type", [
-  "CONTRACT",
-  "DB_SCHEMA",
-  "API_CONTRACTS",
-  "CURRENT_STATE",
+  "contract",
+  "db_schema",
+  "api_contracts",
+  "current_state",
+  "deploy_checklist",
+  "security_checklist",
+  "connection_checklist",
+  "provenance_log",
 ]);
 
 export const sharedBrainFiles = pgTable("shared_brain_files", {
@@ -323,10 +382,12 @@ export const sharedBrainFiles = pgTable("shared_brain_files", {
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
-  sessionId: text("session_id"),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
   fileType: brainFileTypeEnum("file_type").notNull(),
-  version: integer("version").notNull(),
+  fileName: text("file_name").notNull().default("brain-file"),
   content: text("content").notNull(),
+  version: integer("version").notNull().default(1),
+  previousVersionId: text("previous_version_id"),
   agentType: text("agent_type"),
   modelUsed: text("model_used"),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -419,7 +480,7 @@ export const userPreferences = pgTable("user_preferences", {
 
 export const envEnvironmentEnum = pgEnum("env_environment", [
   "development",
-  "preview",
+  "staging",
   "production",
 ]);
 
@@ -496,6 +557,7 @@ export type BuildStatus = (typeof buildStatusEnum.enumValues)[number];
 export type ProjectMode = (typeof projectModeEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type MemberRole = (typeof memberRoleEnum.enumValues)[number];
+export type MemberStatus = (typeof memberStatusEnum.enumValues)[number];
 export type AgentTask = typeof agentTasks.$inferSelect;
 export type AgentTaskStatus = (typeof agentTaskStatusEnum.enumValues)[number];
 export type BuildSession = typeof buildSessions.$inferSelect;
@@ -505,6 +567,8 @@ export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
 export type McpProvider = (typeof mcpProviderEnum.enumValues)[number];
 export type IntegrationStatus = (typeof integrationStatusEnum.enumValues)[number];
+export type ProviderType = (typeof providerTypeEnum.enumValues)[number];
+export type ConnectionType = (typeof connectionTypeEnum.enumValues)[number];
 export type SharedBrainFile = typeof sharedBrainFiles.$inferSelect;
 export type NewSharedBrainFile = typeof sharedBrainFiles.$inferInsert;
 export type BrainFileType = (typeof brainFileTypeEnum.enumValues)[number];

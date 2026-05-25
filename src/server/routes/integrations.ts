@@ -135,10 +135,8 @@ integrationsRouter.get("/", async (c) => {
       id:             integrations.id,
       provider:       integrations.provider,
       status:         integrations.status,
-      tier:           integrations.tier,
       lastTestedAt:   integrations.lastTestedAt,
-      lastDeployedAt: integrations.lastDeployedAt,
-      error:          integrations.error,
+      lastError:      integrations.lastError,
       createdAt:      integrations.createdAt,
     })
     .from(integrations)
