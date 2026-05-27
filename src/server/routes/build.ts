@@ -199,6 +199,13 @@ export async function runFastBuild(
         timestamp: new Date().toISOString(),
       });
 
+      // Emit file:created for frontend workspace listener
+      server?.emitToSession(sessionId, "file:created", {
+        path: safePath,
+        content: code,
+        sessionId,
+      });
+
       const writePercent = 90 + Math.floor(((idx + 1) / totalFiles) * 10);
       server?.progress(sessionId, {
         sessionId,
@@ -212,6 +219,17 @@ export async function runFastBuild(
       cancelledSessions.delete(sessionId);
       return;
     }
+
+    // ── Emit build:complete for frontend workspace listener ────────────────
+    const allFiles: Record<string, string> = {};
+    for (const f of filesToWrite) {
+      allFiles[f.path] = f.code;
+    }
+    server?.emitToSession(sessionId, "build:complete", {
+      sessionId,
+      files: allFiles,
+      previewUrl: `/api/build/${sessionId}/preview`,
+    });
 
     // ── Update build session ────────────────────────────────────────────────
     const creditsUsed = Math.ceil(result.costUsd * 1_000);
