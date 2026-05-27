@@ -1,4 +1,17 @@
-import { type SmokeCheck, type SmokeResult } from "../mcp/types.js";
+interface SmokeCheck {
+  name: string;
+  passed: boolean;
+  statusCode?: number | undefined;
+  latencyMs: number;
+  detail?: string | undefined;
+}
+
+interface SmokeResult {
+  url: string;
+  ok: boolean;
+  checks: SmokeCheck[];
+  totalLatencyMs: number;
+}
 
 // ── Smoke test fetcher type ───────────────────────────────────────────────────
 

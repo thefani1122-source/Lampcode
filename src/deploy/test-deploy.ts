@@ -14,20 +14,42 @@
  *   npx tsx src/deploy/test-deploy.ts
  */
 
-import {
-  McpError,
-  TIER_FALLBACK_ERRORS,
-  type IProvider,
-  type IntegrationCredentials,
-  type ConnectionTier,
-  type ToolResult,
-  type DeployStep,
-} from "../mcp/types.js";
-import { VercelProvider }   from "../mcp/providers/vercel.js";
-import { SupabaseProvider } from "../mcp/providers/supabase.js";
-import { GithubProvider }   from "../mcp/providers/github.js";
-import { RailwayProvider }  from "../mcp/providers/railway.js";
 import { runSmokeTests, type Fetcher } from "./smoke.js";
+
+// ── Inline types (previously from mcp/types) ──────────────────────────────────
+
+type ConnectionTier = 1 | 2 | 3;
+type IntegrationCredentials = Record<string, string | undefined>;
+
+interface ToolResult {
+  success: boolean;
+  tier: ConnectionTier;
+  data: Record<string, unknown>;
+  cliCommands?: string[];
+  error?: string;
+}
+
+interface DeployStep {
+  name: string;
+  tier?: ConnectionTier;
+  success: boolean;
+  data?: Record<string, unknown>;
+  cliCommands?: string[];
+  error?: string;
+}
+
+class McpError extends Error {
+  override name = "McpError";
+  constructor(
+    public readonly type: string,
+    message: string,
+    public readonly statusCode?: number,
+  ) {
+    super(message);
+  }
+}
+
+const TIER_FALLBACK_ERRORS = new Set(["AUTH_FAILED", "NETWORK_ERROR", "RATE_LIMIT"]);
 
 // ── Harness ───────────────────────────────────────────────────────────────────
 
@@ -69,105 +91,6 @@ test("McpError: TIER_FALLBACK_ERRORS contains auth/network/rate-limit", () => {
   expectTrue(!TIER_FALLBACK_ERRORS.has("NOT_FOUND"));
   expectTrue(!TIER_FALLBACK_ERRORS.has("PROVIDER_ERROR"));
   expectTrue(!TIER_FALLBACK_ERRORS.has("TOOL_NOT_FOUND"));
-});
-
-// ── Vercel CLI commands ───────────────────────────────────────────────────────
-
-const vercel = new VercelProvider();
-
-test("VercelProvider: cliCommands deploy includes vercel --prod", () => {
-  const cmds = vercel.cliCommands("deploy", { projectName: "my-app" });
-  expectTrue(cmds.some((c) => c.includes("vercel")), "Should include vercel command");
-  expectTrue(cmds.some((c) => c.includes("--prod") || c.includes("my-app")), "Should target project");
-});
-
-test("VercelProvider: cliCommands setEnvVars one line per var", () => {
-  const cmds = vercel.cliCommands("setEnvVars", {
-    envVars: { DATABASE_URL: "postgres://...", REDIS_URL: "redis://..." },
-  });
-  expect(cmds.length, 2);
-  expectTrue(cmds.every((c) => c.includes("vercel env add")));
-});
-
-test("VercelProvider: cliCommands rollback includes deployment id", () => {
-  const cmds = vercel.cliCommands("rollback", { deploymentId: "dpl_abc123" });
-  expectTrue(cmds.some((c) => c.includes("dpl_abc123")));
-});
-
-test("VercelProvider: cliCommands unknown tool returns comment", () => {
-  const cmds = vercel.cliCommands("unknownTool", {});
-  expectTrue(cmds[0]?.startsWith("#") === true, "Should return a comment for unknown tool");
-});
-
-// ── Supabase CLI commands ─────────────────────────────────────────────────────
-
-const supabase = new SupabaseProvider();
-
-test("SupabaseProvider: cliCommands pushMigrations includes project ref", () => {
-  const cmds = supabase.cliCommands("pushMigrations", {
-    sql: "CREATE TABLE t (id uuid);",
-    projectRef: "proj-xyz",
-  });
-  expectTrue(cmds.some((c) => c.includes("proj-xyz") || c.includes("supabase")));
-});
-
-test("SupabaseProvider: cliCommands applyRLS embeds SQL heredoc", () => {
-  const cmds = supabase.cliCommands("applyRLS", { sql: "ALTER TABLE users ENABLE ROW LEVEL SECURITY;" });
-  expectTrue(cmds.join(" ").includes("ALTER TABLE") || cmds.join(" ").includes("supabase"), "Should reference SQL or supabase CLI");
-});
-
-// ── GitHub CLI commands ───────────────────────────────────────────────────────
-
-const github = new GithubProvider();
-
-test("GithubProvider: cliCommands createRepo private", () => {
-  const cmds = github.cliCommands("createRepo", { name: "my-repo", private: true });
-  expectTrue(cmds.some((c) => c.includes("--private")));
-  expectTrue(cmds.some((c) => c.includes("my-repo")));
-});
-
-test("GithubProvider: cliCommands createRepo org-scoped", () => {
-  const cmds = github.cliCommands("createRepo", { name: "my-repo", org: "acme-corp", private: true });
-  expectTrue(cmds.some((c) => c.includes("acme-corp/my-repo")));
-});
-
-test("GithubProvider: cliCommands pushCode includes git commands", () => {
-  const cmds = github.cliCommands("pushCode", {
-    repo: "my-repo",
-    branch: "main",
-    message: "chore: deploy",
-    owner: "johndoe",
-  });
-  expectTrue(cmds.some((c) => c.includes("git push")));
-  expectTrue(cmds.some((c) => c.includes("git commit") || c.includes("git add")));
-});
-
-test("GithubProvider: cliCommands createPR uses gh CLI", () => {
-  const cmds = github.cliCommands("createPR", { title: "Deploy to prod", base: "main" });
-  expectTrue(cmds.some((c) => c.includes("gh pr create")));
-  expectTrue(cmds.some((c) => c.includes("Deploy to prod")));
-});
-
-// ── Railway CLI commands ──────────────────────────────────────────────────────
-
-const railway = new RailwayProvider();
-
-test("RailwayProvider: cliCommands deploy includes railway up", () => {
-  const cmds = railway.cliCommands("deploy", { serviceId: "svc-123" });
-  expectTrue(cmds.some((c) => c.includes("railway")));
-});
-
-test("RailwayProvider: cliCommands setEnvVars formats KEY=VALUE pairs", () => {
-  const cmds = railway.cliCommands("setEnvVars", {
-    envVars: { PORT: "3000", NODE_ENV: "production" },
-  });
-  const joined = cmds.join(" ");
-  expectTrue(joined.includes("PORT=3000") || joined.includes("variables"), "Should format env vars");
-});
-
-test("RailwayProvider: cliCommands empty vars returns no-op comment", () => {
-  const cmds = railway.cliCommands("setEnvVars", { envVars: {} });
-  expectTrue(cmds.length > 0 && (cmds[0]?.startsWith("#") === true || cmds[0]?.includes("No") === true));
 });
 
 // ── Tier fallback mock gateway ────────────────────────────────────────────────

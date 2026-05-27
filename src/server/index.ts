@@ -12,17 +12,12 @@ import { projectsRouter } from "./routes/projects.js";
 import { buildRouter } from "./routes/build.js";
 import { planRouter } from "./routes/plan.js";
 import { brainRouter } from "./routes/brain.js";
-import { deployRouter } from "./routes/deploy.js";
-import { integrationsRouter, providersRouter } from "./routes/integrations.js";
 import { settingsRouter, userSettingsRouter } from "./routes/settings.js";
 import { envRouter } from "./routes/env.js";
 import { billingRouter } from "./routes/billing.js";
 import { contextRouter } from "./routes/context.js";
-import { interviewRouter } from "./routes/interview.js";
 import { webhooksRouter } from "./routes/webhooks.js";
-import { createWebSocketServer, getWebSocketServer } from "../websocket/server.js";
-import { startFastBuildWorker } from "../build/worker.js";
-import { runFastBuild } from "./routes/build.js";
+import { createWebSocketServer } from "../websocket/server.js";
 
 // ── Startup diagnostics ───────────────────────────────────────────────────────
 // Log enough detail to diagnose connection issues without exposing credentials.
@@ -75,15 +70,11 @@ app.route("/api/projects", projectsRouter);
 app.route("/api/build", buildRouter);
 app.route("/api/plan", planRouter);
 app.route("/api/projects/:id/brain", brainRouter);
-app.route("/api/projects/:id/integrations", integrationsRouter);
 app.route("/api/projects/:id/settings", settingsRouter);
 app.route("/api/projects/:id/env", envRouter);
-app.route("/api/integrations", providersRouter);
 app.route("/api/users/me/settings", userSettingsRouter);
 app.route("/api/users/me/billing", billingRouter);
-app.route("/api/deploy", deployRouter);
 app.route("/api/context", contextRouter);
-app.route("/api/interview", interviewRouter);
 app.route("/api/webhooks", webhooksRouter);
 
 // 404 handler
@@ -105,12 +96,5 @@ const httpServer = serve(
 
 // Attach WebSocket server to the same HTTP server
 createWebSocketServer(httpServer);
-
-// Start BullMQ worker — non-blocking: a Redis failure here must not take down the HTTP server.
-try {
-  startFastBuildWorker(runFastBuild, getWebSocketServer());
-} catch (err) {
-  logger.warn({ err }, "Fast build worker could not start (Redis unavailable?) — will retry on redeploy");
-}
 
 export { app };

@@ -12,12 +12,10 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
-import { parseFilesFromContent, parseAndPublishFiles, type ParsedFile } from "../../agents/file-parser.js";
-import { publishBuildEvent } from "../../lib/redis-publisher.js";
+import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
-import { enqueueFastBuild } from "../../build/queue.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -150,13 +148,7 @@ export async function runFastBuild(
     // ── Parse and write files ───────────────────────────────────────────────
     console.log("[DEBUG] LLM output first 500 chars:", result.content.substring(0, 500))
     console.log("[DEBUG] LLM output last 200 chars:", result.content.substring(result.content.length - 200))
-    const allFiles = await parseAndPublishFiles(result.content, sessionId);
-    let parsedFiles: ParsedFile[] = Object.entries(allFiles).map(([path, code]) => ({ path, code }));
-
-    await publishBuildEvent(sessionId, {
-      type: "build_complete",
-      files: allFiles,
-    });
+    let parsedFiles: ParsedFile[] = parseFilesFromContent(result.content);
 
     // Auto-trigger fix agent if frontend produced no structured file output
     if (parsedFiles.length === 0 && result.content.trim().length < 200) {
@@ -366,8 +358,8 @@ buildRouter.post("/fast", async (c) => {
       .where(eq(projects.id, projectId));
     console.log(`[FAST t+${Date.now()-t0}ms] project status=building`);
 
-    // ── Enqueue via BullMQ ──────────────────────────────────────────────────
-    await enqueueFastBuild({ sessionId, projectId, userId: authUser.id, prompt });
+    // ── Run build in background ─────────────────────────────────────────────
+    void runFastBuild(sessionId, projectId, prompt, authUser.id);
     console.log(`[FAST t+${Date.now()-t0}ms] job enqueued — returning 202`);
   } catch (err) {
     // Refund credits if we failed to queue the job

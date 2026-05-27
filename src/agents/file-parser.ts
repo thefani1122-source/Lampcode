@@ -1,5 +1,3 @@
-import { publishBuildEvent } from "../lib/redis-publisher.js";
-
 export interface ParsedFile {
   path: string;
   code: string;
@@ -82,22 +80,3 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
   return files;
 }
 
-export async function parseAndPublishFiles(
-  content: string,
-  sessionId: string,
-): Promise<Record<string, string>> {
-  const files = parseFilesFromContent(content);
-  const result: Record<string, string> = {};
-
-  for (const { path, code } of files) {
-    result[path] = code;
-    await publishBuildEvent(sessionId, {
-      type: "file_created",
-      path,
-      content: code,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-  }
-
-  return result;
-}

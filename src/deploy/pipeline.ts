@@ -2,14 +2,29 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { buildSessions, projects, integrations } from "../db/schema.js";
 import { logger } from "../server/logger.js";
-import { getGateway } from "../mcp/gateway.js";
 import { runSmokeTests } from "./smoke.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import {
-  type DeployResult,
-  type DeployStatus,
-  type DeployStep,
-} from "../mcp/types.js";
+
+type DeployStatus = "deployed" | "failed" | "manual_required";
+
+interface DeployStep {
+  name: string;
+  tier?: number;
+  success: boolean;
+  data?: Record<string, unknown>;
+  cliCommands?: string[];
+  error?: string;
+}
+
+interface DeployResult {
+  sessionId: string;
+  projectId: string;
+  status: DeployStatus;
+  previewUrl?: string | undefined;
+  steps: DeployStep[];
+  manualSteps?: string[] | undefined;
+  smokeTests?: Awaited<ReturnType<typeof runSmokeTests>> | undefined;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +64,6 @@ function collectCliCommands(steps: DeployStep[]): string[] {
 // ── DeployPipeline ────────────────────────────────────────────────────────────
 
 export class DeployPipeline {
-  private readonly gateway = getGateway();
 
   // ── Full deploy ──────────────────────────────────────────────────────────
 
@@ -90,19 +104,10 @@ export class DeployPipeline {
     server?.progress(sessionId, { sessionId, percent: 65, message: "Code pushed", timestamp: now() });
 
     // ── Step 4: Deploy ─────────────────────────────────────────────────────
-    const deployResult = await this.gateway.executeTool(
-      projectId,
-      "vercel",
-      "deploy",
-      { projectName: project.slug },
-    );
     const deployStep: DeployStep = {
       name: "Deploy (Vercel)",
-      tier: deployResult.tier,
-      success: deployResult.success,
-      data: deployResult.data,
-      ...(deployResult.cliCommands !== undefined ? { cliCommands: deployResult.cliCommands } : {}),
-      ...(deployResult.error !== undefined ? { error: deployResult.error } : {}),
+      success: false,
+      error: "Deploy gateway not configured",
     };
     steps.push(deployStep);
     server?.progress(sessionId, { sessionId, percent: 80, message: "Deployment triggered", timestamp: now() });
@@ -132,7 +137,7 @@ export class DeployPipeline {
 
     // ── Step 5: Smoke tests ────────────────────────────────────────────────
     let smokeTests: Awaited<ReturnType<typeof runSmokeTests>> | undefined;
-    const previewUrl = deployResult.data["url"] as string | undefined;
+    const previewUrl: string | undefined = undefined;
 
     if (!allManual && previewUrl) {
       server?.progress(sessionId, { sessionId, percent: 90, message: "Running smoke tests", timestamp: now() });
@@ -183,76 +188,28 @@ export class DeployPipeline {
   // ── Set env vars ─────────────────────────────────────────────────────────
 
   async setEnvVars(
-    projectId: string,
-    env: Record<string, string>,
+    _projectId: string,
+    _env: Record<string, string>,
   ): Promise<DeployStep> {
-    const result = await this.gateway.executeTool(projectId, "vercel", "setEnvVars", {
-      projectName: projectId,
-      envVars: env,
-    });
-    return {
-      name: "Set env vars",
-      tier: result.tier,
-      success: result.success,
-      data: result.data,
-      ...(result.cliCommands !== undefined ? { cliCommands: result.cliCommands } : {}),
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    };
+    return { name: "Set env vars", success: false, error: "Deploy gateway not configured" };
   }
 
   // ── Push database ────────────────────────────────────────────────────────
 
-  async pushDatabase(projectId: string, sql = ""): Promise<DeployStep> {
-    const result = await this.gateway.executeTool(projectId, "supabase", "pushMigrations", {
-      sql: sql || "-- No migrations provided",
-      projectRef: projectId,
-    });
-    return {
-      name: "Push database",
-      tier: result.tier,
-      success: result.success,
-      data: result.data,
-      ...(result.cliCommands !== undefined ? { cliCommands: result.cliCommands } : {}),
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    };
+  async pushDatabase(_projectId: string, _sql = ""): Promise<DeployStep> {
+    return { name: "Push database", success: false, error: "Deploy gateway not configured" };
   }
 
   // ── Push code ────────────────────────────────────────────────────────────
 
-  async pushCode(projectId: string, branch = "main"): Promise<DeployStep> {
-    const result = await this.gateway.executeTool(projectId, "github", "pushCode", {
-      repo: projectId,
-      branch,
-      message: `deploy: BuildForge automated push`,
-      files: [],
-    });
-    return {
-      name: "Push code",
-      tier: result.tier,
-      success: result.success,
-      data: result.data,
-      ...(result.cliCommands !== undefined ? { cliCommands: result.cliCommands } : {}),
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    };
+  async pushCode(_projectId: string, _branch = "main"): Promise<DeployStep> {
+    return { name: "Push code", success: false, error: "Deploy gateway not configured" };
   }
 
   // ── Rollback ─────────────────────────────────────────────────────────────
 
-  async rollback(projectId: string, deploymentId?: string): Promise<DeployStep> {
-    const project = await loadProject(projectId);
-    const result = await this.gateway.executeTool(projectId, "vercel", "rollback", {
-      projectName: project.slug,
-      ...(deploymentId !== undefined ? { deploymentId } : {}),
-    });
-    logger.info({ projectId, deploymentId }, "Rollback triggered");
-    return {
-      name: "Rollback",
-      tier: result.tier,
-      success: result.success,
-      data: result.data,
-      ...(result.cliCommands !== undefined ? { cliCommands: result.cliCommands } : {}),
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    };
+  async rollback(_projectId: string, _deploymentId?: string): Promise<DeployStep> {
+    return { name: "Rollback", success: false, error: "Deploy gateway not configured" };
   }
 }
 

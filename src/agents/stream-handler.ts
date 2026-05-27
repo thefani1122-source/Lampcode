@@ -1,4 +1,3 @@
-import { publishBuildEvent } from "../lib/redis-publisher.js"
 import { writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 
@@ -21,38 +20,16 @@ export async function handleAgentStream(
   const { sessionId, agentType, taskId, outputPath } = opts
   let fullContent = ""
 
-  await publishBuildEvent(sessionId, {
-    type: "agent_status",
-    agent: agentType,
-    status: "running",
-    statusText: "Starting...",
-  })
-
   for await (const chunk of generator) {
     if (chunk.type === "error") {
-      await publishBuildEvent(sessionId, {
-        type: "build_error",
-        error: chunk.error ?? "Unknown error",
-      })
       throw new Error(chunk.error)
     }
 
     if (chunk.type === "content" && chunk.content) {
       fullContent += chunk.content
-      await publishBuildEvent(sessionId, {
-        type: "token",
-        agent: agentType,
-        content: chunk.content,
-      })
     }
 
     if (chunk.type === "done") {
-      await publishBuildEvent(sessionId, {
-        type: "agent_status",
-        agent: agentType,
-        status: "done",
-        statusText: "Complete",
-      })
       break
     }
   }

@@ -14,7 +14,6 @@ import { db } from "../../db/client.js";
 import { projects, projectEnvVars, integrations } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
-import { getGateway } from "../../mcp/gateway.js";
 import { logger } from "../logger.js";
 import { encrypt, decrypt } from "../env-crypto.js";
 
@@ -233,43 +232,6 @@ envRouter.post("/sync", async (c) => {
     }
   }
 
-  // Determine which providers to sync
-  const connectedRows = await db
-    .select({ provider: integrations.provider, status: integrations.status })
-    .from(integrations)
-    .where(and(
-      eq(integrations.projectId, projectId),
-      eq(integrations.status, "connected"),
-    ));
-
-  const connectedProviders = connectedRows.map((r) => r.provider);
-  const targetProviders = requestedProviders
-    ? requestedProviders.filter((p) => connectedProviders.includes(p))
-    : connectedProviders;
-
-  const gateway = getGateway();
-  const results: Array<{ provider: string; ok: boolean; error?: string }> = [];
-
-  for (const provider of targetProviders) {
-    if (provider !== "vercel") {
-      // Only Vercel supports setEnvVars today; mark others as skipped
-      results.push({ provider, ok: false, error: "setEnvVars not supported for this provider" });
-      continue;
-    }
-    try {
-      const result = await gateway.executeTool(projectId, provider, "setEnvVars", {
-        projectName: project.slug,
-        envVars: envMap,
-      });
-      results.push({ provider, ok: result.success });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      results.push({ provider, ok: false, error: msg });
-    }
-  }
-
-  const synced  = results.filter((r) => r.ok).map((r) => r.provider);
-  const skipped = results.filter((r) => !r.ok);
-
-  return c.json({ ok: skipped.length === 0, environment, synced, skipped });
+  logger.warn({ projectId }, "Env sync not available — deploy gateway removed");
+  return c.json({ ok: false, environment, synced: [], skipped: [], message: "Env sync not configured" }, 501);
 });
