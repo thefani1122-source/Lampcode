@@ -77,6 +77,8 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
     i++;
   }
 
+  console.log("[DEBUG] Files parsed count:", files.length)
+  console.log("[DEBUG] File paths:", files.map((f) => f.path))
   return files;
 }
 

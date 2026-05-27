@@ -148,6 +148,8 @@ export async function runFastBuild(
     }
 
     // ── Parse and write files ───────────────────────────────────────────────
+    console.log("[DEBUG] LLM output first 500 chars:", result.content.substring(0, 500))
+    console.log("[DEBUG] LLM output last 200 chars:", result.content.substring(result.content.length - 200))
     const allFiles = await parseAndPublishFiles(result.content, sessionId);
     let parsedFiles: ParsedFile[] = Object.entries(allFiles).map(([path, code]) => ({ path, code }));
 

@@ -1,5 +1,8 @@
 import { type Namespace, type Socket } from "socket.io";
 import { logger } from "../../server/logger.js";
+import { createRedis } from "../../lib/redis.js";
+
+const redis = createRedis();
 import {
   type BuildServerEvents,
   type BuildClientEvents,
@@ -16,8 +19,21 @@ type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, BuildSoc
 
 const SESSION_ROOM = (sessionId: string) => `session:${sessionId}`;
 
+async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<void> {
+  const buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);
+  if (buffered.length > 0) {
+    for (const raw of buffered) {
+      try {
+        const event = JSON.parse(raw);
+        socket.emit(event.type, event.payload);
+      } catch {}
+    }
+    logger.debug({ socketId: socket.id, sessionId, count: buffered.length }, "Replayed buffered events");
+  }
+}
+
 export function registerBuildHandlers(nsp: BuildNamespace): void {
-  nsp.on("connection", (socket: BuildSocket) => {
+  nsp.on("connection", async (socket: BuildSocket) => {
     const userId = socket.data.userId;
     // Step 3: log every connection with full query so we can confirm the client reaches us
     console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
@@ -31,17 +47,19 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
       console.log(`[WS JOIN] auto-join room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.info({ socketId: socket.id, sessionId: querySid, totalClients: size }, "Auto-joined build session room from query");
+      await replayBuffer(socket, querySid);
     } else {
       console.log(`[WS CONNECT] no sessionId in query — client must emit join_session manually`);
     }
 
     // Client joins a session room to receive updates for that build
-    socket.on("join_session", (sessionId, ack) => {
+    socket.on("join_session", async (sessionId, ack) => {
       const room = SESSION_ROOM(sessionId);
       socket.join(room); // synchronous in Socket.IO v4
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
       console.log(`[WS JOIN] join_session room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.debug({ socketId: socket.id, sessionId, totalClients: size }, "Joined build session room");
+      await replayBuffer(socket, sessionId);
       ack(true);
     });
 

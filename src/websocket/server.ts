@@ -93,6 +93,7 @@ export class WebSocketServer {
   private readonly userNsp: UserNsp;
   private readonly interviewNsp: InterviewNsp;
   private subscriber = createRedis()
+  private writer = createRedis()
   private subscribedSessions = new Set<string>()
 
   constructor(httpServer: ServerType) {
@@ -149,7 +150,7 @@ export class WebSocketServer {
       if (!this.subscribedSessions.has(sessionId)) return
       try {
         const event = JSON.parse(message)
-        this.routeBuildEvent(sessionId, event)
+        this.routeBuildEvent(sessionId, event).catch(() => {})
       } catch (err) {
         console.error("[WS] Redis parse failed:", err)
       }
@@ -311,52 +312,50 @@ export class WebSocketServer {
     } catch {}
   }
 
-  private routeBuildEvent(sessionId: string, event: any): void {
+  private async routeBuildEvent(sessionId: string, event: any): Promise<void> {
     const room = `session:${sessionId}`
+    let eventName: string
+    let eventData: Record<string, unknown>
 
     switch (event.type) {
       case "token":
-        this.io.to(room).emit("agent:token", {
-          agent: event.agent,
-          content: event.content,
-          sessionId,
-        })
+        eventName = "agent:token"
+        eventData = { agent: event.agent, content: event.content, sessionId }
         break
       case "agent_status":
-        this.io.to(room).emit("agent:update", {
-          agent: event.agent,
-          status: event.status,
-          statusText: event.statusText,
-          sessionId,
-        })
+        eventName = "agent:update"
+        eventData = { agent: event.agent, status: event.status, statusText: event.statusText, sessionId }
         break
       case "file_created":
-        this.io.to(room).emit("file:created", {
-          path: event.path,
-          content: event.content,
-          sessionId,
-        })
+        eventName = "file:created"
+        eventData = { path: event.path, content: event.content, sessionId }
         break
       case "build_complete":
-        this.io.to(room).emit("build:complete", {
-          files: event.files,
-          sessionId,
-        })
+        eventName = "build:complete"
+        eventData = { files: event.files, sessionId }
         break
       case "build_error":
-        this.io.to(room).emit("build:error", {
-          error: event.error,
-          sessionId,
-        })
+        eventName = "build:error"
+        eventData = { error: event.error, sessionId }
         break
       case "phase_change":
-        this.io.to(room).emit("phase:change", {
-          phase: event.phase,
-          label: event.label,
-          sessionId,
-        })
+        eventName = "phase:change"
+        eventData = { phase: event.phase, label: event.label, sessionId }
         break
+      default:
+        return
     }
+
+    // Buffer event for late-joining clients (keep last 500, TTL 1h)
+    const bufferKey = `buffer:${sessionId}`
+    await this.writer.multi()
+      .rpush(bufferKey, JSON.stringify({ type: eventName, payload: eventData }))
+      .ltrim(bufferKey, -500, -1)
+      .expire(bufferKey, 3600)
+      .exec()
+      .catch(() => {})
+
+    this.io.to(room).emit(eventName as any, eventData)
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
