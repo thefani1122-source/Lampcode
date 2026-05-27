@@ -11,6 +11,7 @@ import {
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk } from "./stream-handler.js";
+import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 
 // Workspace root: one directory per project
@@ -208,7 +209,7 @@ export class AgentDispatcher {
     try {
       content = await handleAgentStream(
         stream as unknown as AsyncGenerator<HandlerStreamChunk>,
-        { sessionId, agentType, taskId, outputPath },
+        { sessionId, agentType, taskId, outputPath, wsServer: getWebSocketServer() },
       );
     } catch (err) {
       await this.tracker.fail(taskId, String(err)).catch(() => undefined);

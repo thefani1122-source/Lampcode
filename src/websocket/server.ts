@@ -159,6 +159,12 @@ export class WebSocketServer {
     logger.info("WebSocket server initialised (namespaces: / /project /user /interview)");
   }
 
+  // ── Direct session emit ───────────────────────────────────────────────────────
+
+  emitToSession(sessionId: string, event: string, data: Record<string, unknown>): void {
+    this.io.to(`session:${sessionId}`).emit(event, data);
+  }
+
   // ── StreamBroadcaster implementation ────────────────────────────────────────
 
   /**
