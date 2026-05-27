@@ -92,9 +92,6 @@ export class WebSocketServer {
   private readonly projectNsp: ProjectNsp;
   private readonly userNsp: UserNsp;
   private readonly interviewNsp: InterviewNsp;
-  private subscriber = createRedis()
-  private writer = createRedis()
-  private subscribedSessions = new Set<string>()
 
   constructor(httpServer: ServerType) {
     this.io = new Server(httpServer, {
@@ -144,18 +141,6 @@ export class WebSocketServer {
     registerUserHandlers(this.userNsp);
     registerInterviewHandlers(this.interviewNsp);
 
-    // ── Single Redis message listener for all build sessions ─────────────────
-    this.subscriber.on("message", (channel: string, message: string) => {
-      const sessionId = channel.replace("build:", "")
-      if (!this.subscribedSessions.has(sessionId)) return
-      try {
-        const event = JSON.parse(message)
-        this.routeBuildEvent(sessionId, event).catch(() => {})
-      } catch (err) {
-        console.error("[WS] Redis parse failed:", err)
-      }
-    })
-
     logger.info("WebSocket server initialised (namespaces: / /project /user /interview)");
   }
 
@@ -163,6 +148,14 @@ export class WebSocketServer {
 
   emitToSession(sessionId: string, event: string, data: Record<string, unknown>): void {
     this.io.to(`session:${sessionId}`).emit(event, data);
+  }
+
+  emitToUser(userId: string, event: string, data: Record<string, unknown>): void {
+    this.io.to(`user:${userId}`).emit(event, data);
+  }
+
+  emitToProject(projectId: string, event: string, data: Record<string, unknown>): void {
+    this.io.to(`project:${projectId}`).emit(event, data);
   }
 
   // ── StreamBroadcaster implementation ────────────────────────────────────────
@@ -301,67 +294,6 @@ export class WebSocketServer {
 
   emitInterviewApproved(sessionId: string, event: InterviewApprovedEvent): void {
     emitInterviewApproved(this.interviewNsp, sessionId, event);
-  }
-
-  // ── Redis build event subscription ───────────────────────────────────────
-
-  async startBuildSession(sessionId: string): Promise<void> {
-    if (this.subscribedSessions.has(sessionId)) return
-    this.subscribedSessions.add(sessionId)
-    await this.subscriber.subscribe(`build:${sessionId}`)
-  }
-
-  async endBuildSession(sessionId: string): Promise<void> {
-    this.subscribedSessions.delete(sessionId)
-    try {
-      await this.subscriber.unsubscribe(`build:${sessionId}`)
-    } catch {}
-  }
-
-  private async routeBuildEvent(sessionId: string, event: any): Promise<void> {
-    const room = `session:${sessionId}`
-    let eventName: string
-    let eventData: Record<string, unknown>
-
-    switch (event.type) {
-      case "token":
-        eventName = "agent:token"
-        eventData = { agent: event.agent, content: event.content, sessionId }
-        break
-      case "agent_status":
-        eventName = "agent:update"
-        eventData = { agent: event.agent, status: event.status, statusText: event.statusText, sessionId }
-        break
-      case "file_created":
-        eventName = "file:created"
-        eventData = { path: event.path, content: event.content, sessionId }
-        break
-      case "build_complete":
-        eventName = "build:complete"
-        eventData = { files: event.files, sessionId }
-        break
-      case "build_error":
-        eventName = "build:error"
-        eventData = { error: event.error, sessionId }
-        break
-      case "phase_change":
-        eventName = "phase:change"
-        eventData = { phase: event.phase, label: event.label, sessionId }
-        break
-      default:
-        return
-    }
-
-    // Buffer event for late-joining clients (keep last 500, TTL 1h)
-    const bufferKey = `buffer:${sessionId}`
-    await this.writer.multi()
-      .rpush(bufferKey, JSON.stringify({ type: eventName, payload: eventData }))
-      .ltrim(bufferKey, -500, -1)
-      .expire(bufferKey, 3600)
-      .exec()
-      .catch(() => {})
-
-    this.io.to(room).emit(eventName as any, eventData)
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
