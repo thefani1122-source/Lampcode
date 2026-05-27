@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { createRedis } from "../lib/redis.js";
 import { logger } from "../server/logger.js";
 import type { FastBuildJobData } from "./queue.js";
+import type { WebSocketServer } from "../websocket/server.js";
 
 export type FastBuildRunner = (
   sessionId: string,
@@ -12,7 +13,7 @@ export type FastBuildRunner = (
 
 let _worker: Worker<FastBuildJobData> | null = null;
 
-export function startFastBuildWorker(runner: FastBuildRunner): void {
+export function startFastBuildWorker(runner: FastBuildRunner, wsServer?: WebSocketServer): void {
   if (_worker !== null) {
     logger.warn("Fast build worker already started — skipping");
     return;
@@ -44,6 +45,33 @@ export function startFastBuildWorker(runner: FastBuildRunner): void {
   _worker.on("error", (err) => {
     logger.error({ err: err.message }, "Fast build worker error");
   });
+
+  _worker.on("active", async (job) => {
+    const { sessionId } = job.data
+    if (sessionId && wsServer) {
+      await wsServer.startBuildSession(sessionId)
+    }
+  })
+
+  _worker.on("completed", async (job) => {
+    const { sessionId } = job.data
+    if (sessionId && wsServer) {
+      setTimeout(() => wsServer.endBuildSession(sessionId), 5000)
+    }
+  })
+
+  _worker.on("failed", async (job) => {
+    if (!job) return
+    const { sessionId } = job.data
+    if (sessionId) {
+      const { publishBuildEvent } = await import("../lib/redis-publisher.ts")
+      await publishBuildEvent(sessionId, {
+        type: "build_error",
+        error: job.failedReason ?? "Build failed",
+      })
+      if (wsServer) wsServer.endBuildSession(sessionId)
+    }
+  })
 
   logger.info("Fast build worker started (concurrency: 3)");
 }

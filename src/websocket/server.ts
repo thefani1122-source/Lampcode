@@ -91,6 +91,8 @@ export class WebSocketServer {
   private readonly projectNsp: ProjectNsp;
   private readonly userNsp: UserNsp;
   private readonly interviewNsp: InterviewNsp;
+  private subscriber = createRedis()
+  private subscribedSessions = new Set<string>()
 
   constructor(httpServer: ServerType) {
     this.io = new Server(httpServer, {
@@ -373,6 +375,81 @@ export class WebSocketServer {
 
   emitInterviewApproved(sessionId: string, event: InterviewApprovedEvent): void {
     emitInterviewApproved(this.interviewNsp, sessionId, event);
+  }
+
+  // ── Redis build event subscription ───────────────────────────────────────
+
+  async startBuildSession(sessionId: string): Promise<void> {
+    if (this.subscribedSessions.has(sessionId)) return
+    this.subscribedSessions.add(sessionId)
+
+    const channel = `build:${sessionId}`
+    await this.subscriber.subscribe(channel)
+
+    this.subscriber.on("message", (ch: string, message: string) => {
+      if (ch !== channel) return
+      try {
+        const event = JSON.parse(message)
+        this.routeBuildEvent(sessionId, event)
+      } catch (err) {
+        console.error("[WS] Redis parse failed:", err)
+      }
+    })
+  }
+
+  async endBuildSession(sessionId: string): Promise<void> {
+    this.subscribedSessions.delete(sessionId)
+    try {
+      await this.subscriber.unsubscribe(`build:${sessionId}`)
+    } catch {}
+  }
+
+  private routeBuildEvent(sessionId: string, event: any): void {
+    const room = `session:${sessionId}`
+
+    switch (event.type) {
+      case "token":
+        this.io.to(room).emit("agent:token", {
+          agent: event.agent,
+          content: event.content,
+          sessionId,
+        })
+        break
+      case "agent_status":
+        this.io.to(room).emit("agent:update", {
+          agent: event.agent,
+          status: event.status,
+          statusText: event.statusText,
+          sessionId,
+        })
+        break
+      case "file_created":
+        this.io.to(room).emit("file:created", {
+          path: event.path,
+          content: event.content,
+          sessionId,
+        })
+        break
+      case "build_complete":
+        this.io.to(room).emit("build:complete", {
+          files: event.files,
+          sessionId,
+        })
+        break
+      case "build_error":
+        this.io.to(room).emit("build:error", {
+          error: event.error,
+          sessionId,
+        })
+        break
+      case "phase_change":
+        this.io.to(room).emit("phase:change", {
+          phase: event.phase,
+          label: event.label,
+          sessionId,
+        })
+        break
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

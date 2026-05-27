@@ -13,7 +13,6 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
-import { streamEvents, type StreamEventPayload } from "../../agents/stream-handler.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -121,24 +120,6 @@ export async function runFastBuild(
     timestamp: new Date().toISOString(),
   });
 
-  // ── Subscribe to stream chunks for WS forwarding ──────────────────────────
-  let chunkCount = 0;
-  const chunkHandler = (payload: StreamEventPayload): void => {
-    if (payload.sessionId !== sessionId) return;
-    chunkCount++;
-    server?.agentProgress(sessionId, payload.taskId, "frontend", payload.chunk, chunkCount);
-
-    // Emit coarse-grained progress (0–90%; final 10% reserved for file writes)
-    const percent = Math.min(Math.floor((chunkCount / 150) * 90), 90);
-    server?.progress(sessionId, {
-      sessionId,
-      percent,
-      message: `Generating code… (${chunkCount} chunks received)`,
-      timestamp: new Date().toISOString(),
-    });
-  };
-  streamEvents.on("chunk", chunkHandler);
-
   try {
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
@@ -158,8 +139,6 @@ export async function runFastBuild(
       userId,
       projectId,
     });
-
-    streamEvents.off("chunk", chunkHandler);
 
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {
@@ -269,8 +248,6 @@ export async function runFastBuild(
 
     logger.info({ sessionId, projectId, files: writtenPaths.length, creditsUsed }, "Fast build complete");
   } catch (err) {
-    streamEvents.off("chunk", chunkHandler);
-
     if (cancelledSessions.has(sessionId)) {
       cancelledSessions.delete(sessionId);
       return;

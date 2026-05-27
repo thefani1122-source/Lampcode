@@ -18,7 +18,6 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
-import { streamEvents, type StreamEventPayload } from "../../agents/stream-handler.js";
 import { FreezeManager } from "../../orchestrator/freeze-contract.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -226,21 +225,6 @@ async function runAgent(opts: {
     timestamp: now(),
   });
 
-  // Forward stream chunks to WS
-  let chunks = 0;
-  const chunkHandler = (payload: StreamEventPayload): void => {
-    if (payload.sessionId !== sessionId) return;
-    chunks++;
-    server?.agentProgress(
-      sessionId,
-      payload.taskId,
-      agentType as Parameters<typeof server.agentProgress>[2],
-      payload.chunk,
-      chunks,
-    );
-  };
-  streamEvents.on("chunk", chunkHandler);
-
   try {
     const dispatcher = getDispatcher();
     const result = await dispatcher.dispatch({
@@ -257,8 +241,6 @@ async function runAgent(opts: {
       projectId,
     });
 
-    streamEvents.off("chunk", chunkHandler);
-
     server?.agentComplete(sessionId, {
       taskId,
       sessionId,
@@ -274,7 +256,6 @@ async function runAgent(opts: {
 
     return { content: result.content, costUsd: result.costUsd, taskId, durationMs: result.durationMs, modelUsed: result.modelUsed };
   } catch (err) {
-    streamEvents.off("chunk", chunkHandler);
     server?.agentError(sessionId, {
       taskId,
       sessionId,

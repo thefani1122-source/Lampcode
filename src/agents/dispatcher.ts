@@ -10,7 +10,7 @@ import {
 } from "./model-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
-import { StreamHandler, type StreamBroadcaster } from "./stream-handler.js";
+import { handleAgentStream, type StreamChunk as HandlerStreamChunk } from "./stream-handler.js";
 import {
   type AgentRunner,
   type AgentResult,
@@ -97,13 +97,11 @@ export class AgentDispatcher implements AgentRunner {
   private readonly gateway: ModelGateway;
   private readonly tracker: TokenTracker;
   private readonly promptBuilder: PromptBuilder;
-  private readonly streamHandler: StreamHandler;
 
-  constructor(broadcaster?: StreamBroadcaster) {
+  constructor() {
     this.gateway = new ModelGateway();
     this.tracker = new TokenTracker();
     this.promptBuilder = new PromptBuilder();
-    this.streamHandler = new StreamHandler(broadcaster);
   }
 
   /** Primary dispatch method — tries tier 1 → 2 → 3 on fallback errors, with per-tier retries. */
@@ -275,24 +273,21 @@ export class AgentDispatcher implements AgentRunner {
     ];
 
     const stream = this.gateway.stream({ model, messages });
+    const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
+    const startMs = Date.now();
 
-    let result: Awaited<ReturnType<StreamHandler["handle"]>>;
+    let content: string;
     try {
-      result = await this.streamHandler.handle(
-        stream,
-        sessionId,
-        taskId,
-        agentType,
-        this.tracker,
-        model,
-        estimatedInputTokens,
+      content = await handleAgentStream(
+        stream as unknown as AsyncGenerator<HandlerStreamChunk>,
+        { sessionId, agentType, taskId, outputPath },
       );
     } catch (err) {
       await this.tracker.fail(taskId, String(err)).catch(() => undefined);
       throw err;
     }
 
-    await this.tracker.complete(taskId, result.usage).catch((e) => {
+    await this.tracker.complete(taskId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 }).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
 
@@ -300,14 +295,14 @@ export class AgentDispatcher implements AgentRunner {
       taskId,
       modelUsed: model,
       tierUsed: tier,
-      content: result.content,
-      reasoning: result.reasoning,
-      toolCalls: result.toolCalls,
-      outputPath: result.outputPath,
-      durationMs: result.durationMs,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      costUsd: result.usage.costUsd,
+      content,
+      reasoning: "",
+      toolCalls: [],
+      outputPath,
+      durationMs: Date.now() - startMs,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
     };
   }
 
@@ -328,9 +323,9 @@ export class AgentDispatcher implements AgentRunner {
 
 let _dispatcher: AgentDispatcher | null = null;
 
-export function getDispatcher(broadcaster?: StreamBroadcaster): AgentDispatcher {
+export function getDispatcher(): AgentDispatcher {
   if (_dispatcher === null) {
-    _dispatcher = new AgentDispatcher(broadcaster);
+    _dispatcher = new AgentDispatcher();
   }
   return _dispatcher;
 }
