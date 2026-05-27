@@ -64,7 +64,7 @@ export function startFastBuildWorker(runner: FastBuildRunner, wsServer?: WebSock
     if (!job) return
     const { sessionId } = job.data
     if (sessionId) {
-      const { publishBuildEvent } = await import("../lib/redis-publisher.ts")
+      const { publishBuildEvent } = await import("../lib/redis-publisher.js")
       await publishBuildEvent(sessionId, {
         type: "build_error",
         error: job.failedReason ?? "Build failed",

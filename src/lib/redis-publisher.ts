@@ -1,4 +1,4 @@
-import { createRedis } from "./redis.ts"
+import { createRedis } from "./redis.js"
 
 const pub = createRedis()
 

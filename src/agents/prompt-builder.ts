@@ -2,7 +2,12 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
-import { type BuildContext } from "../orchestrator/engine.js";
+interface BuildContext {
+  projectId: string;
+  userId: string;
+  mode: "fast" | "plan";
+  prompt: string;
+}
 import { logger } from "../server/logger.js";
 
 // ── Token budget ──────────────────────────────────────────────────────────────

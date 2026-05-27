@@ -1,5 +1,5 @@
 import { type StreamChunk } from "../agents/model-gateway.js";
-import { type Phase } from "../orchestrator/state-machine.js";
+type Phase = "IDLE" | "PLANNING" | "FOUNDATION" | "BUILD" | "VERIFY" | "DEPLOY";
 import { type AgentTaskType } from "../agents/model-gateway.js";
 
 // ── Build namespace events ────────────────────────────────────────────────────

@@ -11,12 +11,6 @@ import {
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk } from "./stream-handler.js";
-import {
-  type AgentRunner,
-  type AgentResult,
-  type BuildContext,
-} from "../orchestrator/engine.js";
-import { type Phase, type AgentType } from "../orchestrator/state-machine.js";
 import { logger } from "../server/logger.js";
 
 // Workspace root: one directory per project
@@ -27,26 +21,6 @@ const RETRIES_PER_TIER = 2;
 
 // ── AgentTaskType re-exported for external consumers ─────────────────────────
 export { type AgentTaskType } from "./model-gateway.js";
-
-// ── Orchestrator AgentType → dispatcher AgentTaskType ────────────────────────
-
-const AGENT_TYPE_MAP: Record<AgentType, AgentTaskType> = {
-  architect: "planning",
-  backend:   "backend",
-  frontend:  "frontend",
-  database:  "db",
-  devops:    "deploy",
-};
-
-// Phase-level task descriptions for the run() bridge method
-const PHASE_TASK: Record<Phase, string> = {
-  IDLE:       "No task (idle phase)",
-  PLANNING:   "Analyse the project requirements and produce a complete technical architecture plan.",
-  FOUNDATION: "Establish the project foundation: directory structure, DB schema, and core configuration.",
-  BUILD:      "Implement the requested feature or module according to the approved architecture.",
-  VERIFY:     "Run security analysis, test coverage checks, and integration validation.",
-  DEPLOY:     "Generate deployment configuration (Dockerfile, CI workflow, platform config).",
-};
 
 // ── Dispatch request / result ─────────────────────────────────────────────────
 
@@ -93,7 +67,7 @@ function isFallbackCode(code: string): code is FallbackCode {
 
 // ── AgentDispatcher ───────────────────────────────────────────────────────────
 
-export class AgentDispatcher implements AgentRunner {
+export class AgentDispatcher {
   private readonly gateway: ModelGateway;
   private readonly tracker: TokenTracker;
   private readonly promptBuilder: PromptBuilder;
@@ -160,52 +134,6 @@ export class AgentDispatcher implements AgentRunner {
       projectId,
       userId,
     });
-  }
-
-  /** Implements AgentRunner — called by the BuildOrchestrator worker. */
-  async run(sessionId: string, phase: Phase, context: BuildContext): Promise<AgentResult> {
-    // Determine which agent type to use for this phase
-    // FOUNDATION and BUILD phases need to pick based on which agent is being run.
-    // The orchestrator calls run() once per phase; we pick the primary agent type.
-    const primaryAgentType = this.phaseToAgentType(phase);
-
-    const taskDescription = PHASE_TASK[phase];
-
-    let result: DispatchResult;
-    try {
-      result = await this.dispatch({
-        agentType: primaryAgentType,
-        task: {
-          description: taskDescription,
-          requirements: [`Project: ${context.projectId}`, `Mode: ${context.mode}`],
-          outputFormat: "markdown",
-        },
-        sessionId,
-        projectId: context.projectId,
-        userId: context.userId,
-      });
-    } catch (err) {
-      return {
-        success: false,
-        creditsUsed: 0,
-        outputs: {},
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-
-    // Convert cost to integer credits (1 credit = $0.001 USD)
-    const creditsUsed = Math.ceil(result.costUsd * 1_000);
-
-    return {
-      success: true,
-      creditsUsed,
-      outputs: {
-        content: result.content,
-        outputPath: result.outputPath,
-        modelUsed: result.modelUsed,
-        tierUsed: result.tierUsed,
-      },
-    };
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -287,7 +215,7 @@ export class AgentDispatcher implements AgentRunner {
       throw err;
     }
 
-    await this.tracker.complete(taskId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 }).catch((e) => {
+    await this.tracker.complete(taskId, { model, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 }).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
 
@@ -306,17 +234,6 @@ export class AgentDispatcher implements AgentRunner {
     };
   }
 
-  private phaseToAgentType(phase: Phase): AgentTaskType {
-    const map: Record<Phase, AgentTaskType> = {
-      IDLE:       "monitor",
-      PLANNING:   "planning",
-      FOUNDATION: "db",
-      BUILD:      "backend",
-      VERIFY:     "security",
-      DEPLOY:     "deploy",
-    };
-    return map[phase];
-  }
 }
 
 // ── Singleton factory ─────────────────────────────────────────────────────────
@@ -335,6 +252,3 @@ export function getDispatcher(): AgentDispatcher {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-// Expose AgentType map for external consumers
-export { AGENT_TYPE_MAP };

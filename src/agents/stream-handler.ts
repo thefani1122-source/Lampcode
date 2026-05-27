@@ -1,4 +1,4 @@
-import { publishBuildEvent } from "../lib/redis-publisher.ts"
+import { publishBuildEvent } from "../lib/redis-publisher.js"
 import { writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 

@@ -2,8 +2,9 @@ import { createHash } from "crypto";
 import { readFile, writeFile, mkdir, access } from "fs/promises";
 import { join } from "path";
 import { z } from "zod";
-import { type Phase } from "./state-machine.js";
 import { logger } from "../server/logger.js";
+
+type Phase = "IDLE" | "PLANNING" | "FOUNDATION" | "BUILD" | "VERIFY" | "DEPLOY";
 
 // ── Freeze file schema ────────────────────────────────────────────────────────
 

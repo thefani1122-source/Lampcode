@@ -18,7 +18,7 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
-import { FreezeManager } from "../../orchestrator/freeze-contract.js";
+import { FreezeManager } from "../../lib/freeze-contract.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { getBrainManager } from "../../brain/manager.js";

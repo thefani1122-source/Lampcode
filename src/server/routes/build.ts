@@ -373,7 +373,7 @@ buildRouter.post("/fast", async (c) => {
     throw err;
   }
 
-  return c.json({ sessionId, status: "queued", estimatedTime: "2-5 min" }, 202);
+  return c.json({ sessionId, projectId, status: "queued", estimatedTime: "2-5 min" }, 202);
 });
 
 // GET /api/build/:sessionId/status
