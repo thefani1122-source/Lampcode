@@ -358,16 +358,16 @@ buildRouter.post("/fast", async (c) => {
       .where(eq(projects.id, projectId));
     console.log(`[FAST t+${Date.now()-t0}ms] project status=building`);
 
-    // ── Run build in background ─────────────────────────────────────────────
-    void runFastBuild(sessionId, projectId, prompt, authUser.id);
-    console.log(`[FAST t+${Date.now()-t0}ms] job enqueued — returning 202`);
+    // ── Run build synchronously ─────────────────────────────────────────────
+    await runFastBuild(sessionId, projectId, prompt, authUser.id);
+    console.log(`[FAST t+${Date.now()-t0}ms] build complete`);
   } catch (err) {
-    // Refund credits if we failed to queue the job
+    // Refund credits if session creation or build failed
     await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);
     throw err;
   }
 
-  return c.json({ sessionId, projectId, status: "queued", estimatedTime: "2-5 min" }, 202);
+  return c.json({ sessionId, projectId, status: "completed" });
 });
 
 // GET /api/build/:sessionId/status
