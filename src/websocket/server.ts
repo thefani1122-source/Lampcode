@@ -143,6 +143,18 @@ export class WebSocketServer {
     registerUserHandlers(this.userNsp);
     registerInterviewHandlers(this.interviewNsp);
 
+    // ── Single Redis message listener for all build sessions ─────────────────
+    this.subscriber.on("message", (channel: string, message: string) => {
+      const sessionId = channel.replace("build:", "")
+      if (!this.subscribedSessions.has(sessionId)) return
+      try {
+        const event = JSON.parse(message)
+        this.routeBuildEvent(sessionId, event)
+      } catch (err) {
+        console.error("[WS] Redis parse failed:", err)
+      }
+    })
+
     logger.info("WebSocket server initialised (namespaces: / /project /user /interview)");
   }
 
@@ -289,19 +301,7 @@ export class WebSocketServer {
   async startBuildSession(sessionId: string): Promise<void> {
     if (this.subscribedSessions.has(sessionId)) return
     this.subscribedSessions.add(sessionId)
-
-    const channel = `build:${sessionId}`
-    await this.subscriber.subscribe(channel)
-
-    this.subscriber.on("message", (ch: string, message: string) => {
-      if (ch !== channel) return
-      try {
-        const event = JSON.parse(message)
-        this.routeBuildEvent(sessionId, event)
-      } catch (err) {
-        console.error("[WS] Redis parse failed:", err)
-      }
-    })
+    await this.subscriber.subscribe(`build:${sessionId}`)
   }
 
   async endBuildSession(sessionId: string): Promise<void> {
