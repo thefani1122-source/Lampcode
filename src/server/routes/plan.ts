@@ -1015,7 +1015,7 @@ planRouter.post("/:id/approve", async (c) => {
     // Rejected with no modifications — cancel
     await db.update(buildSessions).set({ status: "cancelled", planStatus: "cancelled", completedAt: new Date() })
       .where(eq(buildSessions.id, sessionId));
-    await db.update(projects).set({ status: "inactive" }).where(eq(projects.id, session.projectId));
+    await db.update(projects).set({ status: "completed" }).where(eq(projects.id, session.projectId));
     return c.json({ sessionId, status: "cancelled" });
   }
 

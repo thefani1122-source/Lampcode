@@ -12,7 +12,8 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
-import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
+import { parseFilesFromContent, parseAndPublishFiles, type ParsedFile } from "../../agents/file-parser.js";
+import { publishBuildEvent } from "../../lib/redis-publisher.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -147,7 +148,13 @@ export async function runFastBuild(
     }
 
     // ── Parse and write files ───────────────────────────────────────────────
-    let parsedFiles = parseFilesFromContent(result.content);
+    const allFiles = await parseAndPublishFiles(result.content, sessionId);
+    let parsedFiles: ParsedFile[] = Object.entries(allFiles).map(([path, code]) => ({ path, code }));
+
+    await publishBuildEvent(sessionId, {
+      type: "build_complete",
+      files: allFiles,
+    });
 
     // Auto-trigger fix agent if frontend produced no structured file output
     if (parsedFiles.length === 0 && result.content.trim().length < 200) {

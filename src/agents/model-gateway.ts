@@ -132,7 +132,6 @@ export class ModelGateway {
     console.log("URL:", `${baseUrl}/chat/completions`);
     console.log("Model:", resolvedModel);
     console.log("API key present:", !!apiKey);
-    console.log("API key prefix:", apiKey ? apiKey.substring(0, 12) : "(none)");
     console.log("OPENROUTER_API_KEY env:", !!process.env["OPENROUTER_API_KEY"]);
     console.log("KIMI_API_KEY env:", !!process.env["KIMI_API_KEY"]);
     console.log("Messages count:", req.messages.length);
