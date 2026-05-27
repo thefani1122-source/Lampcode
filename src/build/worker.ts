@@ -32,15 +32,6 @@ export function startFastBuildWorker(runner: FastBuildRunner, wsServer?: WebSock
     },
   );
 
-  _worker.on("completed", (job) => {
-    logger.info({ sessionId: job.data.sessionId }, "Fast build job completed");
-  });
-
-  _worker.on("failed", (job, err) => {
-    const sid = job?.data.sessionId ?? "unknown";
-    logger.error({ sessionId: sid, err: err.message }, "Fast build job failed");
-  });
-
   // Without this handler Node would crash on Redis connection errors.
   _worker.on("error", (err) => {
     logger.error({ err: err.message }, "Fast build worker error");

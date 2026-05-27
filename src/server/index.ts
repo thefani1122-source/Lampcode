@@ -20,7 +20,7 @@ import { billingRouter } from "./routes/billing.js";
 import { contextRouter } from "./routes/context.js";
 import { interviewRouter } from "./routes/interview.js";
 import { webhooksRouter } from "./routes/webhooks.js";
-import { createWebSocketServer } from "../websocket/server.js";
+import { createWebSocketServer, getWebSocketServer } from "../websocket/server.js";
 import { startFastBuildWorker } from "../build/worker.js";
 import { runFastBuild } from "./routes/build.js";
 
@@ -108,7 +108,7 @@ createWebSocketServer(httpServer);
 
 // Start BullMQ worker — non-blocking: a Redis failure here must not take down the HTTP server.
 try {
-  startFastBuildWorker(runFastBuild);
+  startFastBuildWorker(runFastBuild, getWebSocketServer());
 } catch (err) {
   logger.warn({ err }, "Fast build worker could not start (Redis unavailable?) — will retry on redeploy");
 }
