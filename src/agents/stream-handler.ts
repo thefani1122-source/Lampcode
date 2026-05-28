@@ -22,17 +22,10 @@ export async function handleAgentStream(
   const { sessionId, agentType, taskId, outputPath, wsServer } = opts
   let fullContent = ""
 
-  wsServer.emitToSession(sessionId, "agent:update", {
-    agent: agentType,
-    status: "running",
-    statusText: "Starting...",
-    sessionId,
-  })
-
   for await (const chunk of generator) {
     if (chunk.type === "error") {
       wsServer.emitToSession(sessionId, "build:error", {
-        error: chunk.error ?? "Unknown error",
+        message: chunk.error ?? "Unknown error",
         sessionId,
       })
       throw new Error(chunk.error)
@@ -40,20 +33,13 @@ export async function handleAgentStream(
 
     if (chunk.type === "content" && chunk.content) {
       fullContent += chunk.content
-      wsServer.emitToSession(sessionId, "agent:token", {
-        agent: agentType,
-        content: chunk.content,
+      wsServer.emitToSession(sessionId, "build:token", {
+        text: chunk.content,
         sessionId,
       })
     }
 
     if (chunk.type === "done") {
-      wsServer.emitToSession(sessionId, "agent:update", {
-        agent: agentType,
-        status: "done",
-        statusText: "Complete",
-        sessionId,
-      })
       break
     }
   }
