@@ -127,10 +127,10 @@ export async function runFastBuild(
       task: {
         description: prompt,
         requirements: [
-          "Generate complete, production-ready files.",
-          "Each file must be preceded by its relative path (e.g. ## File: src/App.tsx).",
-          "Include: index.html, CSS, and all JavaScript/TypeScript source files.",
-          "Use React with TypeScript. Style with Tailwind CSS.",
+          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+          "Always include src/App.tsx, src/index.tsx, and package.json.",
+          "src/App.tsx must have `export default function App()`.",
+          "Use React with TypeScript. Style with Tailwind CSS or inline styles.",
         ],
         outputFormat: "code",
       },

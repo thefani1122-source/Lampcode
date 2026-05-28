@@ -3,39 +3,139 @@ export interface ParsedFile {
   code: string;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Single-word language hints that appear after ``` but are NOT file paths
+const LANG_HINTS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs",
+  "json", "json5", "jsonc",
+  "css", "scss", "sass", "less",
+  "html", "xml", "svg",
+  "md", "mdx", "markdown",
+  "bash", "sh", "zsh", "shell",
+  "python", "py", "rb", "ruby", "go", "rust", "java", "c", "cpp", "cs",
+  "yaml", "yml", "toml", "ini", "env",
+  "sql", "graphql", "gql",
+  "plaintext", "text", "txt", "diff", "patch",
+]);
+
+// Files that belong at project root, not under src/
+const ROOT_FILES = new Set([
+  "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+  "index.html", "vite.config.ts", "vite.config.js",
+  "tsconfig.json", "tsconfig.node.json", "tsconfig.app.json",
+  ".env", ".env.local", ".gitignore", ".eslintrc", ".eslintrc.json",
+  "README.md", "tailwind.config.ts", "tailwind.config.js",
+  "postcss.config.js", "postcss.config.ts",
+]);
+
+// ── Default generated file contents ──────────────────────────────────────────
+
+const DEFAULT_INDEX_TSX = `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);`;
+
+const DEFAULT_PACKAGE_JSON = JSON.stringify(
+  {
+    name: "sandpack-app",
+    private: true,
+    version: "0.0.0",
+    type: "module",
+    dependencies: {
+      react: "^18.2.0",
+      "react-dom": "^18.2.0",
+    },
+    devDependencies: {
+      "@types/react": "^18.2.0",
+      "@types/react-dom": "^18.2.0",
+      typescript: "^5.0.0",
+    },
+  },
+  null,
+  2,
+);
+
+// ── Path helpers ──────────────────────────────────────────────────────────────
+
 /**
- * Extract file path + code pairs from an LLM markdown response.
- *
- * Handles the most common LLM output patterns:
- *   ## File: src/App.tsx      <- heading with "File:" prefix
- *   ### `src/App.tsx`         <- heading with backtick path
- *   **`src/App.tsx`**         <- bold backtick path
- *   src/App.tsx               <- bare path on its own line
- *   // src/App.tsx            <- path as first comment in code block
+ * Extract a file path from the opening fence line, e.g.:
+ *   ```filename:src/App.tsx   → "src/App.tsx"
+ *   ```src/App.tsx            → "src/App.tsx"
+ *   ```tsx                    → null  (language hint only)
  */
+function extractFencePath(fenceLine: string): string | null {
+  const after = fenceLine.replace(/^(?:```|~~~)/, "").trim();
+  if (!after) return null;
+
+  // filename: prefix is unambiguous
+  if (after.startsWith("filename:")) {
+    return after.slice("filename:".length).trim() || null;
+  }
+
+  // Pure language hint → not a path
+  if (LANG_HINTS.has(after.toLowerCase())) return null;
+
+  // Contains a slash → definitely a path
+  if (after.includes("/")) return after;
+
+  // Bare name with a recognisable extension → treat as path
+  if (/\.[a-zA-Z0-9]{1,10}$/.test(after)) return after;
+
+  return null;
+}
+
+/**
+ * Normalise a raw path extracted from LLM output:
+ *   "/src/App.tsx" → "src/App.tsx"   (strip leading slash)
+ *   "App.tsx"      → "src/App.tsx"   (add src/ for bare source files)
+ *   "package.json" → "package.json"  (root file, unchanged)
+ */
+function normalizePath(raw: string): string {
+  let p = raw.trim().replace(/^\/+/, "").replace(/^\.\//, "");
+  // Bare filename with no directory: promote source files to src/
+  if (
+    !p.includes("/") &&
+    !ROOT_FILES.has(p) &&
+    /\.(tsx|ts|jsx|js|css|scss|sass|less)$/.test(p)
+  ) {
+    p = `src/${p}`;
+  }
+  return p;
+}
+
+// ── Main parser ───────────────────────────────────────────────────────────────
+
 export function parseFilesFromContent(content: string): ParsedFile[] {
-  const files: ParsedFile[] = [];
+  const rawFiles: ParsedFile[] = [];
   const lines = content.split("\n");
   let i = 0;
 
-  // Regex for a line that looks like a file path indicator (before a fence)
+  // Regex for a heading line before a fence that looks like a file path
   const pathLineRe =
     /^(?:#{1,4}\s+(?:File:\s+)?|>\s*)?[`*_]{0,3}([^\s`*_<>|]+\.[a-zA-Z0-9]{1,10})[`*_]{0,3}:?\s*$/;
 
   while (i < lines.length) {
     const line = lines[i] ?? "";
 
-    // Check for opening fence (``` or ~~~)
     if (/^(?:```|~~~)/.test(line)) {
-      // Look backwards (up to 3 lines) for a file path heading
-      let filePath: string | null = null;
-      for (let back = 1; back <= 3; back++) {
-        const prevLine = lines[i - back] ?? "";
-        if (prevLine.trim() === "") continue;
-        const m = pathLineRe.exec(prevLine.trim());
-        if (m?.[1]) { filePath = m[1]; break; }
-        // If this prev line is itself a fence or content, stop looking back
-        if (/^(?:```|~~~)/.test(prevLine) || back === 1) break;
+      // 1. Try to extract path from the fence line itself (```filename:path or ```path)
+      let filePath: string | null = extractFencePath(line);
+
+      // 2. If fence has no path, look backwards up to 3 lines for a heading
+      if (filePath === null) {
+        for (let back = 1; back <= 3; back++) {
+          const prevLine = lines[i - back] ?? "";
+          if (prevLine.trim() === "") continue;
+          const m = pathLineRe.exec(prevLine.trim());
+          if (m?.[1]) { filePath = m[1]; break; }
+          if (/^(?:```|~~~)/.test(prevLine) || back === 1) break;
+        }
       }
 
       // Collect code until closing fence
@@ -50,24 +150,24 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
       const code = codeLines.join("\n").trim();
       if (code.length === 0) continue;
 
-      // Fallback: look for path comment as first line in the code block
+      // 3. Fallback: first line of code block as a comment path
       if (filePath === null) {
         const firstCodeLine = codeLines[0] ?? "";
-        const commentPathMatch =
+        const commentMatch =
           firstCodeLine.match(/^\/\/\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/) ??
           firstCodeLine.match(/^#\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/);
-        if (commentPathMatch?.[1]) {
-          filePath = commentPathMatch[1];
+        if (commentMatch?.[1]) {
+          filePath = commentMatch[1];
           const trimmedCode = codeLines.slice(1).join("\n").trim();
           if (trimmedCode.length > 0) {
-            files.push({ path: filePath, code: trimmedCode });
+            rawFiles.push({ path: normalizePath(filePath), code: trimmedCode });
           }
           continue;
         }
       }
 
       if (filePath !== null) {
-        files.push({ path: filePath, code });
+        rawFiles.push({ path: normalizePath(filePath), code });
       }
       continue;
     }
@@ -75,8 +175,59 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
     i++;
   }
 
-  console.log("[DEBUG] Files parsed count:", files.length)
-  console.log("[DEBUG] File paths:", files.map((f) => f.path))
-  return files;
+  // ── Post-process: ensure Sandpack required files exist ────────────────────
+
+  const fileMap = new Map<string, string>(rawFiles.map((f) => [f.path, f.code]));
+
+  // Promote bare App.tsx to src/App.tsx if src/App.tsx is absent
+  if (!fileMap.has("src/App.tsx") && fileMap.has("App.tsx")) {
+    fileMap.set("src/App.tsx", fileMap.get("App.tsx")!);
+    fileMap.delete("App.tsx");
+  }
+
+  // Generate src/index.tsx if absent
+  if (!fileMap.has("src/index.tsx")) {
+    fileMap.set("src/index.tsx", DEFAULT_INDEX_TSX);
+  }
+
+  // Generate package.json if absent
+  if (!fileMap.has("package.json")) {
+    fileMap.set("package.json", DEFAULT_PACKAGE_JSON);
+  }
+
+  return Array.from(fileMap.entries()).map(([path, code]) => ({ path, code }));
 }
 
+// ── Sandpack validator ────────────────────────────────────────────────────────
+
+const SERVER_IMPORT_RE =
+  /from\s+['"](?:fs|path|os|crypto|child_process|net|dns|tls|stream|buffer|util|events|assert|url|querystring|http|https|http2)['"]/;
+
+/**
+ * Validate that a file map is safe to load into Sandpack.
+ * Returns the (possibly unmodified) files alongside any errors found.
+ */
+export function validateSandpackFiles(files: Record<string, string>): {
+  valid: boolean;
+  errors: string[];
+  files: Record<string, string>;
+} {
+  const errors: string[] = [];
+
+  if (!files["src/App.tsx"]) errors.push("Missing src/App.tsx");
+  if (!files["src/index.tsx"]) errors.push("Missing src/index.tsx");
+  if (!files["package.json"]) errors.push("Missing package.json");
+
+  if (files["src/App.tsx"] && !/export\s+default/.test(files["src/App.tsx"])) {
+    errors.push("src/App.tsx has no default export");
+  }
+
+  for (const [filePath, content] of Object.entries(files)) {
+    if (filePath === "package.json") continue;
+    if (SERVER_IMPORT_RE.test(content)) {
+      errors.push(`${filePath} contains a server-side import`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors, files };
+}
