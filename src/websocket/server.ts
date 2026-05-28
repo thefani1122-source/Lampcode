@@ -150,6 +150,11 @@ export class WebSocketServer {
     this.io.to(`session:${sessionId}`).emit(event, data);
   }
 
+  // Emit to a literal room name — used for bare sessionId rooms joined via 'join' event
+  emitToRoom(room: string, event: string, data: Record<string, unknown>): void {
+    this.io.to(room).emit(event, data);
+  }
+
   emitToUser(userId: string, event: string, data: Record<string, unknown>): void {
     this.io.to(`user:${userId}`).emit(event, data);
   }

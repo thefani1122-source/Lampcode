@@ -52,10 +52,13 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       console.log(`[WS CONNECT] no sessionId in query — client must emit join_session manually`);
     }
 
-    // Simple join event: room = sessionId directly (used by frontend workspace)
-    socket.on("join", (sessionId: string) => {
-      socket.join(sessionId);
-      logger.debug({ socketId: socket.id, sessionId }, "Joined session room (join event)");
+    // Simple join event: room = bare sessionId (used by frontend workspace).
+    // Accepts either a plain string or { sessionId } object from the client.
+    socket.on("join", (payload: string | { sessionId: string }) => {
+      const sid = typeof payload === "string" ? payload : payload.sessionId;
+      if (!sid) return;
+      socket.join(sid);
+      logger.debug({ socketId: socket.id, sessionId: sid }, "Joined session room (join event)");
     });
 
     // Client joins a session room to receive updates for that build

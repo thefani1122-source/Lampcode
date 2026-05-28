@@ -159,6 +159,7 @@ export interface BuildServerEvents {
 
 // Client → server events for the build namespace
 export interface BuildClientEvents {
+  join: (payload: string | { sessionId: string }) => void;
   join_session: (sessionId: string, ack: (joined: boolean) => void) => void;
   leave_session: (sessionId: string) => void;
 }
