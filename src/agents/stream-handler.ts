@@ -80,11 +80,13 @@ export async function handleAgentStream(
     console.error("[StreamHandler] Output file write failed:", err)
   }
 
-  // ── Parse files and emit file events (frontend builds only) ────────────────
+  // ── Parse files and emit file events ───────────────────────────────────────
   // Disk writes for the project workspace are still handled by build.ts so
   // the correct outputDir (workspace/{projectId}/{sessionId}/frontend) is used.
   // Here we only parse content to emit the WS events the FileTree needs.
-  if (agentType === "frontend" && fullContent.length > 0) {
+  // Skip pure analysis agents that never produce file output.
+  const skipFileEmit = ["security", "connection", "monitor"].includes(agentType ?? "");
+  if (!skipFileEmit && fullContent.length > 0) {
     const parsedFiles = parseFilesFromContent(fullContent)
 
     for (const file of parsedFiles) {
