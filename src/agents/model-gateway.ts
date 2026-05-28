@@ -149,8 +149,8 @@ export class ModelGateway {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://buildforge.dev",
-          "X-Title": "BuildForge",
+          "HTTP-Referer": process.env["FRONTEND_URL"] ?? "https://lampcode.dev",
+          "X-Title": "Lampcode",
         },
         body: JSON.stringify({
           model: resolvedModel,

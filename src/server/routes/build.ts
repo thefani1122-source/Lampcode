@@ -377,7 +377,13 @@ buildRouter.post("/fast", async (c) => {
     console.log(`[FAST t+${Date.now()-t0}ms] project status=building`);
 
     // ── Fire-and-forget build ───────────────────────────────────────────────
-    setImmediate(() => { runFastBuild(sessionId, projectId, prompt, authUser.id).catch(console.error); });
+    const userId = authUser.id;
+    setImmediate(() => {
+      runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
+        console.error(err);
+        refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
+      });
+    });
   } catch (err) {
     // Refund credits if session creation failed (DB insert or project update)
     await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);

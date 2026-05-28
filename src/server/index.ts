@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 import { logger as honoLogger } from "hono/logger";
 import { serve } from "@hono/node-server";
 import { config, ALLOWED_ORIGINS } from "./config.js";
@@ -49,6 +50,14 @@ app.use(
     credentials: true,
   }),
 );
+
+// Security headers
+app.use("*", secureHeaders({
+  xContentTypeOptions: "nosniff",
+  xFrameOptions: "DENY",
+  xXssProtection: "1; mode=block",
+  referrerPolicy: "strict-origin-when-cross-origin",
+}));
 
 // Request logging
 app.use("*", honoLogger((message, ...rest) => logger.info({ msg: message }, ...rest)));

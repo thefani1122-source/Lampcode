@@ -21,7 +21,7 @@ export { encrypt, decrypt, type EncryptedValue } from "../env-crypto.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ENVIRONMENTS = ["development", "preview", "production"] as const;
+const ENVIRONMENTS = ["development", "staging", "production"] as const;
 type Env = (typeof ENVIRONMENTS)[number];
 
 // ── Validation ────────────────────────────────────────────────────────────────

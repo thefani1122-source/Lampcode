@@ -21,6 +21,7 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_PRO: z.string().min(1).optional(),
   STRIPE_PRICE_ENTERPRISE: z.string().min(1).optional(),
+  ENCRYPTION_KEY: z.string().length(64, "ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)").optional(),
 });
 
 const REQUIRED_VARS = [
@@ -29,6 +30,7 @@ const REQUIRED_VARS = [
   "SUPABASE_SERVICE_KEY",
   "OPENROUTER_API_KEY",
   "REDIS_URL",
+  "ENCRYPTION_KEY",
 ] as const;
 
 function parseEnv() {
