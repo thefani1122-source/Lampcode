@@ -17,7 +17,7 @@ type BuildSocketData = Partial<SocketData>;
 type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
 type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
 
-const SESSION_ROOM = (sessionId: string) => `session:${sessionId}`;
+const SESSION_ROOM = (sessionId: string) => sessionId;
 
 async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<void> {
   const buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);

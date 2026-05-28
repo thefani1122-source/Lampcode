@@ -201,7 +201,7 @@ export async function runFastBuild(
       });
 
       // Emit file:created for frontend workspace listener
-      server?.emitToSession(sessionId, "file:created", {
+      server?.emitToRoom(sessionId, "file:created", {
         path: safePath,
         content: code,
         sessionId,
@@ -226,7 +226,7 @@ export async function runFastBuild(
     for (const f of filesToWrite) {
       allFiles[f.path] = f.code;
     }
-    server?.emitToSession(sessionId, "build:complete", {
+    server?.emitToRoom(sessionId, "build:complete", {
       sessionId,
       files: allFiles,
       previewUrl: `/api/build/${sessionId}/preview`,

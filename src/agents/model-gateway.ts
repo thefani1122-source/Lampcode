@@ -116,19 +116,20 @@ export class ModelGateway {
   private readonly apiKey: string;
   private readonly timeoutMs: number;
 
-  constructor(apiKey: string = config.OPENROUTER_API_KEY, timeoutMs = 120_000) {
+  constructor(apiKey: string = config.OPENROUTER_API_KEY, timeoutMs = 180_000) {
     this.apiKey = apiKey;
     this.timeoutMs = timeoutMs;
   }
 
   /** Yield parsed SSE chunks from an OpenAI-compatible streaming completion. */
-  async *stream(req: GatewayRequest): AsyncGenerator<StreamChunk> {
+  async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
     const baseUrl = OPENROUTER_BASE;
     const apiKey = this.apiKey;
     const resolvedModel = req.model;
+    const effectiveTimeout = overrideTimeoutMs ?? this.timeoutMs;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
     logger.debug({ model: resolvedModel, baseUrl }, "ModelGateway routing");
 
@@ -154,7 +155,7 @@ export class ModelGateway {
     } catch (err) {
       clearTimeout(timeoutId);
       if (err instanceof Error && err.name === "AbortError") {
-        throw new GatewayError("NETWORK", `Request timed out after ${this.timeoutMs}ms`);
+        throw new GatewayError("NETWORK", `Request timed out after ${effectiveTimeout}ms`);
       }
       throw new GatewayError("NETWORK", `Fetch failed: ${String(err)}`);
     }

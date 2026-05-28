@@ -147,7 +147,7 @@ export class WebSocketServer {
   // ── Direct session emit ───────────────────────────────────────────────────────
 
   emitToSession(sessionId: string, event: string, data: Record<string, unknown>): void {
-    this.io.to(`session:${sessionId}`).emit(event, data);
+    this.io.to(sessionId).emit(event, data);
   }
 
   // Emit to a literal room name — used for bare sessionId rooms joined via 'join' event
