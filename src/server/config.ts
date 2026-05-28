@@ -88,6 +88,7 @@ export const ALLOWED_ORIGINS = [
   ...new Set([
     "https://lampcode-production.up.railway.app",
     "https://vibe-coder-suite.vercel.app",
+    // TODO: Remove localhost origins before production hardening
     "http://localhost:3000",
     "http://localhost:5173",
     _env.FRONTEND_ORIGIN,

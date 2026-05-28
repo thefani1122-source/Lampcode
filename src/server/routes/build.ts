@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
-import { join, dirname, relative, extname } from "path";
+import { join, dirname, relative } from "path";
 import { db } from "../../db/client.js";
 import {
   projects,

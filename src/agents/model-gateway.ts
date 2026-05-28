@@ -127,16 +127,6 @@ export class ModelGateway {
     const apiKey = this.apiKey;
     const resolvedModel = req.model;
 
-    // ── Debug: log every outbound LLM call so we can confirm it reaches OpenRouter ──
-    console.log("=== LLM CALL DEBUG ===");
-    console.log("URL:", `${baseUrl}/chat/completions`);
-    console.log("Model:", resolvedModel);
-    console.log("API key present:", !!apiKey);
-    console.log("OPENROUTER_API_KEY env:", !!process.env["OPENROUTER_API_KEY"]);
-    console.log("KIMI_API_KEY env:", !!process.env["KIMI_API_KEY"]);
-    console.log("Messages count:", req.messages.length);
-    console.log("======================");
-
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -169,8 +159,6 @@ export class ModelGateway {
       throw new GatewayError("NETWORK", `Fetch failed: ${String(err)}`);
     }
 
-    console.log("=== LLM RESPONSE ===", response.status, response.statusText);
-
     if (!response.ok) {
       clearTimeout(timeoutId);
       throw await this.parseHttpError(response);
@@ -189,9 +177,6 @@ export class ModelGateway {
     // Accumulate tool call argument fragments keyed by call index
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
 
-    let totalBytesReceived = 0;
-    let totalChunksRead = 0;
-
     try {
       outer: while (true) {
         let result: Awaited<ReturnType<typeof reader.read>>;
@@ -204,22 +189,14 @@ export class ModelGateway {
           throw new GatewayError("NETWORK", `Stream read error: ${String(err)}`);
         }
 
-        if (result.done) {
-          console.log(`=== STREAM DONE === totalBytes=${totalBytesReceived} reads=${totalChunksRead}`);
-          break;
-        }
+        if (result.done) break;
 
-        totalBytesReceived += result.value.byteLength;
-        totalChunksRead++;
         const raw = decoder.decode(result.value, { stream: true });
-        console.log(`[stream read #${totalChunksRead}] bytes=${result.value.byteLength} preview=${JSON.stringify(raw.slice(0, 120))}`);
-
         buffer += raw;
 
         // SSE events are delimited by \n\n
         const events = buffer.split("\n\n");
         buffer = events.pop() ?? "";
-        console.log(`[stream parse] events=${events.length} bufferRemainder=${buffer.length}`);
 
         for (const event of events) {
           for (const line of event.split("\n")) {

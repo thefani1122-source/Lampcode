@@ -25,7 +25,6 @@
     "@hono/node-server": "^2.0.2",
     "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/supabase-js": "^2.106.1",
-    "bullmq": "^5.76.8",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.19",
     "ioredis": "^5.10.1",
