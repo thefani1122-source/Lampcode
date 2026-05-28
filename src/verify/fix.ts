@@ -6,6 +6,7 @@
  * All IO and AI are injectable so the module can be tested without DB/network.
  */
 
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SecurityReport, SecurityCheck } from "./security.js";
@@ -83,7 +84,7 @@ async function defaultFixAgent(
       outputFormat: "code",
       targetFiles: [file],
     },
-    sessionId: crypto.randomUUID(),
+    sessionId: randomUUID(),
   });
 
   return {

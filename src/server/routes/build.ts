@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
@@ -354,7 +355,7 @@ buildRouter.post("/fast", async (c) => {
   await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
   console.log(`[FAST t+${Date.now()-t0}ms] credits deducted`);
 
-  const sessionId = crypto.randomUUID();
+  const sessionId = randomUUID();
   try {
     // ── Create build session ────────────────────────────────────────────────
     await db.insert(buildSessions).values({

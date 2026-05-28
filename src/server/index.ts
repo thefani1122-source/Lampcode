@@ -1,3 +1,12 @@
+// ── Node.js 18 crypto polyfill ────────────────────────────────────────────────
+// Node 18 does not expose `crypto` as a global by default. Polyfill it before
+// any other import so Hono, Supabase, and internal callers all see it.
+import { webcrypto } from "node:crypto";
+if (!globalThis.crypto) {
+  (globalThis as unknown as { crypto: Crypto }).crypto =
+    webcrypto as unknown as Crypto;
+}
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";

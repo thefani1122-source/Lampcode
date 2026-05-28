@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
@@ -213,7 +214,7 @@ async function runAgent(opts: {
 }): Promise<{ content: string; costUsd: number; taskId: string; durationMs: number; modelUsed: string }> {
   const { sessionId, userId, projectId, agentType, taskDescription, phase } = opts;
   const server = ws();
-  const taskId = crypto.randomUUID();
+  const taskId = randomUUID();
 
   server?.agentStart(sessionId, {
     taskId,
@@ -450,7 +451,7 @@ async function runPlanPhase(
       sessionId,
       phase as Parameters<typeof freezer.createFreeze>[1],
       fileInputs,
-      config.agentTypes.map((a) => ({ agentType: a, outputHash: crypto.randomUUID() })),
+      config.agentTypes.map((a) => ({ agentType: a, outputHash: randomUUID() })),
     );
 
     const creditsUsed = Math.ceil(totalCost * 1_000);
@@ -596,7 +597,7 @@ planRouter.post("/start", async (c) => {
   // Atomically deduct credits; refund on any subsequent failure
   await deductCredits(authUser.id, PLAN_CREDIT_ESTIMATE);
 
-  const sessionId = crypto.randomUUID();
+  const sessionId = randomUUID();
   try {
     await db.insert(buildSessions).values({
       id: sessionId,

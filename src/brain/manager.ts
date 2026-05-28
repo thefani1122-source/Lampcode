@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, max } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { sharedBrainFiles, type BrainFileType, type SharedBrainFile } from "../db/schema.js";
@@ -68,7 +69,7 @@ export class BrainManager {
       );
 
     const version = (maxRow[0]?.maxVer ?? 0) + 1;
-    const id = crypto.randomUUID();
+    const id = randomUUID();
 
     await db.insert(sharedBrainFiles).values({
       id,

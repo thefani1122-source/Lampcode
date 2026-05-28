@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -87,7 +88,7 @@ async function writeAudit(
   details?: Record<string, unknown>,
 ): Promise<void> {
   await db.insert(auditLog).values({
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     userId,
     projectId,
     action,
@@ -150,7 +151,7 @@ projectsRouter.post("/", async (c) => {
   const [project] = await db
     .insert(projects)
     .values({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       userId: authUser.id,
       name: body.name,
       slug,
@@ -268,7 +269,7 @@ projectsRouter.post("/:id/duplicate", async (c) => {
   const [duplicate] = await db
     .insert(projects)
     .values({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       userId: authUser.id,
       name: `${source.name} (Copy)`,
       slug: newSlug,

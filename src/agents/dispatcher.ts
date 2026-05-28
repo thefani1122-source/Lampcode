@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "path";
 import { z } from "zod";
 import {
@@ -193,7 +194,7 @@ export class AgentDispatcher {
       .begin(sessionId, agentType, model, tier, userId, projectId)
       .catch((err) => {
         logger.warn({ err }, "Failed to record agent task start");
-        return crypto.randomUUID();
+        return randomUUID();
       });
 
     const messages: ChatMessage[] = [

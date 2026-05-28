@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agentTasks } from "../db/schema.js";
@@ -60,7 +61,7 @@ export class TokenTracker {
     userId?: string | undefined,
     projectId?: string | undefined,
   ): Promise<string> {
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     await db.insert(agentTasks).values({
       id,
       sessionId,
