@@ -34,10 +34,12 @@
     "simple-git": "^3.36.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8.5.1",
     "tsx": "^4.22.0",

@@ -1,3 +1,4 @@
+import ws from "ws";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { config } from "../server/config.js";
 
@@ -14,6 +15,8 @@ export function getSupabaseAdmin(): SupabaseClient {
 
   _client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    realtime: { transport: ws as unknown as any },
   });
 
   return _client;
