@@ -35,6 +35,9 @@ export async function handleAgentStream(
   let insideFileBlock = false
   let pendingFilePath = ""
 
+  // ── Kick off with an immediate progress message so the chat panel isn't blank
+  emit("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
+
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
     for await (const chunk of generator) {
@@ -60,6 +63,7 @@ export async function handleAgentStream(
             insideFileBlock = true
             const m = text.match(/```(?:filename:)?([^\s`\n]+)/)
             pendingFilePath = m?.[1] ?? ""
+            emit("build:thinking", { text: `Writing ${pendingFilePath}...`, sessionId })
             emit("build:tool_call", {
               tool: "write_file",
               args: { path: pendingFilePath },
@@ -147,6 +151,7 @@ export async function handleAgentStream(
     }
 
     // build:complete — send the full file map once all files are done
+    emit("build:thinking", { text: "Finalizing and preparing preview...", sessionId })
     emit("build:complete", {
       files: Object.fromEntries(filesMap),
       sessionId,
