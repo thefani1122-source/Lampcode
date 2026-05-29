@@ -112,6 +112,8 @@ function normalizePath(raw: string): string {
 // ── Main parser ───────────────────────────────────────────────────────────────
 
 export function parseFilesFromContent(content: string): ParsedFile[] {
+  console.log('[parser] raw content length:', content.length)
+  console.log('[parser] first 500 chars:', content.slice(0, 500))
   const rawFiles: ParsedFile[] = [];
   const lines = content.split("\n");
   let i = 0;
@@ -195,7 +197,9 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
     fileMap.set("package.json", DEFAULT_PACKAGE_JSON);
   }
 
-  return Array.from(fileMap.entries()).map(([path, code]) => ({ path, code }));
+  const result = Array.from(fileMap.entries()).map(([path, code]) => ({ path, code }));
+  console.log('[parser] extracted files:', result.map((f) => f.path))
+  return result;
 }
 
 // ── Sandpack validator ────────────────────────────────────────────────────────

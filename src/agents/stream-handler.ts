@@ -30,6 +30,11 @@ export async function handleAgentStream(
   const emit = (event: string, data: Record<string, unknown>): void =>
     wsServer.emitToRoom(sessionId, event, data)
 
+  // Track whether we're currently streaming inside a code fence block so we
+  // can suppress raw code from appearing as chat tokens.
+  let insideFileBlock = false
+  let pendingFilePath = ""
+
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
     for await (const chunk of generator) {
@@ -42,13 +47,46 @@ export async function handleAgentStream(
           break
 
         // Normal response tokens
-        case "content":
-          if (chunk.content) {
-            console.log('[stream] token chunk:', JSON.stringify({ type: chunk.type, content: chunk.content?.slice(0, 80) }))
-            fullContent += chunk.content
-            emit("build:token", { text: chunk.content, sessionId })
+        case "content": {
+          if (!chunk.content) break
+          const text = chunk.content
+          console.log('[stream] token chunk:', JSON.stringify({ type: chunk.type, content: text.slice(0, 80) }))
+
+          // Always accumulate the raw text so file-parser sees the full output
+          fullContent += text
+
+          // Detect the start of a file fence block
+          if (!insideFileBlock && (text.includes("```filename:") || /```[^\s`\n]*\//.test(text))) {
+            insideFileBlock = true
+            const m = text.match(/```(?:filename:)?([^\s`\n]+)/)
+            pendingFilePath = m?.[1] ?? ""
+            emit("build:tool_call", {
+              tool: "write_file",
+              args: { path: pendingFilePath },
+              sessionId,
+            })
+            break
+          }
+
+          // Detect the closing fence of a file block (a chunk that is just ```)
+          if (insideFileBlock && text.trim() === "```") {
+            insideFileBlock = false
+            emit("build:tool_result", {
+              tool: "write_file",
+              result: "success",
+              path: pendingFilePath,
+              sessionId,
+            })
+            pendingFilePath = ""
+            break
+          }
+
+          // Only send conversational text as chat tokens
+          if (!insideFileBlock) {
+            emit("build:token", { text, sessionId })
           }
           break
+        }
 
         // Tool-call announced by the model (before execution)
         case "tool_call":
