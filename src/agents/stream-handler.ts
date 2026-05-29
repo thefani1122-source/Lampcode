@@ -44,6 +44,7 @@ export async function handleAgentStream(
         // Normal response tokens
         case "content":
           if (chunk.content) {
+            console.log('[stream] token chunk:', JSON.stringify({ type: chunk.type, content: chunk.content?.slice(0, 80) }))
             fullContent += chunk.content
             emit("build:token", { text: chunk.content, sessionId })
           }
