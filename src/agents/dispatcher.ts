@@ -59,9 +59,11 @@ export interface DispatchResult {
   costUsd: number;
 }
 
-// Errors that allow falling back to the next tier
-const FALLBACK_CODES = new Set(["RATE_LIMIT", "MODEL_DOWN"] as const);
-type FallbackCode = "RATE_LIMIT" | "MODEL_DOWN";
+// Errors that allow falling back to the next tier.
+// UNKNOWN is included so a nonexistent model ID (HTTP 400) falls through
+// to the next tier rather than crashing the build immediately.
+const FALLBACK_CODES = new Set(["RATE_LIMIT", "MODEL_DOWN", "UNKNOWN"] as const);
+type FallbackCode = "RATE_LIMIT" | "MODEL_DOWN" | "UNKNOWN";
 
 function isFallbackCode(code: string): code is FallbackCode {
   return FALLBACK_CODES.has(code as FallbackCode);

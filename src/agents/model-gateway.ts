@@ -9,7 +9,7 @@ export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 // Tier arrays: [tier1, tier2, tier3]
 export const MODEL_TIERS = {
   planning:   ["anthropic/claude-opus-4-6",    "anthropic/claude-sonnet-4-6",  "openai/gpt-4o"] as const,
-  frontend:   ["google/gemini-2.5-pro",           "anthropic/claude-sonnet-4-6",  "deepseek/deepseek-chat"] as const,
+  frontend:   ["google/gemini-3.1-pro",            "google/gemini-2.5-pro",        "moonshotai/kimi-k2.6"] as const,
   backend:    ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
   db:         ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
   security:   ["deepseek/deepseek-v4-pro",      "anthropic/claude-sonnet-4-6",  "openai/gpt-4o-mini"] as const,
