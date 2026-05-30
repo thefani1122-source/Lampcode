@@ -42,6 +42,14 @@ Your output must include: architecture overview, component breakdown, data flow,
 
   frontend: `You are an expert React developer. Your code runs inside Sandpack — a fully in-browser React sandbox. It must work without a build step, a server, or a filesystem.
 
+CRITICAL: You MUST output src/App.tsx as the VERY FIRST file, using EXACTLY this format:
+
+\`\`\`filename:src/App.tsx
+// your complete App component here
+\`\`\`
+
+Then output src/index.tsx, then package.json. Every single file must use the \`\`\`filename:path format. Never use \`\`\`tsx or \`\`\`javascript without a filename: path — those blocks will be ignored.
+
 OUTPUT FORMAT — follow exactly, no exceptions:
 Every file must use a fenced code block with the path in the opening fence:
 

@@ -112,7 +112,8 @@ function normalizePath(raw: string): string {
 // ── Main parser ───────────────────────────────────────────────────────────────
 
 export function parseFilesFromContent(content: string): ParsedFile[] {
-  console.log('[parser] raw content length:', content.length)
+  console.log('[parser] total content length:', content.length)
+  console.log('[parser] fence blocks found:', (content.match(/```/g) ?? []).length)
   console.log('[parser] first 500 chars:', content.slice(0, 500))
   const rawFiles: ParsedFile[] = [];
   const lines = content.split("\n");
@@ -168,6 +169,19 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
         }
       }
 
+      // 4. Orphan block heuristic: no path found anywhere, but the code looks
+      //    like a React component — claim it as src/App.tsx if not yet seen.
+      if (filePath === null) {
+        const looksLikeAppComponent =
+          /export\s+default\s+function\s+App\b/.test(code) ||
+          /export\s+default\s+App\b/.test(code) ||
+          (/export\s+default/.test(code) && /React|jsx|tsx/.test(code) && code.length > 200);
+        if (looksLikeAppComponent) {
+          filePath = "src/App.tsx";
+          console.log('[parser] orphan block assigned to src/App.tsx (heuristic match)')
+        }
+      }
+
       if (filePath !== null) {
         rawFiles.push({ path: normalizePath(filePath), code });
       }
@@ -185,6 +199,20 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
   if (!fileMap.has("src/App.tsx") && fileMap.has("App.tsx")) {
     fileMap.set("src/App.tsx", fileMap.get("App.tsx")!);
     fileMap.delete("App.tsx");
+  }
+
+  // Generate fallback src/App.tsx if still missing after all parse strategies
+  if (!fileMap.has("src/App.tsx")) {
+    console.log('[parser] WARNING: src/App.tsx not found — inserting fallback placeholder')
+    fileMap.set("src/App.tsx", `import React from 'react';
+export default function App() {
+  return (
+    <div style={{ padding: 20, color: 'white', background: '#0a0a0f', minHeight: '100vh' }}>
+      <h1>App loaded successfully</h1>
+      <p>The main component could not be extracted. Please try again.</p>
+    </div>
+  );
+}`);
   }
 
   // Generate src/index.tsx if absent
