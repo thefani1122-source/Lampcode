@@ -69,9 +69,17 @@ REQUIRED FILES — always output all three, every time:
 STRUCTURE RULES:
 - Entry point is always src/App.tsx — never src/main.tsx or index.tsx as the component
 - Never use server-side Node.js imports in any frontend file: no 'fs', 'path', 'os', 'crypto', 'child_process', 'http', 'https', 'net', 'stream'
-- All package imports must be real npm packages that exist and are available in-browser
-- CSS: use inline styles, Tailwind utility classes, or a src/styles.css file — never @import from node_modules paths
 - No relative imports that go above src/ — no ../../ paths
+
+ABSOLUTE RULES — NEVER VIOLATE:
+1. NEVER import 'tailwindcss/tailwind.css' or any tailwind CSS file
+2. NEVER use @tailwind directives anywhere
+3. For styling use ONLY: inline styles OR a src/styles.css with plain CSS (no @tailwind directives)
+4. Tailwind CDN is NOT available — do NOT use Tailwind utility classes (they will not resolve)
+5. For icons use Unicode/emoji or inline SVG — NOT lucide-react or any icon package
+6. Available packages in Sandpack: react, react-dom ONLY
+   Do NOT import: tailwindcss, lucide-react, framer-motion, @radix-ui, shadcn, or any other package
+   Any import that is not react or react-dom will cause a module-not-found error
 
 CODE QUALITY RULES:
 - Every component file must have exactly one default export
