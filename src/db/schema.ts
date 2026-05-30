@@ -476,6 +476,49 @@ export const userPreferences = pgTable("user_preferences", {
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+// ── User-level MCP / service integrations ────────────────────────────────────
+
+export const userIntegrationProviderEnum = pgEnum("user_integration_provider", [
+  "supabase",
+  "vercel",
+  "github",
+  "railway",
+]);
+
+export const userIntegrationStatusEnum = pgEnum("user_integration_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+
+export type UserIntegrationConfig = {
+  // Supabase
+  supabaseUrl?: string | undefined;
+  encryptedServiceKey?: string | undefined;
+  encryptedServiceKeyIv?: string | undefined;
+  encryptedServiceKeyTag?: string | undefined;
+  projectRef?: string | undefined;
+  // Vercel / GitHub / Railway — extend as needed
+  encryptedToken?: string | undefined;
+  encryptedTokenIv?: string | undefined;
+  encryptedTokenTag?: string | undefined;
+  teamId?: string | undefined;
+};
+
+export const userIntegrations = pgTable("user_integrations", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  provider: userIntegrationProviderEnum("provider").notNull(),
+  status: userIntegrationStatusEnum("status").notNull().default("disconnected"),
+  config: jsonb("config").$type<UserIntegrationConfig>().notNull().default({}),
+  lastTestedAt: timestamp("last_tested_at", { mode: "date" }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+},
+(t) => [uniqueIndex("user_integrations_user_provider_idx").on(t.userId, t.provider)],
+);
+
 // ── Encrypted project env vars ────────────────────────────────────────────────
 
 export const envEnvironmentEnum = pgEnum("env_environment", [
