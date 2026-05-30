@@ -103,19 +103,19 @@ export async function runFastBuild(
 ): Promise<void> {
   const server = ws();
 
-  // Mark started
-  await db
-    .update(buildSessions)
-    .set({ startedAt: new Date(), phase: 1 })
-    .where(eq(buildSessions.id, sessionId));
+  // Mark project building + session started (moved from handler hot-path)
+  await Promise.all([
+    db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId)),
+    db.update(buildSessions).set({ startedAt: new Date(), phase: 1 }).where(eq(buildSessions.id, sessionId)),
+  ]);
 
   // ── Emit agent_start ──────────────────────────────────────────────────────
   server?.agentStart(sessionId, {
     taskId: sessionId,
     sessionId,
     agentType: "frontend",
-    taskName: "Fast Build — Frontend (Kimi K2)",
-    model: "moonshotai/kimi-k2",
+    taskName: "Fast Build — Frontend (Gemini 2.5 Pro)",
+    model: "google/gemini-2.5-pro",
     tier: 1,
     timestamp: new Date().toISOString(),
   });
@@ -369,13 +369,6 @@ buildRouter.post("/fast", async (c) => {
       attachments: attachments ?? null,
     });
     console.log(`[FAST t+${Date.now()-t0}ms] session created id=${sessionId}`);
-
-    // Mark project as building
-    await db
-      .update(projects)
-      .set({ status: "building" })
-      .where(eq(projects.id, projectId));
-    console.log(`[FAST t+${Date.now()-t0}ms] project status=building`);
 
     // ── Fire-and-forget build ───────────────────────────────────────────────
     const userId = authUser.id;
