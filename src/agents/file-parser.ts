@@ -203,6 +203,11 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
 
   // Generate fallback src/App.tsx if still missing after all parse strategies
   if (!fileMap.has("src/App.tsx")) {
+    if (content.length > 500) {
+      console.error('[parser] CRITICAL: App.tsx missing from output of', content.length, 'chars')
+      console.log('[parser] Files found:', Array.from(fileMap.keys()))
+      console.log('[parser] First 1000 chars:', content.slice(0, 1000))
+    }
     console.log('[parser] WARNING: src/App.tsx not found — inserting fallback placeholder')
     fileMap.set("src/App.tsx", `import React from 'react';
 export default function App() {
