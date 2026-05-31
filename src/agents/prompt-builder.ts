@@ -43,8 +43,32 @@ Your output must include: architecture overview, component breakdown, data flow,
   frontend: `You are an expert UI/UX designer and React developer.
 Create BEAUTIFUL, POLISHED, PROFESSIONAL interfaces.
 Use rich colors, gradients, proper spacing, and typography.
-Make it look like a $10,000 design agency built it.
+Use professional design standards: proper spacing, typography hierarchy, consistent colors, smooth interactions.
 Prioritize visual excellence above all else.
+
+STEP 1 — ANALYZE THE REQUEST:
+Before writing any code, think about what the user ACTUALLY needs.
+A 'todo app' means: add/delete/complete tasks, persistent state, clean UI, empty state, keyboard shortcuts.
+A 'dashboard' means: sidebar, stats cards, charts, tables, real data.
+A 'landing page' means: hero, features, pricing, testimonials, CTA, footer.
+A 'timer' means: start/stop/reset, visual progress, sound feedback option.
+
+Always build the COMPLETE version, not a skeleton:
+✓ Real interactive features (not just UI shells)
+✓ Realistic mock data (not 'Item 1, Item 2')
+✓ Working state management (useState/useEffect)
+✓ All buttons must do something
+✓ Empty states must be handled
+✓ Mobile responsive layout
+✓ Smooth CSS transitions on interactions
+✓ Proper error boundaries
+
+STEP 2 — THEN write the code following all format rules.
+
+Your output will be judged against Lovable, Bolt, and v0.
+It must be noticeably better in: visual polish, interactivity, and completeness. No half-built features.
+
+NEVER add watermarks, credits, or 'Designed by' text anywhere in the output.
 
 Your code runs inside Sandpack — a fully in-browser React sandbox. It must work without a build step, a server, or a filesystem.
 
@@ -153,6 +177,47 @@ const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "db",
   "planning",
 ]);
+
+// ── Prompt expansion ──────────────────────────────────────────────────────────
+
+// Per-app-type feature expectations appended to short prompts so the model
+// builds the COMPLETE version rather than a skeleton. Runs before the main build.
+const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
+  {
+    match: /\btodo|task list|task manager\b/i,
+    expansion: "Include: add/delete/complete tasks, persistent in-memory state, clean UI, an empty state, and keyboard shortcuts (Enter to add).",
+  },
+  {
+    match: /\bdashboard|admin panel|analytics\b/i,
+    expansion: "Include: a sidebar, stats cards, at least one chart (inline SVG/canvas), a data table, and realistic mock data.",
+  },
+  {
+    match: /\blanding page|marketing site|homepage\b/i,
+    expansion: "Include: a hero section, features grid, pricing tiers, testimonials, a clear CTA, and a footer.",
+  },
+  {
+    match: /\btimer|stopwatch|pomodoro|countdown\b/i,
+    expansion: "Include: start/stop/reset controls, a visual progress indicator, and clean time formatting.",
+  },
+  {
+    match: /\bchat|messaging|messenger\b/i,
+    expansion: "Include: a message list, an input box, send-on-Enter, mock conversation data, and auto-scroll to the latest message.",
+  },
+];
+
+/**
+ * Expand a short user prompt with completeness expectations for its app type.
+ * Pure and additive — never replaces the user's intent, only appends guidance.
+ * Call this BEFORE dispatching the main build so the model targets a full app.
+ */
+export function expandUserPrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  const matched = APP_TYPE_EXPANSIONS.filter((e) => e.match.test(trimmed));
+  if (matched.length === 0) return trimmed;
+
+  const additions = matched.map((e) => `- ${e.expansion}`).join("\n");
+  return `${trimmed}\n\nBuild the complete, fully-functional version:\n${additions}`;
+}
 
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
 

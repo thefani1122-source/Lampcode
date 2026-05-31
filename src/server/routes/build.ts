@@ -13,6 +13,7 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
+import { expandUserPrompt } from "../../agents/prompt-builder.js";
 import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
@@ -121,17 +122,20 @@ export async function runFastBuild(
   });
 
   try {
+    // ── Expand short prompts with app-type completeness expectations ─────────
+    const expandedPrompt = expandUserPrompt(prompt);
+
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       task: {
-        description: prompt,
+        description: expandedPrompt,
         requirements: [
           "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
           "Always include src/App.tsx, src/index.tsx, and package.json.",
           "src/App.tsx must have `export default function App()`.",
-          "Use React with TypeScript. Style with Tailwind CSS or inline styles.",
+          "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
         ],
         outputFormat: "code",
       },
