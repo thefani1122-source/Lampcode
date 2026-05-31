@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { user as userTable, buildJobs } from "../../db/schema.js";
+import { user as userTable, userBilling, buildSessions } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 
 const updateProfileSchema = z.object({
@@ -59,23 +59,34 @@ usersRouter.patch("/me", async (c) => {
   return c.json({ user: updated });
 });
 
-// GET /api/users/me/usage — build job usage stats
+// GET /api/users/me/usage — real credit balance + builds count
 usersRouter.get("/me/usage", async (c) => {
   const authUser = c.get("authUser");
 
-  const stats = await db
-    .select({
-      status: buildJobs.status,
-      count: sql<number>`cast(count(*) as integer)`,
-    })
-    .from(buildJobs)
-    .where(eq(buildJobs.userId, authUser.id))
-    .groupBy(buildJobs.status);
+  const [billing, projectsBuiltRow] = await Promise.all([
+    db
+      .select({ creditsUsed: userBilling.creditsUsed, creditsLimit: userBilling.creditsLimit })
+      .from(userBilling)
+      .where(eq(userBilling.userId, authUser.id))
+      .limit(1),
+    db
+      .select({ count: sql<number>`cast(count(*) as integer)` })
+      .from(buildSessions)
+      .where(eq(buildSessions.userId, authUser.id)),
+  ]);
 
-  const total = stats.reduce((sum, row) => sum + row.count, 0);
-  const byStatus = Object.fromEntries(stats.map((r) => [r.status, r.count]));
+  const creditsUsed = billing[0]?.creditsUsed ?? 0;
+  const creditsLimit = billing[0]?.creditsLimit ?? 500;
+  const projectsBuilt = projectsBuiltRow[0]?.count ?? 0;
 
-  return c.json({ usage: { total, byStatus } });
+  return c.json({
+    usage: {
+      creditsUsed,
+      creditsLimit,
+      creditsRemaining: creditsLimit - creditsUsed,
+      projectsBuilt,
+    },
+  });
 });
 
 export { usersRouter };

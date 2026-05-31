@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
 import { join, dirname, relative } from "path";
 import { db } from "../../db/client.js";
@@ -385,6 +385,22 @@ buildRouter.post("/fast", async (c) => {
   }
 
   return c.json({ sessionId, status: "running", projectId });
+});
+
+// GET /api/build/:projectId/last-session
+buildRouter.get("/:projectId/last-session", async (c) => {
+  const authUser = c.get("authUser");
+  const { projectId } = c.req.param();
+
+  const rows = await db
+    .select({ sessionId: buildSessions.id, status: buildSessions.status })
+    .from(buildSessions)
+    .where(and(eq(buildSessions.projectId, projectId), eq(buildSessions.userId, authUser.id)))
+    .orderBy(desc(buildSessions.createdAt))
+    .limit(1);
+
+  if (!rows.length) return c.json({ sessionId: null });
+  return c.json({ sessionId: rows[0]!.sessionId, status: rows[0]!.status });
 });
 
 // GET /api/build/:sessionId/status
