@@ -273,7 +273,7 @@ export class PromptBuilder {
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
-    const systemPrompt = this.buildSystemPrompt(agentType, task.outputFormat);
+    const systemPrompt = this.buildSystemPrompt(agentType, task);
     const contextBlock = await this.buildContextBlock(agentType, workspaceDir, contextFiles);
     const taskBlock = this.buildTaskBlock(task, context);
 
@@ -296,13 +296,27 @@ export class PromptBuilder {
 
   // ── Private ──────────────────────────────────────────────────────────────────
 
-  private buildSystemPrompt(agentType: AgentTaskType, outputFormat: TaskInput["outputFormat"]): string {
+  private buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): string {
     const base = SYSTEM_PROMPTS[agentType];
+
+    const isEditMode =
+      agentType === "frontend" &&
+      task.description.startsWith("EXISTING PROJECT FILES:");
+    const editModeInstruction = isEditMode
+      ? "\n\nEDIT MODE — You are modifying an existing React app:\n" +
+        "- Preserve the existing design system, colors, and component patterns\n" +
+        "- Only change what the user explicitly asked for\n" +
+        "- Output ALL files completely (modified and unmodified) — never omit a file\n" +
+        "- Preserve all working functionality and state management\n" +
+        "- Do NOT redesign or restructure anything the user did not mention"
+      : "";
+
     const jsonInstruction =
-      JSON_OUTPUT_AGENTS.has(agentType) || outputFormat === "json"
+      JSON_OUTPUT_AGENTS.has(agentType) || task.outputFormat === "json"
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
-    return base + jsonInstruction;
+
+    return base + editModeInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(

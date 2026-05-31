@@ -94,6 +94,42 @@ async function walkDirectory(base: string, dir: string): Promise<FileEntry[]> {
   return entries;
 }
 
+// ── Load files from previous build for edit context ───────────────────────────
+
+const MAX_EDIT_CONTEXT_CHARS = 60_000;
+
+async function loadProjectFiles(outputDir: string): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  try {
+    const walked = await walkDirectory(outputDir, outputDir);
+    // Prioritise the files the model most needs to see
+    const priority = (p: string) =>
+      p === "src/App.tsx" ? 0 : p === "src/styles.css" ? 1 : p === "src/index.tsx" ? 2 : 3;
+    walked.sort((a, b) => priority(a.path) - priority(b.path));
+    let totalChars = 0;
+    for (const f of walked) {
+      if (totalChars + f.content.length > MAX_EDIT_CONTEXT_CHARS) break;
+      files[f.path] = f.content;
+      totalChars += f.content.length;
+    }
+  } catch {
+    // filesystem miss (container restart or first build) — fall through as new build
+  }
+  return files;
+}
+
+function buildEditPrompt(files: Record<string, string>, userRequest: string): string {
+  const fileBlocks = Object.entries(files)
+    .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
+    .join("\n\n");
+  return (
+    `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
+    `USER REQUEST: ${userRequest}\n\n` +
+    `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
+    `Keep everything that does not need to change. Output the complete updated files.`
+  );
+}
+
 // ── Background build runner ───────────────────────────────────────────────────
 
 export async function runFastBuild(
@@ -122,21 +158,52 @@ export async function runFastBuild(
   });
 
   try {
-    // ── Expand short prompts with app-type completeness expectations ─────────
-    const expandedPrompt = expandUserPrompt(prompt);
+    // ── Load existing files to decide new-build vs edit-existing ────────────
+    const lastSuccessRow = await db
+      .select({ outputDir: buildSessions.outputDir })
+      .from(buildSessions)
+      .where(and(
+        eq(buildSessions.projectId, projectId),
+        eq(buildSessions.userId, userId),
+        eq(buildSessions.status, "success"),
+      ))
+      .orderBy(desc(buildSessions.createdAt))
+      .limit(1);
+
+    const existingFiles = lastSuccessRow[0]?.outputDir
+      ? await loadProjectFiles(lastSuccessRow[0].outputDir)
+      : {};
+
+    const hasExistingCode = Object.keys(existingFiles).length > 0;
+    console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length}`);
+
+    // ── Build task description ────────────────────────────────────────────
+    const taskDescription = hasExistingCode
+      ? buildEditPrompt(existingFiles, prompt)
+      : expandUserPrompt(prompt);
+
+    const requirements = hasExistingCode
+      ? [
+          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+          "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+          "Keep ALL existing functionality that the user did NOT ask to change.",
+          "Preserve the existing design system, color palette, and component structure.",
+          "Use inline styles or plain src/styles.css — never Tailwind.",
+        ]
+      : [
+          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+          "Always include src/App.tsx, src/index.tsx, and package.json.",
+          "src/App.tsx must have `export default function App()`.",
+          "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
+        ];
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       task: {
-        description: expandedPrompt,
-        requirements: [
-          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-          "Always include src/App.tsx, src/index.tsx, and package.json.",
-          "src/App.tsx must have `export default function App()`.",
-          "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
-        ],
+        description: taskDescription,
+        requirements,
         outputFormat: "code",
       },
       sessionId,
