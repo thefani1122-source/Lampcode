@@ -185,11 +185,27 @@ const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
 const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
   {
     match: /\btodo|task list|task manager\b/i,
-    expansion: "Include: add/delete/complete tasks, persistent in-memory state, clean UI, an empty state, and keyboard shortcuts (Enter to add).",
+    expansion: `Build a COMPLETE task management app with ALL these features:
+- Add tasks with title, priority (High/Medium/Low badge), and due date
+- Priority color-coded badges: High=red, Medium=yellow/amber, Low=green
+- Filter tabs: All / Active / Completed — each showing filtered count
+- Sort controls: by Priority / Due Date / Created
+- Task count display ("3 of 7 tasks remaining")
+- 5–6 sample tasks pre-loaded with varied priorities and due dates
+- Delete and toggle-complete for every task
+- Empty state message when no tasks match the current filter
+- Keyboard shortcut: press Enter in the input to add a task
+- Clean, polished UI with smooth hover/transition effects`,
   },
   {
     match: /\bdashboard|admin panel|analytics\b/i,
-    expansion: "Include: a sidebar, stats cards, at least one chart (inline SVG/canvas), a data table, and realistic mock data.",
+    expansion: `Build a COMPLETE analytics dashboard with ALL these sections:
+- Sidebar with navigation items: Dashboard, Analytics, Reports, Settings (with icons via Unicode/SVG)
+- 4 KPI cards: Revenue ($84,230), Active Users (12,480), Orders (3,942), Growth (+18.4%) — each with a trend arrow (↑/↓) and a subtle sparkline or percentage change
+- SVG bar or line chart (300×160 px minimum) with at least 7 realistic data points and axis labels
+- Activity feed or table: 5–8 rows of realistic recent-activity data (user, action, timestamp, status badge)
+- Status badges color-coded: Completed=green, Pending=yellow, Failed=red
+- Professional light or dark theme with consistent spacing and typography`,
   },
   {
     match: /\blanding page|marketing site|homepage\b/i,
