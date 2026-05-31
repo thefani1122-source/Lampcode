@@ -191,17 +191,25 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
 - Filter tabs: All / Active / Completed — each showing filtered count
 - Sort controls: by Priority / Due Date / Created
 - Task count display ("3 of 7 tasks remaining")
-- 5–6 sample tasks pre-loaded with varied priorities and due dates
 - Delete and toggle-complete for every task
 - Empty state message when no tasks match the current filter
 - Keyboard shortcut: press Enter in the input to add a task
-- Clean, polished UI with smooth hover/transition effects`,
+- Clean, polished UI with smooth hover/transition effects
+- Use these realistic sample tasks pre-loaded (not generic "Task 1" placeholders):
+  • "Review Q3 marketing report" — High priority
+  • "Schedule team standup for next week" — Medium priority
+  • "Update API documentation" — Low priority
+  • "Fix login page mobile layout" — High priority`,
   },
   {
     match: /\bdashboard|admin panel|analytics\b/i,
     expansion: `Build a COMPLETE analytics dashboard with ALL these sections:
 - Sidebar with navigation items: Dashboard, Analytics, Reports, Settings (with icons via Unicode/SVG)
-- 4 KPI cards: Revenue ($84,230), Active Users (12,480), Orders (3,942), Growth (+18.4%) — each with a trend arrow (↑/↓) and a subtle sparkline or percentage change
+- 4 KPI cards with trend arrows (↑/↓) and percentage change — use these exact realistic metrics:
+  • Revenue: $24,521 (↑ +12.5%)
+  • Users: 1,284 (↑ +8.3%)
+  • Orders: 342 (↑ +5.1%)
+  • Conversion: 3.2% (↓ -0.4%)
 - SVG bar or line chart (300×160 px minimum) with at least 7 realistic data points and axis labels
 - Activity feed or table: 5–8 rows of realistic recent-activity data (user, action, timestamp, status badge)
 - Status badges color-coded: Completed=green, Pending=yellow, Failed=red

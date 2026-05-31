@@ -148,7 +148,7 @@ export class ModelGateway {
           messages: req.messages,
           stream: true,
           temperature: req.temperature ?? 0.2,
-          ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+          max_tokens: req.maxTokens ?? 16_000,
         }),
         signal: controller.signal,
       });
