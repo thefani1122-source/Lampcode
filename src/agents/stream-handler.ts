@@ -42,6 +42,8 @@ export async function handleAgentStream(
   // can suppress raw code from appearing as chat tokens.
   let insideFileBlock = false
   let pendingFilePath = ""
+  let chunkCount = 0
+  let contentChunkCount = 0
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   emit("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
@@ -49,6 +51,8 @@ export async function handleAgentStream(
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
     for await (const chunk of generator) {
+      chunkCount++
+
       switch (chunk.type) {
         // Reasoning / thinking tokens (DeepSeek R1, o1, etc.)
         case "reasoning":
@@ -59,12 +63,14 @@ export async function handleAgentStream(
 
         // Normal response tokens
         case "content": {
-          if (!chunk.content) break
-          const text = chunk.content
-          console.log('[stream] token chunk:', JSON.stringify({ type: chunk.type, content: text.slice(0, 80) }))
-
-          // Always accumulate the raw text so file-parser sees the full output
+          // Coerce to string unconditionally — accumulate BEFORE any branch
+          const text = chunk.content ?? ""
           fullContent += text
+
+          if (!text) break
+
+          contentChunkCount++
+          console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
 
           // Detect the start of a file fence block
           if (!insideFileBlock && (text.includes("```filename:") || /```[^\s`\n]*\//.test(text))) {
@@ -127,6 +133,8 @@ export async function handleAgentStream(
     emit("build:error", { message, sessionId })
     throw err
   }
+
+  console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length}`)
 
   // ── Write raw LLM output to disk (for audit / replay) ──────────────────────
   try {
