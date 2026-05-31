@@ -11,7 +11,7 @@ import {
 } from "./model-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
-import { handleAgentStream, type StreamChunk as HandlerStreamChunk } from "./stream-handler.js";
+import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 
@@ -211,9 +211,9 @@ export class AgentDispatcher {
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
     const startMs = Date.now();
 
-    let content: string;
+    let streamResult: StreamResult;
     try {
-      content = await handleAgentStream(
+      streamResult = await handleAgentStream(
         stream as unknown as AsyncGenerator<HandlerStreamChunk>,
         { sessionId, agentType, taskId, outputPath, wsServer: getWebSocketServer() },
       );
@@ -222,7 +222,9 @@ export class AgentDispatcher {
       throw err;
     }
 
-    await this.tracker.complete(taskId, { model, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 }).catch((e) => {
+    const { content, inputTokens, outputTokens } = streamResult;
+    const usage = this.tracker.computeUsage(model, inputTokens, outputTokens);
+    await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
 
@@ -235,9 +237,9 @@ export class AgentDispatcher {
       toolCalls: [],
       outputPath,
       durationMs: Date.now() - startMs,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      inputTokens,
+      outputTokens,
+      costUsd: usage.costUsd,
     };
   }
 

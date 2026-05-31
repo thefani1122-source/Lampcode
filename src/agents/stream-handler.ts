@@ -8,6 +8,12 @@ import { parseFilesFromContent } from "./file-parser.js"
 //   import { type StreamChunk as HandlerStreamChunk } from "./stream-handler.js"
 export type { StreamChunk }
 
+export interface StreamResult {
+  content: string
+  inputTokens: number
+  outputTokens: number
+}
+
 export async function handleAgentStream(
   generator: AsyncGenerator<StreamChunk>,
   opts: {
@@ -17,9 +23,11 @@ export async function handleAgentStream(
     outputPath: string
     wsServer: WebSocketServer
   }
-): Promise<string> {
+): Promise<StreamResult> {
   const { sessionId, agentType, taskId, outputPath, wsServer } = opts
   let fullContent = ""
+  let inputTokens = 0
+  let outputTokens = 0
 
   // Accumulates every file emitted via build:file_write so build:complete
   // can hand the full Record<string, string> to the frontend in one shot.
@@ -103,8 +111,13 @@ export async function handleAgentStream(
           }
           break
 
-        // usage / done carry no UI-relevant data
         case "usage":
+          if (chunk.usage) {
+            inputTokens = chunk.usage.promptTokens ?? 0
+            outputTokens = chunk.usage.completionTokens ?? 0
+          }
+          break
+
         case "done":
           break
       }
@@ -159,5 +172,5 @@ export async function handleAgentStream(
     })
   }
 
-  return fullContent
+  return { content: fullContent, inputTokens, outputTokens }
 }

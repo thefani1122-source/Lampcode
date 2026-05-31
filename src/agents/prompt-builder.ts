@@ -216,6 +216,20 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
 - Professional light or dark theme with consistent spacing and typography`,
   },
   {
+    match: /\bkanban|board|drag|trello\b/i,
+    expansion: `Build a Kanban board WITHOUT any drag-and-drop library.
+Use ONLY React state for moving cards between columns.
+Clicking a card shows a move button: [→ Move to Next Column]
+Three columns: Todo, In Progress, Done
+Each column has: header with title, task count badge, and list of cards
+Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
+Use inline styles only. No external libraries.
+Sample tasks pre-loaded:
+  Todo: "Design homepage mockup" (High), "Write API docs" (Medium)
+  In Progress: "Build auth system" (High), "Fix mobile nav" (Low)
+  Done: "Set up database" (Medium), "Deploy to staging" (Low)`,
+  },
+  {
     match: /\blanding page|marketing site|homepage\b/i,
     expansion: "Include: a hero section, features grid, pricing tiers, testimonials, a clear CTA, and a footer.",
   },

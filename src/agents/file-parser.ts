@@ -112,8 +112,8 @@ function normalizePath(raw: string): string {
 // ── Main parser ───────────────────────────────────────────────────────────────
 
 export function parseFilesFromContent(content: string): ParsedFile[] {
-  console.log('[parser] total content length:', content.length)
-  console.log('[parser] fence blocks found:', (content.match(/```/g) ?? []).length)
+  console.log('[parser] input length:', content.length)
+  console.log('[parser] fence count:', (content.match(/```/g) ?? []).length)
   console.log('[parser] first 500 chars:', content.slice(0, 500))
   const rawFiles: ParsedFile[] = [];
   const lines = content.split("\n");
@@ -231,7 +231,7 @@ export default function App() {
   }
 
   const result = Array.from(fileMap.entries()).map(([path, code]) => ({ path, code }));
-  console.log('[parser] extracted files:', result.map((f) => f.path))
+  console.log('[parser] extracted:', result.map((f) => f.path))
   return result;
 }
 
