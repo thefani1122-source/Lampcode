@@ -4,6 +4,34 @@ import { userBilling } from "../db/schema.js";
 import { AppError } from "../server/middleware/error-handler.js";
 
 /**
+ * Ensure every authenticated user has at least 500 starter credits.
+ * - Inserts a billing row if one doesn't exist yet.
+ * - If a row exists with creditsLimit below 500, bumps it up (covers users
+ *   created before the default was raised from 100 → 500).
+ * - Never reduces a limit that is already above 500 (paid plans).
+ * Safe to call on every request — uses a single upsert.
+ */
+export async function ensureStartingCredits(userId: string): Promise<void> {
+  await db
+    .insert(userBilling)
+    .values({
+      userId,
+      plan: "free",
+      creditsLimit: 500,
+      creditsUsed: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: userBilling.userId,
+      set: {
+        creditsLimit: sql`GREATEST(user_billing.credits_limit, 500)`,
+        updatedAt: sql`now()`,
+      },
+    });
+}
+
+/**
  * Atomically deduct `amount` credits from the user's balance.
  * Uses a single UPDATE with a WHERE constraint to prevent races.
  * Throws 402 INSUFFICIENT_CREDITS if the deduction cannot be applied.

@@ -5,6 +5,7 @@ import { AppError } from "../server/middleware/error-handler.js";
 import { getSupabaseAdmin } from "./supabase-server.js";
 import { db } from "../db/client.js";
 import { user as userTable } from "../db/schema.js";
+import { ensureStartingCredits } from "../build/credits.js";
 
 export type AuthUser = {
   id: string;
@@ -92,5 +93,10 @@ export const requireAuth: MiddlewareHandler = createMiddleware(async (c, next) =
 
   c.set("authUser", authUser);
   c.set("authSession", { id: user.id, expiresAt });
+
+  // Ensure billing row exists with at least 500 starter credits.
+  // Fire-and-forget — never blocks the request.
+  ensureStartingCredits(authUser.id).catch(() => undefined);
+
   await next();
 });
