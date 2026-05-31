@@ -25,8 +25,8 @@ export async function ensureStartingCredits(userId: string): Promise<void> {
     .onConflictDoUpdate({
       target: userBilling.userId,
       set: {
-        creditsLimit: sql`GREATEST(user_billing.credits_limit, 500)`,
-        updatedAt: sql`now()`,
+        creditsLimit: sql`GREATEST(${userBilling.creditsLimit}, 500)`,
+        updatedAt: new Date(),
       },
     });
 }
