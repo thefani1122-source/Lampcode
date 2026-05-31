@@ -403,6 +403,28 @@ buildRouter.get("/:projectId/last-session", async (c) => {
   return c.json({ sessionId: rows[0]!.sessionId, status: rows[0]!.status });
 });
 
+// GET /api/build/:projectId/sessions — list recent sessions for a project (most recent first)
+buildRouter.get("/:projectId/sessions", async (c) => {
+  const authUser = c.get("authUser");
+  const { projectId } = c.req.param();
+
+  const rows = await db
+    .select({
+      id: buildSessions.id,
+      status: buildSessions.status,
+      prompt: buildSessions.prompt,
+      creditsUsed: buildSessions.creditsUsed,
+      createdAt: buildSessions.createdAt,
+      completedAt: buildSessions.completedAt,
+    })
+    .from(buildSessions)
+    .where(and(eq(buildSessions.projectId, projectId), eq(buildSessions.userId, authUser.id)))
+    .orderBy(desc(buildSessions.createdAt))
+    .limit(20);
+
+  return c.json({ sessions: rows });
+});
+
 // GET /api/build/:sessionId/status
 buildRouter.get("/:sessionId/status", async (c) => {
   const authUser = c.get("authUser");
