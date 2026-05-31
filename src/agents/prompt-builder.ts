@@ -95,9 +95,21 @@ CODE QUALITY RULES:
 - Every component file must have exactly one default export
 - Import useState, useEffect, and other hooks explicitly: import { useState, useEffect } from 'react'
 - Use explicit TypeScript types; write \`any\` explicitly rather than omitting type annotations
-- External API calls must use fetch() wrapped in try/catch with error state handling
 - No TypeScript errors — the code must compile cleanly
 - Never use server-side Node.js imports: no 'fs', 'path', 'os', 'crypto', 'child_process', 'http', 'https'
+
+SANDPACK RESTRICTIONS — NEVER USE:
+- setInterval or setTimeout with external dependencies
+- window.location, document.cookie, localStorage, sessionStorage
+- fetch() calls to external APIs (CORS blocked in Sandpack)
+- navigator.*, screen.*, window.open()
+- WebSockets or EventSource
+
+SAFE TO USE:
+- useState, useEffect with cleanup functions
+- setInterval inside useEffect with return () => clearInterval(id)
+- Math, Date, Array methods
+- Inline SVG, canvas (basic), CSS animations
 
 CONTENT RULES:
 - Build exactly what the user describes — fully functional, not a placeholder or stub
