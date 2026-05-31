@@ -38,10 +38,11 @@ export async function handleAgentStream(
   const emit = (event: string, data: Record<string, unknown>): void =>
     wsServer.emitToRoom(sessionId, event, data)
 
-  // Track whether we're currently streaming inside a code fence block so we
-  // can suppress raw code from appearing as chat tokens.
-  let insideFileBlock = false
-  let pendingFilePath = ""
+  // Only emit thinking text that appears BEFORE the first code fence.
+  // Claude Sonnet sometimes streams the entire response as one large chunk,
+  // making per-chunk fence detection unreliable. Instead we gate on whether
+  // fullContent already contains a fence, which is always accurate.
+  let codeStarted = false
   let chunkCount = 0
   let contentChunkCount = 0
 
@@ -63,7 +64,7 @@ export async function handleAgentStream(
 
         // Normal response tokens
         case "content": {
-          // Coerce to string unconditionally — accumulate BEFORE any branch
+          // Accumulate unconditionally — ALWAYS first, before any branch
           const text = chunk.content ?? ""
           fullContent += text
 
@@ -72,36 +73,16 @@ export async function handleAgentStream(
           contentChunkCount++
           console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
 
-          // Detect the start of a file fence block
-          if (!insideFileBlock && (text.includes("```filename:") || /```[^\s`\n]*\//.test(text))) {
-            insideFileBlock = true
-            const m = text.match(/```(?:filename:)?([^\s`\n]+)/)
-            pendingFilePath = m?.[1] ?? ""
-            emit("build:thinking", { text: `Writing ${pendingFilePath}...`, sessionId })
-            emit("build:tool_call", {
-              tool: "write_file",
-              args: { path: pendingFilePath },
-              sessionId,
-            })
-            break
+          // Mark code as started the moment a fence appears anywhere in fullContent
+          if (!codeStarted && fullContent.includes("```filename:")) {
+            codeStarted = true
+            emit("build:thinking", { text: "Writing files...", sessionId })
           }
 
-          // Detect the closing fence of a file block (a chunk that is just ```)
-          if (insideFileBlock && text.trim() === "```") {
-            insideFileBlock = false
-            emit("build:tool_result", {
-              tool: "write_file",
-              result: "success",
-              path: pendingFilePath,
-              sessionId,
-            })
-            pendingFilePath = ""
-            break
-          }
-
-          // Only send conversational text as chat tokens
-          if (!insideFileBlock) {
-            emit("build:token", { text, sessionId })
+          // Only forward pre-code text to the thinking panel.
+          // Never emit raw code (build:token) — files are sent via build:file_write at the end.
+          if (!codeStarted) {
+            emit("build:thinking", { text, sessionId })
           }
           break
         }
