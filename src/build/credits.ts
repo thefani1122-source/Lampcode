@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { userBilling } from "../db/schema.js";
 import { AppError } from "../server/middleware/error-handler.js";
@@ -58,7 +58,10 @@ export async function deductCredits(userId: string, amount: number): Promise<voi
       updatedAt: sql`now()`,
     })
     .where(
-      sql`${userBilling.userId} = ${userId} AND credits_used + ${amount} <= credits_limit`,
+      and(
+        eq(userBilling.userId, userId),
+        sql`${userBilling.creditsUsed} + ${amount} <= ${userBilling.creditsLimit}`,
+      ),
     )
     .returning({ creditsUsed: userBilling.creditsUsed });
 
