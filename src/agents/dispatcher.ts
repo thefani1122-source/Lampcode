@@ -207,7 +207,7 @@ export class AgentDispatcher {
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.
     // All other agents use the gateway default (3 minutes).
     const streamTimeoutMs = ["frontend", "fast"].includes(agentType) ? 300_000 : undefined;
-    const stream = this.gateway.stream({ model, messages, maxTokens: 12_000 }, streamTimeoutMs);
+    const stream = this.gateway.stream({ model, messages, maxTokens: 16_000 }, streamTimeoutMs);
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
     const startMs = Date.now();
 

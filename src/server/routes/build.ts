@@ -202,10 +202,14 @@ export async function runFastBuild(
         ];
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
+    server?.emitToRoom(sessionId, "build:thinking", { text: `Building: ${prompt}`, sessionId });
     server?.emitToRoom(sessionId, "build:thinking", {
-      text: `Analyzing: ${prompt}`,
+      text: hasExistingCode
+        ? `Editing existing project (${Object.keys(existingFiles).length} files loaded)...`
+        : "Starting new build...",
       sessionId,
     });
+    server?.emitToRoom(sessionId, "build:thinking", { text: "Calling AI model...", sessionId });
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();

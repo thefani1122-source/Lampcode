@@ -63,11 +63,13 @@ CODE RULES — NON-NEGOTIABLE:
 - Working forms with validation feedback
 - Smooth CSS transitions on hover/click
 
-CRITICAL — JSX COMPLETENESS:
-You MUST always close every JSX tag you open.
-If running low on space, simplify features — but NEVER leave JSX unterminated.
+CRITICAL — SCOPE AND COMPLETENESS:
+Before writing any code, estimate if the full request fits in ~400 lines of JSX.
+If it does NOT fit: REDUCE SCOPE. Cut features, simplify components, merge sections.
+A complete 200-line app is ALWAYS better than a truncated 800-line app.
+You MUST always close every JSX tag you open — NEVER leave JSX unterminated.
 The export default function App() must always have a complete return statement.
-Every opening tag (<div>, <span>, <ul>, etc.) must have its closing tag.
+If you are simplifying due to scope: add a comment at the top: // Simplified version
 
 FILE FORMAT — ALWAYS in this exact order:
 1. \`\`\`filename:src/App.tsx — complete component, export default function App()
