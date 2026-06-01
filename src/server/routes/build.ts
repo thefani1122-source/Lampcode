@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, isNotNull } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
 import { join, dirname, relative } from "path";
 import { db } from "../../db/client.js";
@@ -159,6 +159,9 @@ export async function runFastBuild(
 
   try {
     // ── Load existing files to decide new-build vs edit-existing ────────────
+    // Only load files from a prior build that belongs to THIS project + THIS user
+    // and that actually has files on disk (outputDir IS NOT NULL).
+    // A brand-new project has no matching row → existingFiles stays {}.
     const lastSuccessRow = await db
       .select({ outputDir: buildSessions.outputDir })
       .from(buildSessions)
@@ -166,6 +169,7 @@ export async function runFastBuild(
         eq(buildSessions.projectId, projectId),
         eq(buildSessions.userId, userId),
         eq(buildSessions.status, "success"),
+        isNotNull(buildSessions.outputDir),
       ))
       .orderBy(desc(buildSessions.createdAt))
       .limit(1);
