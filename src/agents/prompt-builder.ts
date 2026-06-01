@@ -63,6 +63,12 @@ CODE RULES — NON-NEGOTIABLE:
 - Working forms with validation feedback
 - Smooth CSS transitions on hover/click
 
+CRITICAL — JSX COMPLETENESS:
+You MUST always close every JSX tag you open.
+If running low on space, simplify features — but NEVER leave JSX unterminated.
+The export default function App() must always have a complete return statement.
+Every opening tag (<div>, <span>, <ul>, etc.) must have its closing tag.
+
 FILE FORMAT — ALWAYS in this exact order:
 1. \`\`\`filename:src/App.tsx — complete component, export default function App()
 2. \`\`\`filename:src/styles.css — all CSS using variables
