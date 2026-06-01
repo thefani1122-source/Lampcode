@@ -13,6 +13,7 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
+import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
 import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -147,12 +148,15 @@ export async function runFastBuild(
   ]);
 
   // ── Emit agent_start ──────────────────────────────────────────────────────
+  // Use the actual tier-1 frontend model rather than a hardcoded name so the
+  // displayed model stays in sync with MODEL_TIERS.
+  const frontendModel = tierModel("frontend", 1);
   server?.agentStart(sessionId, {
     taskId: sessionId,
     sessionId,
     agentType: "frontend",
-    taskName: "Fast Build — Frontend (Gemini 2.5 Pro)",
-    model: "google/gemini-2.5-pro",
+    taskName: `Fast Build — Frontend (${frontendModel})`,
+    model: frontendModel,
     tier: 1,
     timestamp: new Date().toISOString(),
   });
@@ -315,6 +319,7 @@ export async function runFastBuild(
       sessionId,
       files: allFiles,
       previewUrl: `/api/build/${sessionId}/preview`,
+      totalFiles: Object.keys(allFiles).length,
     });
 
     // ── Update build session ────────────────────────────────────────────────

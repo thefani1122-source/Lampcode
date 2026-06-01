@@ -86,12 +86,17 @@ type InterviewNsp = Namespace<InterviewClientEvents, InterviewServerEvents, obje
 
 // ── WebSocketServer ───────────────────────────────────────────────────────────
 
+// How long buffered build events live so late-joining clients can replay them.
+const BUFFER_TTL_SECONDS = 3600; // 1 hour
+
 export class WebSocketServer {
   private readonly io: Server;
   private readonly buildNsp: BuildNsp;
   private readonly projectNsp: ProjectNsp;
   private readonly userNsp: UserNsp;
   private readonly interviewNsp: InterviewNsp;
+  // Dedicated connection for buffering build events (separate from the adapter pub/sub).
+  private readonly bufferRedis = createRedis();
 
   constructor(httpServer: ServerType) {
     this.io = new Server(httpServer, {
@@ -153,6 +158,21 @@ export class WebSocketServer {
   // Emit to a literal room name — used for bare sessionId rooms joined via 'join' event
   emitToRoom(room: string, event: string, data: Record<string, unknown>): void {
     this.io.to(room).emit(event, data);
+
+    // Buffer the event so a client that connects/refreshes AFTER it fired can
+    // replay the build via build-handler.ts replayBuffer().
+    // Format MUST match replayBuffer: { type, payload }. It reads with
+    // lrange(key, 0, -1), so we rpush to keep chronological (oldest→newest) order
+    // — lpush would replay events in reverse and break file_write→complete ordering.
+    void this.bufferRedis
+      .multi()
+      .rpush(
+        `buffer:${room}`,
+        JSON.stringify({ type: event, payload: data, timestamp: Date.now() }),
+      )
+      .expire(`buffer:${room}`, BUFFER_TTL_SECONDS)
+      .exec()
+      .catch((err) => logger.warn({ err, room, event }, "Failed to buffer build event"));
   }
 
   emitToUser(userId: string, event: string, data: Record<string, unknown>): void {

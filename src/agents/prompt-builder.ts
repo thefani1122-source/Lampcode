@@ -77,6 +77,13 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:src/index.tsx — always identical render boilerplate
 4. \`\`\`filename:package.json — only react + react-dom
 
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Do NOT import external libraries beyond react and react-dom
+- All icons must be inline SVG or emoji — no icon libraries
+- All data must be static mock data defined in the component
+
 QUALITY BAR:
 Build as if a senior designer reviewed every pixel.
 Every interaction must feel smooth and intentional.`,

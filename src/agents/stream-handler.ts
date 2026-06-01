@@ -152,13 +152,11 @@ export async function handleAgentStream(
       })
     }
 
-    // build:complete — send the full file map once all files are done
+    // NOTE: build:complete is intentionally NOT emitted here.
+    // build.ts (runFastBuild) emits the single authoritative build:complete
+    // AFTER files are written to disk, with files + previewUrl + totalFiles.
+    // Emitting here too caused a duplicate event reaching the frontend.
     emit("build:thinking", { text: "Finalizing and preparing preview...", sessionId })
-    emit("build:complete", {
-      files: Object.fromEntries(filesMap),
-      sessionId,
-      totalFiles: filesMap.size,
-    })
   }
 
   return { content: fullContent, inputTokens, outputTokens }
