@@ -131,30 +131,26 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
 - Priority color-coded badges: High=red, Medium=yellow/amber, Low=green
 - Filter tabs: All / Active / Completed — each showing filtered count
 - Sort controls: by Priority / Due Date / Created
-- Task count display ("3 of 7 tasks remaining")
+- Task count display (e.g. "3 of 7 tasks remaining")
 - Delete and toggle-complete for every task
 - Empty state message when no tasks match the current filter
 - Keyboard shortcut: press Enter in the input to add a task
 - Clean, polished UI with smooth hover/transition effects
-- Use these realistic sample tasks pre-loaded (not generic "Task 1" placeholders):
-  • "Review Q3 marketing report" — High priority
-  • "Schedule team standup for next week" — Medium priority
-  • "Update API documentation" — Low priority
-  • "Fix login page mobile layout" — High priority`,
+- Pre-load 4–5 realistic sample tasks relevant to the app's domain.
+  Use fresh, varied task names every time — NEVER generic "Task 1" placeholders.`,
   },
   {
     match: /\bdashboard|admin panel|analytics\b/i,
     expansion: `Build a COMPLETE analytics dashboard with ALL these sections:
-- Sidebar with navigation items: Dashboard, Analytics, Reports, Settings (with icons via Unicode/SVG)
-- 4 KPI cards with trend arrows (↑/↓) and percentage change — use these exact realistic metrics:
-  • Revenue: $24,521 (↑ +12.5%)
-  • Users: 1,284 (↑ +8.3%)
-  • Orders: 342 (↑ +5.1%)
-  • Conversion: 3.2% (↓ -0.4%)
-- SVG bar or line chart (300×160 px minimum) with at least 7 realistic data points and axis labels
-- Activity feed or table: 5–8 rows of realistic recent-activity data (user, action, timestamp, status badge)
-- Status badges color-coded: Completed=green, Pending=yellow, Failed=red
-- Professional light or dark theme with consistent spacing and typography`,
+- Sidebar with navigation items relevant to the domain (with icons via Unicode/SVG)
+- 4 KPI cards with trend arrows (↑/↓) and percentage change.
+  Use realistic numbers appropriate to the domain — generate fresh values every time,
+  do NOT reuse the same numbers across builds.
+- SVG bar or line chart (300×160 px minimum) with at least 7 data points and axis labels.
+  Use domain-appropriate data — generate varied, realistic values.
+- Activity feed or table: 5–8 rows of recent-activity data with realistic names, actions, timestamps, and status badges
+- Status badges color-coded: e.g. Completed=green, Pending=yellow, Failed=red
+- Professional theme with consistent spacing and typography`,
   },
   {
     match: /\bkanban|board|drag|trello\b/i,
@@ -165,10 +161,8 @@ Three columns: Todo, In Progress, Done
 Each column has: header with title, task count badge, and list of cards
 Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
 Use inline styles only, no CSS frameworks.
-Sample tasks pre-loaded:
-  Todo: "Design homepage mockup" (High), "Write API docs" (Medium)
-  In Progress: "Build auth system" (High), "Fix mobile nav" (Low)
-  Done: "Set up database" (Medium), "Deploy to staging" (Low)`,
+Pre-load 6 sample tasks distributed across the three columns.
+Use realistic task names relevant to the app's domain — generate fresh names every time.`,
   },
   {
     match: /\blanding page|marketing site|homepage\b/i,
