@@ -71,6 +71,9 @@ You MUST always close every JSX tag you open — NEVER leave JSX unterminated.
 The export default function App() must always have a complete return statement.
 If you are simplifying due to scope: add a comment at the top: // Simplified version
 
+PLANNING — REQUIRED BEFORE CODE:
+Before writing any code, explain your plan in 2-3 sentences. Describe what you will build and the key components. Only AFTER this explanation, begin writing files.
+
 FILE FORMAT — ALWAYS in this exact order:
 1. \`\`\`filename:src/App.tsx — complete component, export default function App()
 2. \`\`\`filename:src/styles.css — all CSS using variables

@@ -147,8 +147,12 @@ export class ModelGateway {
           model: resolvedModel,
           messages: req.messages,
           stream: true,
-          temperature: req.temperature ?? 0.2,
+          // Anthropic extended thinking requires temperature=1; skip the 0.2 default.
+          temperature: resolvedModel.startsWith("anthropic/") ? 1 : (req.temperature ?? 0.2),
           max_tokens: req.maxTokens ?? 16_000,
+          ...(resolvedModel.startsWith("anthropic/") && {
+            thinking: { type: "enabled", budget_tokens: 4000 },
+          }),
         }),
         signal: controller.signal,
       });

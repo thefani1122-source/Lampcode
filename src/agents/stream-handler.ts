@@ -45,6 +45,9 @@ export async function handleAgentStream(
   let codeStarted = false
   let chunkCount = 0
   let contentChunkCount = 0
+  let lastProgressEmitTime = 0
+  let lastProgressLineCount = 0
+  let currentWritingFile = ""
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   emit("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
@@ -77,12 +80,35 @@ export async function handleAgentStream(
           if (!codeStarted && fullContent.includes("```filename:")) {
             codeStarted = true
             emit("build:thinking", { text: "Writing files...", sessionId })
+            lastProgressEmitTime = Date.now()
+            lastProgressLineCount = fullContent.split("\n").length
           }
 
-          // Only forward pre-code text to the thinking panel.
-          // Never emit raw code (build:token) — files are sent via build:file_write at the end.
           if (!codeStarted) {
+            // Forward pre-code planning/explanation text to the thinking panel
             emit("build:thinking", { text, sessionId })
+          } else {
+            // Emit progress updates during code accumulation: every 20 lines or 5 s
+            const linesSoFar = fullContent.split("\n").length
+            const linesSinceLastEmit = linesSoFar - lastProgressLineCount
+            const timeSinceLastEmit = Date.now() - lastProgressEmitTime
+
+            if (linesSinceLastEmit >= 20 || timeSinceLastEmit >= 5000) {
+              const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
+              const lastFence = fenceMatches[fenceMatches.length - 1]
+              const capturedFile = lastFence?.[1]
+              if (capturedFile) {
+                currentWritingFile = capturedFile.trim()
+              }
+              if (currentWritingFile) {
+                emit("build:thinking", {
+                  text: `Writing ${currentWritingFile}... (${linesSoFar} lines so far)`,
+                  sessionId,
+                })
+              }
+              lastProgressEmitTime = Date.now()
+              lastProgressLineCount = linesSoFar
+            }
           }
           break
         }
