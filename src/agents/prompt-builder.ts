@@ -156,7 +156,7 @@ Clicking a card shows a move button: [→ Move to Next Column]
 Three columns: Todo, In Progress, Done
 Each column has: header with title, task count badge, and list of cards
 Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
-Use inline styles only. No external libraries.
+Use inline styles only, no CSS frameworks.
 Sample tasks pre-loaded:
   Todo: "Design homepage mockup" (High), "Write API docs" (Medium)
   In Progress: "Build auth system" (High), "Fix mobile nav" (Low)

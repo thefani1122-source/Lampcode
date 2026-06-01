@@ -201,6 +201,12 @@ export async function runFastBuild(
           "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
         ];
 
+    // ── Tell frontend what's being built (original prompt, never expanded) ──
+    server?.emitToRoom(sessionId, "build:thinking", {
+      text: `Analyzing: ${prompt}`,
+      sessionId,
+    });
+
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
     const result = await dispatcher.dispatch({
