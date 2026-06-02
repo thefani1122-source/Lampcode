@@ -20,6 +20,7 @@ import {
   parseSurgicalEdits,
   applySurgicalEdit,
   stripEditMarkers,
+  isBackendFile,
   type ParsedFile,
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -268,6 +269,23 @@ function validateAppTsx(code: string): string | null {
   return null;
 }
 
+// ── Full-stack detection ──────────────────────────────────────────────────────
+
+/**
+ * True when the prompt implies persistence / server logic (auth, CRUD, data
+ * storage, etc.) and therefore warrants generating backend + database files.
+ */
+function needsBackend(prompt: string): boolean {
+  return /\b(user|login|auth|account|save|store|database|db|api|backend|crud|admin|dashboard|post|blog|todo|task|expense|income|product|order|payment|upload|file|message|chat|notification|setting|profile)\b/i.test(
+    prompt,
+  );
+}
+
+/** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK MODE. */
+function buildFullstackPrompt(prompt: string): string {
+  return `FULLSTACK BUILD:\n${expandUserPrompt(prompt)}`;
+}
+
 // ── Smart follow-up file selection ────────────────────────────────────────────
 
 /**
@@ -422,6 +440,14 @@ export async function runFastBuild(
       }
     }
 
+    // ── Full-stack detection (new builds only) ────────────────────────────
+    // Edits and follow-ups keep their existing flows untouched; only a fresh
+    // build with no prior code can be promoted to a full-stack generation.
+    const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
+    if (isFullstackBuild) {
+      console.log(`[build] fullstack mode: generating frontend + backend + db files`);
+    }
+
     // ── Build task description ────────────────────────────────────────────
     // Priority: token-only > feature-addition > edit-existing > new build.
     const rootBlock = isTokenOnlyEdit
@@ -434,7 +460,9 @@ export async function runFastBuild(
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
           ? buildEditPrompt(contextFiles, prompt)
-          : expandUserPrompt(prompt);
+          : isFullstackBuild
+            ? buildFullstackPrompt(prompt)
+            : expandUserPrompt(prompt);
 
     const requirements = isTokenOnlyEdit
       ? [
@@ -468,12 +496,22 @@ export async function runFastBuild(
               "Preserve the existing design system, color palette, and component structure.",
               "Use inline styles or plain src/styles.css — never Tailwind.",
             ]
-        : [
-            "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-            "Always include src/App.tsx, src/index.tsx, and package.json.",
-            "src/App.tsx must have `export default function App()`.",
-            "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
-          ];
+        : isFullstackBuild
+          ? [
+              "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+              "Generate ALL of: src/db/schema.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css, package.json, src/db/seed.ts.",
+              "Add src/server/auth.ts ONLY if the app needs login/accounts.",
+              "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+              "Backend: Hono.js + Drizzle ORM (drizzle-orm/pg-core); export const api = new Hono(); routes prefixed /api/; Zod validation.",
+              "package.json must include hono, drizzle-orm, zod, react, and react-dom.",
+              "Also output .env.example with DATABASE_URL and VITE_API_URL placeholders.",
+            ]
+          : [
+              "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+              "Always include src/App.tsx, src/index.tsx, and package.json.",
+              "src/App.tsx must have `export default function App()`.",
+              "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
+            ];
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
     server?.emitToRoom(sessionId, "build:thinking", { text: `Building: ${prompt}`, sessionId });
@@ -639,6 +677,13 @@ export async function runFastBuild(
         sessionId,
       });
 
+      // Emit build:file_write so fullstack clients can track per-file progress
+      server?.emitToRoom(sessionId, "build:file_write", {
+        path: safePath,
+        isBackend: isBackendFile(safePath),
+        sessionId,
+      });
+
       const writePercent = 90 + Math.floor(((idx + 1) / totalFiles) * 10);
       server?.progress(sessionId, {
         sessionId,
@@ -670,6 +715,22 @@ export async function runFastBuild(
         // Isolation audit: log exact path so it's easy to verify per-project isolation
         console.log(`[build] design-tokens project=${projectId} vars=${varCount} path=${tokensPath}`);
       }
+    }
+
+    // ── Signal backend code is ready (fullstack builds) ──────────────────
+    // NOTE: We generate backend + DB files as code artifacts; we deliberately do
+    // NOT execute the generated schema/seed SQL against the platform database.
+    // The platform `db` client points at Lampcode's own production DB — running
+    // LLM-generated DDL/DML there would be arbitrary SQL execution against prod.
+    // Users run these files in their own deployment using the emitted .env.example.
+    if (isFullstackBuild) {
+      const backendFiles = writtenPaths.filter(isBackendFile);
+      server?.emitToRoom(sessionId, "build:backend_ready", {
+        sessionId,
+        backendFiles,
+        note: "Backend + DB files generated. Run drizzle migrations + seed in your own environment (see .env.example).",
+      });
+      console.log(`[build] backend_ready project=${projectId} files=[${backendFiles.join(", ")}]`);
     }
 
     // ── Emit build:complete for frontend workspace listener ────────────────

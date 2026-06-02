@@ -207,7 +207,13 @@ export class AgentDispatcher {
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.
     // All other agents use the gateway default (3 minutes).
     const streamTimeoutMs = ["frontend", "fast"].includes(agentType) ? 300_000 : undefined;
-    const stream = this.gateway.stream({ model, messages, maxTokens: 16_000 }, streamTimeoutMs);
+
+    // Fullstack builds emit ~10 files (frontend + backend + db) — double the
+    // output budget so the response isn't truncated mid-file.
+    const isFullstackBuild = task.description.startsWith("FULLSTACK BUILD:");
+    const maxTokens = isFullstackBuild ? 32_000 : 16_000;
+
+    const stream = this.gateway.stream({ model, messages, maxTokens }, streamTimeoutMs);
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
     const startMs = Date.now();
 

@@ -19,6 +19,20 @@ const LANG_HINTS = new Set([
   "plaintext", "text", "txt", "diff", "patch",
 ]);
 
+// Backend / full-stack files. These run server-side (Node), NOT in Sandpack,
+// so the Sandpack validator must NOT flag their server-side imports as errors.
+const BACKEND_FILES = new Set([
+  "src/db/schema.ts",
+  "src/db/seed.ts",
+  "src/server/routes/api.ts",
+  "src/server/auth.ts",
+]);
+
+/** True when a path is a server-side full-stack file (not bundled by Sandpack). */
+export function isBackendFile(path: string): boolean {
+  return BACKEND_FILES.has(path) || path.startsWith("src/server/") || path.startsWith("src/db/");
+}
+
 // Files that belong at project root, not under src/
 const ROOT_FILES = new Set([
   "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
@@ -456,6 +470,8 @@ export function validateSandpackFiles(files: Record<string, string>): {
 
   for (const [filePath, content] of Object.entries(files)) {
     if (filePath === "package.json") continue;
+    // Backend files legitimately import fs/path/etc. — they run in Node, not Sandpack.
+    if (isBackendFile(filePath)) continue;
     if (SERVER_IMPORT_RE.test(content)) {
       errors.push(`${filePath} contains a server-side import`);
     }

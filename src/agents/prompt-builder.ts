@@ -140,8 +140,54 @@ Configure: structured logging, metrics collection, distributed tracing, alerting
 Output configuration files and instrumentation code for the specified stack.`,
 };
 
-// ── JSON output instruction appended for structured agents ────────────────────
+// ── Fullstack mode instruction ────────────────────────────────────────────────
+// Appended to the frontend system prompt when the task is a full-stack build.
+// Detected by the "FULLSTACK BUILD:" description prefix set in build.ts.
 
+const FULLSTACK_INSTRUCTION = `
+
+FULLSTACK MODE — You are building a complete full-stack application (frontend + backend + database).
+
+FRONTEND RULES:
+- Use React + TypeScript.
+- ALL data fetching goes through functions exported from src/lib/api.ts.
+- Load data with useEffect + useState; always show loading and error states.
+- fetch() IS allowed, but ONLY inside src/lib/api.ts (this overrides the no-fetch sandbox rule).
+
+BACKEND RULES:
+- Use Hono.js for API routes.
+- Use Drizzle ORM with PostgreSQL.
+- Export the router as: export const api = new Hono()
+- Prefix every route with /api/.
+- Add permissive CORS headers.
+- Validate every request body with Zod.
+
+DATABASE RULES:
+- Use drizzle-orm/pg-core.
+- Export each table.
+- Include a created_at timestamp column.
+- Use appropriate types (serial, varchar, integer, boolean, timestamp).
+
+FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
+1. \`\`\`filename:src/db/schema.ts        — Drizzle table definitions
+2. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes (export const api = new Hono())
+3. \`\`\`filename:src/server/auth.ts        — session/auth middleware (ONLY if the app needs auth/login)
+4. \`\`\`filename:src/lib/api.ts            — typed client functions (fetch wrappers)
+5. \`\`\`filename:src/App.tsx               — React app, imports from ./lib/api
+6. \`\`\`filename:src/styles.css            — all CSS
+7. \`\`\`filename:src/index.tsx             — render boilerplate
+8. \`\`\`filename:package.json              — include hono, drizzle-orm, react, react-dom, zod
+9. \`\`\`filename:src/db/seed.ts            — inserts realistic mock rows
+10. \`\`\`filename:.env.example             — DATABASE_URL and VITE_API_URL placeholders
+
+API INTEGRATION EXAMPLE:
+In src/App.tsx:
+  import { fetchTodos, createTodo, deleteTodo } from './lib/api';
+  useEffect(() => { fetchTodos().then(setTodos).catch(setError); }, []);
+
+Skip src/server/auth.ts entirely if the app has no login/account concept.`;
+
+// ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "security",
   "db",
@@ -263,6 +309,11 @@ export class PromptBuilder {
   private buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): string {
     const base = SYSTEM_PROMPTS[agentType];
 
+    const isFullstackMode =
+      agentType === "frontend" &&
+      task.description.startsWith("FULLSTACK BUILD:");
+    const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
+
     const isEditMode =
       agentType === "frontend" &&
       task.description.startsWith("EXISTING PROJECT FILES:");
@@ -287,7 +338,7 @@ export class PromptBuilder {
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
-    return base + editModeInstruction + jsonInstruction;
+    return base + fullstackInstruction + editModeInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
