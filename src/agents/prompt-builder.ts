@@ -63,6 +63,17 @@ CODE RULES — NON-NEGOTIABLE:
 - Working forms with validation feedback
 - Smooth CSS transitions on hover/click
 
+DESIGN SYSTEM — REQUIRED:
+If a "DESIGN_TOKENS.md" section appears in the context, those are the persisted CSS variables for this project.
+You MUST use ONLY those variables for colors, backgrounds, and spacing — do NOT introduce new hex colors.
+Use: var(--primary), var(--background), var(--card), var(--text), etc.
+If a variable you need is missing, ADD it to the :root block following the existing naming pattern.
+NEVER use hardcoded hex values (#xxx), rgb(), or hsl() for anything already covered by the design tokens.
+
+MEMORY RULES — REQUIRED:
+If a "MEMORY_RULES.md" section appears in the context, those are permanent project preferences.
+Always follow every rule listed there on every build.
+
 CRITICAL — SCOPE AND COMPLETENESS:
 Before writing any code, estimate if the full request fits in ~400 lines of JSX.
 If it does NOT fit: REDUCE SCOPE. Cut features, simplify components, merge sections.
@@ -251,9 +262,16 @@ export class PromptBuilder {
       ? "\n\nEDIT MODE — You are modifying an existing React app:\n" +
         "- Preserve the existing design system, colors, and component patterns\n" +
         "- Only change what the user explicitly asked for\n" +
-        "- Output ALL files completely (modified and unmodified) — never omit a file\n" +
         "- Preserve all working functionality and state management\n" +
-        "- Do NOT redesign or restructure anything the user did not mention"
+        "- Do NOT redesign or restructure anything the user did not mention\n\n" +
+        "SURGICAL EDITS — use for small, targeted changes:\n" +
+        "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
+        "  // BEGIN_EDIT: [brief description of what changes]\n" +
+        "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
+        "  // END_EDIT\n" +
+        "The system will splice this in place of the matching section in the existing file.\n" +
+        "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
+        "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged."
       : "";
 
     const jsonInstruction =
@@ -343,7 +361,7 @@ export class PromptBuilder {
   private relevantFiles(agentType: AgentTaskType): string[] {
     const byType: Record<AgentTaskType, string[]> = {
       planning:   ["CONTRACT.md", "DB_SCHEMA.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
-      frontend:   ["CONTRACT.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
+      frontend:   ["DESIGN_TOKENS.md", "MEMORY_RULES.md", "CONTRACT.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
       backend:    ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],
       db:         ["CONTRACT.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],
       security:   ["CONTRACT.md", "API_CONTRACTS.md", "DB_SCHEMA.md", "CURRENT_STATE.md"],

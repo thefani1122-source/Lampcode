@@ -15,7 +15,7 @@ import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
-import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
+import { parseFilesFromContent, parseSurgicalEdits, applySurgicalEdit, type ParsedFile } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -119,6 +119,66 @@ async function loadProjectFiles(outputDir: string): Promise<Record<string, strin
   return files;
 }
 
+// ── Design token extraction ───────────────────────────────────────────────────
+
+function extractDesignTokens(stylesContent: string): string | null {
+  const rootMatch = /(:root\s*\{[^}]+\})/s.exec(stylesContent);
+  if (!rootMatch) return null;
+  const block = rootMatch[1] ?? "";
+  if (!/--[\w-]+\s*:/.test(block)) return null;
+  return (
+    "# Design System Tokens\n\n" +
+    "Persisted CSS variables for this project. Use ONLY these on every build.\n\n" +
+    block
+  );
+}
+
+// ── Smart follow-up file selection ────────────────────────────────────────────
+
+/**
+ * For short follow-up prompts, select only the 1–2 files likely to change.
+ * Returns { selected, isSmartSelection } so the caller can gate copy-existing logic.
+ */
+function selectFollowUpFiles(
+  files: Record<string, string>,
+  prompt: string,
+): { selected: Record<string, string>; isSmartSelection: boolean } {
+  const p = prompt.toLowerCase();
+  let targetPaths: string[];
+
+  if (/\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/.test(p)) {
+    targetPaths = ["src/styles.css"];
+  } else if (/\b(layout|grid|flex|spacing|margin|padding|align|justify)\b/.test(p)) {
+    targetPaths = ["src/App.tsx", "src/styles.css"];
+  } else if (/\b(text|wording|content|label|title|heading|copy|placeholder|message)\b/.test(p)) {
+    targetPaths = ["src/App.tsx"];
+  } else {
+    // Default: feature additions / unrecognised prompt
+    targetPaths = ["src/App.tsx"];
+  }
+
+  const selected: Record<string, string> = {};
+  for (const tp of targetPaths) {
+    const fc = files[tp];
+    if (fc !== undefined) selected[tp] = fc;
+  }
+
+  const isSmartSelection = Object.keys(selected).length > 0;
+  return { selected: isSmartSelection ? selected : files, isSmartSelection };
+}
+
+// ── Copy directory ────────────────────────────────────────────────────────────
+
+async function copyExistingFiles(srcDir: string, destDir: string): Promise<number> {
+  const entries = await walkDirectory(srcDir, srcDir).catch(() => []);
+  for (const entry of entries) {
+    const destPath = join(destDir, entry.path);
+    await mkdir(dirname(destPath), { recursive: true });
+    await writeFile(destPath, entry.content, "utf8");
+  }
+  return entries.length;
+}
+
 function buildEditPrompt(files: Record<string, string>, userRequest: string): string {
   const fileBlocks = Object.entries(files)
     .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
@@ -185,19 +245,46 @@ export async function runFastBuild(
     const hasExistingCode = Object.keys(existingFiles).length > 0;
     console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length}`);
 
+    // ── Smart follow-up context selection ────────────────────────────────
+    // Short prompts (≤ 20 words) on an existing project only need 1–2 files.
+    // We copy all existing files to the new outputDir first so unchanged files
+    // remain on disk, then let the LLM only re-output what it actually changes.
+    const promptWordCount = prompt.trim().split(/\s+/).length;
+    const isShortFollowUp = hasExistingCode && promptWordCount <= 20;
+
+    let contextFiles = existingFiles;
+    let smartSelectionUsed = false;
+
+    if (isShortFollowUp) {
+      const { selected, isSmartSelection } = selectFollowUpFiles(existingFiles, prompt);
+      if (isSmartSelection) {
+        contextFiles = selected;
+        smartSelectionUsed = true;
+        console.log(`[build] smart context: sending ${Object.keys(contextFiles).length} of ${Object.keys(existingFiles).length} files to LLM`);
+      }
+    }
+
     // ── Build task description ────────────────────────────────────────────
     const taskDescription = hasExistingCode
-      ? buildEditPrompt(existingFiles, prompt)
+      ? buildEditPrompt(contextFiles, prompt)
       : expandUserPrompt(prompt);
 
     const requirements = hasExistingCode
-      ? [
-          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-          "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
-          "Keep ALL existing functionality that the user did NOT ask to change.",
-          "Preserve the existing design system, color palette, and component structure.",
-          "Use inline styles or plain src/styles.css — never Tailwind.",
-        ]
+      ? smartSelectionUsed
+        ? [
+            "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
+            "Do NOT output src/index.tsx or package.json if they are unchanged.",
+            "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
+            "For large changes (>50% of file): output the complete file.",
+            "Preserve all existing logic and structure that was not mentioned in the request.",
+          ]
+        : [
+            "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+            "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+            "Keep ALL existing functionality that the user did NOT ask to change.",
+            "Preserve the existing design system, color palette, and component structure.",
+            "Use inline styles or plain src/styles.css — never Tailwind.",
+          ]
       : [
           "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
           "Always include src/App.tsx, src/index.tsx, and package.json.",
@@ -238,6 +325,17 @@ export async function runFastBuild(
     // ── Parse and write files ───────────────────────────────────────────────
     console.log("[DEBUG] LLM output first 500 chars:", result.content.substring(0, 500))
     console.log("[DEBUG] LLM output last 200 chars:", result.content.substring(result.content.length - 200))
+
+    const outputDir = join(WORKSPACE_BASE, projectId, sessionId, "frontend");
+    await mkdir(outputDir, { recursive: true });
+
+    // For smart follow-up edits: copy ALL existing files first so unchanged files
+    // remain present. LLM output then overwrites only the changed ones.
+    if (smartSelectionUsed && lastSuccessRow[0]?.outputDir) {
+      const copied = await copyExistingFiles(lastSuccessRow[0].outputDir, outputDir);
+      console.log(`[build] copied ${copied} existing files to new outputDir`);
+    }
+
     let parsedFiles: ParsedFile[] = parseFilesFromContent(result.content);
 
     // Auto-trigger fix agent if frontend produced no structured file output
@@ -260,9 +358,6 @@ export async function runFastBuild(
         ? parsedFiles
         : [{ path: "output.md", code: result.content }];
 
-    const outputDir = join(WORKSPACE_BASE, projectId, sessionId, "frontend");
-    await mkdir(outputDir, { recursive: true });
-
     const writtenPaths: string[] = [];
     const totalFiles = filesToWrite.length;
 
@@ -277,14 +372,31 @@ export async function runFastBuild(
       const safePath = filePath.replace(/^[\\/]+/, "").replace(/\.\.\//g, "");
       const fullPath = join(outputDir, safePath);
       await mkdir(dirname(fullPath), { recursive: true });
-      await writeFile(fullPath, code, "utf8");
+
+      // Detect surgical edits (BEGIN_EDIT/END_EDIT markers)
+      const surgicalEdits = parseSurgicalEdits(code);
+      let finalCode = code;
+
+      if (surgicalEdits.length > 0) {
+        // Read the existing file (may have been copied from previous build above)
+        let existingCode = "";
+        try { existingCode = await readFile(fullPath, "utf8"); } catch { /* new file */ }
+
+        finalCode = existingCode;
+        for (const edit of surgicalEdits) {
+          finalCode = applySurgicalEdit(finalCode, edit);
+        }
+        console.log(`[build] applied ${surgicalEdits.length} surgical edit(s) to ${safePath}`);
+      }
+
+      await writeFile(fullPath, finalCode, "utf8");
       writtenPaths.push(safePath);
 
-      const linesChanged = code.split("\n").length;
+      const linesChanged = finalCode.split("\n").length;
       server?.fileUpdate(sessionId, {
         sessionId,
         path: safePath,
-        content: code,
+        content: finalCode,
         linesChanged,
         timestamp: new Date().toISOString(),
       });
@@ -292,7 +404,7 @@ export async function runFastBuild(
       // Emit file:created for frontend workspace listener
       server?.emitToRoom(sessionId, "file:created", {
         path: safePath,
-        content: code,
+        content: finalCode,
         sessionId,
       });
 
@@ -310,10 +422,33 @@ export async function runFastBuild(
       return;
     }
 
+    // ── Save design tokens after first successful build ───────────────────
+    // Only when we have a styles.css and no DESIGN_TOKENS.md exists yet.
+    const stylesFile = filesToWrite.find((f) => f.path === "src/styles.css");
+    if (stylesFile) {
+      const tokensMd = extractDesignTokens(stylesFile.code);
+      if (tokensMd !== null) {
+        const projectWorkspaceDir = join(WORKSPACE_BASE, projectId);
+        const tokensPath = join(projectWorkspaceDir, "DESIGN_TOKENS.md");
+        // Always overwrite — the latest build defines the authoritative tokens.
+        await mkdir(projectWorkspaceDir, { recursive: true });
+        await writeFile(tokensPath, tokensMd, "utf8");
+        console.log(`[build] design tokens saved → ${tokensPath}`);
+      }
+    }
+
     // ── Emit build:complete for frontend workspace listener ────────────────
+    // Collect final content: for smart-selection builds, merge with existing files
+    // so the frontend receives the complete file set (not just what changed).
     const allFiles: Record<string, string> = {};
-    for (const f of filesToWrite) {
-      allFiles[f.path] = f.code;
+    if (smartSelectionUsed) {
+      // Seed with all files in outputDir (includes copies + LLM output)
+      const allOnDisk = await walkDirectory(outputDir, outputDir).catch(() => []);
+      for (const f of allOnDisk) allFiles[f.path] = f.content;
+    } else {
+      for (const f of filesToWrite) {
+        allFiles[f.path] = f.code;
+      }
     }
     server?.emitToRoom(sessionId, "build:complete", {
       sessionId,
@@ -652,4 +787,40 @@ buildRouter.get("/:sessionId/files", async (c) => {
     totalSizeBytes: files.reduce((acc, f) => acc + f.sizeBytes, 0),
     groups: grouped,
   });
+});
+
+// POST /api/build/:projectId/memory — persist a rule into MEMORY_RULES.md
+// Injected on every future build via PromptBuilder reading workspace/{projectId}/MEMORY_RULES.md
+buildRouter.post("/:projectId/memory", async (c) => {
+  const authUser = c.get("authUser");
+  const { projectId } = c.req.param();
+
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const ruleSchema = z.object({ rule: z.string().min(1).max(1_000) });
+  const parsed = ruleSchema.safeParse(body);
+  if (!parsed.success) throw new AppError(400, "rule must be a non-empty string (max 1000 chars)", "VALIDATION_ERROR");
+
+  // Verify project ownership
+  const projectRows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
+    .limit(1);
+  if (!projectRows[0]) throw new AppError(404, "Project not found", "NOT_FOUND");
+
+  const rulesPath = join(WORKSPACE_BASE, projectId, "MEMORY_RULES.md");
+  let existing = "";
+  try { existing = await readFile(rulesPath, "utf8"); } catch { /* first rule */ }
+
+  const newContent = existing.trim()
+    ? `${existing.trim()}\n- ${parsed.data.rule}\n`
+    : `# Project Memory Rules\n\n- ${parsed.data.rule}\n`;
+
+  await mkdir(join(WORKSPACE_BASE, projectId), { recursive: true });
+  await writeFile(rulesPath, newContent, "utf8");
+
+  logger.info({ projectId, rule: parsed.data.rule }, "Memory rule saved");
+  return c.json({ ok: true, totalRules: (newContent.match(/^- /gm) ?? []).length });
 });

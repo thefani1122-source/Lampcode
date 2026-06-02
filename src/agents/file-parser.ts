@@ -235,6 +235,96 @@ export default function App() {
   return result;
 }
 
+// ── Surgical edit parser ──────────────────────────────────────────────────────
+
+export interface SurgicalEdit {
+  description: string;
+  content: string;
+}
+
+/**
+ * Extract BEGIN_EDIT/END_EDIT blocks from a parsed file's code.
+ * Returns empty array when the file uses full-file output (no markers).
+ */
+export function parseSurgicalEdits(code: string): SurgicalEdit[] {
+  const edits: SurgicalEdit[] = [];
+  const lines = code.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    const beginMatch = /^\s*\/\/\s*BEGIN_EDIT\s*:?\s*(.*)$/.exec(line);
+    if (beginMatch) {
+      const description = (beginMatch[1] ?? "").trim();
+      const contentLines: string[] = [];
+      i++;
+      while (i < lines.length) {
+        const cl = lines[i] ?? "";
+        if (/^\s*\/\/\s*END_EDIT\s*/.test(cl)) { i++; break; }
+        contentLines.push(cl);
+        i++;
+      }
+      const content = contentLines.join("\n").trim();
+      if (content.length > 0) edits.push({ description, content });
+    } else {
+      i++;
+    }
+  }
+
+  return edits;
+}
+
+/**
+ * Apply one surgical edit to existing file content.
+ * Finds the anchor (first non-comment, non-empty line of the new content) in the
+ * existing file, then replaces the matching block using brace-depth counting.
+ * Falls back to appending if the anchor is not found — no data is ever lost.
+ */
+export function applySurgicalEdit(
+  existingContent: string,
+  edit: SurgicalEdit,
+): string {
+  const newLines = edit.content.split("\n");
+  if (newLines.length === 0 || edit.content.trim() === "") return existingContent;
+
+  // Anchor: first non-empty, non-comment line
+  const anchorLine = newLines.find((l) => {
+    const t = l.trim();
+    return t.length > 0 && !t.startsWith("//");
+  });
+  if (!anchorLine) return existingContent;
+
+  const existingLines = existingContent.split("\n");
+  const anchorIdx = existingLines.findIndex((l) => l.trim() === anchorLine.trim());
+
+  if (anchorIdx === -1) {
+    // Section not found — append as a new block (safe: no data loss)
+    return existingContent.trimEnd() + "\n\n" + edit.content + "\n";
+  }
+
+  // Walk forward from the anchor to find the end of the block using brace depth.
+  // Works for CSS rules (:root { }) and TS/JS function bodies.
+  let depth = 0;
+  let foundOpen = false;
+  let endIdx = anchorIdx;
+
+  for (let i = anchorIdx; i < existingLines.length; i++) {
+    for (const ch of (existingLines[i] ?? "")) {
+      if (ch === "{") { depth++; foundOpen = true; }
+      if (ch === "}") depth--;
+    }
+    if (foundOpen && depth <= 0) { endIdx = i; break; }
+    // No braces found at all: treat anchor as a single-line section
+    if (!foundOpen && i > anchorIdx) { endIdx = anchorIdx; break; }
+  }
+
+  return [
+    ...existingLines.slice(0, anchorIdx),
+    ...newLines,
+    ...existingLines.slice(endIdx + 1),
+  ].join("\n");
+}
+
 // ── Sandpack validator ────────────────────────────────────────────────────────
 
 const SERVER_IMPORT_RE =
