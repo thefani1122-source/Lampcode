@@ -15,7 +15,7 @@ import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
-import { parseFilesFromContent, parseSurgicalEdits, applySurgicalEdit, type ParsedFile } from "../../agents/file-parser.js";
+import { parseFilesFromContent, parseSurgicalEdits, applySurgicalEdit, stripEditMarkers, type ParsedFile } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -133,27 +133,58 @@ function extractDesignTokens(stylesContent: string): string | null {
   );
 }
 
+/** Extract the bare :root { } block from a CSS string, or null if absent/empty. */
+function extractRootBlock(css: string): string | null {
+  const match = /(:root\s*\{[^}]+\})/s.exec(css);
+  if (!match) return null;
+  const block = match[1] ?? "";
+  return /--[\w-]+\s*:/.test(block) ? block.trim() : null;
+}
+
+/**
+ * Return true when `css` contains ONLY a :root { } block and no other rules.
+ * Used to detect that the LLM correctly output only token values for a token-only edit.
+ */
+function isRootOnlyCSS(css: string): boolean {
+  const stripped = css
+    .replace(/(:root\s*\{[^}]+\})/s, "")  // remove :root block
+    .replace(/\/\*[\s\S]*?\*\//g, "")      // remove CSS comments
+    .trim();
+  return stripped.length === 0;
+}
+
+/** Compact prompt sent when only the :root token values need updating. */
+function buildTokenEditPrompt(rootBlock: string, userRequest: string): string {
+  return (
+    `EXISTING DESIGN TOKENS:\n${rootBlock}\n\n` +
+    `USER REQUEST: ${userRequest}\n\n` +
+    `INSTRUCTION: Update ONLY the CSS variable values in the :root block to fulfill the request. ` +
+    "Output ONLY the updated :root { } block inside a ```filename:src/styles.css fence — nothing else."
+  );
+}
+
 // ── Smart follow-up file selection ────────────────────────────────────────────
 
 /**
  * For short follow-up prompts, select only the 1–2 files likely to change.
- * Returns { selected, isSmartSelection } so the caller can gate copy-existing logic.
+ * Also flags theme/color prompts as token-only edits so the caller can send
+ * just the :root block instead of the full styles.css.
  */
 function selectFollowUpFiles(
   files: Record<string, string>,
   prompt: string,
-): { selected: Record<string, string>; isSmartSelection: boolean } {
+): { selected: Record<string, string>; isSmartSelection: boolean; isTokenOnlyEdit: boolean } {
   const p = prompt.toLowerCase();
-  let targetPaths: string[];
+  const isThemePrompt = /\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/.test(p);
 
-  if (/\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/.test(p)) {
+  let targetPaths: string[];
+  if (isThemePrompt) {
     targetPaths = ["src/styles.css"];
   } else if (/\b(layout|grid|flex|spacing|margin|padding|align|justify)\b/.test(p)) {
     targetPaths = ["src/App.tsx", "src/styles.css"];
   } else if (/\b(text|wording|content|label|title|heading|copy|placeholder|message)\b/.test(p)) {
     targetPaths = ["src/App.tsx"];
   } else {
-    // Default: feature additions / unrecognised prompt
     targetPaths = ["src/App.tsx"];
   }
 
@@ -164,7 +195,13 @@ function selectFollowUpFiles(
   }
 
   const isSmartSelection = Object.keys(selected).length > 0;
-  return { selected: isSmartSelection ? selected : files, isSmartSelection };
+  // Token-only: theme prompt AND we actually have a styles.css with a :root block
+  const isTokenOnlyEdit =
+    isThemePrompt &&
+    selected["src/styles.css"] !== undefined &&
+    extractRootBlock(selected["src/styles.css"] ?? "") !== null;
+
+  return { selected: isSmartSelection ? selected : files, isSmartSelection, isTokenOnlyEdit };
 }
 
 // ── Copy directory ────────────────────────────────────────────────────────────
@@ -254,43 +291,59 @@ export async function runFastBuild(
 
     let contextFiles = existingFiles;
     let smartSelectionUsed = false;
+    let isTokenOnlyEdit = false;
 
     if (isShortFollowUp) {
-      const { selected, isSmartSelection } = selectFollowUpFiles(existingFiles, prompt);
+      const { selected, isSmartSelection, isTokenOnlyEdit: tokenOnly } = selectFollowUpFiles(existingFiles, prompt);
       if (isSmartSelection) {
         contextFiles = selected;
         smartSelectionUsed = true;
-        console.log(`[build] smart context: sending ${Object.keys(contextFiles).length} of ${Object.keys(existingFiles).length} files to LLM`);
+        isTokenOnlyEdit = tokenOnly;
+        console.log(`[build] smart context: ${Object.keys(contextFiles).length}/${Object.keys(existingFiles).length} files → LLM (tokenOnlyEdit=${isTokenOnlyEdit})`);
       }
     }
 
     // ── Build task description ────────────────────────────────────────────
-    const taskDescription = hasExistingCode
-      ? buildEditPrompt(contextFiles, prompt)
-      : expandUserPrompt(prompt);
+    // Token-only edit: send just the :root block (< 300 chars vs 5K full CSS).
+    const rootBlock = isTokenOnlyEdit
+      ? extractRootBlock(existingFiles["src/styles.css"] ?? "")
+      : null;
 
-    const requirements = hasExistingCode
-      ? smartSelectionUsed
-        ? [
-            "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
-            "Do NOT output src/index.tsx or package.json if they are unchanged.",
-            "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
-            "For large changes (>50% of file): output the complete file.",
-            "Preserve all existing logic and structure that was not mentioned in the request.",
-          ]
+    const taskDescription = rootBlock
+      ? buildTokenEditPrompt(rootBlock, prompt)
+      : hasExistingCode
+        ? buildEditPrompt(contextFiles, prompt)
+        : expandUserPrompt(prompt);
+
+    const requirements = isTokenOnlyEdit
+      ? [
+          "Output ONLY ```filename:src/styles.css containing the updated :root { } block.",
+          "The file content must be ONLY the :root { } block — no other CSS rules.",
+          "Keep ALL existing variable names. Only change the values the user requested.",
+          "Do NOT output App.tsx, index.tsx, or package.json.",
+        ]
+      : hasExistingCode
+        ? smartSelectionUsed
+          ? [
+              "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
+              "Do NOT output src/index.tsx or package.json if they are unchanged.",
+              "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
+              "For large changes (>50% of file): output the complete file.",
+              "Preserve all existing logic and structure that was not mentioned in the request.",
+            ]
+          : [
+              "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+              "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+              "Keep ALL existing functionality that the user did NOT ask to change.",
+              "Preserve the existing design system, color palette, and component structure.",
+              "Use inline styles or plain src/styles.css — never Tailwind.",
+            ]
         : [
             "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-            "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
-            "Keep ALL existing functionality that the user did NOT ask to change.",
-            "Preserve the existing design system, color palette, and component structure.",
-            "Use inline styles or plain src/styles.css — never Tailwind.",
-          ]
-      : [
-          "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-          "Always include src/App.tsx, src/index.tsx, and package.json.",
-          "src/App.tsx must have `export default function App()`.",
-          "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
-        ];
+            "Always include src/App.tsx, src/index.tsx, and package.json.",
+            "src/App.tsx must have `export default function App()`.",
+            "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
+          ];
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
     server?.emitToRoom(sessionId, "build:thinking", { text: `Building: ${prompt}`, sessionId });
@@ -387,6 +440,28 @@ export async function runFastBuild(
           finalCode = applySurgicalEdit(finalCode, edit);
         }
         console.log(`[build] applied ${surgicalEdits.length} surgical edit(s) to ${safePath}`);
+      } else if (isTokenOnlyEdit && safePath === "src/styles.css") {
+        // Token-only mode: LLM outputs just the :root block.
+        // Verify it's root-only output, then splice it into the full existing CSS.
+        if (isRootOnlyCSS(finalCode)) {
+          let existingCSS = "";
+          try { existingCSS = await readFile(fullPath, "utf8"); } catch { /* no prior file */ }
+          if (existingCSS) {
+            finalCode = applySurgicalEdit(existingCSS, { description: "token update", content: finalCode });
+            console.log(`[build] token-only edit: spliced new :root block into ${safePath}`);
+          }
+        } else {
+          // LLM output more than the :root block — use it as the full file
+          console.log(`[build] token-only: LLM output full CSS (${finalCode.split("\n").length} lines), using as-is`);
+        }
+      }
+
+      // Strip any stray edit markers so Sandpack never sees // BEGIN_EDIT comments
+      finalCode = stripEditMarkers(finalCode);
+
+      // Safety check: warn if styles.css begins with a JS comment after processing
+      if (safePath === "src/styles.css" && finalCode.trimStart().startsWith("//")) {
+        console.warn(`[build] WARNING: ${safePath} starts with JS comment after edit — possible marker corruption`);
       }
 
       await writeFile(fullPath, finalCode, "utf8");
@@ -422,18 +497,22 @@ export async function runFastBuild(
       return;
     }
 
-    // ── Save design tokens after first successful build ───────────────────
-    // Only when we have a styles.css and no DESIGN_TOKENS.md exists yet.
-    const stylesFile = filesToWrite.find((f) => f.path === "src/styles.css");
-    if (stylesFile) {
-      const tokensMd = extractDesignTokens(stylesFile.code);
+    // ── Save design tokens after every successful build ──────────────────
+    // Read the final written styles.css from disk so we get the post-splice content.
+    // Path: workspace/{projectId}/DESIGN_TOKENS.md — strictly per-project, not global.
+    const finalStylesPath = join(outputDir, "src/styles.css");
+    let finalStylesContent = "";
+    try { finalStylesContent = await readFile(finalStylesPath, "utf8"); } catch { /* no styles.css */ }
+    if (finalStylesContent) {
+      const tokensMd = extractDesignTokens(finalStylesContent);
       if (tokensMd !== null) {
         const projectWorkspaceDir = join(WORKSPACE_BASE, projectId);
         const tokensPath = join(projectWorkspaceDir, "DESIGN_TOKENS.md");
-        // Always overwrite — the latest build defines the authoritative tokens.
         await mkdir(projectWorkspaceDir, { recursive: true });
         await writeFile(tokensPath, tokensMd, "utf8");
-        console.log(`[build] design tokens saved → ${tokensPath}`);
+        const varCount = (tokensMd.match(/--[\w-]+\s*:/g) ?? []).length;
+        // Isolation audit: log exact path so it's easy to verify per-project isolation
+        console.log(`[build] design-tokens project=${projectId} vars=${varCount} path=${tokensPath}`);
       }
     }
 
@@ -821,6 +900,9 @@ buildRouter.post("/:projectId/memory", async (c) => {
   await mkdir(join(WORKSPACE_BASE, projectId), { recursive: true });
   await writeFile(rulesPath, newContent, "utf8");
 
-  logger.info({ projectId, rule: parsed.data.rule }, "Memory rule saved");
-  return c.json({ ok: true, totalRules: (newContent.match(/^- /gm) ?? []).length });
+  const totalRules = (newContent.match(/^- /gm) ?? []).length;
+  // Isolation audit: log exact path so it's easy to verify per-project isolation
+  console.log(`[build] memory-rule project=${projectId} totalRules=${totalRules} path=${rulesPath}`);
+  logger.info({ projectId, rule: parsed.data.rule, totalRules }, "Memory rule saved");
+  return c.json({ ok: true, totalRules });
 });

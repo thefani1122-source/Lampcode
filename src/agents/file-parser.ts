@@ -325,6 +325,25 @@ export function applySurgicalEdit(
   ].join("\n");
 }
 
+/**
+ * Remove any stray BEGIN_EDIT / END_EDIT / CHANGED: comment lines from code.
+ * Called on every file before it is written to disk so no edit markers
+ * ever reach Sandpack, even if the LLM scattered them outside proper blocks.
+ */
+export function stripEditMarkers(code: string): string {
+  return code
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return (
+        !/^\/\/\s*BEGIN_EDIT\b/.test(t) &&
+        !/^\/\/\s*END_EDIT\b/.test(t) &&
+        !/^\/\/\s*CHANGED:/.test(t)
+      );
+    })
+    .join("\n");
+}
+
 // ── Sandpack validator ────────────────────────────────────────────────────────
 
 const SERVER_IMPORT_RE =
