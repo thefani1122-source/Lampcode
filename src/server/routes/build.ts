@@ -15,7 +15,15 @@ import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
-import { parseFilesFromContent, parseSurgicalEdits, applySurgicalEdit, stripEditMarkers, type ParsedFile } from "../../agents/file-parser.js";
+import {
+  parseFilesFromContent,
+  parseSurgicalEdits,
+  applySurgicalEdit,
+  parseComponentAddition,
+  applyComponentAddition,
+  stripEditMarkers,
+  type ParsedFile,
+} from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -163,6 +171,80 @@ function buildTokenEditPrompt(rootBlock: string, userRequest: string): string {
   );
 }
 
+// ── Component addition helpers ────────────────────────────────────────────────
+
+/**
+ * True when the prompt asks to add a new section/component to an existing app.
+ * Deliberately narrow — must mention an "add/insert/create" verb AND a UI noun
+ * so it doesn't fire on theme changes, data edits, or wording tweaks.
+ */
+function isAdditionPrompt(prompt: string): boolean {
+  const p = prompt.toLowerCase();
+  const addVerb = /\b(add|insert|include|append|create|build|make)\b/.test(p);
+  const uiNoun = /\b(section|component|page|tab|panel|modal|sidebar|navbar|nav|footer|header|widget|form|chart|graph|feature|screen|view|card|list|table|menu|drawer|dialog|tooltip)\b/.test(p);
+  const newNoun = /\bnew\s+(section|component|page|tab|panel|modal|sidebar|widget|screen|view|feature)\b/.test(p);
+  return (addVerb && uiNoun) || newNoun;
+}
+
+/**
+ * Extract a compact structural summary of an App.tsx string.
+ * Returns the PascalCase function names and the direct JSX children of the
+ * App return statement — enough context for the LLM to place the new component.
+ */
+function extractAppStructure(
+  appTsx: string,
+): { components: string[]; returnChildren: string[] } {
+  // PascalCase function / const declarations (skip "App" itself)
+  const fnRe = /(?:^|\n)\s*(?:function|const)\s+([A-Z][A-Za-z0-9]+)\s*(?:\(|\s*=)/g;
+  const components: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = fnRe.exec(appTsx)) !== null) {
+    const name = m[1] ?? "";
+    if (name && name !== "App" && !components.includes(name)) components.push(name);
+  }
+
+  // Direct PascalCase JSX children in the App return statement
+  const returnMatch = /export\s+default\s+function\s+App[\s\S]*?return\s*\(\s*([\s\S]+?)\s*\)\s*;/s.exec(appTsx);
+  const returnChildren: string[] = [];
+  if (returnMatch) {
+    const jsx = returnMatch[1] ?? "";
+    const childRe = /<([A-Z][A-Za-z0-9]+)\b[^>]*(?:\/>|>)/g;
+    let c: RegExpExecArray | null;
+    while ((c = childRe.exec(jsx)) !== null) {
+      const name = c[1] ?? "";
+      if (name && !returnChildren.includes(name)) returnChildren.push(name);
+    }
+  }
+
+  return { components, returnChildren };
+}
+
+/**
+ * Compact prompt for component-addition mode.
+ * Only sends a structural summary of the existing app (~100 chars) rather than
+ * the full App.tsx (~4 K chars), so the LLM context cost stays minimal.
+ */
+function buildAdditionPrompt(
+  structure: { components: string[]; returnChildren: string[] },
+  userRequest: string,
+): string {
+  const defined = structure.components.length > 0
+    ? structure.components.join(", ")
+    : "(no sub-components yet)";
+  const renders = structure.returnChildren.length > 0
+    ? structure.returnChildren.map((c) => `  <${c} />`).join("\n")
+    : "  (main content in a single block)";
+
+  return (
+    `EXISTING APP STRUCTURE:\n` +
+    `Sub-components defined: ${defined}\n` +
+    `App return currently renders:\n${renders}\n\n` +
+    `USER REQUEST: ${userRequest}\n\n` +
+    `INSTRUCTION: Add the requested component. ` +
+    `Follow the COMPONENT ADDITION MODE output format from the system prompt exactly.`
+  );
+}
+
 // ── Smart follow-up file selection ────────────────────────────────────────────
 
 /**
@@ -303,17 +385,39 @@ export async function runFastBuild(
       }
     }
 
+    // ── Component addition mode ───────────────────────────────────────────
+    // Detected when: existing code present + short prompt + "add X" pattern.
+    // We send only a structural summary (~100 chars) instead of the full 4K App.tsx.
+    // isTokenOnlyEdit takes precedence (theme changes are not additions).
+    let isComponentAdditionMode = false;
+    let appStructure: { components: string[]; returnChildren: string[] } | null = null;
+
+    if (!isTokenOnlyEdit && isShortFollowUp && isAdditionPrompt(prompt)) {
+      const appTsx = existingFiles["src/App.tsx"] ?? "";
+      if (appTsx.length > 0) {
+        appStructure = extractAppStructure(appTsx);
+        isComponentAdditionMode = true;
+        smartSelectionUsed = true; // ensure copy-existing-files step runs
+        console.log(
+          `[build] component-addition mode: components=[${appStructure.components.join(", ")}]` +
+          ` children=[${appStructure.returnChildren.join(", ")}]`,
+        );
+      }
+    }
+
     // ── Build task description ────────────────────────────────────────────
-    // Token-only edit: send just the :root block (< 300 chars vs 5K full CSS).
+    // Priority: token-only > component-addition > edit-existing > new build.
     const rootBlock = isTokenOnlyEdit
       ? extractRootBlock(existingFiles["src/styles.css"] ?? "")
       : null;
 
     const taskDescription = rootBlock
       ? buildTokenEditPrompt(rootBlock, prompt)
-      : hasExistingCode
-        ? buildEditPrompt(contextFiles, prompt)
-        : expandUserPrompt(prompt);
+      : isComponentAdditionMode && appStructure
+        ? buildAdditionPrompt(appStructure, prompt)
+        : hasExistingCode
+          ? buildEditPrompt(contextFiles, prompt)
+          : expandUserPrompt(prompt);
 
     const requirements = isTokenOnlyEdit
       ? [
@@ -322,6 +426,15 @@ export async function runFastBuild(
           "Keep ALL existing variable names. Only change the values the user requested.",
           "Do NOT output App.tsx, index.tsx, or package.json.",
         ]
+      : isComponentAdditionMode
+        ? [
+            "Output ONLY ```filename:src/App.tsx with the new component code.",
+            "First line inside the fence: // NEW COMPONENT: ComponentName",
+            "Then the complete new function body (self-contained, with inline styles).",
+            "Then: // INTEGRATION: add <ComponentName /> after <ExistingComponent />",
+            "Then the exact JSX tag on its own line.",
+            "Do NOT include any existing component code — only the new code.",
+          ]
       : hasExistingCode
         ? smartSelectionUsed
           ? [
@@ -426,9 +539,34 @@ export async function runFastBuild(
       const fullPath = join(outputDir, safePath);
       await mkdir(dirname(fullPath), { recursive: true });
 
-      // Detect surgical edits (BEGIN_EDIT/END_EDIT markers)
-      const surgicalEdits = parseSurgicalEdits(code);
+      // ── Component addition mode: splice new component into existing App.tsx ──
+      // Detect by the // NEW COMPONENT: marker the LLM is instructed to use.
+      const isNewComponentBlock =
+        isComponentAdditionMode &&
+        safePath === "src/App.tsx" &&
+        /\/\/\s*NEW COMPONENT:/i.test(code);
+
       let finalCode = code;
+
+      if (isNewComponentBlock) {
+        const addition = parseComponentAddition(code);
+        const existingAppTsx = existingFiles["src/App.tsx"] ?? "";
+        if (addition && existingAppTsx) {
+          const merged = applyComponentAddition(existingAppTsx, addition);
+          if (merged) {
+            finalCode = merged;
+            console.log(`[build] component addition: inserted ${addition.componentName} into App.tsx`);
+          } else {
+            // applyComponentAddition couldn't parse the structure — fall through to full file write
+            console.warn(`[build] component addition: apply failed for ${addition.componentName}, using LLM output as-is`);
+          }
+        } else {
+          console.warn(`[build] component addition: parseComponentAddition returned null, using LLM output as-is`);
+        }
+      }
+
+      // ── Surgical edits (BEGIN_EDIT/END_EDIT markers) ──────────────────────
+      const surgicalEdits = isNewComponentBlock ? [] : parseSurgicalEdits(code);
 
       if (surgicalEdits.length > 0) {
         // Read the existing file (may have been copied from previous build above)

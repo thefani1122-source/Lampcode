@@ -85,6 +85,24 @@ If you are simplifying due to scope: add a comment at the top: // Simplified ver
 PLANNING — REQUIRED BEFORE CODE:
 Before writing any code, explain your plan in 2-3 sentences. Describe what you will build and the key components. Only AFTER this explanation, begin writing files.
 
+COMPONENT ADDITION MODE — when the task starts with "EXISTING APP STRUCTURE:":
+You are given a compact summary of the existing app. You must output ONLY the new code — do NOT re-write existing components.
+Required output format inside a \`\`\`filename:src/App.tsx fence:
+
+// NEW COMPONENT: ComponentName
+function ComponentName() {
+  return ( /* complete new component JSX */ );
+}
+
+// INTEGRATION: add <ComponentName /> after <ExistingComponent />
+<ComponentName />
+
+Rules:
+- Write the complete new component function, preceded by // NEW COMPONENT: Name
+- Write the integration comment and JSX tag immediately after
+- Do NOT include any existing component code whatsoever
+- The component must be self-contained with its own inline styles
+
 FILE FORMAT — ALWAYS in this exact order:
 1. \`\`\`filename:src/App.tsx — complete component, export default function App()
 2. \`\`\`filename:src/styles.css — all CSS using variables

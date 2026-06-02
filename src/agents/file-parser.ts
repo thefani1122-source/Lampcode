@@ -325,6 +325,92 @@ export function applySurgicalEdit(
   ].join("\n");
 }
 
+// ── Component addition parser ─────────────────────────────────────────────────
+
+export interface ComponentAddition {
+  componentName: string;
+  componentCode: string;   // complete function body
+  integrationTag: string;  // e.g. "<ProfileSection />"
+  insertAfter: string | null; // PascalCase component name, or null = append
+}
+
+/**
+ * Parse a component-addition code block that contains // NEW COMPONENT: and
+ * // INTEGRATION: markers. Returns null when neither marker is present.
+ */
+export function parseComponentAddition(code: string): ComponentAddition | null {
+  // Must start with the marker (LLM is instructed to output it first)
+  const compRe = /\/\/\s*NEW COMPONENT:\s*(\w+)[^\n]*\n([\s\S]+?)(?=\/\/\s*INTEGRATION:)/i;
+  const compMatch = compRe.exec(code);
+  if (!compMatch) return null;
+
+  const componentName = (compMatch[1] ?? "").trim();
+  const componentCode = (compMatch[2] ?? "").trim();
+  if (!componentName || !componentCode) return null;
+
+  // Extract the JSX tag that follows // INTEGRATION:
+  const intRe = /\/\/\s*INTEGRATION:[^\n]*\n([^\n]+)/i;
+  const intMatch = intRe.exec(code);
+  const integrationTag = (intMatch?.[1] ?? "").trim();
+
+  // Extract "after <SomeComponent" from the integration comment
+  const afterMatch = /\/\/\s*INTEGRATION:[^\n]*after\s+<([A-Z][A-Za-z0-9]+)/i.exec(code);
+  const insertAfter = afterMatch?.[1] ?? null;
+
+  return { componentName, componentCode, integrationTag, insertAfter };
+}
+
+/**
+ * Splice a new component into an existing App.tsx string.
+ *
+ * Step 1: Insert the function body immediately before "export default function App".
+ * Step 2: Insert the JSX tag after the specified sibling component (or before the
+ *         last closing tag of the root element if no sibling is named).
+ *
+ * Returns null when the existing file structure can't be parsed safely.
+ */
+export function applyComponentAddition(
+  existingAppTsx: string,
+  addition: ComponentAddition,
+): string | null {
+  // ── Step 1: insert function before "export default function App" ────────────
+  const exportDefaultRe = /(\nexport\s+default\s+function\s+App\b)/;
+  if (!exportDefaultRe.test(existingAppTsx)) return null;
+
+  let result = existingAppTsx.replace(
+    exportDefaultRe,
+    `\n// ${addition.componentName}\n${addition.componentCode}\n$1`,
+  );
+
+  // ── Step 2: insert JSX tag ──────────────────────────────────────────────────
+  if (addition.integrationTag) {
+    let inserted = false;
+
+    if (addition.insertAfter) {
+      // Insert on the line immediately after the named sibling component tag
+      const siblingRe = new RegExp(
+        `(<${addition.insertAfter}\\b[^>]*(?:\\/>|>[^<]*<\\/${addition.insertAfter}>))`,
+        "s",
+      );
+      if (siblingRe.test(result)) {
+        result = result.replace(siblingRe, `$1\n          ${addition.integrationTag}`);
+        inserted = true;
+      }
+    }
+
+    if (!inserted) {
+      // Fallback: prepend the new tag immediately before the first
+      // "          </div>);" style closing line of the App's return block.
+      const closingTagRe = /([ \t]{2,})<\/[a-z][A-Za-z0-9]*>\s*\)\s*;/;
+      result = result.replace(closingTagRe, (m, indent) =>
+        `${indent}${addition.integrationTag}\n${m}`,
+      );
+    }
+  }
+
+  return result;
+}
+
 /**
  * Remove any stray BEGIN_EDIT / END_EDIT / CHANGED: comment lines from code.
  * Called on every file before it is written to disk so no edit markers
