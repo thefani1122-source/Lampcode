@@ -185,20 +185,62 @@ function isAdditionPrompt(prompt: string): boolean {
 }
 
 /**
- * Build prompt for feature-addition mode — sends ALL existing files so the LLM
- * can output a complete, correct App.tsx rather than guessing at structure.
+ * Extract a compact structural summary of App.tsx.
+ * Returns PascalCase component names and direct JSX children of the App return.
  */
-function buildAdditionEditPrompt(files: Record<string, string>, userRequest: string): string {
-  const fileBlocks = Object.entries(files)
-    .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
-    .join("\n\n");
+function extractAppStructure(appTsx: string): { components: string[]; returnChildren: string[] } {
+  const fnRe = /(?:^|\n)\s*(?:function|const)\s+([A-Z][A-Za-z0-9]+)\s*(?:\(|\s*=)/g;
+  const components: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = fnRe.exec(appTsx)) !== null) {
+    const name = m[1] ?? "";
+    if (name && name !== "App" && !components.includes(name)) components.push(name);
+  }
+  const returnMatch = /export\s+default\s+function\s+App[\s\S]*?return\s*\(\s*([\s\S]+?)\s*\)\s*;/s.exec(appTsx);
+  const returnChildren: string[] = [];
+  if (returnMatch) {
+    const jsx = returnMatch[1] ?? "";
+    const childRe = /<([A-Z][A-Za-z0-9]+)\b[^>]*(?:\/>|>)/g;
+    let c: RegExpExecArray | null;
+    while ((c = childRe.exec(jsx)) !== null) {
+      const name = c[1] ?? "";
+      if (name && !returnChildren.includes(name)) returnChildren.push(name);
+    }
+  }
+  return { components, returnChildren };
+}
+
+const MAX_APP_TSX_CHARS = 20_000; // ~5K tokens — fallback cap if App.tsx is huge
+
+/**
+ * Build prompt for feature-addition mode.
+ * Sends a structural summary + the existing App.tsx (capped at ~5K tokens).
+ * Explicitly excludes styles.css to prevent theme corruption.
+ */
+function buildAdditionEditPrompt(appTsx: string, userRequest: string): string {
+  const structure = extractAppStructure(appTsx);
+
+  const defined = structure.components.length > 0
+    ? structure.components.join(", ")
+    : "(no sub-components yet)";
+  const renders = structure.returnChildren.length > 0
+    ? structure.returnChildren.map((c) => `<${c} />`).join(", ")
+    : "(main content inline)";
+
+  const appContent = appTsx.length > MAX_APP_TSX_CHARS
+    ? appTsx.slice(0, MAX_APP_TSX_CHARS) + "\n// [truncated — App.tsx too large]"
+    : appTsx;
+
   return (
-    `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
+    `EXISTING APP STRUCTURE:\n` +
+    `Components defined: ${defined}\n` +
+    `App currently renders: ${renders}\n\n` +
+    `EXISTING App.tsx:\n\`\`\`filename:src/App.tsx\n${appContent}\n\`\`\`\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Add the new feature described above. ` +
     `PRESERVE ALL existing code exactly as-is — only ADD new sections/components. ` +
-    `Output the FULL updated App.tsx so the result is complete and correct. ` +
-    `Do NOT rewrite or restructure existing sections.`
+    `Use existing CSS classes from styles.css — do NOT modify or output styles.css. ` +
+    `Output the FULL updated App.tsx — every line, nothing omitted.`
   );
 }
 
@@ -360,11 +402,15 @@ export async function runFastBuild(
     if (isShortFollowUp) {
       // Feature addition: send ALL files so LLM can output correct full App.tsx.
       // Must be detected before token-only check since theme changes aren't additions.
-      if (!isTokenOnlyEdit && isAdditionPrompt(prompt) && Object.keys(existingFiles).length > 0) {
+      if (!isTokenOnlyEdit && isAdditionPrompt(prompt) && existingFiles["src/App.tsx"]) {
         isFeatureAddition = true;
-        contextFiles = existingFiles;
+        // contextFiles not used for feature-addition (buildAdditionEditPrompt takes App.tsx directly)
         smartSelectionUsed = true; // ensures copy-existing-files step runs
-        console.log(`[build] feature-addition mode: sending all ${Object.keys(existingFiles).length} files`);
+        const structure = extractAppStructure(existingFiles["src/App.tsx"] ?? "");
+        console.log(
+          `[build] feature-addition mode: components=[${structure.components.join(", ")}]` +
+          ` renders=[${structure.returnChildren.join(", ")}]`,
+        );
       } else {
         const { selected, isSmartSelection, isTokenOnlyEdit: tokenOnly } = selectFollowUpFiles(existingFiles, prompt);
         if (isSmartSelection) {
@@ -385,7 +431,7 @@ export async function runFastBuild(
     const taskDescription = rootBlock
       ? buildTokenEditPrompt(rootBlock, prompt)
       : isFeatureAddition
-        ? buildAdditionEditPrompt(contextFiles, prompt)
+        ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
           ? buildEditPrompt(contextFiles, prompt)
           : expandUserPrompt(prompt);
@@ -399,10 +445,11 @@ export async function runFastBuild(
         ]
       : isFeatureAddition
         ? [
-            "Output the FULL updated ```filename:src/App.tsx — every line, nothing omitted.",
+            "Output ONLY ```filename:src/App.tsx — the full file, every line, nothing omitted.",
             "PRESERVE all existing components, state, and JSX exactly as they are.",
             "Only ADD the new feature — do not restructure or rewrite existing sections.",
             "The file must end with `export default App` or `export default function App`.",
+            "Do NOT output src/styles.css, src/index.tsx, or package.json.",
             "Do NOT use // BEGIN_EDIT or // END_EDIT markers.",
           ]
       : hasExistingCode
@@ -510,6 +557,17 @@ export async function runFastBuild(
       await mkdir(dirname(fullPath), { recursive: true });
 
       let finalCode = code;
+
+      // ── CSS protection: reject styles.css for non-theme follow-up edits ───
+      // Prevents the LLM from wiping the design tokens on feature additions
+      // or text/layout edits. Token-only edits are exempt (they exist to update CSS).
+      if (safePath === "src/styles.css" && hasExistingCode && !isTokenOnlyEdit) {
+        const isThemePrompt = /\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/i.test(prompt);
+        if (!isThemePrompt) {
+          console.log(`[build] CSS file rejected for non-theme edit — keeping existing styles.css`);
+          continue;
+        }
+      }
 
       // ── Validate App.tsx before writing (feature addition or any edit) ────
       if (safePath === "src/App.tsx" && hasExistingCode) {
