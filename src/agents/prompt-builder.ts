@@ -177,6 +177,15 @@ FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\
 6. \`\`\`filename:src/styles.css            — all CSS
 7. \`\`\`filename:src/index.tsx             — render boilerplate
 8. \`\`\`filename:package.json              — include hono, drizzle-orm, react, react-dom, zod
+   package.json scripts must be EXACTLY:
+   {
+     "scripts": {
+       "dev": "vite",
+       "build": "vite build"
+     }
+   }
+   "server" and "db:seed" scripts are for deployment only — do NOT include them.
+   Sandpack preview runs ONLY the "dev" script; extra scripts break the preview.
 9. \`\`\`filename:src/db/seed.ts            — inserts realistic mock rows
 10. \`\`\`filename:.env.example             — DATABASE_URL and VITE_API_URL placeholders
 
