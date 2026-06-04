@@ -28,9 +28,17 @@ const BACKEND_FILES = new Set([
   "src/server/auth.ts",
 ]);
 
+// Non-source files generated for the deployment artifact but not needed by Sandpack.
+const SANDPACK_EXCLUDED = new Set(["README.md", ".env.example", ".env"]);
+
 /** True when a path is a server-side full-stack file (not bundled by Sandpack). */
 export function isBackendFile(path: string): boolean {
   return BACKEND_FILES.has(path) || path.startsWith("src/server/") || path.startsWith("src/db/");
+}
+
+/** True when a path should be excluded from the Sandpack file set entirely. */
+export function isSandpackExcluded(path: string): boolean {
+  return SANDPACK_EXCLUDED.has(path) || path.startsWith(".env");
 }
 
 // Files that belong at project root, not under src/

@@ -196,6 +196,124 @@ In src/App.tsx:
 
 Skip src/server/auth.ts entirely if the app has no login/account concept.`;
 
+// ── Auth sub-mode instruction ─────────────────────────────────────────────────
+// Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
+
+const FULLSTACK_AUTH_INSTRUCTION = `
+
+AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
+
+ADDITIONAL FILES — generate these AFTER the base files (numbered continuing from 10):
+11. \`\`\`filename:src/lib/supabase.ts
+    Use this EXACT content:
+    \`\`\`
+    import { createClient } from '@supabase/supabase-js'
+    export const supabase = createClient(
+      import.meta.env.VITE_SUPABASE_URL,
+      import.meta.env.VITE_SUPABASE_ANON_KEY
+    )
+    \`\`\`
+
+12. \`\`\`filename:src/hooks/useAuth.ts
+    - Import supabase from '../lib/supabase'
+    - Export default function useAuth()
+    - Returns: { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
+    - On mount: call supabase.auth.getSession(), set user + session, then set loading=false
+    - Subscribe: supabase.auth.onAuthStateChange((_, session) => { setSession(session); setUser(session?.user ?? null); })
+    - signIn(email, password): return supabase.auth.signInWithPassword({ email, password })
+    - signUp(email, password): return supabase.auth.signUp({ email, password })
+    - signOut(): return supabase.auth.signOut()
+    - signInWithGoogle(): return supabase.auth.signInWithOAuth({ provider: 'google' })
+    - signInWithGithub(): return supabase.auth.signInWithOAuth({ provider: 'github' })
+
+13. \`\`\`filename:src/components/AuthProvider.tsx
+    - Create AuthContext with { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
+    - AuthProvider component: uses useAuth() internally, provides context to children
+    - While loading is true, render a centered loading spinner (inline CSS, no libraries)
+    - Export useAuthContext() hook: returns useContext(AuthContext)
+    - Export default AuthProvider
+
+14. \`\`\`filename:src/components/Login.tsx
+    - Two tabs: "Sign In" | "Sign Up" — switching between them changes the form
+    - Email + password fields (controlled inputs) for both Sign In and Sign Up
+    - "Continue with Google" button with Google's red (#DB4437) color
+    - "Continue with GitHub" button with GitHub's dark (#24292e) color
+    - Both OAuth buttons call the matching method from useAuthContext()
+    - Error message display (red text, below the form)
+    - Loading state: disable buttons and show "Loading..." during async calls
+    - Clean card layout, centered on screen, white background, subtle box-shadow
+    - Export default Login
+
+15. \`\`\`filename:.env.example
+    Use this EXACT content (overrides the base .env.example):
+    \`\`\`
+    VITE_SUPABASE_URL=your_supabase_url
+    VITE_SUPABASE_ANON_KEY=your_anon_key
+    VITE_API_URL=http://localhost:5173
+    \`\`\`
+
+16. \`\`\`filename:README.md
+    Use this EXACT content (fill in the app name at the top):
+    \`\`\`
+    # [App Name]
+
+    ## Auth Setup
+
+    1. Create a Supabase project at https://supabase.com
+    2. Enable Google and/or GitHub in **Supabase Dashboard → Authentication → Providers**
+    3. Copy your Project URL and anon key from **Project Settings → API**
+    4. Create a \`.env\` file from \`.env.example\` and fill in the values:
+       \`\`\`
+       VITE_SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
+       VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+       \`\`\`
+    5. Add your OAuth redirect URL in the Supabase dashboard:
+       **Authentication → URL Configuration → Redirect URLs**
+       \`\`\`
+       https://your-project.supabase.co/auth/v1/callback
+       \`\`\`
+
+    > ⚠️ **OAuth (Google/GitHub) does NOT work in the iframe preview.**
+    > Test on the published URL after deploying.
+    \`\`\`
+
+PACKAGE.JSON — add @supabase/supabase-js to the dependencies object:
+    "@supabase/supabase-js": "^2.39.0"
+
+APP.TSX — integrate auth into the main app:
+- Import AuthProvider from './components/AuthProvider'
+- Import Login from './components/Login'
+- Import useAuthContext from './components/AuthProvider'
+- The root return must wrap everything in <AuthProvider>
+- Inside, use a guard: if (user === null) return <Login />
+- When authenticated: render the full app UI with a sign-out button in the header
+- Example skeleton:
+    function AuthenticatedApp() {
+      const { user, signOut } = useAuthContext();
+      return (
+        <div>
+          <header>
+            <span>{user?.email}</span>
+            <button onClick={signOut}>Sign out</button>
+          </header>
+          {/* rest of app */}
+        </div>
+      );
+    }
+    export default function App() {
+      return (
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      );
+    }
+    function AppContent() {
+      const { user, loading } = useAuthContext();
+      if (loading) return <div>Loading...</div>;
+      if (!user) return <Login />;
+      return <AuthenticatedApp />;
+    }`;
+
 // ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "security",
@@ -320,8 +438,14 @@ export class PromptBuilder {
 
     const isFullstackMode =
       agentType === "frontend" &&
-      task.description.startsWith("FULLSTACK BUILD:");
+      (task.description.startsWith("FULLSTACK BUILD:") ||
+       task.description.startsWith("FULLSTACK AUTH BUILD:"));
     const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
+
+    const isFullstackAuthMode =
+      agentType === "frontend" &&
+      task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const authInstruction = isFullstackAuthMode ? FULLSTACK_AUTH_INSTRUCTION : "";
 
     const isEditMode =
       agentType === "frontend" &&
@@ -347,7 +471,7 @@ export class PromptBuilder {
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
-    return base + fullstackInstruction + editModeInstruction + jsonInstruction;
+    return base + fullstackInstruction + authInstruction + editModeInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(

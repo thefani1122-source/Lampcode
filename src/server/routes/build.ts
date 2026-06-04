@@ -21,6 +21,7 @@ import {
   applySurgicalEdit,
   stripEditMarkers,
   isBackendFile,
+  isSandpackExcluded,
   type ParsedFile,
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -296,9 +297,20 @@ function needsBackend(prompt: string): boolean {
   );
 }
 
-/** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK MODE. */
+/**
+ * True when the prompt implies user accounts, login, OAuth, or session handling.
+ * Used to activate the AUTH sub-mode of a fullstack build.
+ */
+function needsAuth(prompt: string): boolean {
+  return /\b(auth|login|log[- ]in|signin|sign[- ]in|sign[- ]up|signup|register|logout|log[- ]out|oauth|jwt|session|password|credential|account|user account|user profile|admin panel|authentication|authorization)\b/i.test(
+    prompt,
+  );
+}
+
+/** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
 function buildFullstackPrompt(prompt: string): string {
-  return `FULLSTACK BUILD:\n${expandUserPrompt(prompt)}`;
+  const prefix = needsAuth(prompt) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
+  return `${prefix}\n${expandUserPrompt(prompt)}`;
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -763,12 +775,12 @@ export async function runFastBuild(
       console.log(`[build] backend_ready project=${projectId} files=[${backendPaths.join(", ")}]`);
     }
 
-    // Filter out backend/server/db files before sending to Sandpack.
-    // Those files import Node.js-only packages (drizzle-orm, hono, etc.) that
-    // the browser bundler can't resolve, causing "Preview failed to load".
+    // Filter out backend/server/db files and non-source artifacts before sending
+    // to Sandpack. Server-side files import Node.js-only packages that the
+    // browser bundler can't resolve. README.md and .env.* are deployment-only.
     const frontendFiles = Object.fromEntries(
       Object.entries(allFiles).filter(
-        ([p]) => !p.includes("/server/") && !p.includes("/db/") && !p.startsWith(".env"),
+        ([p]) => !isBackendFile(p) && !isSandpackExcluded(p),
       ),
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
