@@ -27,7 +27,6 @@ interface SandboxEntry {
   inactivityTimer: ReturnType<typeof setTimeout>;
 }
 
-// Keyed by E2B sandboxId
 const registry = new Map<string, SandboxEntry>();
 
 function ws() {
@@ -53,7 +52,8 @@ function scheduleInactivityKill(sandboxId: string): ReturnType<typeof setTimeout
     try {
       if (apiKey) await Sandbox.kill(sandboxId, { apiKey });
       else await Sandbox.kill(sandboxId);
-      logger.info({ sandboxId, idleSec }, `Sandbox ${sandboxId} destroyed after ${idleSec}s inactivity`);
+      console.log(`[E2B] Sandbox ${sandboxId} destroyed after ${idleSec}s inactivity`);
+      logger.info({ sandboxId, idleSec }, "E2B sandbox destroyed after inactivity");
     } catch (err) {
       logger.warn({ sandboxId, err }, "E2B kill on inactivity failed (sandbox may have already expired)");
     }
@@ -61,17 +61,14 @@ function scheduleInactivityKill(sandboxId: string): ReturnType<typeof setTimeout
 }
 
 // ── Vite scaffolding ──────────────────────────────────────────────────────────
-// The LLM generates files for Sandpack (no bundler). We add the minimal Vite
-// wiring needed to make them runnable in a real Node environment.
 
 function addViteScaffolding(files: Record<string, string>): Record<string, string> {
   const result = { ...files };
 
-  // Patch package.json: add vite, @vitejs/plugin-react, and a dev script
   let pkg: Record<string, unknown> = {};
   try { pkg = JSON.parse(result["package.json"] ?? "{}") as Record<string, unknown>; } catch { /* use empty */ }
-  const deps = ((pkg["dependencies"] ?? {}) as Record<string, string>);
-  const devDeps = ((pkg["devDependencies"] ?? {}) as Record<string, string>);
+  const deps = (pkg["dependencies"] ?? {}) as Record<string, string>;
+  const devDeps = (pkg["devDependencies"] ?? {}) as Record<string, string>;
   pkg["scripts"] = { ...(pkg["scripts"] as object ?? {}), dev: `vite --port ${DEV_PORT} --host 0.0.0.0` };
   pkg["dependencies"] = {
     ...deps,
@@ -88,7 +85,6 @@ function addViteScaffolding(files: Record<string, string>): Record<string, strin
   };
   result["package.json"] = JSON.stringify(pkg, null, 2);
 
-  // vite.config.ts — use react plugin, proxy /api to port 3001 for fullstack builds
   if (!result["vite.config.ts"]) {
     const hasBackend = Object.keys(files).some(
       (p) => p.startsWith("src/server/") || p.startsWith("src/db/"),
@@ -104,7 +100,6 @@ function addViteScaffolding(files: Record<string, string>): Record<string, strin
     ].join("\n");
   }
 
-  // index.html — Vite entry point
   if (!result["index.html"]) {
     result["index.html"] = [
       "<!DOCTYPE html>",
@@ -125,102 +120,134 @@ function addViteScaffolding(files: Record<string, string>): Record<string, strin
   return result;
 }
 
-// ── Background sandbox setup ──────────────────────────────────────────────────
+// ── Typed error codes ─────────────────────────────────────────────────────────
+
+type E2BErrorCode =
+  | "E2B_API_KEY_MISSING"
+  | "SANDBOX_CREATION_FAILED"
+  | "FILE_UPLOAD_FAILED"
+  | "NPM_INSTALL_FAILED"
+  | "SERVER_START_FAILED";
+
+class E2BError extends Error {
+  constructor(
+    public readonly code: E2BErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "E2BError";
+  }
+}
+
+// ── Sandbox setup (synchronous — caller awaits the full result) ───────────────
+
+interface SetupResult {
+  sandboxId: string;
+  sandboxUrl: string;
+  expiresAt: number;
+}
 
 async function setupSandbox(
   files: Record<string, string>,
   sessionId: string,
   projectId: string,
   userId: string,
-): Promise<void> {
-  const apiKey = process.env["E2B_API_KEY"];
+  apiKey: string,
+): Promise<SetupResult> {
   const server = ws();
-
   const emit = (event: string, data: Record<string, unknown>) =>
     server?.emitToRoom(sessionId, event, data);
 
-  let sandboxId = "(unknown)";
+  // ── 1. Create sandbox ───────────────────────────────────────────────────────
+  emit("build:thinking", { text: "Creating E2B sandbox...", sessionId });
+  let sb: Sandbox;
   try {
-    emit("build:thinking", { text: "Creating E2B sandbox...", sessionId });
+    sb = await Sandbox.create(SANDBOX_TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS, apiKey });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[E2B] FAILED: Sandbox creation error:", msg);
+    throw new E2BError("SANDBOX_CREATION_FAILED", msg);
+  }
 
-    const sb = apiKey
-      ? await Sandbox.create(SANDBOX_TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS, apiKey })
-      : await Sandbox.create(SANDBOX_TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
-    sandboxId = sb.sandboxId;
+  const sandboxId = sb.sandboxId;
+  console.log("[E2B] Sandbox instance created, ID:", sandboxId);
+  emit("build:thinking", { text: `Sandbox ${sandboxId} ready. Uploading files...`, sessionId });
 
-    logger.info({ sandboxId, sessionId, projectId }, "E2B sandbox created");
-    emit("build:thinking", { text: `Sandbox ready (${sandboxId}). Uploading files...`, sessionId });
-
-    // ── Upload files ────────────────────────────────────────────────────────
-    const scaffolded = addViteScaffolding(files);
+  // ── 2. Upload files ─────────────────────────────────────────────────────────
+  const scaffolded = addViteScaffolding(files);
+  try {
     await Promise.all(
       Object.entries(scaffolded).map(([filePath, content]) =>
         sb.files.write(`${SANDBOX_ROOT}/${filePath}`, content),
       ),
     );
-    logger.info({ sandboxId, fileCount: Object.keys(scaffolded).length }, "Files uploaded to sandbox");
-    emit("build:thinking", {
-      text: `${Object.keys(scaffolded).length} files uploaded. Running npm install...`,
-      sessionId,
-    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[E2B] FAILED: File upload error:", msg);
+    throw new E2BError("FILE_UPLOAD_FAILED", msg);
+  }
+  console.log("[E2B] Files uploaded:", Object.keys(scaffolded).length);
+  emit("build:thinking", {
+    text: `${Object.keys(scaffolded).length} files uploaded. Running npm install...`,
+    sessionId,
+  });
 
-    // ── npm install ─────────────────────────────────────────────────────────
-    const installResult = await sb.commands.run("npm install", {
+  // ── 3. npm install ──────────────────────────────────────────────────────────
+  let installResult: Awaited<ReturnType<typeof sb.commands.run>>;
+  try {
+    installResult = await sb.commands.run("npm install", {
       cwd: SANDBOX_ROOT,
       timeoutMs: 120_000,
     });
-    if (installResult.exitCode !== 0) {
-      throw new Error(`npm install failed (exit ${installResult.exitCode}): ${installResult.stderr.slice(0, 500)}`);
-    }
-    logger.info({ sandboxId }, "npm install complete");
-    emit("build:thinking", { text: "Dependencies installed. Starting dev server...", sessionId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[E2B] FAILED: npm install threw:", msg);
+    throw new E2BError("NPM_INSTALL_FAILED", `npm install threw: ${msg}`);
+  }
+  if (installResult.exitCode !== 0) {
+    const detail = installResult.stderr.slice(0, 500) || installResult.stdout.slice(0, 500);
+    console.error(`[E2B] FAILED: npm install exited ${installResult.exitCode}:`, detail);
+    throw new E2BError("NPM_INSTALL_FAILED", `exit ${installResult.exitCode}: ${detail}`);
+  }
+  console.log("[E2B] npm install complete");
+  emit("build:thinking", { text: "Dependencies installed. Starting dev server...", sessionId });
 
-    // ── Start Vite dev server in background ─────────────────────────────────
+  // ── 4. Start Vite dev server ────────────────────────────────────────────────
+  try {
     await sb.commands.run("npm run dev", {
       cwd: SANDBOX_ROOT,
       background: true,
     });
-
-    // Give Vite 8 seconds to bind the port
-    await new Promise<void>((r) => setTimeout(r, 8_000));
-
-    const previewUrl = `https://${sb.getHost(DEV_PORT)}`;
-    const expiresAt = Date.now() + SANDBOX_TIMEOUT_MS;
-
-    // ── Register for inactivity cleanup ─────────────────────────────────────
-    const entry: SandboxEntry = {
-      sandbox: sb,
-      userId,
-      projectId,
-      sessionId,
-      previewUrl,
-      createdAt: Date.now(),
-      lastUsedAt: Date.now(),
-      inactivityTimer: scheduleInactivityKill(sandboxId),
-    };
-    registry.set(sandboxId, entry);
-
-    console.log("[E2B] Sandbox created:", previewUrl);
-    console.log("[E2B] Sandbox ID:", sandboxId);
-
-    // ── Emit E2B ready event ─────────────────────────────────────────────────
-    emit("build:e2b_ready", {
-      sandboxId,
-      sandboxUrl: previewUrl,
-      expiresAt,
-      sessionId,
-    });
-    logger.info({ sandboxId, previewUrl, expiresAt }, "E2B sandbox live");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[E2B] Sandbox creation failed:", msg);
-    logger.error({ sandboxId, sessionId, err: msg }, "E2B sandbox setup failed");
-    emit("build:e2b_error", {
-      sandboxId,
-      error: msg,
-      sessionId,
-    });
+    console.error("[E2B] FAILED: npm run dev error:", msg);
+    throw new E2BError("SERVER_START_FAILED", msg);
   }
+
+  // Give Vite time to bind the port
+  await new Promise<void>((r) => setTimeout(r, 8_000));
+
+  const sandboxUrl = `https://${sb.getHost(DEV_PORT)}`;
+  const expiresAt = Date.now() + SANDBOX_TIMEOUT_MS;
+
+  // ── 5. Register for inactivity cleanup ──────────────────────────────────────
+  registry.set(sandboxId, {
+    sandbox: sb,
+    userId,
+    projectId,
+    sessionId,
+    previewUrl: sandboxUrl,
+    createdAt: Date.now(),
+    lastUsedAt: Date.now(),
+    inactivityTimer: scheduleInactivityKill(sandboxId),
+  });
+
+  console.log("[E2B] SUCCESS: Sandbox URL:", sandboxUrl);
+  console.log("[E2B] SUCCESS: Sandbox ID:", sandboxId);
+  emit("build:e2b_ready", { sandboxId, sandboxUrl, expiresAt, sessionId });
+  logger.info({ sandboxId, sandboxUrl, expiresAt }, "E2B sandbox live");
+
+  return { sandboxId, sandboxUrl, expiresAt };
 }
 
 // ── Request schemas ───────────────────────────────────────────────────────────
@@ -243,17 +270,20 @@ export const e2bRouter = new Hono();
 e2bRouter.use("/*", requireAuth);
 
 // POST /api/e2b/create
-// Starts sandbox setup in background; client listens for build:e2b_ready over WS.
+// Synchronous: waits for full sandbox setup so the client gets real errors.
+// Progress events are emitted over WebSocket during the wait (~30–60 s).
 e2bRouter.post("/create", async (c) => {
+  // ── API key check ────────────────────────────────────────────────────────
   const apiKey = process.env["E2B_API_KEY"];
   if (!apiKey) {
-    console.error("[E2B] E2B_API_KEY is missing! Set it in Railway env vars.");
+    console.error("[E2B] FAILED: E2B_API_KEY is missing! Set it in Railway env vars.");
     return c.json({
-      error: "E2B_API_KEY missing",
-      message: "Please set E2B_API_KEY in Railway environment variables. Get it from e2b.dev/dashboard",
+      error: "E2B_API_KEY_MISSING",
+      message: "Set E2B_API_KEY in Railway environment variables. Get the key from e2b.dev/dashboard.",
     }, 503);
   }
 
+  // ── Validate body ────────────────────────────────────────────────────────
   const authUser = c.get("authUser");
   const body = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
@@ -266,25 +296,31 @@ e2bRouter.post("/create", async (c) => {
   }
   const { projectId, sessionId, files } = parsed.data;
 
-  console.log("[E2B] Creating sandbox for project:", projectId);
-  console.log("[E2B] Files count:", Object.keys(files).length);
+  // ── Intake log ───────────────────────────────────────────────────────────
+  console.log("[E2B] Received request for project:", projectId);
+  console.log("[E2B] File count:", Object.keys(files).length);
+  console.log("[E2B] E2B_API_KEY present:", true); // key existence already checked above
 
-  // Fire-and-forget: respond immediately, emit WS events as the sandbox boots
-  setImmediate(() => {
-    setupSandbox(files, sessionId, projectId, authUser.id).catch((err) =>
-      logger.error({ err }, "Unhandled error in setupSandbox"),
+  // ── Run setup (synchronous) ──────────────────────────────────────────────
+  try {
+    const { sandboxId, sandboxUrl, expiresAt } = await setupSandbox(
+      files, sessionId, projectId, authUser.id, apiKey,
     );
-  });
-
-  return c.json({
-    status: "starting",
-    message: "Sandbox is being prepared. Listen for build:e2b_ready over WebSocket.",
-    sessionId,
-  });
+    return c.json({ sandboxId, sandboxUrl, expiresAt });
+  } catch (err) {
+    if (err instanceof E2BError) {
+      console.error(`[E2B] FAILED (${err.code}):`, err.message);
+      const status = err.code === "E2B_API_KEY_MISSING" ? 503 : 500;
+      return c.json({ error: err.code, message: err.message }, status);
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[E2B] FAILED (unexpected):", msg);
+    return c.json({ error: "SANDBOX_CREATION_FAILED", message: msg }, 500);
+  }
 });
 
 // POST /api/e2b/sync
-// Write a single file into a running sandbox and let Vite HMR pick it up.
+// Write a single file into a running sandbox; Vite HMR picks it up.
 e2bRouter.post("/sync", async (c) => {
   const authUser = c.get("authUser");
   const body = await c.req.json().catch(() => {
@@ -306,28 +342,23 @@ e2bRouter.post("/sync", async (c) => {
     throw new AppError(403, "You do not own this sandbox", "FORBIDDEN");
   }
 
-  // Sanitise path: must be a relative path within the sandbox root
   const safePath = filePath.replace(/^[/\\]+/, "").replace(/\.\.\//g, "");
   await entry.sandbox.files.write(`${SANDBOX_ROOT}/${safePath}`, newContent);
-
-  // Reset inactivity timer on every sync (user is actively editing)
   resetInactivityTimer(sandboxId);
 
+  console.log(`[E2B] File synced to sandbox ${sandboxId}: ${safePath}`);
   logger.info({ sandboxId, filePath: safePath }, "File synced to sandbox");
   return c.json({ ok: true, sandboxId, filePath: safePath });
 });
 
 // DELETE /api/e2b/:sandboxId
-// Explicit teardown (e.g. when user closes the workspace tab).
+// Explicit teardown when the user closes the workspace tab.
 e2bRouter.delete("/:sandboxId", async (c) => {
   const authUser = c.get("authUser");
   const { sandboxId } = c.req.param();
 
   const entry = registry.get(sandboxId);
-  if (!entry) {
-    // Already gone — return 204 so the client doesn't need to retry
-    return c.body(null, 204);
-  }
+  if (!entry) return c.body(null, 204);
   if (entry.userId !== authUser.id) {
     throw new AppError(403, "You do not own this sandbox", "FORBIDDEN");
   }
@@ -339,6 +370,7 @@ e2bRouter.delete("/:sandboxId", async (c) => {
     const apiKey = process.env["E2B_API_KEY"];
     if (apiKey) await Sandbox.kill(sandboxId, { apiKey });
     else await Sandbox.kill(sandboxId);
+    console.log("[E2B] Sandbox destroyed by user request:", sandboxId);
     logger.info({ sandboxId }, "Sandbox destroyed by user request");
   } catch (err) {
     logger.warn({ sandboxId, err }, "E2B kill on explicit delete failed");
