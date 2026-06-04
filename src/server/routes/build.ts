@@ -276,7 +276,22 @@ function validateAppTsx(code: string): string | null {
  * storage, etc.) and therefore warrants generating backend + database files.
  */
 function needsBackend(prompt: string): boolean {
-  return /\b(user|login|auth|account|save|store|database|db|api|backend|crud|admin|dashboard|post|blog|todo|task|expense|income|product|order|payment|upload|file|message|chat|notification|setting|profile)\b/i.test(
+  const lower = prompt.toLowerCase();
+
+  const explicitTriggers = [
+    "fullstack", "full stack", "full-stack",
+    "backend", "server-side", "server side",
+    "database", "postgres", "postgresql", "sqlite", "mysql",
+    "rest api", "graphql", "endpoint",
+    "crud", "create read update delete",
+    "persist", "cloud sync",
+    "signin", "signup", "oauth", "authentication",
+    "user account", "user profile", "admin panel",
+    "save data", "store data", "data storage",
+  ];
+  if (explicitTriggers.some((t) => lower.includes(t))) return true;
+
+  return /\b(user|login|auth|account|save|store|db|api|admin|dashboard|post|blog|todo|task|expense|income|product|order|payment|upload|file|message|chat|notification|setting|profile)\b/i.test(
     prompt,
   );
 }
