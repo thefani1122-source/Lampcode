@@ -756,7 +756,7 @@ export async function runFastBuild(
       const backendPaths = writtenPaths.filter(isBackendFile);
       server?.emitToRoom(sessionId, "build:backend_ready", {
         sessionId,
-        files: allFiles,          // full file set for E2B to upload
+        files: allFiles,
         backendFileCount: backendPaths.length,
         note: "Backend + DB files generated. Run drizzle migrations + seed in your own environment (see .env.example).",
       });
@@ -776,7 +776,7 @@ export async function runFastBuild(
     server?.emitToRoom(sessionId, "build:complete", {
       sessionId,
       files: frontendFiles,       // Sandpack-safe: no Node.js imports
-      backendFiles: allFiles,     // full file set for E2B sandbox
+      backendFiles: allFiles,
       backendFileCount,           // >0 signals fullstack build to the client
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
