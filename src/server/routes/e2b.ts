@@ -200,6 +200,9 @@ async function setupSandbox(
     };
     registry.set(sandboxId, entry);
 
+    console.log("[E2B] Sandbox created:", previewUrl);
+    console.log("[E2B] Sandbox ID:", sandboxId);
+
     // ── Emit E2B ready event ─────────────────────────────────────────────────
     emit("build:e2b_ready", {
       sandboxId,
@@ -210,6 +213,7 @@ async function setupSandbox(
     logger.info({ sandboxId, previewUrl, expiresAt }, "E2B sandbox live");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[E2B] Sandbox creation failed:", msg);
     logger.error({ sandboxId, sessionId, err: msg }, "E2B sandbox setup failed");
     emit("build:e2b_error", {
       sandboxId,
@@ -243,7 +247,11 @@ e2bRouter.use("/*", requireAuth);
 e2bRouter.post("/create", async (c) => {
   const apiKey = process.env["E2B_API_KEY"];
   if (!apiKey) {
-    throw new AppError(503, "E2B integration is not configured (E2B_API_KEY missing)", "E2B_NOT_CONFIGURED");
+    console.error("[E2B] E2B_API_KEY is missing! Set it in Railway env vars.");
+    return c.json({
+      error: "E2B_API_KEY missing",
+      message: "Please set E2B_API_KEY in Railway environment variables. Get it from e2b.dev/dashboard",
+    }, 503);
   }
 
   const authUser = c.get("authUser");
@@ -257,6 +265,9 @@ e2bRouter.post("/create", async (c) => {
     throw new AppError(400, msg, "VALIDATION_ERROR");
   }
   const { projectId, sessionId, files } = parsed.data;
+
+  console.log("[E2B] Creating sandbox for project:", projectId);
+  console.log("[E2B] Files count:", Object.keys(files).length);
 
   // Fire-and-forget: respond immediately, emit WS events as the sandbox boots
   setImmediate(() => {
