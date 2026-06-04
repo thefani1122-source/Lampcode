@@ -8,6 +8,10 @@ import { logger } from "../logger.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+// ── Startup diagnostics ───────────────────────────────────────────────────────
+console.log("[E2B] API Key loaded:", !!process.env["E2B_API_KEY"]);
+console.log("[E2B] API Key prefix:", process.env["E2B_API_KEY"]?.substring(0, 10) ?? "(none)");
+
 const SANDBOX_TEMPLATE = "base"; // Ubuntu with Node.js 20 pre-installed
 const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 min hard limit from E2B
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 min inactivity → auto-kill
@@ -252,17 +256,56 @@ async function setupSandbox(
 
 // ── Request schemas ───────────────────────────────────────────────────────────
 
-const createSchema = z.object({
-  projectId: z.string().min(1),
-  sessionId: z.string().uuid(),
-  files: z.record(z.string(), z.string()),
-});
+// The frontend posts snake_case keys (project_id, session_id) — the same
+// reason build.ts normalizes them. It also receives the file map under the
+// `backendFiles` key in the build:complete event, so accept that alias too.
+// Without this normalization the camelCase fields arrive undefined and Zod
+// throws "Invalid input: expected string, received undefined" (VALIDATION_ERROR).
+const createSchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const obj = { ...(raw as Record<string, unknown>) };
+    if (obj["projectId"] === undefined && obj["project_id"] !== undefined) {
+      obj["projectId"] = obj["project_id"];
+    }
+    if (obj["sessionId"] === undefined && obj["session_id"] !== undefined) {
+      obj["sessionId"] = obj["session_id"];
+    }
+    if (obj["files"] === undefined) {
+      obj["files"] = obj["backendFiles"] ?? obj["backend_files"] ?? obj["allFiles"];
+    }
+    return obj;
+  },
+  z.object({
+    projectId: z.string().min(1),
+    // Not all callers use a UUID-shaped session id — keep this permissive so a
+    // valid request never fails validation purely on the id format.
+    sessionId: z.string().min(1),
+    files: z.record(z.string(), z.string()),
+  }),
+);
 
-const syncSchema = z.object({
-  sandboxId: z.string().min(1),
-  filePath: z.string().min(1),
-  newContent: z.string(),
-});
+const syncSchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const obj = { ...(raw as Record<string, unknown>) };
+    if (obj["sandboxId"] === undefined && obj["sandbox_id"] !== undefined) {
+      obj["sandboxId"] = obj["sandbox_id"];
+    }
+    if (obj["filePath"] === undefined) {
+      obj["filePath"] = obj["file_path"] ?? obj["path"];
+    }
+    if (obj["newContent"] === undefined) {
+      obj["newContent"] = obj["new_content"] ?? obj["content"];
+    }
+    return obj;
+  },
+  z.object({
+    sandboxId: z.string().min(1),
+    filePath: z.string().min(1),
+    newContent: z.string(),
+  }),
+);
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
@@ -289,9 +332,18 @@ e2bRouter.post("/create", async (c) => {
     throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
   });
 
+  // Log the raw keys so any future field-name mismatch is obvious in Railway logs.
+  console.log(
+    "[E2B] /create raw body keys:",
+    body && typeof body === "object" ? Object.keys(body as object).join(", ") : typeof body,
+  );
+
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    const msg = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+    console.error("[E2B] FAILED: validation —", msg);
     throw new AppError(400, msg, "VALIDATION_ERROR");
   }
   const { projectId, sessionId, files } = parsed.data;
