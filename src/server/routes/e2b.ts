@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { Sandbox } from "e2b";
+import { Sandbox } from "@e2b/code-interpreter";
 import { z } from "zod";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";

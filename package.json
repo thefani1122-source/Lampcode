@@ -23,7 +23,6 @@
   "license": "ISC",
   "dependencies": {
     "@e2b/code-interpreter": "^2.5.0",
-    "e2b": "^2.27.1",
     "@hono/node-server": "^2.0.2",
     "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/supabase-js": "^2.106.1",
