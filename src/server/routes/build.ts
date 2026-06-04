@@ -717,22 +717,6 @@ export async function runFastBuild(
       }
     }
 
-    // ── Signal backend code is ready (fullstack builds) ──────────────────
-    // NOTE: We generate backend + DB files as code artifacts; we deliberately do
-    // NOT execute the generated schema/seed SQL against the platform database.
-    // The platform `db` client points at Lampcode's own production DB — running
-    // LLM-generated DDL/DML there would be arbitrary SQL execution against prod.
-    // Users run these files in their own deployment using the emitted .env.example.
-    if (isFullstackBuild) {
-      const backendFiles = writtenPaths.filter(isBackendFile);
-      server?.emitToRoom(sessionId, "build:backend_ready", {
-        sessionId,
-        backendFiles,
-        note: "Backend + DB files generated. Run drizzle migrations + seed in your own environment (see .env.example).",
-      });
-      console.log(`[build] backend_ready project=${projectId} files=[${backendFiles.join(", ")}]`);
-    }
-
     // ── Emit build:complete for frontend workspace listener ────────────────
     // Collect final content: for smart-selection builds, merge with existing files
     // so the frontend receives the complete file set (not just what changed).
@@ -746,9 +730,39 @@ export async function runFastBuild(
         allFiles[f.path] = f.code;
       }
     }
+
+    // ── Signal backend code is ready with full file contents (fullstack builds) ──
+    // NOTE: We generate backend + DB files as code artifacts; we deliberately do
+    // NOT execute the generated schema/seed SQL against the platform database.
+    // The platform `db` client points at Lampcode's own production DB — running
+    // LLM-generated DDL/DML there would be arbitrary SQL execution against prod.
+    // Users run these files in their own deployment using the emitted .env.example.
+    if (isFullstackBuild) {
+      const backendPaths = writtenPaths.filter(isBackendFile);
+      server?.emitToRoom(sessionId, "build:backend_ready", {
+        sessionId,
+        files: allFiles,          // full file set for E2B to upload
+        backendFileCount: backendPaths.length,
+        note: "Backend + DB files generated. Run drizzle migrations + seed in your own environment (see .env.example).",
+      });
+      console.log(`[build] backend_ready project=${projectId} files=[${backendPaths.join(", ")}]`);
+    }
+
+    // Filter out backend/server/db files before sending to Sandpack.
+    // Those files import Node.js-only packages (drizzle-orm, hono, etc.) that
+    // the browser bundler can't resolve, causing "Preview failed to load".
+    const frontendFiles = Object.fromEntries(
+      Object.entries(allFiles).filter(
+        ([p]) => !p.includes("/server/") && !p.includes("/db/") && !p.startsWith(".env"),
+      ),
+    );
+    const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
+
     server?.emitToRoom(sessionId, "build:complete", {
       sessionId,
-      files: allFiles,
+      files: frontendFiles,       // Sandpack-safe: no Node.js imports
+      backendFiles: allFiles,     // full file set for E2B sandbox
+      backendFileCount,           // >0 signals fullstack build to the client
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
     });
