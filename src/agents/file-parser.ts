@@ -23,11 +23,14 @@ const LANG_HINTS = new Set([
 // so the Sandpack validator must NOT flag their server-side imports as errors.
 const BACKEND_FILES = new Set([
   // Legacy Drizzle-based names (kept so old builds still parse correctly)
-  "src/db/schema.ts",
   "src/db/seed.ts",
-  // WebContainer-compatible Supabase-based names
+  // Supabase mode: TypeScript interfaces + SQL migration
   "src/db/types.ts",
   "src/db/schema.sql",
+  // MongoDB mode: Mongoose schemas (also covers legacy Drizzle schema.ts path)
+  "src/db/schema.ts",
+  // Shared DB client — imports service keys / mongoose; must not reach Sandpack
+  "src/lib/db.ts",
   // API routes and auth (server-side in all modes)
   "src/server/routes/api.ts",
   "src/server/auth.ts",

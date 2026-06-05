@@ -133,6 +133,7 @@ Output configuration files and instrumentation code for the specified stack.`,
 // ── Framework detection + per-framework rules ─────────────────────────────────
 
 export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid";
+export type Database = "supabase" | "mongodb";
 
 /**
  * Detect which frontend framework the user is requesting.
@@ -269,8 +270,115 @@ SANDBOX RESTRICTIONS:
 - All data must be static mock data defined in the component`,
 };
 
+// ── Database detection + per-database rules ───────────────────────────────────
+
+/**
+ * Detect which cloud database the user is requesting.
+ * Supabase is the default when no specific DB keyword is found.
+ */
+export function detectDatabase(prompt: string): Database {
+  if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
+  return "supabase";
+}
+
+const DB_INSTRUCTIONS: Record<Database, string> = {
+  supabase: `
+DATABASE: Supabase (PostgreSQL via @supabase/supabase-js)
+
+DATABASE RULES:
+- Use @supabase/supabase-js — NOT drizzle-orm, NOT the postgres package, NOT any TCP DB driver.
+- Define TypeScript interfaces for each table's row type in src/db/types.ts.
+- Generate CREATE TABLE SQL in src/db/schema.sql (user runs it once in the Supabase SQL editor).
+- Include created_at TIMESTAMPTZ DEFAULT now() on every table.
+- Column types: UUID DEFAULT gen_random_uuid(), TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ.
+
+DB SCHEMA FILES:
+1. \`\`\`filename:src/db/types.ts   — TypeScript interfaces for each table row
+2. \`\`\`filename:src/db/schema.sql — CREATE TABLE SQL to run in Supabase dashboard
+
+DB CLIENT — \`\`\`filename:src/lib/db.ts:
+  import { createClient } from '@supabase/supabase-js'
+  export const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+
+API ROUTES EXAMPLE — src/server/routes/api.ts:
+  import { db } from '../../lib/db'
+  api.get('/items', async (c) => {
+    const { data, error } = await db.from('items').select('*').order('created_at', { ascending: false })
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json(data)
+  })
+  api.post('/items', async (c) => {
+    const body = await c.req.json()
+    const { data, error } = await db.from('items').insert(body).select().single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json(data, 201)
+  })
+
+PACKAGE.JSON DEPS: hono, @supabase/supabase-js, zod (plus frontend framework deps)
+
+ENV EXAMPLE — \`\`\`filename:.env.example:
+  SUPABASE_URL=your_supabase_project_url
+  SUPABASE_SERVICE_KEY=your_service_role_key
+  VITE_SUPABASE_URL=your_supabase_project_url
+  VITE_SUPABASE_ANON_KEY=your_anon_key
+  VITE_API_URL=http://localhost:5173`,
+
+  mongodb: `
+DATABASE: MongoDB Atlas (via Mongoose)
+
+DATABASE RULES:
+- Use mongoose — it connects to MongoDB Atlas over TLS, which WebContainers support (HTTPS/WSS only).
+- Define all Mongoose schemas and model exports in src/db/schema.ts.
+- Connect lazily at startup in src/lib/db.ts using MONGODB_URI from env.
+- Every schema gets { timestamps: true } — Mongoose auto-adds createdAt + updatedAt.
+- Use .lean() on read queries (returns plain JS objects, faster serialisation).
+- Do NOT add a separate mongodb driver — mongoose bundles it.
+- Field types: String, Number, Boolean, Date, Schema.Types.ObjectId, [String] for arrays.
+
+DB SCHEMA FILE:
+1. \`\`\`filename:src/db/schema.ts — Mongoose schemas + model exports
+
+DB CLIENT — \`\`\`filename:src/lib/db.ts:
+  import mongoose from 'mongoose'
+  let _connected = false
+  export async function connectDB(): Promise<void> {
+    if (_connected) return
+    await mongoose.connect(process.env.MONGODB_URI!)
+    _connected = true
+  }
+
+API ROUTES EXAMPLE — src/server/routes/api.ts:
+  import { connectDB } from '../../lib/db'
+  import { Item } from '../../db/schema'
+  api.get('/items', async (c) => {
+    await connectDB()
+    const items = await Item.find().sort({ createdAt: -1 }).lean()
+    return c.json(items)
+  })
+  api.post('/items', async (c) => {
+    await connectDB()
+    const body = await c.req.json()
+    const item = await Item.create(body)
+    return c.json(item.toObject(), 201)
+  })
+  api.delete('/items/:id', async (c) => {
+    await connectDB()
+    const { id } = c.req.param()
+    await Item.findByIdAndDelete(id)
+    return c.body(null, 204)
+  })
+
+PACKAGE.JSON DEPS: hono, mongoose, zod (plus frontend framework deps)
+Note: do NOT add mongodb separately — mongoose already includes it.
+
+ENV EXAMPLE — \`\`\`filename:.env.example:
+  MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/dbname?retryWrites=true&w=majority
+  VITE_API_URL=http://localhost:5173`,
+};
+
 // ── Fullstack mode instruction ────────────────────────────────────────────────
 // Appended to the frontend system prompt when the task is a full-stack build.
+// DB-specific rules are injected separately via DB_INSTRUCTIONS[db].
 // Detected by the "FULLSTACK BUILD:" description prefix set in build.ts.
 
 const FULLSTACK_INSTRUCTION = `
@@ -280,83 +388,46 @@ FULLSTACK MODE — You are building a complete full-stack application (frontend 
 WEBCONTAINER CONSTRAINT — NON-NEGOTIABLE:
 - Backend: Node.js / TypeScript ONLY. Do NOT generate Python, PHP, Ruby, Go, Rust, Java, or any non-Node runtime.
 - Framework: Hono.js (preferred), Express.js, or Fastify. Never Django, Flask, FastAPI, Laravel, Rails, etc.
-- Database: Use an EXTERNAL cloud database via its SDK — Supabase (@supabase/supabase-js) is the default.
-  WebContainers CANNOT run a local PostgreSQL/MySQL/Redis server process. Never import or use Drizzle ORM,
-  pg, mysql2, or any driver that opens a raw TCP socket to a database.
+- Database: External cloud database detected from user prompt — see DATABASE section below for the exact rules.
+  WebContainers CANNOT run a local PostgreSQL/MySQL/Redis server process.
+  Never import any driver that opens a raw TCP socket to a local database.
 - Auth: Supabase Auth or JWT — never native Passport.js, bcrypt-native, or OS-level session stores.
 - NO native C++ modules — every npm package must be pure JavaScript/TypeScript or WebAssembly.
 
 FRONTEND RULES:
-- Use React + TypeScript.
 - ALL data fetching goes through functions exported from src/lib/api.ts.
-- Load data with useEffect + useState; always show loading and error states.
+- Load data with appropriate lifecycle hooks; always show loading and error states.
 - fetch() IS allowed, but ONLY inside src/lib/api.ts (this overrides the no-fetch sandbox rule).
 
 BACKEND RULES:
-- Use Hono.js for API routes.
-- Use the Supabase JS client for all database access (supabase.from('table').select/insert/update/delete).
-- Export the router as: export const api = new Hono()
+- Use Hono.js for API routes. Export the router as: export const api = new Hono()
+- Import the database client from src/lib/db.ts for all data access.
 - Prefix every route with /api/.
 - Add permissive CORS headers.
 - Validate every request body with Zod.
-- The server-side Supabase client uses process.env.SUPABASE_URL + process.env.SUPABASE_SERVICE_KEY.
-
-DATABASE RULES:
-- Use @supabase/supabase-js — NOT drizzle-orm, NOT the postgres package, NOT any TCP DB driver.
-- Define TypeScript interfaces for each table's row type in src/db/types.ts.
-- Generate CREATE TABLE SQL for Supabase in src/db/schema.sql (plain SQL, not executed by the app —
-  user runs it once in the Supabase SQL editor or dashboard).
-- Include created_at TIMESTAMPTZ DEFAULT now() on every table.
-- Use appropriate column types: UUID, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ.
 
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
 
-BACKEND FILES (always the same regardless of frontend framework):
-1. \`\`\`filename:src/db/types.ts          — TypeScript interfaces for each Supabase table row
-2. \`\`\`filename:src/db/schema.sql        — CREATE TABLE SQL to run once in Supabase dashboard
-3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes using supabase.from(...) (export const api = new Hono())
-4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers that call /api/...
+BACKEND FILES (always required regardless of frontend framework):
+1. [DB schema/types files — see DATABASE section below]
+2. \`\`\`filename:src/lib/db.ts            — database client singleton (see DATABASE section below)
+3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes importing { db } or { connectDB } from ../../lib/db
+4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers calling /api/...
 
-FRONTEND FILES (adapt to the framework detected in the section above):
+FRONTEND FILES (adapt to the framework detected above):
 - React (default): src/App.tsx, src/styles.css, src/index.tsx
 - Vue:    src/App.vue, src/style.css, src/main.ts, index.html, vite.config.ts
 - Next.js: app/page.tsx, app/layout.tsx, app/globals.css
 - Svelte: src/App.svelte, src/app.css, src/main.ts, index.html, vite.config.ts
 - SolidJS: src/App.tsx, src/index.css, src/index.tsx, vite.config.ts
 
-PACKAGE.JSON:
-Include BOTH the frontend framework deps AND: hono, @supabase/supabase-js, zod
-Scripts must be EXACTLY:
-   {
-     "scripts": {
-       "dev": "vite",
-       "build": "vite build"
-     }
-   }
+PACKAGE.JSON scripts must be EXACTLY:
+   { "scripts": { "dev": "vite", "build": "vite build" } }
 (Next.js exception: "dev": "next dev", "build": "next build")
-"server" and "db:seed" scripts must NOT be included — Sandpack runs only "dev".
+"server" and "db:seed" must NOT be included — Sandpack runs only "dev".
 
-ENV EXAMPLE:
-\`\`\`filename:.env.example
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_SERVICE_KEY=your_service_role_key
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_anon_key
-VITE_API_URL=http://localhost:5173
-\`\`\`
-
-BACKEND INTEGRATION EXAMPLE (same for all frameworks):
-In src/server/routes/api.ts:
-  import { createClient } from '@supabase/supabase-js'
-  const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-  api.get('/todos', async (c) => {
-    const { data, error } = await supabase.from('todos').select('*')
-    if (error) return c.json({ error: error.message }, 500)
-    return c.json(data)
-  })
-
-FRONTEND DATA FETCHING — adapt the import but the pattern is the same:
-  import { fetchTodos, createTodo } from './lib/api'
+FRONTEND DATA FETCHING — adapt to framework but the import pattern is the same:
+  import { fetchItems, createItem } from './lib/api'
   // React: useEffect + useState
   // Vue: onMounted + ref
   // Svelte: onMount + let variable
@@ -619,6 +690,9 @@ export class PromptBuilder {
        task.description.startsWith("FULLSTACK AUTH BUILD:"));
     const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
 
+    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
+    const dbInstruction = isFullstackMode ? DB_INSTRUCTIONS[db] : "";
+
     const isFullstackAuthMode =
       agentType === "frontend" &&
       task.description.startsWith("FULLSTACK AUTH BUILD:");
@@ -648,7 +722,7 @@ export class PromptBuilder {
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
-    return base + frameworkInstruction + fullstackInstruction + authInstruction + editModeInstruction + jsonInstruction;
+    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
