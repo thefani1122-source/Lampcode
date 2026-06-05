@@ -132,7 +132,7 @@ Output configuration files and instrumentation code for the specified stack.`,
 
 // ── Framework detection + per-framework rules ─────────────────────────────────
 
-export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid";
+export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid" | "preact";
 export type Database = "supabase" | "mongodb";
 
 /**
@@ -140,6 +140,7 @@ export type Database = "supabase" | "mongodb";
  * React is the default when no specific framework keyword is found.
  */
 export function detectFramework(prompt: string): Framework {
+  if (/\bpreact\b/i.test(prompt)) return "preact";
   if (/\bvue\b/i.test(prompt)) return "vue";
   if (/\bnext\.?js\b|\bnextjs\b/i.test(prompt)) return "nextjs";
   if (/\bsvelte\b/i.test(prompt)) return "svelte";
@@ -157,6 +158,22 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:src/index.tsx — always identical render boilerplate
 4. \`\`\`filename:package.json — only react + react-dom
 
+VITE CONFIG (fullstack only — for frontend-only builds Sandpack supplies its own):
+\`\`\`filename:vite.config.ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: { port: 5173, host: true },
+  envPrefix: 'VITE_',
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
+  },
+})
+\`\`\`
+
 SANDBOX RESTRICTIONS:
 - Do NOT use fetch() or any HTTP requests
 - Do NOT use localStorage or sessionStorage
@@ -173,7 +190,21 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:src/main.ts — boilerplate: import { createApp } from 'vue'; import App from './App.vue'; createApp(App).mount('#app')
 4. \`\`\`filename:index.html — Vite entry: <div id="app"></div> + <script type="module" src="/src/main.ts"></script>
 5. \`\`\`filename:package.json — vue + @vitejs/plugin-vue only
-6. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import vue from '@vitejs/plugin-vue'; export default defineConfig({ plugins: [vue()] })
+6. \`\`\`filename:vite.config.ts:
+\`\`\`
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+  server: { port: 5173, host: true },
+  envPrefix: 'VITE_',
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
+  },
+})
+\`\`\`
 
 FRAMEWORK RULES:
 - Always use <script setup lang="ts"> — never Options API
@@ -200,6 +231,13 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:app/globals.css — all CSS using variables
 4. \`\`\`filename:package.json — next + react + react-dom only
 
+## Next.js Fullstack Architecture
+For fullstack builds with Next.js, the backend API is generated as a SEPARATE Hono.js server (src/server/routes/api.ts), NOT as Next.js App Router API routes.
+
+Why: WebContainer runs the Next.js frontend dev server (port 3000 or 5173) and the Hono backend server (port 3001) as two separate processes. This gives you a clean separation between frontend (Next.js App Router) and backend (Hono API).
+
+In production deployment, you may optionally migrate API routes into Next.js app/api/ if desired.
+
 FRAMEWORK RULES:
 - Server Components (default): no "use client" directive, can be async
 - Client Components: add "use client" at the very top when using useState / useEffect / event handlers
@@ -224,7 +262,21 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:src/main.ts — boilerplate: import './app.css'; import App from './App.svelte'; const app = new App({ target: document.body }); export default app;
 4. \`\`\`filename:index.html — Vite entry: <script type="module" src="/src/main.ts"></script>
 5. \`\`\`filename:package.json — svelte + @sveltejs/vite-plugin-svelte only
-6. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import { svelte } from '@sveltejs/vite-plugin-svelte'; export default defineConfig({ plugins: [svelte()] })
+6. \`\`\`filename:vite.config.ts:
+\`\`\`
+import { defineConfig } from 'vite'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+
+export default defineConfig({
+  plugins: [svelte()],
+  server: { port: 5173, host: true },
+  envPrefix: 'VITE_',
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
+  },
+})
+\`\`\`
 
 FRAMEWORK RULES:
 - Script block: <script lang="ts"> at the top of every .svelte file
@@ -251,7 +303,21 @@ FILE FORMAT — ALWAYS in this exact order:
 2. \`\`\`filename:src/index.css — all CSS using variables
 3. \`\`\`filename:src/index.tsx — boilerplate: import { render } from 'solid-js/web'; import App from './App'; render(() => <App />, document.getElementById('root')!)
 4. \`\`\`filename:package.json — solid-js + vite-plugin-solid only
-5. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import solid from 'vite-plugin-solid'; export default defineConfig({ plugins: [solid()] })
+5. \`\`\`filename:vite.config.ts:
+\`\`\`
+import { defineConfig } from 'vite'
+import solid from 'vite-plugin-solid'
+
+export default defineConfig({
+  plugins: [solid()],
+  server: { port: 5173, host: true },
+  envPrefix: 'VITE_',
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
+  },
+})
+\`\`\`
 
 FRAMEWORK RULES:
 - State: const [count, setCount] = createSignal(0); read as count() — always call the accessor
@@ -266,6 +332,45 @@ SANDBOX RESTRICTIONS:
 - Do NOT use fetch() or any HTTP requests
 - Do NOT use localStorage or sessionStorage
 - Do NOT import libraries beyond solid-js
+- All icons must be inline SVG or emoji
+- All data must be static mock data defined in the component`,
+
+  preact: `
+FRAMEWORK: Preact + TypeScript
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:src/App.tsx — root component, export default function App()
+2. \`\`\`filename:src/index.tsx — boilerplate: import { render } from 'preact'; import App from './App'; render(<App />, document.getElementById('root')!)
+3. \`\`\`filename:src/styles.css — all CSS using variables
+4. \`\`\`filename:package.json — preact + @preact/preset-vite only
+5. \`\`\`filename:vite.config.ts:
+\`\`\`
+import { defineConfig } from 'vite'
+import preact from '@preact/preset-vite'
+
+export default defineConfig({
+  plugins: [preact()],
+  server: { port: 5173, host: true },
+  envPrefix: 'VITE_',
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
+  },
+})
+\`\`\`
+
+FRAMEWORK RULES:
+- Use Preact hooks: useState, useEffect, useCallback — import from 'preact/hooks'
+- Use JSX (preact/compat provides React-compatible JSX) or h()
+- NO React imports — import from 'preact' and 'preact/hooks' ONLY
+- DOM events use camelCase: onClick (not onclick), onInput, onSubmit
+- Preact signals allowed: import { signal } from '@preact/signals'
+- Do NOT import from 'react' or 'react-dom' — Preact is a separate runtime
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Allowed dependencies ONLY: preact, @preact/signals (no react, no react-dom)
 - All icons must be inline SVG or emoji
 - All data must be static mock data defined in the component`,
 };
@@ -373,7 +478,42 @@ Note: do NOT add mongodb separately — mongoose already includes it.
 
 ENV EXAMPLE — \`\`\`filename:.env.example:
   MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/dbname?retryWrites=true&w=majority
-  VITE_API_URL=http://localhost:5173`,
+  VITE_API_URL=http://localhost:5173
+
+README — also generate \`\`\`filename:README.md with this EXACT content:
+\`\`\`
+# MongoDB Atlas Setup Guide
+
+## 1. Create Cluster
+- Go to mongodb.com/atlas → Sign up free
+- Create Shared Cluster (FREE tier)
+- Choose AWS/Google Cloud region closest to your users
+
+## 2. Network Access
+- Database → Network Access → Add IP Address
+- Click "Allow Access from Anywhere" → 0.0.0.0/0
+- (Required because WebContainer preview runs from browser networks with dynamic IPs)
+
+## 3. Database User
+- Database → Database Access → Add New User
+- Username: lampcode_user
+- Password: (auto-generate and save)
+- Built-in Role: Read and Write to any database
+
+## 4. Connection String
+- Database → Clusters → Connect → Drivers → Node.js
+- Copy connection string: mongodb+srv://lampcode_user:<password>@cluster0.xxxxx.mongodb.net/lampcode?retryWrites=true&w=majority
+- Replace <password> with your generated password
+
+## 5. Environment Variables
+Create .env file with:
+MONGODB_URI=mongodb+srv://lampcode_user:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/lampcode?retryWrites=true&w=majority
+VITE_API_URL=http://localhost:3001
+
+## 6. Deploy
+- Backend: Railway/Render (set MONGODB_URI env var)
+- Frontend: Vercel (set VITE_API_URL to your Railway backend URL)
+\`\`\``,
 };
 
 // ── Fullstack mode instruction ────────────────────────────────────────────────
@@ -415,11 +555,12 @@ BACKEND FILES (always required regardless of frontend framework):
 4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers calling /api/...
 
 FRONTEND FILES (adapt to the framework detected above):
-- React (default): src/App.tsx, src/styles.css, src/index.tsx
+- React (default): src/App.tsx, src/styles.css, src/index.tsx, vite.config.ts
 - Vue:    src/App.vue, src/style.css, src/main.ts, index.html, vite.config.ts
 - Next.js: app/page.tsx, app/layout.tsx, app/globals.css
 - Svelte: src/App.svelte, src/app.css, src/main.ts, index.html, vite.config.ts
 - SolidJS: src/App.tsx, src/index.css, src/index.tsx, vite.config.ts
+- Preact: src/App.tsx, src/styles.css, src/index.tsx, vite.config.ts
 
 PACKAGE.JSON scripts must be EXACTLY:
    { "scripts": { "dev": "vite", "build": "vite build" } }
