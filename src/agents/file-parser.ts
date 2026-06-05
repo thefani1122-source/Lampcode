@@ -22,8 +22,13 @@ const LANG_HINTS = new Set([
 // Backend / full-stack files. These run server-side (Node), NOT in Sandpack,
 // so the Sandpack validator must NOT flag their server-side imports as errors.
 const BACKEND_FILES = new Set([
+  // Legacy Drizzle-based names (kept so old builds still parse correctly)
   "src/db/schema.ts",
   "src/db/seed.ts",
+  // WebContainer-compatible Supabase-based names
+  "src/db/types.ts",
+  "src/db/schema.sql",
+  // API routes and auth (server-side in all modes)
   "src/server/routes/api.ts",
   "src/server/auth.ts",
 ]);

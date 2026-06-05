@@ -298,6 +298,17 @@ function needsBackend(prompt: string): boolean {
 }
 
 /**
+ * True when the prompt explicitly requests a backend runtime that WebContainers
+ * cannot run (Python, PHP, Ruby, Go, etc.). Used to short-circuit the build
+ * with a helpful redirect message before any LLM tokens are spent.
+ */
+function isUnsupportedBackendRuntime(prompt: string): boolean {
+  return /\b(python|django|flask|fastapi|tornado|bottle|aiohttp|uvicorn|gunicorn|php|laravel|symfony|ruby|rails|sinatra|golang|go lang|rust|actix|elixir|phoenix|java|spring|kotlin|ktor|c\+\+|\.net|asp\.net)\b/i.test(
+    prompt,
+  );
+}
+
+/**
  * True when the prompt implies user accounts, login, OAuth, or session handling.
  * Used to activate the AUTH sub-mode of a fullstack build.
  */
@@ -407,6 +418,34 @@ export async function runFastBuild(
     tier: 1,
     timestamp: new Date().toISOString(),
   });
+
+  // ── Unsupported runtime guard ─────────────────────────────────────────────
+  // WebContainers run Node.js only. Catch Python/PHP/Ruby/Go requests before
+  // spending any LLM tokens and refund the credits.
+  if (isUnsupportedBackendRuntime(prompt)) {
+    const redirectMsg =
+      "WebContainers support Node.js only. I can build your backend in Hono.js " +
+      "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
+      "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
+    server?.emitToRoom(sessionId, "build:thinking", { text: redirectMsg, sessionId });
+    const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
+    server?.buildFailed(sessionId, {
+      sessionId,
+      phase: "BUILD",
+      reason: redirectMsg,
+      logs: "",
+      timestamp: new Date().toISOString(),
+    });
+    await Promise.all([
+      db.update(buildSessions)
+        .set({ status: "failed", error: reason, completedAt: new Date() })
+        .where(eq(buildSessions.id, sessionId)),
+      db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+      refundCredits(userId, FAST_BUILD_CREDIT_COST),
+    ]);
+    console.log(`[build] unsupported runtime request rejected, credits refunded: ${prompt.slice(0, 80)}`);
+    return;
+  }
 
   try {
     // ── Load existing files to decide new-build vs edit-existing ────────────

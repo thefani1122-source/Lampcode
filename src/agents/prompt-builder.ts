@@ -148,6 +148,15 @@ const FULLSTACK_INSTRUCTION = `
 
 FULLSTACK MODE — You are building a complete full-stack application (frontend + backend + database).
 
+WEBCONTAINER CONSTRAINT — NON-NEGOTIABLE:
+- Backend: Node.js / TypeScript ONLY. Do NOT generate Python, PHP, Ruby, Go, Rust, Java, or any non-Node runtime.
+- Framework: Hono.js (preferred), Express.js, or Fastify. Never Django, Flask, FastAPI, Laravel, Rails, etc.
+- Database: Use an EXTERNAL cloud database via its SDK — Supabase (@supabase/supabase-js) is the default.
+  WebContainers CANNOT run a local PostgreSQL/MySQL/Redis server process. Never import or use Drizzle ORM,
+  pg, mysql2, or any driver that opens a raw TCP socket to a database.
+- Auth: Supabase Auth or JWT — never native Passport.js, bcrypt-native, or OS-level session stores.
+- NO native C++ modules — every npm package must be pure JavaScript/TypeScript or WebAssembly.
+
 FRONTEND RULES:
 - Use React + TypeScript.
 - ALL data fetching goes through functions exported from src/lib/api.ts.
@@ -156,27 +165,30 @@ FRONTEND RULES:
 
 BACKEND RULES:
 - Use Hono.js for API routes.
-- Use Drizzle ORM with PostgreSQL.
+- Use the Supabase JS client for all database access (supabase.from('table').select/insert/update/delete).
 - Export the router as: export const api = new Hono()
 - Prefix every route with /api/.
 - Add permissive CORS headers.
 - Validate every request body with Zod.
+- The server-side Supabase client uses process.env.SUPABASE_URL + process.env.SUPABASE_SERVICE_KEY.
 
 DATABASE RULES:
-- Use drizzle-orm/pg-core.
-- Export each table.
-- Include a created_at timestamp column.
-- Use appropriate types (serial, varchar, integer, boolean, timestamp).
+- Use @supabase/supabase-js — NOT drizzle-orm, NOT the postgres package, NOT any TCP DB driver.
+- Define TypeScript interfaces for each table's row type in src/db/types.ts.
+- Generate CREATE TABLE SQL for Supabase in src/db/schema.sql (plain SQL, not executed by the app —
+  user runs it once in the Supabase SQL editor or dashboard).
+- Include created_at TIMESTAMPTZ DEFAULT now() on every table.
+- Use appropriate column types: UUID, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ.
 
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
-1. \`\`\`filename:src/db/schema.ts        — Drizzle table definitions
-2. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes (export const api = new Hono())
-3. \`\`\`filename:src/server/auth.ts        — session/auth middleware (ONLY if the app needs auth/login)
-4. \`\`\`filename:src/lib/api.ts            — typed client functions (fetch wrappers)
-5. \`\`\`filename:src/App.tsx               — React app, imports from ./lib/api
-6. \`\`\`filename:src/styles.css            — all CSS
-7. \`\`\`filename:src/index.tsx             — render boilerplate
-8. \`\`\`filename:package.json              — include hono, drizzle-orm, react, react-dom, zod
+1. \`\`\`filename:src/db/types.ts          — TypeScript interfaces for each Supabase table row
+2. \`\`\`filename:src/db/schema.sql        — CREATE TABLE SQL to run once in Supabase dashboard
+3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes using supabase.from(...) (export const api = new Hono())
+4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers (calls /api/...)
+5. \`\`\`filename:src/App.tsx              — React app, imports from ./lib/api
+6. \`\`\`filename:src/styles.css           — all CSS
+7. \`\`\`filename:src/index.tsx            — render boilerplate
+8. \`\`\`filename:package.json             — include hono, @supabase/supabase-js, react, react-dom, zod
    package.json scripts must be EXACTLY:
    {
      "scripts": {
@@ -186,10 +198,18 @@ FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\
    }
    "server" and "db:seed" scripts are for deployment only — do NOT include them.
    Sandpack preview runs ONLY the "dev" script; extra scripts break the preview.
-9. \`\`\`filename:src/db/seed.ts            — inserts realistic mock rows
-10. \`\`\`filename:.env.example             — DATABASE_URL and VITE_API_URL placeholders
+9. \`\`\`filename:.env.example             — SUPABASE_URL, SUPABASE_SERVICE_KEY, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL
 
 API INTEGRATION EXAMPLE:
+In src/server/routes/api.ts:
+  import { createClient } from '@supabase/supabase-js'
+  const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+  api.get('/todos', async (c) => {
+    const { data, error } = await supabase.from('todos').select('*')
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json(data)
+  })
+
 In src/App.tsx:
   import { fetchTodos, createTodo, deleteTodo } from './lib/api';
   useEffect(() => { fetchTodos().then(setTodos).catch(setError); }, []);
