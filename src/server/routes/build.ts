@@ -27,12 +27,13 @@ import {
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
+import { isAdmin } from "../../auth/admin.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
-const FAST_BUILD_CREDIT_COST = 20;
+const FAST_BUILD_CREDIT_COST = 1; // Reduced for testing phase. Change back to 20 before production launch.
 
 // ── In-memory cancel registry ─────────────────────────────────────────────────
 
@@ -952,12 +953,16 @@ buildRouter.post("/fast", async (c) => {
     throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
   }
 
-  // ── Ensure billing row exists with 500-credit limit ──────────────────────
-  await ensureStartingCredits(authUser.id);
-
-  // ── Atomically deduct credits ─────────────────────────────────────────────
-  await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
-  console.log(`[FAST t+${Date.now()-t0}ms] credits deducted`);
+  // ── Credit handling (admins bypass entirely) ──────────────────────────────
+  const adminBypass = isAdmin(authUser.email);
+  if (adminBypass) {
+    console.log("[CREDITS] Admin bypass for:", authUser.email);
+  } else {
+    // Ensure billing row exists with the 500-credit starter limit, then deduct.
+    await ensureStartingCredits(authUser.id);
+    await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+  }
+  console.log(`[FAST t+${Date.now()-t0}ms] credits ${adminBypass ? "bypassed" : "deducted"}`);
 
   const sessionId = randomUUID();
   try {
@@ -979,12 +984,12 @@ buildRouter.post("/fast", async (c) => {
     setImmediate(() => {
       runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
         console.error(err);
-        refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
+        if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
       });
     });
   } catch (err) {
     // Refund credits if session creation failed (DB insert or project update)
-    await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+    if (!adminBypass) await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);
     throw err;
   }
 

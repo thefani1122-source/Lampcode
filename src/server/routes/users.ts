@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { user as userTable, userBilling, buildSessions } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
+import { isAdmin } from "../../auth/admin.js";
 
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
@@ -15,20 +16,40 @@ const usersRouter = new Hono();
 // All user routes require authentication
 usersRouter.use("/*", requireAuth);
 
-// GET /api/users/me — current user profile
+// GET /api/users/me — current user profile + live credit balance from DB
 usersRouter.get("/me", async (c) => {
   const authUser = c.get("authUser");
-  const [profile] = await db
-    .select()
-    .from(userTable)
-    .where(eq(userTable.id, authUser.id))
-    .limit(1);
+  const [profile, billing] = await Promise.all([
+    db
+      .select()
+      .from(userTable)
+      .where(eq(userTable.id, authUser.id))
+      .limit(1),
+    db
+      .select({ creditsUsed: userBilling.creditsUsed, creditsLimit: userBilling.creditsLimit })
+      .from(userBilling)
+      .where(eq(userBilling.userId, authUser.id))
+      .limit(1),
+  ]);
 
-  if (profile === undefined) {
+  if (profile[0] === undefined) {
     return c.json({ error: { message: "User not found", code: "NOT_FOUND" } }, 404);
   }
 
-  return c.json({ user: profile });
+  const admin = isAdmin(authUser.email);
+  const creditsUsed = billing[0]?.creditsUsed ?? 0;
+  const creditsLimit = billing[0]?.creditsLimit ?? 500;
+
+  return c.json({
+    user: {
+      ...profile[0],
+      isAdmin: admin,
+      // Always the live DB value (admins effectively have unlimited builds).
+      creditsUsed,
+      creditsLimit,
+      creditsRemaining: admin ? Number.MAX_SAFE_INTEGER : creditsLimit - creditsUsed,
+    },
+  });
 });
 
 // PATCH /api/users/me — update profile fields

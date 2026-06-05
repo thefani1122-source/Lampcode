@@ -28,6 +28,7 @@ import { billingRouter } from "./routes/billing.js";
 import { contextRouter } from "./routes/context.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { integrationsRouter } from "./routes/integrations.js";
+import { adminRouter } from "./routes/admin.js";
 import { createWebSocketServer } from "../websocket/server.js";
 
 // ── Startup diagnostics ───────────────────────────────────────────────────────
@@ -96,6 +97,7 @@ app.route("/api/users/me/billing", billingRouter);
 app.route("/api/context", contextRouter);
 app.route("/api/webhooks", webhooksRouter);
 app.route("/api/integrations", integrationsRouter);
+app.route("/api/admin", adminRouter);
 
 // 404 handler
 app.notFound((c) =>
