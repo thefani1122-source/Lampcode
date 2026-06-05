@@ -60,6 +60,7 @@ export type GatewayErrorCode =
   | "INVALID_KEY"
   | "CONTEXT_LENGTH"
   | "NETWORK"
+  | "PAYMENT_REQUIRED"
   | "UNKNOWN";
 
 export class GatewayError extends Error {
@@ -321,6 +322,8 @@ export class ModelGateway {
       case 503:
       case 529:
         return new GatewayError("MODEL_DOWN", `Model unavailable (${response.status})`);
+      case 402:
+        return new GatewayError("PAYMENT_REQUIRED", "OpenRouter credits exhausted — add credits at openrouter.ai/credits");
       case 400:
         if (body.includes("context_length")) {
           return new GatewayError("CONTEXT_LENGTH", "Prompt exceeds model context length");

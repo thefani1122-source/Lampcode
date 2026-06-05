@@ -26,7 +26,7 @@ import {
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
-import { deductCredits, refundCredits } from "../../build/credits.js";
+import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -951,6 +951,9 @@ buildRouter.post("/fast", async (c) => {
   if (project.status === "building") {
     throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
   }
+
+  // ── Ensure billing row exists with 500-credit limit ──────────────────────
+  await ensureStartingCredits(authUser.id);
 
   // ── Atomically deduct credits ─────────────────────────────────────────────
   await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
