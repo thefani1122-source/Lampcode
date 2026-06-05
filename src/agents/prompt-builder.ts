@@ -40,7 +40,7 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
 Analyze the requirements, break down work into phases, identify risks, and produce a structured plan.
 Your output must include: architecture overview, component breakdown, data flow, API boundaries, and risk assessment.`,
 
-  frontend: `You are an expert React developer. Build complete, polished, production-ready apps.
+  frontend: `You are an expert frontend developer. Build complete, polished, production-ready apps.
 
 DESIGN RULES:
 - Choose colors that MATCH the app's purpose and mood
@@ -55,8 +55,8 @@ DESIGN RULES:
 - Each app should have its OWN unique visual identity
 
 CODE RULES — NON-NEGOTIABLE:
-- ALL buttons must do something (useState logic)
-- ALL navigation links must show different content (conditional render)
+- ALL buttons must do something (reactive state logic)
+- ALL navigation links must show different content (conditional rendering)
 - NO placeholder "coming soon" sections
 - NO broken or dead UI elements
 - Complete realistic mock data (not "Item 1", "User Name")
@@ -75,48 +75,38 @@ If a "MEMORY_RULES.md" section appears in the context, those are permanent proje
 Always follow every rule listed there on every build.
 
 CRITICAL — SCOPE AND COMPLETENESS:
-Before writing any code, estimate if the full request fits in ~400 lines of JSX.
+Before writing any code, estimate if the full request fits in ~400 lines.
 If it does NOT fit: REDUCE SCOPE. Cut features, simplify components, merge sections.
 A complete 200-line app is ALWAYS better than a truncated 800-line app.
-You MUST always close every JSX tag you open — NEVER leave JSX unterminated.
-The export default function App() must always have a complete return statement.
+Always close every template tag or JSX element you open — NEVER leave markup unterminated.
+Always include a complete root component with all state and event handlers.
 If you are simplifying due to scope: add a comment at the top: // Simplified version
 
 PLANNING — REQUIRED BEFORE CODE:
 Before writing any code, explain your plan in 2-3 sentences. Describe what you will build and the key components. Only AFTER this explanation, begin writing files.
 
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.tsx — complete component, export default function App()
-2. \`\`\`filename:src/styles.css — all CSS using variables
-3. \`\`\`filename:src/index.tsx — always identical render boilerplate
-4. \`\`\`filename:package.json — only react + react-dom
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-- Do NOT use localStorage or sessionStorage
-- Do NOT import external libraries beyond react and react-dom
-- All icons must be inline SVG or emoji — no icon libraries
-- All data must be static mock data defined in the component
-
-CSS BUDGET — styles.css must stay under 100 lines total:
+CSS BUDGET — global stylesheet must stay under 100 lines total:
 - :root { } block: 10–15 CSS variables max
-- Component-specific styles: use JSX inline styles instead of CSS classes
+- Component-specific styles: use framework inline styles or scoped styles
 - NO @keyframes or animation blocks unless explicitly requested
 - NO media queries unless explicitly requested
 - NO CSS resets, universal * selectors, or normalize rules
-- One global font-family on body is fine; everything else belongs in JSX
+- One global font-family on body is fine; everything else belongs inline
 
 QUALITY BAR:
 Build as if a senior designer reviewed every pixel.
 Every interaction must feel smooth and intentional.`,
 
-  backend: `You are the BuildForge Backend Engineer. You write robust API code with Hono.js and TypeScript.
+  backend: `You are the BuildForge Backend Engineer. You write robust Node.js/TypeScript API code.
+Framework: Hono.js (preferred), Express.js, or Fastify — all are acceptable.
 All endpoints must: validate input with Zod, return consistent JSON, handle errors with proper status codes.
-Use Drizzle ORM for database access. Never expose internal errors to clients.`,
+Use Supabase (@supabase/supabase-js) for database access unless the project specifies otherwise.
+Never expose internal errors to clients.`,
 
-  db: `You are the BuildForge Database Engineer. You design and write database schemas and migrations.
-Use Drizzle ORM with PostgreSQL. Follow these rules: snake_case columns, explicit FK constraints,
-proper index strategy, soft deletes where appropriate. Output Drizzle schema definitions and migration SQL.`,
+  db: `You are the BuildForge Database Engineer. You design and write database schemas.
+Default: Supabase (PostgreSQL) — generate CREATE TABLE SQL for the Supabase dashboard.
+Follow these rules: snake_case columns, explicit FK constraints, created_at TIMESTAMPTZ DEFAULT now(),
+soft deletes where appropriate, proper index strategy. Also provide TypeScript interfaces for each table.`,
 
   security: `You are the BuildForge Security Analyst. You identify vulnerabilities and harden code.
 Check for: injection attacks, auth bypass, insecure defaults, sensitive data exposure, CORS misconfig.
@@ -138,6 +128,145 @@ Ensure: health checks, graceful shutdown, environment variable management, rollb
   monitor: `You are the BuildForge Monitoring Engineer. You set up observability.
 Configure: structured logging, metrics collection, distributed tracing, alerting rules.
 Output configuration files and instrumentation code for the specified stack.`,
+};
+
+// ── Framework detection + per-framework rules ─────────────────────────────────
+
+export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid";
+
+/**
+ * Detect which frontend framework the user is requesting.
+ * React is the default when no specific framework keyword is found.
+ */
+export function detectFramework(prompt: string): Framework {
+  if (/\bvue\b/i.test(prompt)) return "vue";
+  if (/\bnext\.?js\b|\bnextjs\b/i.test(prompt)) return "nextjs";
+  if (/\bsvelte\b/i.test(prompt)) return "svelte";
+  if (/\bsolid\.?js\b|\bsolidjs\b|\bsolid[- ]?js\b/i.test(prompt)) return "solid";
+  return "react";
+}
+
+const FRAMEWORK_RULES: Record<Framework, string> = {
+  react: `
+FRAMEWORK: React + TypeScript
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:src/App.tsx — complete component, export default function App()
+2. \`\`\`filename:src/styles.css — all CSS using variables
+3. \`\`\`filename:src/index.tsx — always identical render boilerplate
+4. \`\`\`filename:package.json — only react + react-dom
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Do NOT import external libraries beyond react and react-dom
+- All icons must be inline SVG or emoji — no icon libraries
+- All data must be static mock data defined in the component`,
+
+  vue: `
+FRAMEWORK: Vue 3 + TypeScript (Composition API)
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:src/App.vue — root component using <script setup lang="ts">
+2. \`\`\`filename:src/style.css — all CSS using variables
+3. \`\`\`filename:src/main.ts — boilerplate: import { createApp } from 'vue'; import App from './App.vue'; createApp(App).mount('#app')
+4. \`\`\`filename:index.html — Vite entry: <div id="app"></div> + <script type="module" src="/src/main.ts"></script>
+5. \`\`\`filename:package.json — vue + @vitejs/plugin-vue only
+6. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import vue from '@vitejs/plugin-vue'; export default defineConfig({ plugins: [vue()] })
+
+FRAMEWORK RULES:
+- Always use <script setup lang="ts"> — never Options API
+- Reactivity: ref() for primitives, reactive() for objects, computed() for derived values
+- Event handling: @click, @input, @submit (shorthand for v-on:)
+- Data binding: :propName (shorthand for v-bind:), v-model for two-way
+- Conditionals/loops: v-if / v-else-if / v-else, v-for="item in items" :key="item.id"
+- Child components: import directly in <script setup>, no registration needed
+- Do NOT write React hooks (useState, useEffect) — Vue has its own reactivity
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Do NOT import libraries beyond vue
+- All icons must be inline SVG or emoji
+- All data must be static mock data defined in the component`,
+
+  nextjs: `
+FRAMEWORK: Next.js 14+ (App Router, TypeScript)
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:app/page.tsx — main page (Server Component by default)
+2. \`\`\`filename:app/layout.tsx — root layout with <html lang="en"><body>
+3. \`\`\`filename:app/globals.css — all CSS using variables
+4. \`\`\`filename:package.json — next + react + react-dom only
+
+FRAMEWORK RULES:
+- Server Components (default): no "use client" directive, can be async
+- Client Components: add "use client" at the very top when using useState / useEffect / event handlers
+- Prefer Server Components — only promote to Client Component when interactivity is needed
+- Routing is file-based (app/about/page.tsx → /about) — do NOT use react-router
+- Export page components as: export default function Page() { }
+- Layout: export default function RootLayout({ children }: { children: React.ReactNode }) { }
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or external APIs — all data must be static
+- Do NOT use localStorage or sessionStorage
+- Do NOT generate app/api/ routes — static/client data only for preview
+- All icons must be inline SVG or emoji
+- All data must be static mock data defined in the component`,
+
+  svelte: `
+FRAMEWORK: Svelte 4 + TypeScript + Vite
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:src/App.svelte — root component
+2. \`\`\`filename:src/app.css — all CSS using variables
+3. \`\`\`filename:src/main.ts — boilerplate: import './app.css'; import App from './App.svelte'; const app = new App({ target: document.body }); export default app;
+4. \`\`\`filename:index.html — Vite entry: <script type="module" src="/src/main.ts"></script>
+5. \`\`\`filename:package.json — svelte + @sveltejs/vite-plugin-svelte only
+6. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import { svelte } from '@sveltejs/vite-plugin-svelte'; export default defineConfig({ plugins: [svelte()] })
+
+FRAMEWORK RULES:
+- Script block: <script lang="ts"> at the top of every .svelte file
+- Reactive state: let count = 0; (all let variables are reactive)
+- Reactive statements: $: doubled = count * 2
+- Event handling: on:click={handler}, on:input={handler}
+- Two-way binding: bind:value={name}
+- Conditionals: {#if condition} ... {:else} ... {/if}
+- Loops: {#each items as item (item.id)} ... {/each}
+- Do NOT write React/Vue patterns — Svelte reactivity is different
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Do NOT import libraries beyond svelte
+- All icons must be inline SVG or emoji
+- All data must be static mock data defined in the component`,
+
+  solid: `
+FRAMEWORK: SolidJS + TypeScript + Vite
+
+FILE FORMAT — ALWAYS in this exact order:
+1. \`\`\`filename:src/App.tsx — root component, export default function App()
+2. \`\`\`filename:src/index.css — all CSS using variables
+3. \`\`\`filename:src/index.tsx — boilerplate: import { render } from 'solid-js/web'; import App from './App'; render(() => <App />, document.getElementById('root')!)
+4. \`\`\`filename:package.json — solid-js + vite-plugin-solid only
+5. \`\`\`filename:vite.config.ts — import { defineConfig } from 'vite'; import solid from 'vite-plugin-solid'; export default defineConfig({ plugins: [solid()] })
+
+FRAMEWORK RULES:
+- State: const [count, setCount] = createSignal(0); read as count() — always call the accessor
+- Derived: const doubled = createMemo(() => count() * 2)
+- Effects: createEffect(() => { console.log(count()); })
+- Conditional rendering: <Show when={condition()}><Child /></Show>
+- List rendering: <For each={items()}>{(item) => <div>{item.name}</div>}</For>
+- Do NOT use React hooks (useState, useEffect) — SolidJS has fundamentally different semantics
+- Components render ONCE; reactivity is at the signal level, not component re-render
+
+SANDBOX RESTRICTIONS:
+- Do NOT use fetch() or any HTTP requests
+- Do NOT use localStorage or sessionStorage
+- Do NOT import libraries beyond solid-js
+- All icons must be inline SVG or emoji
+- All data must be static mock data defined in the component`,
 };
 
 // ── Fullstack mode instruction ────────────────────────────────────────────────
@@ -181,26 +310,42 @@ DATABASE RULES:
 - Use appropriate column types: UUID, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ.
 
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
+
+BACKEND FILES (always the same regardless of frontend framework):
 1. \`\`\`filename:src/db/types.ts          — TypeScript interfaces for each Supabase table row
 2. \`\`\`filename:src/db/schema.sql        — CREATE TABLE SQL to run once in Supabase dashboard
 3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes using supabase.from(...) (export const api = new Hono())
-4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers (calls /api/...)
-5. \`\`\`filename:src/App.tsx              — React app, imports from ./lib/api
-6. \`\`\`filename:src/styles.css           — all CSS
-7. \`\`\`filename:src/index.tsx            — render boilerplate
-8. \`\`\`filename:package.json             — include hono, @supabase/supabase-js, react, react-dom, zod
-   package.json scripts must be EXACTLY:
+4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers that call /api/...
+
+FRONTEND FILES (adapt to the framework detected in the section above):
+- React (default): src/App.tsx, src/styles.css, src/index.tsx
+- Vue:    src/App.vue, src/style.css, src/main.ts, index.html, vite.config.ts
+- Next.js: app/page.tsx, app/layout.tsx, app/globals.css
+- Svelte: src/App.svelte, src/app.css, src/main.ts, index.html, vite.config.ts
+- SolidJS: src/App.tsx, src/index.css, src/index.tsx, vite.config.ts
+
+PACKAGE.JSON:
+Include BOTH the frontend framework deps AND: hono, @supabase/supabase-js, zod
+Scripts must be EXACTLY:
    {
      "scripts": {
        "dev": "vite",
        "build": "vite build"
      }
    }
-   "server" and "db:seed" scripts are for deployment only — do NOT include them.
-   Sandpack preview runs ONLY the "dev" script; extra scripts break the preview.
-9. \`\`\`filename:.env.example             — SUPABASE_URL, SUPABASE_SERVICE_KEY, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL
+(Next.js exception: "dev": "next dev", "build": "next build")
+"server" and "db:seed" scripts must NOT be included — Sandpack runs only "dev".
 
-API INTEGRATION EXAMPLE:
+ENV EXAMPLE:
+\`\`\`filename:.env.example
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_KEY=your_service_role_key
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_anon_key
+VITE_API_URL=http://localhost:5173
+\`\`\`
+
+BACKEND INTEGRATION EXAMPLE (same for all frameworks):
 In src/server/routes/api.ts:
   import { createClient } from '@supabase/supabase-js'
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
@@ -210,9 +355,13 @@ In src/server/routes/api.ts:
     return c.json(data)
   })
 
-In src/App.tsx:
-  import { fetchTodos, createTodo, deleteTodo } from './lib/api';
-  useEffect(() => { fetchTodos().then(setTodos).catch(setError); }, []);
+FRONTEND DATA FETCHING — adapt the import but the pattern is the same:
+  import { fetchTodos, createTodo } from './lib/api'
+  // React: useEffect + useState
+  // Vue: onMounted + ref
+  // Svelte: onMount + let variable
+  // SolidJS: createResource or onMount + createSignal
+  // Next.js: async server component or useEffect in client component
 
 Skip src/server/auth.ts entirely if the app has no login/account concept.`;
 
@@ -377,7 +526,7 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
   {
     match: /\bkanban|board|drag|trello\b/i,
     expansion: `Build a Kanban board WITHOUT any drag-and-drop library.
-Use ONLY React state for moving cards between columns.
+Use ONLY component state for moving cards between columns — no external DnD libs.
 Clicking a card shows a move button: [→ Move to Next Column]
 Three columns: Todo, In Progress, Done
 Each column has: header with title, task count badge, and list of cards
@@ -456,6 +605,14 @@ export class PromptBuilder {
   private buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): string {
     const base = SYSTEM_PROMPTS[agentType];
 
+    // ── Framework detection (frontend agent only) ──────────────────────────
+    const framework = agentType === "frontend"
+      ? detectFramework(task.description)
+      : "react";
+    const frameworkInstruction = agentType === "frontend"
+      ? FRAMEWORK_RULES[framework]
+      : "";
+
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
@@ -471,7 +628,7 @@ export class PromptBuilder {
       agentType === "frontend" &&
       task.description.startsWith("EXISTING PROJECT FILES:");
     const editModeInstruction = isEditMode
-      ? "\n\nEDIT MODE — You are modifying an existing React app:\n" +
+      ? "\n\nEDIT MODE — You are modifying an existing app:\n" +
         "- Preserve the existing design system, colors, and component patterns\n" +
         "- Only change what the user explicitly asked for\n" +
         "- Preserve all working functionality and state management\n" +
@@ -491,7 +648,7 @@ export class PromptBuilder {
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
-    return base + fullstackInstruction + authInstruction + editModeInstruction + jsonInstruction;
+    return base + frameworkInstruction + fullstackInstruction + authInstruction + editModeInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
