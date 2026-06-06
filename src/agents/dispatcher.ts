@@ -206,7 +206,7 @@ export class AgentDispatcher {
 
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.
     // All other agents use the gateway default (3 minutes).
-    const streamTimeoutMs = ["frontend", "fast"].includes(agentType) ? 300_000 : undefined;
+    const streamTimeoutMs = agentType === "frontend" ? 300_000 : undefined;
 
     // Fullstack builds emit ~10 files (frontend + backend + db) — double the
     // output budget so the response isn't truncated mid-file.

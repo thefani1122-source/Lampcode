@@ -413,6 +413,12 @@ async function runPlanPhase(
       completedAt: phase === "DEPLOY" ? new Date() : undefined,
     }).where(eq(buildSessions.id, sessionId));
 
+    try {
+      await deductCredits(userId, creditsUsed);
+    } catch (err) {
+      logger.error({ err, userId, phase, sessionId }, "Failed to deduct credits for plan phase");
+    }
+
     if (phase === "DEPLOY") {
       await db.update(projects).set({ status: "live" }).where(eq(projects.id, projectId));
       const previewUrl = `/preview/${projectId}/${sessionId}`;
