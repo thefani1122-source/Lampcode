@@ -84,14 +84,11 @@ export const config = _env as Omit<typeof _env, (typeof REQUIRED_VARS)[number]> 
 export type Config = typeof config;
 
 // Origins allowed to make credentialed requests.
+const isDev = NODE_ENV !== "production";
 export const ALLOWED_ORIGINS = [
-  ...new Set([
-    "https://lampcode-production.up.railway.app",
-    "https://vibe-coder-suite.vercel.app",
-    // TODO: Remove localhost origins before production hardening
-    "http://localhost:3000",
-    "http://localhost:5173",
-    _env.FRONTEND_ORIGIN,
-    _env.FRONTEND_URL,
-  ].filter(Boolean) as string[]),
-];
+  "https://lampcode-production.up.railway.app",
+  "https://vibe-coder-suite.vercel.app",
+  ...(isDev ? ["http://localhost:3000", "http://localhost:5173"] : []),
+  ...(process.env["FRONTEND_ORIGIN"] ? [process.env["FRONTEND_ORIGIN"]] : []),
+  ...(process.env["FRONTEND_URL"] ? [process.env["FRONTEND_URL"]] : []),
+].filter(Boolean) as string[];

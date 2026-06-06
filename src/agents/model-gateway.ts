@@ -151,7 +151,8 @@ export class ModelGateway {
           // Anthropic extended thinking requires temperature=1; skip the 0.2 default.
           temperature: resolvedModel.startsWith("anthropic/") ? 1 : (req.temperature ?? 0.2),
           max_tokens: req.maxTokens ?? 16_000,
-          ...(resolvedModel.startsWith("anthropic/") && {
+          ...(resolvedModel.startsWith("anthropic/") &&
+            !resolvedModel.includes("haiku") && {
             thinking: { type: "enabled", budget_tokens: 4000 },
           }),
         }),

@@ -18,6 +18,7 @@ import {
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
+import { parseFilesFromContent, type ParsedFile } from "../../agents/file-parser.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { FreezeManager } from "../../lib/freeze-contract.js";
 import { deductCredits, refundCredits } from "../../build/credits.js";
@@ -149,56 +150,6 @@ async function getOwnedSession(sessionId: string, userId: string) {
   const s = rows[0];
   if (!s) throw new AppError(404, "Build session not found", "NOT_FOUND");
   return s;
-}
-
-// ── File parser (shared with fast-mode logic) ─────────────────────────────────
-
-interface ParsedFile { path: string; code: string }
-
-function parseFilesFromContent(content: string): ParsedFile[] {
-  const files: ParsedFile[] = [];
-  const lines = content.split("\n");
-  const pathLineRe =
-    /^(?:#{1,4}\s+(?:File:\s+)?|>\s*)?[`*_]{0,3}([^\s`*_<>|]+\.[a-zA-Z0-9]{1,10})[`*_]{0,3}:?\s*$/;
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i] ?? "";
-    if (/^(?:```|~~~)/.test(line)) {
-      let filePath: string | null = null;
-      for (let back = 1; back <= 3; back++) {
-        const prev = lines[i - back] ?? "";
-        if (prev.trim() === "") continue;
-        const m = pathLineRe.exec(prev.trim());
-        if (m?.[1]) { filePath = m[1]; break; }
-        if (/^(?:```|~~~)/.test(prev) || back === 1) break;
-      }
-      i++;
-      const codeLines: string[] = [];
-      while (i < lines.length) {
-        const cl = lines[i] ?? "";
-        if (/^(?:```|~~~)/.test(cl)) { i++; break; }
-        codeLines.push(cl);
-        i++;
-      }
-      const code = codeLines.join("\n").trim();
-      if (code.length === 0) continue;
-      if (filePath === null) {
-        const first = codeLines[0] ?? "";
-        const cm = first.match(/^\/\/\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/) ??
-                   first.match(/^#\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/);
-        if (cm?.[1]) {
-          filePath = cm[1];
-          const trimmed = codeLines.slice(1).join("\n").trim();
-          if (trimmed.length > 0) files.push({ path: filePath, code: trimmed });
-          continue;
-        }
-      }
-      if (filePath !== null) files.push({ path: filePath, code });
-      continue;
-    }
-    i++;
-  }
-  return files;
 }
 
 // ── Single-agent dispatcher wrapper (emits WS start/complete) ─────────────────
@@ -526,9 +477,12 @@ async function handleVerification(
       passed = parsed.data.passed && checks.every((c) => c.passed);
     }
   } catch {
-    // If we can't parse structured output, assume pass (agent may have returned prose)
-    passed = true;
-    checks = [{ name: "general", passed: true, detail: "Verification output parsed as pass" }];
+    passed = false;
+    checks = [{
+      name: "parse_error",
+      passed: false,
+      detail: "Verifier output could not be parsed as JSON — treated as fail to trigger fix-agent",
+    }];
   }
 
   const report: VerifyReport = { passed, round: currentRound, checks };
@@ -801,12 +755,19 @@ planRouter.post("/approve", async (c) => {
   // ── Approved — start FOUNDATION phase ────────────────────────────────────
   await db.update(buildSessions).set({ planStatus: "approved" }).where(eq(buildSessions.id, sessionId));
 
+  const contractContent = session.contractContent;
+  if (!contractContent) {
+    return c.json({
+      error: "Contract generation failed. Please restart from /api/plan/start to regenerate the architecture plan.",
+      code: "CONTRACT_MISSING",
+    }, 409);
+  }
   void runPlanPhase(
     sessionId,
     authUser.id,
     session.projectId,
     "FOUNDATION",
-    session.contractContent ?? session.prompt,
+    contractContent,
   );
 
   return c.json({ sessionId, status: "running", phase: "FOUNDATION" });

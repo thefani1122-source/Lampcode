@@ -210,7 +210,9 @@ export class AgentDispatcher {
 
     // Fullstack builds emit ~10 files (frontend + backend + db) — double the
     // output budget so the response isn't truncated mid-file.
-    const isFullstackBuild = task.description.startsWith("FULLSTACK BUILD:");
+    const isFullstackBuild =
+      task.description.startsWith("FULLSTACK BUILD:") ||
+      task.description.startsWith("FULLSTACK AUTH BUILD:");
     const maxTokens = isFullstackBuild ? 32_000 : 16_000;
 
     const stream = this.gateway.stream({ model, messages, maxTokens }, streamTimeoutMs);
