@@ -460,6 +460,40 @@ export function stripEditMarkers(code: string): string {
     .join("\n");
 }
 
+// ── Empty / required-file validator ───────────────────────────────────────────
+
+// Fullstack builds must produce these with real content. Empty or whitespace-only
+// output here is the root cause of blank .env.example / README.md / api.ts files.
+const REQUIRED_FULLSTACK_FILES = [
+  "src/server/routes/api.ts",
+  "src/lib/db.ts",
+  ".env.example",
+  "README.md",
+] as const;
+
+// A file is "empty" if it has no meaningful content — blank, or only comments /
+// punctuation the LLM emitted as a placeholder.
+function isEffectivelyEmpty(code: string | undefined): boolean {
+  if (code === undefined) return true;
+  const stripped = code
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("//") && !l.startsWith("#"))
+    .join("");
+  return stripped.length === 0;
+}
+
+/**
+ * Validate that a fullstack build produced non-empty content for every required
+ * file. Returns the list of files that are missing or effectively empty so the
+ * caller can decide whether to re-prompt the model.
+ */
+export function findMissingFullstackFiles(
+  files: Record<string, string>,
+): string[] {
+  return REQUIRED_FULLSTACK_FILES.filter((path) => isEffectivelyEmpty(files[path]));
+}
+
 // ── Sandpack validator ────────────────────────────────────────────────────────
 
 const SERVER_IMPORT_RE =

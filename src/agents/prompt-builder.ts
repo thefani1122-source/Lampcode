@@ -167,10 +167,6 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173, host: true },
   envPrefix: 'VITE_',
-  define: {
-    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
-    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-  },
 })
 \`\`\`
 
@@ -199,10 +195,6 @@ export default defineConfig({
   plugins: [vue()],
   server: { port: 5173, host: true },
   envPrefix: 'VITE_',
-  define: {
-    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
-    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-  },
 })
 \`\`\`
 
@@ -271,10 +263,6 @@ export default defineConfig({
   plugins: [svelte()],
   server: { port: 5173, host: true },
   envPrefix: 'VITE_',
-  define: {
-    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
-    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-  },
 })
 \`\`\`
 
@@ -312,10 +300,6 @@ export default defineConfig({
   plugins: [solid()],
   server: { port: 5173, host: true },
   envPrefix: 'VITE_',
-  define: {
-    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
-    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-  },
 })
 \`\`\`
 
@@ -352,10 +336,6 @@ export default defineConfig({
   plugins: [preact()],
   server: { port: 5173, host: true },
   envPrefix: 'VITE_',
-  define: {
-    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
-    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
-  },
 })
 \`\`\`
 
@@ -421,12 +401,45 @@ API ROUTES EXAMPLE — src/server/routes/api.ts:
 
 PACKAGE.JSON DEPS: hono, @supabase/supabase-js, zod (plus frontend framework deps)
 
-ENV EXAMPLE — \`\`\`filename:.env.example:
+ENV FILES — generate BOTH, each fully filled in (never empty):
+\`\`\`filename:.env.example:
   SUPABASE_URL=your_supabase_project_url
   SUPABASE_SERVICE_KEY=your_service_role_key
   VITE_SUPABASE_URL=your_supabase_project_url
   VITE_SUPABASE_ANON_KEY=your_anon_key
-  VITE_API_URL=http://localhost:5173`,
+  VITE_API_URL=http://localhost:3001
+\`\`\`filename:.env:
+  SUPABASE_URL=placeholder_replace_with_your_supabase_url
+  SUPABASE_SERVICE_KEY=placeholder_replace_with_your_service_role_key
+  VITE_SUPABASE_URL=placeholder_replace_with_your_supabase_url
+  VITE_SUPABASE_ANON_KEY=placeholder_replace_with_your_anon_key
+  VITE_API_URL=http://localhost:3001
+
+README — also generate \`\`\`filename:README.md (NEVER empty) with these sections filled in for this app:
+\`\`\`
+# [App Name]
+
+## 1. Supabase Project Setup
+- Create a project at https://supabase.com
+- Copy your Project URL, anon key, and service_role key from **Project Settings → API**
+
+## 2. Auth Provider Configuration (optional)
+- **Authentication → Providers** → enable Google and/or GitHub
+- Add the redirect URL under **Authentication → URL Configuration → Redirect URLs**
+
+## 3. Database Schema Setup
+- Open **SQL Editor** in the Supabase dashboard
+- Paste and run the contents of \`src/db/schema.sql\`
+
+## 4. Environment Variables
+- Copy \`.env.example\` to \`.env\` and fill in your real Supabase values
+
+## 5. Deployment
+- Backend: Railway/Render — set SUPABASE_URL + SUPABASE_SERVICE_KEY
+- Frontend: Vercel — set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL (your Railway backend URL)
+
+> ⚠️ OAuth (Google/GitHub) does NOT work in the iframe preview. Test on the published URL after deploying.
+\`\`\``,
 
   mongodb: `
 DATABASE: MongoDB Atlas (via Mongoose)
@@ -546,6 +559,30 @@ BACKEND RULES:
 - Add permissive CORS headers.
 - Validate every request body with Zod.
 
+RUNTIME ENV — NON-NEGOTIABLE:
+- Vite reads .env files from the filesystem at dev-server start. The WebContainer
+  writes the .env file, then Vite reads it on startup.
+- Do NOT bake env vars into vite.config.ts via a \`define:\` block. \`process.env\`
+  is undefined on the build machine, so \`define\` would inject \`undefined\`.
+- vite.config.ts MUST only set \`envPrefix: 'VITE_'\` (no \`define\` block).
+- Client code reads vars via \`import.meta.env.VITE_*\` — Vite substitutes them
+  at runtime from the .env file.
+- ALWAYS generate BOTH files:
+    1. \`\`\`filename:.env         — real placeholder values (so the app boots immediately)
+    2. \`\`\`filename:.env.example — same keys, documented values (committed to git)
+  The .env file MUST use these placeholder values:
+    \`\`\`filename:.env
+    VITE_SUPABASE_URL=placeholder_replace_with_your_supabase_url
+    VITE_SUPABASE_ANON_KEY=placeholder_replace_with_your_anon_key
+    VITE_API_URL=http://localhost:3001
+    \`\`\`
+
+NON-EMPTY FILES — NON-NEGOTIABLE:
+- EVERY file you emit MUST have complete, non-empty content. Never emit an empty
+  fence or a file containing only a comment/placeholder.
+- src/server/routes/api.ts, src/lib/db.ts, .env, .env.example, and README.md are
+  REQUIRED and must each contain real content.
+
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
 
 BACKEND FILES (always required regardless of frontend framework):
@@ -553,6 +590,44 @@ BACKEND FILES (always required regardless of frontend framework):
 2. \`\`\`filename:src/lib/db.ts            — database client singleton (see DATABASE section below)
 3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes importing { db } or { connectDB } from ../../lib/db
 4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers calling /api/...
+
+src/server/routes/api.ts — ALWAYS generate complete Hono.js API routes, NEVER empty. It MUST include:
+- All CRUD endpoints matching the frontend API client in src/lib/api.ts (every function in api.ts has a route here)
+- Zod validation for every request body
+- Supabase/database integration via the client imported from ../../lib/db
+- Permissive CORS headers
+- Error handling on every route (return c.json({ error }, status) on failure)
+Example structure (adapt entity names to the app):
+    import { Hono } from 'hono'
+    import { z } from 'zod'
+    import { db } from '../../lib/db'
+
+    export const api = new Hono()
+
+    const itemSchema = z.object({ name: z.string().min(1) })
+
+    // GET /api/items
+    api.get('/items', async (c) => {
+      const { data, error } = await db.from('items').select('*').order('created_at', { ascending: false })
+      if (error) return c.json({ error: error.message }, 500)
+      return c.json(data)
+    })
+
+    // POST /api/items
+    api.post('/items', async (c) => {
+      const parsed = itemSchema.safeParse(await c.req.json())
+      if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+      const { data, error } = await db.from('items').insert(parsed.data).select().single()
+      if (error) return c.json({ error: error.message }, 500)
+      return c.json(data, 201)
+    })
+
+    // DELETE /api/items/:id
+    api.delete('/items/:id', async (c) => {
+      const { error } = await db.from('items').delete().eq('id', c.req.param('id'))
+      if (error) return c.json({ error: error.message }, 500)
+      return c.body(null, 204)
+    })
 
 FRONTEND FILES (adapt to the framework detected above):
 - React (default): src/App.tsx, src/styles.css, src/index.tsx, vite.config.ts

@@ -17,6 +17,7 @@ import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
 import {
   parseFilesFromContent,
+  findMissingFullstackFiles,
   parseSurgicalEdits,
   applySurgicalEdit,
   stripEditMarkers,
@@ -645,6 +646,19 @@ export async function runFastBuild(
       parsedFiles.length > 0
         ? parsedFiles
         : [{ path: "output.md", code: result.content }];
+
+    // Fullstack builds must produce non-empty api.ts / db.ts / .env.example /
+    // README.md. Warn loudly when the model returned them empty or missing so the
+    // gap is visible in logs (and so a future re-prompt step has a signal to act on).
+    if (isFullstackBuild) {
+      const fileRecord: Record<string, string> = Object.fromEntries(
+        filesToWrite.map((f) => [f.path, f.code]),
+      );
+      const missing = findMissingFullstackFiles(fileRecord);
+      if (missing.length > 0) {
+        logger.warn({ sessionId, missing }, "Fullstack build is missing required non-empty files");
+      }
+    }
 
     const writtenPaths: string[] = [];
     const totalFiles = filesToWrite.length;
