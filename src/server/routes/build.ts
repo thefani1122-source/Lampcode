@@ -642,21 +642,80 @@ export async function runFastBuild(
       }
     }
 
-    const filesToWrite: ParsedFile[] =
+    let filesToWrite: ParsedFile[] =
       parsedFiles.length > 0
         ? parsedFiles
         : [{ path: "output.md", code: result.content }];
 
     // Fullstack builds must produce non-empty api.ts / db.ts / .env.example /
-    // README.md. Warn loudly when the model returned them empty or missing so the
-    // gap is visible in logs (and so a future re-prompt step has a signal to act on).
+    // README.md. If any are missing, attempt one focused retry for only those files
+    // before continuing — avoids broken deploys without risking infinite loops.
     if (isFullstackBuild) {
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
       const missing = findMissingFullstackFiles(fileRecord);
       if (missing.length > 0) {
-        logger.warn({ sessionId, missing }, "Fullstack build is missing required non-empty files");
+        logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
+        server?.emitToRoom(sessionId, "build:thinking", {
+          text: `Retrying generation for missing files: ${missing.join(", ")}`,
+          sessionId,
+        });
+
+        try {
+          const retryDescription =
+            `The following required files were empty or missing: ${missing.join(", ")}.\n` +
+            `Generate ONLY these files with complete, production-ready content.\n` +
+            `Original build context: ${prompt}`;
+
+          const retryResult = await dispatcher.dispatch({
+            agentType: "frontend",
+            task: {
+              description: retryDescription,
+              requirements: [
+                `Output ONLY the files listed: ${missing.join(", ")} — nothing else.`,
+                "Each file must have complete, non-empty, production-ready content.",
+                "Use the exact format: \`\`\`filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+
+          const retryParsed = parseFilesFromContent(retryResult.content);
+          const missingSet = new Set(missing);
+          const toMerge = retryParsed.filter((f) => missingSet.has(f.path));
+
+          if (toMerge.length > 0) {
+            const mergedPaths = new Set(toMerge.map((f) => f.path));
+            filesToWrite = [
+              ...filesToWrite.filter((f) => !mergedPaths.has(f.path)),
+              ...toMerge,
+            ];
+            logger.info({ sessionId, merged: [...mergedPaths] }, "Fullstack retry: merged recovered files");
+          }
+
+          const stillMissing = findMissingFullstackFiles(
+            Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
+          );
+          if (stillMissing.length > 0) {
+            logger.warn({ sessionId, stillMissing }, "Fullstack retry: files still missing after retry");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `Some files could not be generated: ${stillMissing.join(", ")}. Continuing with available files.`,
+              missingFiles: stillMissing,
+            });
+          }
+        } catch (retryErr) {
+          logger.error({ sessionId, retryErr }, "Fullstack retry dispatch failed");
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Retry for missing files failed. Continuing with available files. Missing: ${missing.join(", ")}`,
+            missingFiles: missing,
+          });
+        }
       }
     }
 
