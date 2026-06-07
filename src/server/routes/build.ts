@@ -918,20 +918,22 @@ export async function runFastBuild(
     // spin up a real Linux sandbox that can run the full stack end to end.
     // Runs out-of-band so it never blocks or delays build:complete.
     if (isFullstackBuild) {
+      console.log(`[E2B] Fullstack build detected — queueing preview sandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
       server?.emitPreviewLoading(sessionId, { sessionId });
       setImmediate(() => {
+        console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
         void createPreviewSandbox(sessionId, allFiles, (line) => {
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
         })
           .then((url) => {
+            console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
             server?.emitPreviewUrl(sessionId, { sessionId, url });
           })
           .catch((err) => {
+            const message = err instanceof Error ? err.message : "Failed to start preview sandbox";
+            console.error(`[E2B] Preview sandbox FAILED for session=${sessionId}:`, message);
             logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
-            server?.emitPreviewError(sessionId, {
-              sessionId,
-              message: err instanceof Error ? err.message : "Failed to start preview sandbox",
-            });
+            server?.emitPreviewError(sessionId, { sessionId, message });
           });
       });
     }

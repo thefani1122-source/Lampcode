@@ -30,13 +30,14 @@ export async function createPreviewSandbox(
   files: Record<string, string>,
   onLog?: PreviewLogCallback,
 ): Promise<string> {
-  if (!config.E2B_API_KEY) {
-    throw new Error("E2B_API_KEY is not configured");
-  }
-
   console.log("[E2B] Starting sandbox creation for session:", sessionId);
   console.log("[E2B] API key present:", !!config.E2B_API_KEY);
   console.log("[E2B] File count:", Object.keys(files).length);
+
+  if (!config.E2B_API_KEY) {
+    console.error("[E2B] E2B_API_KEY is not configured — cannot start preview sandbox");
+    throw new Error("E2B_API_KEY is not configured on the server");
+  }
 
   const log = (line: string): void => {
     onLog?.(line);
