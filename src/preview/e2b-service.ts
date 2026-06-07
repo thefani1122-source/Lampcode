@@ -48,7 +48,7 @@ export async function createPreviewSandbox(
 
   let sandbox: Sandbox | undefined;
   try {
-    sandbox = await Sandbox.create("node", {
+    sandbox = await Sandbox.create("base", {
       apiKey: config.E2B_API_KEY,
       timeoutMs: SANDBOX_TIMEOUT_MS,
     });
