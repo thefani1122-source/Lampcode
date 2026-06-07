@@ -677,6 +677,19 @@ NON-EMPTY FILES — NON-NEGOTIABLE:
 - src/server/routes/api.ts, src/lib/db.ts, .env, .env.example, and README.md are
   REQUIRED and must each contain real content.
 
+ABSOLUTE RULE: Every file listed must have complete content. An empty file is a
+broken file — never create empty files. Specifically:
+- src/db/types.ts MUST export all TypeScript interfaces/types used in the app.
+- src/server/index.ts MUST have complete Hono server setup with all routes mounted.
+- src/server/routes/api.ts MUST have all CRUD endpoints implemented.
+- src/lib/db.ts MUST have database connection and query helpers.
+- src/db/schema.sql MUST have complete CREATE TABLE statements.
+- .env MUST have all required environment variable keys (with placeholder values).
+
+Example src/db/types.ts:
+    export interface Task { id: string; title: string; completed: boolean; created_at: string }
+    export interface User { id: string; email: string; name: string }
+
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
 
 BACKEND FILES (always required regardless of frontend framework):

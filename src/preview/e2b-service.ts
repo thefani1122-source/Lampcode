@@ -34,6 +34,10 @@ export async function createPreviewSandbox(
     throw new Error("E2B_API_KEY is not configured");
   }
 
+  console.log("[E2B] Starting sandbox creation for session:", sessionId);
+  console.log("[E2B] API key present:", !!config.E2B_API_KEY);
+  console.log("[E2B] File count:", Object.keys(files).length);
+
   const log = (line: string): void => {
     onLog?.(line);
     logger.debug({ sessionId, line }, "[e2b]");
@@ -41,13 +45,15 @@ export async function createPreviewSandbox(
 
   await killSandbox(sessionId);
 
-  const sandbox = await Sandbox.create("node", {
-    apiKey: config.E2B_API_KEY,
-    timeoutMs: SANDBOX_TIMEOUT_MS,
-  });
-  sandboxes.set(sessionId, sandbox);
-
+  let sandbox: Sandbox | undefined;
   try {
+    sandbox = await Sandbox.create("node", {
+      apiKey: config.E2B_API_KEY,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+    });
+    console.log("[E2B] Sandbox created:", sandbox.sandboxId);
+    sandboxes.set(sessionId, sandbox);
+
     log(`Writing ${Object.keys(files).length} files...`);
     for (const [path, content] of Object.entries(files)) {
       await sandbox.files.write(`${PROJECT_DIR}/${path}`, content);
@@ -60,7 +66,9 @@ export async function createPreviewSandbox(
       onStdout: log,
       onStderr: log,
     });
+    console.log("[E2B] Install exit code:", install.exitCode);
     if (install.exitCode !== 0) {
+      console.error("[E2B] Install stderr:", install.stderr);
       throw new Error(`npm install exited with code ${install.exitCode}`);
     }
 
@@ -73,11 +81,16 @@ export async function createPreviewSandbox(
     });
 
     const url = `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+    console.log("[E2B] Preview URL:", url);
     log(`Preview ready at ${url}`);
     return url;
   } catch (err) {
+    console.error("[E2B] FULL ERROR:", err);
+    console.error("[E2B] Error name:", err instanceof Error ? err.name : typeof err);
+    console.error("[E2B] Error message:", err instanceof Error ? err.message : String(err));
+    console.error("[E2B] Error stack:", err instanceof Error ? err.stack : undefined);
     sandboxes.delete(sessionId);
-    await sandbox.kill().catch(() => {});
+    await sandbox?.kill().catch(() => {});
     throw err;
   }
 }
