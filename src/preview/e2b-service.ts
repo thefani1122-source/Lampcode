@@ -60,6 +60,28 @@ export async function createPreviewSandbox(
       await sandbox.files.write(`${PROJECT_DIR}/${path}`, content);
     }
 
+    // Vite rejects requests from unrecognized hosts by default. E2B serves the
+    // preview from a dynamically generated subdomain, so a React+Vite project's
+    // generated vite.config.ts must explicitly allow it via allowedHosts.
+    const viteConfig = files["vite.config.ts"];
+    if (viteConfig?.includes("@vitejs/plugin-react")) {
+      console.log("[E2B] Patching vite.config.ts to set allowedHosts for E2B preview domain");
+      const vitePatch = `
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: 'all',
+  },
+})
+`;
+      await sandbox.files.write(`${PROJECT_DIR}/vite.config.ts`, vitePatch);
+    }
+
     log("Installing dependencies (npm install)...");
     const install = await sandbox.commands.run("npm install", {
       cwd: PROJECT_DIR,
