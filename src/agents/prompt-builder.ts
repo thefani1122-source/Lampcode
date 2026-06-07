@@ -606,6 +606,42 @@ VITE_API_URL=http://localhost:3001
 
 const FULLSTACK_INSTRUCTION = `
 
+## CRITICAL RULES — VIOLATION CAUSES BLANK PREVIEW
+
+RULE 1: src/db/types.ts MUST export every interface the app uses.
+Example for todo app:
+  export interface Todo { id: string; title: string; completed: boolean; user_id: string; created_at: string }
+  export interface User { id: string; email: string }
+
+RULE 2: src/server/index.ts MUST be a complete working Hono server:
+  import { serve } from '@hono/node-server'
+  import { Hono } from 'hono'
+  import { cors } from 'hono/cors'
+  import api from './routes/api.js'
+  const app = new Hono()
+  app.use('*', cors())
+  app.route('/api', api)
+  serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
+
+RULE 3: src/server/routes/api.ts MUST have all CRUD routes implemented.
+  Complete with auth middleware, DB queries, error handling.
+
+RULE 4: package.json MUST have "type": "module"
+
+RULE 5: .env MUST have placeholder values (not empty):
+  VITE_SUPABASE_URL=https://placeholder.supabase.co
+  VITE_SUPABASE_ANON_KEY=placeholder_key
+  VITE_API_URL=http://localhost:3001
+
+RULE 6: Never generate more than 15 files for a simple app.
+  Todo with login = exactly these files:
+  src/db/types.ts, src/db/schema.sql, src/lib/db.ts,
+  src/server/index.ts, src/server/routes/api.ts,
+  src/lib/api.ts, src/lib/supabase.ts, src/hooks/useAuth.ts,
+  src/components/AuthProvider.tsx, src/components/Login.tsx,
+  src/App.tsx, src/index.tsx, src/styles.css,
+  index.html, vite.config.ts, package.json, .env, .env.example
+
 FULLSTACK MODE — You are building a complete full-stack application (frontend + backend + database).
 
 DEFAULT TECH STACK:
