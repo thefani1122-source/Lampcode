@@ -29,6 +29,8 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
+import { createPreviewSandbox } from "../../preview/e2b-service.js";
+import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -422,9 +424,12 @@ export async function runFastBuild(
   });
 
   // ── Unsupported runtime guard ─────────────────────────────────────────────
-  // WebContainers run Node.js only. Catch Python/PHP/Ruby/Go requests before
-  // spending any LLM tokens and refund the credits.
-  if (isUnsupportedBackendRuntime(prompt)) {
+  // The instant Sandpack preview runs Node.js only — but fullstack builds also
+  // get an E2B cloud sandbox preview (a real Linux VM) that can run any backend
+  // runtime. So only block Python/PHP/Ruby/Go requests when E2B isn't configured
+  // or the prompt won't even produce a backend (nothing would run the code).
+  const e2bCanRunNonNodeBackend = Boolean(config.E2B_API_KEY) && needsBackend(prompt);
+  if (isUnsupportedBackendRuntime(prompt) && !e2bCanRunNonNodeBackend) {
     const redirectMsg =
       "WebContainers support Node.js only. I can build your backend in Hono.js " +
       "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
@@ -906,6 +911,30 @@ export async function runFastBuild(
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
     });
+
+    // ── E2B cloud sandbox preview (fullstack builds only) ───────────────────
+    // The instant Sandpack preview above can only run JS/TS in-browser. For
+    // fullstack builds (which may include non-Node backends) we additionally
+    // spin up a real Linux sandbox that can run the full stack end to end.
+    // Runs out-of-band so it never blocks or delays build:complete.
+    if (isFullstackBuild) {
+      server?.emitPreviewLoading(sessionId, { sessionId });
+      setImmediate(() => {
+        void createPreviewSandbox(sessionId, allFiles, (line) => {
+          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+        })
+          .then((url) => {
+            server?.emitPreviewUrl(sessionId, { sessionId, url });
+          })
+          .catch((err) => {
+            logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
+            server?.emitPreviewError(sessionId, {
+              sessionId,
+              message: err instanceof Error ? err.message : "Failed to start preview sandbox",
+            });
+          });
+      });
+    }
 
     // ── Update build session ────────────────────────────────────────────────
     const creditsUsed = Math.ceil(result.costUsd * 1_000);

@@ -183,6 +183,20 @@ export class WebSocketServer {
     this.io.to(`project:${projectId}`).emit(event, data);
   }
 
+  // ── E2B preview events (fullstack builds) ───────────────────────────────────
+
+  emitPreviewLoading(sessionId: string, data: { sessionId: string }): void {
+    this.emitToRoom(sessionId, "build:preview_loading", data);
+  }
+
+  emitPreviewUrl(sessionId: string, data: { sessionId: string; url: string }): void {
+    this.emitToRoom(sessionId, "build:preview_url", data);
+  }
+
+  emitPreviewError(sessionId: string, data: { sessionId: string; message: string }): void {
+    this.emitToRoom(sessionId, "build:preview_error", data);
+  }
+
   // ── StreamBroadcaster implementation ────────────────────────────────────────
 
   /**

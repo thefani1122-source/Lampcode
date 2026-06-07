@@ -41,7 +41,15 @@ const SANDPACK_EXCLUDED = new Set(["README.md", ".env.example", ".env"]);
 
 /** True when a path is a server-side full-stack file (not bundled by Sandpack). */
 export function isBackendFile(path: string): boolean {
-  return BACKEND_FILES.has(path) || path.startsWith("src/server/") || path.startsWith("src/db/");
+  return (
+    BACKEND_FILES.has(path) ||
+    path.startsWith("src/server/") ||
+    path.startsWith("src/db/") ||
+    // Non-Node backends (e.g. FastAPI) requested by the user for fullstack
+    // builds — these run in the E2B sandbox, never in the browser bundler.
+    path.endsWith(".py") ||
+    path === "requirements.txt"
+  );
 }
 
 /** True when a path should be excluded from the Sandpack file set entirely. */

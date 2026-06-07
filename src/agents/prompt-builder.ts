@@ -206,13 +206,16 @@ export type Database = "supabase" | "mongodb";
  * Detect which frontend framework the user is requesting.
  * React is the default when no specific framework keyword is found.
  */
-export function detectFramework(prompt: string): Framework {
+export function detectFramework(prompt: string, fallback: Framework = "react"): Framework {
   if (/\bpreact\b/i.test(prompt)) return "preact";
   if (/\bvue\b/i.test(prompt)) return "vue";
   if (/\bnext\.?js\b|\bnextjs\b/i.test(prompt)) return "nextjs";
   if (/\bsvelte\b/i.test(prompt)) return "svelte";
   if (/\bsolid\.?js\b|\bsolidjs\b|\bsolid[- ]?js\b/i.test(prompt)) return "solid";
-  return "react";
+  // React/Vite, and Python/FastAPI/Django prompts (which pair a React+Vite
+  // frontend with a non-Node backend) all use the React frontend template.
+  if (/\breact\b|\bvite\b|\bpython\b|\bfastapi\b|\bdjango\b/i.test(prompt)) return "react";
+  return fallback;
 }
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
@@ -605,14 +608,35 @@ const FULLSTACK_INSTRUCTION = `
 
 FULLSTACK MODE — You are building a complete full-stack application (frontend + backend + database).
 
-WEBCONTAINER CONSTRAINT — NON-NEGOTIABLE:
-- Backend: Node.js / TypeScript ONLY. Do NOT generate Python, PHP, Ruby, Go, Rust, Java, or any non-Node runtime.
-- Framework: Hono.js (preferred), Express.js, or Fastify. Never Django, Flask, FastAPI, Laravel, Rails, etc.
+DEFAULT TECH STACK:
+- Detect the framework/language from user prompt keywords (case-insensitive).
+  Default to Next.js if no framework is mentioned:
+    "React" or "Vite"     → React + Vite frontend + Hono.js backend + Supabase
+    "Vue"                 → Vue 3 + Vite frontend + Hono.js backend + Supabase
+    "Svelte"              → SvelteKit frontend + Supabase
+    "Python" or "FastAPI" → React + Vite frontend + FastAPI backend + Supabase
+    (none of the above)   → Next.js 14 (App Router) + Supabase + TypeScript
+                            Reason: Vercel deployment ready out of the box.
+
+PREVIEW & RUNTIME CONSTRAINTS — NON-NEGOTIABLE:
+- The instant in-browser preview (WebContainer/Sandpack) can ONLY run Node.js /
+  TypeScript — it cannot execute Python, PHP, Ruby, Go, Rust, Java, or any other
+  non-Node runtime. A separate cloud sandbox (E2B, a real Linux VM) loads
+  shortly after for fullstack builds and CAN run any backend runtime.
+- DEFAULT (no framework/language requested): generate a Node.js backend —
+  Hono.js (preferred), Express.js, or Fastify. This keeps the instant preview
+  working immediately for every user.
+- ONLY if the user explicitly names a non-Node stack (e.g. "Python", "FastAPI",
+  "Django", "Go", "PHP", "Laravel", "Ruby on Rails"), generate that stack as
+  requested — the E2B cloud sandbox will run it. In that case mention in your
+  response that the instant preview shows the frontend immediately while the
+  full live preview (with backend) finishes loading in the cloud sandbox.
 - Database: External cloud database detected from user prompt — see DATABASE section below for the exact rules.
-  WebContainers CANNOT run a local PostgreSQL/MySQL/Redis server process.
-  Never import any driver that opens a raw TCP socket to a local database.
-- Auth: Supabase Auth or JWT — never native Passport.js, bcrypt-native, or OS-level session stores.
-- NO native C++ modules — every npm package must be pure JavaScript/TypeScript or WebAssembly.
+  Never run or assume a locally-hosted PostgreSQL/MySQL/Redis server process —
+  always connect to an external managed/cloud database over the network.
+- Auth: Supabase Auth or JWT — avoid OS-level session stores that need local disk/process state.
+- If generating a Node.js backend, avoid native C++ modules — every npm package
+  must be pure JavaScript/TypeScript or WebAssembly so the instant preview can run it.
 
 FRONTEND RULES:
 - ALL data fetching goes through functions exported from src/lib/api.ts.
@@ -620,11 +644,14 @@ FRONTEND RULES:
 - fetch() IS allowed, but ONLY inside src/lib/api.ts (this overrides the no-fetch sandbox rule).
 
 BACKEND RULES:
-- Use Hono.js for API routes. Export the router as: export const api = new Hono()
-- Import the database client from src/lib/db.ts for all data access.
+- Default (Node.js backend): use Hono.js for API routes. Export the router as:
+  export const api = new Hono()
+- Only when the user explicitly requested Python/FastAPI: generate a FastAPI
+  app instead (main.py + requirements.txt), following the same route shape.
+- Import the database client from src/lib/db.ts (or db.py for FastAPI) for all data access.
 - Prefix every route with /api/.
 - Add permissive CORS headers.
-- Validate every request body with Zod.
+- Validate every request body with Zod (or Pydantic models for FastAPI).
 
 RUNTIME ENV — NON-NEGOTIABLE:
 - Vite reads .env files from the filesystem at dev-server start. The WebContainer
@@ -959,19 +986,21 @@ export class PromptBuilder {
   private buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): string {
     const base = SYSTEM_PROMPTS[agentType];
 
-    // ── Framework detection (frontend agent only) ──────────────────────────
-    const framework = agentType === "frontend"
-      ? detectFramework(task.description)
-      : "react";
-    const frameworkInstruction = agentType === "frontend"
-      ? FRAMEWORK_RULES[framework]
-      : "";
-
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
        task.description.startsWith("FULLSTACK AUTH BUILD:"));
     const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
+
+    // ── Framework detection (frontend agent only) ──────────────────────────
+    // Frontend-only builds default to React (Sandpack-friendly). Fullstack
+    // builds with no framework keyword default to Next.js (Vercel-ready).
+    const framework = agentType === "frontend"
+      ? detectFramework(task.description, isFullstackMode ? "nextjs" : "react")
+      : "react";
+    const frameworkInstruction = agentType === "frontend"
+      ? FRAMEWORK_RULES[framework]
+      : "";
 
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
     const dbInstruction = isFullstackMode ? DB_INSTRUCTIONS[db] : "";
