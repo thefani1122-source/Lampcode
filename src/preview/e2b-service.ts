@@ -64,7 +64,8 @@ export async function createPreviewSandbox(
     // preview from a dynamically generated subdomain, so a React+Vite project's
     // generated vite.config.ts must explicitly allow it via allowedHosts.
     const viteConfig = files["vite.config.ts"];
-    if (viteConfig?.includes("@vitejs/plugin-react")) {
+    const isViteReact = Boolean(viteConfig?.includes("@vitejs/plugin-react"));
+    if (isViteReact) {
       console.log("[E2B] Patching vite.config.ts to set allowedHosts for E2B preview domain");
       const vitePatch = `
 import { defineConfig } from 'vite'
@@ -75,7 +76,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    allowedHosts: 'all',
+    allowedHosts: true,
   },
 })
 `;
@@ -96,7 +97,14 @@ export default defineConfig({
     }
 
     log("Starting dev server...");
-    await sandbox.commands.run("npm run dev -- --host 0.0.0.0", {
+    // Run Vite directly (not via the package.json "dev" script) so it always
+    // picks up our patched vite.config.ts allowedHosts override — npm run dev
+    // would still launch the same vite binary, but going direct avoids any
+    // chance of a generated script overriding host/port flags.
+    const devCommand = isViteReact
+      ? "npx vite --host 0.0.0.0 --port 5173"
+      : "npm run dev -- --host 0.0.0.0";
+    await sandbox.commands.run(devCommand, {
       cwd: PROJECT_DIR,
       background: true,
       onStdout: log,
