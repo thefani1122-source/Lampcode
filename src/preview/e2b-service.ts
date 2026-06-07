@@ -15,7 +15,7 @@ export type PreviewLogCallback = (line: string) => void;
 
 const PROJECT_DIR = "/home/user/app";
 const DEV_SERVER_PORT = 5173;
-const SANDBOX_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 const sandboxes = new Map<string, Sandbox>();
 

@@ -661,6 +661,8 @@ RUNTIME ENV — NON-NEGOTIABLE:
 - vite.config.ts MUST only set \`envPrefix: 'VITE_'\` (no \`define\` block).
 - Client code reads vars via \`import.meta.env.VITE_*\` — Vite substitutes them
   at runtime from the .env file.
+- package.json MUST always include: "type": "module"
+  Without this, import.meta.env will throw "Cannot use import.meta outside a module".
 - ALWAYS generate BOTH files:
     1. \`\`\`filename:.env         — real placeholder values (so the app boots immediately)
     2. \`\`\`filename:.env.example — same keys, documented values (committed to git)
@@ -671,24 +673,33 @@ RUNTIME ENV — NON-NEGOTIABLE:
     VITE_API_URL=http://localhost:3001
     \`\`\`
 
-NON-EMPTY FILES — NON-NEGOTIABLE:
-- EVERY file you emit MUST have complete, non-empty content. Never emit an empty
-  fence or a file containing only a comment/placeholder.
-- src/server/routes/api.ts, src/lib/db.ts, .env, .env.example, and README.md are
-  REQUIRED and must each contain real content.
-
-ABSOLUTE RULE: Every file listed must have complete content. An empty file is a
-broken file — never create empty files. Specifically:
-- src/db/types.ts MUST export all TypeScript interfaces/types used in the app.
-- src/server/index.ts MUST have complete Hono server setup with all routes mounted.
-- src/server/routes/api.ts MUST have all CRUD endpoints implemented.
-- src/lib/db.ts MUST have database connection and query helpers.
-- src/db/schema.sql MUST have complete CREATE TABLE statements.
-- .env MUST have all required environment variable keys (with placeholder values).
-
-Example src/db/types.ts:
+FILE GENERATION CONTRACT — NON-NEGOTIABLE:
+- EVERY file you emit MUST have complete, non-empty content. An empty file is a
+  broken file. Never emit an empty fence or a file containing only a
+  comment/placeholder. EMPTY FILES ARE FORBIDDEN — if you cannot write a file's
+  real content, do not list it at all.
+- src/db/types.ts: MUST export all TypeScript interfaces for every database
+  table used in the app. Never empty.
+    Example:
     export interface Task { id: string; title: string; completed: boolean; created_at: string }
     export interface User { id: string; email: string; name: string }
+- src/server/index.ts: MUST have a complete Hono server with all routes mounted,
+  listening on \`process.env.PORT || 3001\`. Never empty.
+- src/server/routes/api.ts: MUST have ALL CRUD endpoints implemented, with auth
+  middleware applied where the app requires login. Never empty.
+- src/lib/db.ts: MUST have real database client/connection setup and query
+  helpers. Never empty.
+- src/db/schema.sql: MUST have complete CREATE TABLE statements for every table.
+- .env and .env.example: MUST list every required env var with placeholder values:
+    VITE_SUPABASE_URL=your_supabase_url
+    VITE_SUPABASE_ANON_KEY=your_anon_key
+    VITE_API_URL=http://localhost:3001
+- README.md: REQUIRED, must contain real setup/run instructions.
+
+CONSISTENCY RULE:
+- Always generate the SAME file structure for the same type of app. A todo app
+  always has ~12-15 files. A fitness tracker always has ~15-18 files. Do not add
+  extra files unless the user specifically requested that feature.
 
 FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
 
