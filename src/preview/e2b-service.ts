@@ -1,14 +1,17 @@
 import { Sandbox } from "e2b";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
+import { createRedis } from "../lib/redis.js";
 
 /**
  * E2B cloud sandbox preview for fullstack builds.
  *
  * Unlike the in-browser WebContainer/Sandpack preview (JS/TS only), E2B runs a
  * real Linux VM, so it can host backends in any language the LLM generates
- * (Node, Python, Go, etc). Sandboxes are kept alive per build session so the
- * user can keep interacting with the preview after the initial build.
+ * (Node, Python, Go, etc). Sandboxes are kept alive per project (not per build
+ * session) and reused across follow-up builds via E2B's pause/resume — the
+ * Lovable pattern — so we avoid paying the npm-install + cold-start cost on
+ * every single prompt.
  */
 
 export type PreviewLogCallback = (line: string) => void;
@@ -17,9 +20,28 @@ const PROJECT_DIR = "/home/user/app";
 const DEV_SERVER_PORT = 5173;
 const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+// Custom template (see e2b.Dockerfile / e2b.toml) that pre-installs Node,
+// frontend deps, and a baseline Vite/React scaffold. Falls back to the stock
+// "base" template if no custom template has been built/configured yet.
+const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "base";
+
+// E2B sandbox snapshots (created on pause) expire after 30 days. We key the
+// Redis record's TTL slightly below that — 25 days — so we never hand back a
+// sandboxId whose underlying snapshot has already been garbage-collected.
+const SANDBOX_REDIS_TTL_SECONDS = 25 * 24 * 60 * 60;
+
 const READY_POLL_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 2_000;
 
+const redis = createRedis();
+
+function redisKey(projectId: string): string {
+  return `e2b:sandbox:${projectId}`;
+}
+
+// Live Sandbox object references for the current process lifetime — needed so
+// follow-up builds in the same process can write files directly without a
+// network round-trip to resume. Lost on restart; Redis is the durable record.
 const sandboxes = new Map<string, Sandbox>();
 
 /**
@@ -42,70 +64,94 @@ async function waitForServerReady(url: string): Promise<boolean> {
   return false;
 }
 
-/**
- * Spins up a fresh E2B sandbox, writes the build's files into it, installs
- * dependencies, and starts the dev server. Returns the public preview URL.
- *
- * Replaces any existing sandbox for the same session.
- */
-export async function createPreviewSandbox(
-  sessionId: string,
+async function writeFiles(
+  sandbox: Sandbox,
   files: Record<string, string>,
-  onLog?: PreviewLogCallback,
-): Promise<string> {
-  console.log("[E2B] Starting sandbox creation for session:", sessionId);
-  console.log("[E2B] API key present:", !!config.E2B_API_KEY);
-  console.log("[E2B] File count:", Object.keys(files).length);
-
-  if (!config.E2B_API_KEY) {
-    console.error("[E2B] E2B_API_KEY is not configured — cannot start preview sandbox");
-    throw new Error("E2B_API_KEY is not configured on the server");
-  }
-
-  const log = (line: string): void => {
-    onLog?.(line);
-    logger.debug({ sessionId, line }, "[e2b]");
-  };
-
-  await killSandbox(sessionId);
-
-  let sandbox: Sandbox | undefined;
+  log: PreviewLogCallback,
+): Promise<void> {
+  log(`Writing ${Object.keys(files).length} files...`);
   try {
-    sandbox = await Sandbox.create("base", {
-      apiKey: config.E2B_API_KEY,
-      timeoutMs: SANDBOX_TIMEOUT_MS,
-    });
-    console.log("[E2B] Sandbox created:", sandbox.sandboxId);
-    sandboxes.set(sessionId, sandbox);
-
-    log(`Writing ${Object.keys(files).length} files...`);
     await Promise.all(
       Object.entries(files).map(([path, content]) =>
-        sandbox!.files.write(`${PROJECT_DIR}/${path}`, content),
+        sandbox.files.write(`${PROJECT_DIR}/${path}`, content),
       ),
     );
+  } catch (err) {
+    logger.error({ err }, "[e2b] Failed to write files to sandbox");
+    throw err;
+  }
+}
 
-    // Vite rejects requests from unrecognized hosts by default. E2B serves the
-    // preview from a dynamically generated subdomain, so a React+Vite project's
-    // generated vite.config.ts must explicitly allow it via allowedHosts.
-    const viteConfig = files["vite.config.ts"];
-    const isViteReact = Boolean(viteConfig?.includes("@vitejs/plugin-react"));
-    if (isViteReact) {
-      console.log("[E2B] Patching vite.config.ts to set allowedHosts for E2B preview domain");
-      const vitePatch = `
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+async function saveSandboxId(projectId: string, sandboxId: string): Promise<void> {
+  try {
+    await redis.set(redisKey(projectId), sandboxId, "EX", SANDBOX_REDIS_TTL_SECONDS);
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] Failed to save sandboxId to Redis");
+    throw err;
+  }
+}
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 5173,
-    allowedHosts: true,
-  },
-})
-`;
-      await sandbox.files.write(`${PROJECT_DIR}/vite.config.ts`, vitePatch);
+async function loadSandboxId(projectId: string): Promise<string | null> {
+  try {
+    return await redis.get(redisKey(projectId));
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] Failed to read sandboxId from Redis");
+    throw err;
+  }
+}
+
+async function deleteSandboxId(projectId: string): Promise<void> {
+  try {
+    await redis.del(redisKey(projectId));
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] Failed to delete sandboxId from Redis");
+    throw err;
+  }
+}
+
+/**
+ * Tries to resume a previously-paused sandbox by ID. The E2B SDK exposes
+ * resumption through `Sandbox.connect()` — if the sandbox is paused it is
+ * automatically resumed; there is no separate `resume()` API. Returns `null`
+ * if the snapshot is gone (expired/evicted) so the caller can fall back to
+ * creating a fresh sandbox.
+ */
+async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<Sandbox | null> {
+  try {
+    const sandbox = await Sandbox.connect(sandboxId, {
+      ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
+    });
+    console.log("[E2B] Resumed sandbox:", sandboxId, "for project:", projectId);
+    return sandbox;
+  } catch (err) {
+    logger.warn({ projectId, sandboxId, err }, "[e2b] Failed to resume sandbox — snapshot likely expired");
+    await deleteSandboxId(projectId);
+    return null;
+  }
+}
+
+async function installDependencies(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  try {
+    // Skip the (slow) install step when the template already cached
+    // node_modules for every dependency listed in package.json — a fresh
+    // "base"-template sandbox will always need it; a prebuilt custom template
+    // usually won't.
+    log("Checking whether dependencies are already installed...");
+    const check = await sandbox.commands.run(
+      `node -e "
+const fs = require('fs');
+const path = require('path');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+const missing = deps.filter((d) => !fs.existsSync(path.join('node_modules', d)));
+process.exit(missing.length === 0 ? 0 : 1);
+"`,
+      { cwd: PROJECT_DIR },
+    );
+
+    if (check.exitCode === 0) {
+      log("Dependencies already installed — skipping npm install.");
+      return;
     }
 
     log("Installing dependencies (npm install)...");
@@ -120,23 +166,107 @@ export default defineConfig({
       console.error("[E2B] Install stderr:", install.stderr);
       throw new Error(`npm install exited with code ${install.exitCode}`);
     }
+  } catch (err) {
+    logger.error({ err }, "[e2b] Dependency install step failed");
+    throw err;
+  }
+}
 
+async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  try {
     log("Starting dev server...");
-    // Run Vite directly (not via the package.json "dev" script) so it always
-    // picks up our patched vite.config.ts allowedHosts override — npm run dev
-    // would still launch the same vite binary, but going direct avoids any
-    // chance of a generated script overriding host/port flags.
-    const devCommand = isViteReact
-      ? "npx vite --host 0.0.0.0 --port 5173"
-      : "npm run dev -- --host 0.0.0.0";
-    await sandbox.commands.run(devCommand, {
+    await sandbox.commands.run("npx vite --host 0.0.0.0 --port 5173", {
       cwd: PROJECT_DIR,
       background: true,
       onStdout: log,
       onStderr: log,
     });
+  } catch (err) {
+    logger.error({ err }, "[e2b] Failed to start dev server");
+    throw err;
+  }
+}
 
-    const url = `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+function previewUrlFor(sandbox: Sandbox): string {
+  return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+}
+
+/**
+ * Returns the live preview URL for a project's sandbox, creating, resuming,
+ * or reusing one as needed (the "Lovable" get-or-create pattern):
+ *
+ *   1. Already running in this process?  → just write files, return URL (HMR
+ *      picks up the change — no install/start/poll needed).
+ *   2. Previously paused (Redis has a saved sandboxId)? → try to resume it;
+ *      on success, write files and return URL (Vite is already running).
+ *   3. Otherwise (or resume failed)  → create a fresh sandbox from
+ *      TEMPLATE_ID, save its ID, install deps if needed, start Vite, and
+ *      poll until ready.
+ *
+ * Never kills an existing sandbox — reuse, not replace.
+ */
+export async function createPreviewSandbox(
+  sessionId: string,
+  projectId: string,
+  files: Record<string, string>,
+  onLog?: PreviewLogCallback,
+): Promise<string> {
+  console.log("[E2B] Starting sandbox creation for session:", sessionId, "project:", projectId);
+  console.log("[E2B] API key present:", !!config.E2B_API_KEY);
+  console.log("[E2B] File count:", Object.keys(files).length);
+
+  if (!config.E2B_API_KEY) {
+    console.error("[E2B] E2B_API_KEY is not configured — cannot start preview sandbox");
+    throw new Error("E2B_API_KEY is not configured on the server");
+  }
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ sessionId, projectId, line }, "[e2b]");
+  };
+
+  // ── Case 1: already running in this process — reuse directly ──────────────
+  const live = sandboxes.get(projectId);
+  if (live) {
+    console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
+    await writeFiles(live, files, log);
+    const url = previewUrlFor(live);
+    log(`Preview updated at ${url} (HMR will refresh automatically)`);
+    return url;
+  }
+
+  let sandbox: Sandbox | undefined;
+  try {
+    // ── Case 2: previously paused — try to resume ────────────────────────────
+    const savedSandboxId = await loadSandboxId(projectId);
+    if (savedSandboxId) {
+      const resumed = await tryResumeSandbox(projectId, savedSandboxId);
+      if (resumed) {
+        sandbox = resumed;
+        sandboxes.set(projectId, sandbox);
+
+        await writeFiles(sandbox, files, log);
+        const url = previewUrlFor(sandbox);
+        log(`Preview ready at ${url}`);
+        return url;
+      }
+      // tryResumeSandbox already deleted the stale Redis key on failure.
+    }
+
+    // ── Case 3: nothing to resume — create a fresh sandbox ───────────────────
+    sandbox = await Sandbox.create(TEMPLATE_ID, {
+      apiKey: config.E2B_API_KEY,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+    });
+    console.log("[E2B] Sandbox created:", sandbox.sandboxId);
+    sandboxes.set(projectId, sandbox);
+    await saveSandboxId(projectId, sandbox.sandboxId);
+
+    await writeFiles(sandbox, files, log);
+    await installDependencies(sandbox, log);
+    await startDevServer(sandbox, log);
+
+    const url = previewUrlFor(sandbox);
     console.log("[E2B] Preview URL:", url);
 
     log("Waiting for dev server to become ready...");
@@ -153,30 +283,63 @@ export default defineConfig({
     console.error("[E2B] Error name:", err instanceof Error ? err.name : typeof err);
     console.error("[E2B] Error message:", err instanceof Error ? err.message : String(err));
     console.error("[E2B] Error stack:", err instanceof Error ? err.stack : undefined);
-    sandboxes.delete(sessionId);
+    sandboxes.delete(projectId);
     await sandbox?.kill().catch(() => {});
     throw err;
   }
 }
 
-/** Tears down the sandbox for a session, if one exists. Safe to call repeatedly. */
-export async function killSandbox(sessionId: string): Promise<void> {
-  const existing = sandboxes.get(sessionId);
-  if (!existing) return;
-  sandboxes.delete(sessionId);
-  await existing.kill().catch((err) => {
-    logger.warn({ sessionId, err }, "Failed to kill E2B sandbox");
-  });
+/**
+ * Pauses a project's sandbox: snapshots its state on E2B's side and drops the
+ * in-process reference, but keeps the Redis record (the saved sandboxId is
+ * exactly what `createPreviewSandbox` needs to resume it later). No-op if no
+ * live sandbox is held in this process.
+ */
+export async function pauseSandbox(projectId: string): Promise<void> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return;
+
+  try {
+    await sandbox.pause();
+    sandboxes.delete(projectId);
+    console.log("[E2B] Paused sandbox for project:", projectId);
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] Failed to pause sandbox");
+    throw err;
+  }
 }
 
 /**
- * Tears down every active sandbox. Used on process shutdown (SIGTERM) so we
- * don't leak running E2B VMs when the server restarts/redeploys — without this,
- * sandboxes only die via their own 30-minute idle timeout on E2B's side.
+ * Tears down the sandbox for a project entirely — removes both the in-process
+ * reference and the Redis record (unlike pause, there is nothing to resume
+ * afterwards). Use only on project delete or explicit user cancel; never on
+ * follow-up builds — those should reuse the existing sandbox.
+ */
+export async function killSandbox(projectId: string): Promise<void> {
+  try {
+    const existing = sandboxes.get(projectId);
+    sandboxes.delete(projectId);
+    if (existing) {
+      await existing.kill().catch((err) => {
+        logger.warn({ projectId, err }, "Failed to kill E2B sandbox");
+      });
+    }
+    await deleteSandboxId(projectId);
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] Failed to kill sandbox");
+    throw err;
+  }
+}
+
+/**
+ * Tears down every active in-process sandbox. Used on process shutdown
+ * (SIGTERM) so we don't leak running E2B VMs when the server restarts/
+ * redeploys — without this, sandboxes only die via their own 30-minute idle
+ * timeout on E2B's side.
  */
 export async function killAllSandboxes(): Promise<void> {
-  const sessionIds = [...sandboxes.keys()];
-  if (sessionIds.length === 0) return;
-  logger.info({ count: sessionIds.length }, "Killing all active E2B sandboxes");
-  await Promise.all(sessionIds.map((sessionId) => killSandbox(sessionId)));
+  const projectIds = [...sandboxes.keys()];
+  if (projectIds.length === 0) return;
+  logger.info({ count: projectIds.length }, "Killing all active E2B sandboxes");
+  await Promise.all(projectIds.map((projectId) => killSandbox(projectId)));
 }

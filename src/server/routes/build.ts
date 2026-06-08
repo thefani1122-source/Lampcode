@@ -971,7 +971,7 @@ export async function runFastBuild(
       server?.emitPreviewLoading(sessionId, { sessionId });
       setImmediate(() => {
         console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
-        void createPreviewSandbox(sessionId, allFiles, (line) => {
+        void createPreviewSandbox(sessionId, projectId, allFiles, (line) => {
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
         })
           .then((url) => {
@@ -1259,8 +1259,8 @@ buildRouter.post("/:sessionId/cancel", async (c) => {
 
   // Tear down any E2B preview sandbox tied to this session — otherwise it
   // keeps running (and billing) until E2B's own 30-minute idle timeout.
-  killSandbox(sessionId).catch((err) => {
-    logger.warn({ sessionId, err }, "Failed to kill preview sandbox on cancel");
+  killSandbox(session.projectId).catch((err) => {
+    logger.warn({ sessionId, projectId: session.projectId, err }, "Failed to kill preview sandbox on cancel");
   });
 
   // Update DB immediately
