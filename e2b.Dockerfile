@@ -106,3 +106,4 @@ EOF
 RUN touch /home/user/app/.env
 
 EXPOSE 5173
+
