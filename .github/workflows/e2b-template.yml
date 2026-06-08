@@ -1,0 +1,16 @@
+name: Build E2B Template
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'e2b.Dockerfile'
+      - 'e2b.toml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: e2b-dev/infra/packages/github-actions/build-template@main
+        with:
+          api_key: ${{ secrets.E2B_API_KEY }}
