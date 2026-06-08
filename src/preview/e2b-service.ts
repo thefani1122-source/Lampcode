@@ -132,30 +132,12 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
 
 async function installDependencies(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
   try {
-    // Skip the (slow) install step when the template already cached
-    // node_modules for every dependency listed in package.json — a fresh
-    // "base"-template sandbox will always need it; a prebuilt custom template
-    // usually won't.
-    log("Checking whether dependencies are already installed...");
-    const check = await sandbox.commands.run(
-      `node -e "
-const fs = require('fs');
-const path = require('path');
-const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
-const missing = deps.filter((d) => !fs.existsSync(path.join('node_modules', d)));
-process.exit(missing.length === 0 ? 0 : 1);
-"`,
-      { cwd: PROJECT_DIR },
-    );
-
-    if (check.exitCode === 0) {
-      log("Dependencies already installed — skipping npm install.");
-      return;
-    }
-
-    log("Installing dependencies (npm install)...");
-    const install = await sandbox.commands.run("npm install", {
+    // Always run install, but with --prefer-offline: npm uses the template's
+    // cached node_modules/cache for packages it already has (fast, no network)
+    // and only hits the registry for anything new the LLM added to
+    // package.json. Simpler and safer than trying to detect what's missing.
+    log("Installing dependencies (npm install --prefer-offline)...");
+    const install = await sandbox.commands.run("npm install --prefer-offline", {
       cwd: PROJECT_DIR,
       timeoutMs: 5 * 60 * 1000,
       onStdout: log,
