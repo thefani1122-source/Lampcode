@@ -18,6 +18,7 @@ import { expandUserPrompt } from "../../agents/prompt-builder.js";
 import {
   parseFilesFromContent,
   findMissingFullstackFiles,
+  validateSandpackFiles,
   parseSurgicalEdits,
   applySurgicalEdit,
   stripEditMarkers,
@@ -36,7 +37,9 @@ import { config } from "../config.js";
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
-const FAST_BUILD_CREDIT_COST = 1; // Reduced for testing phase. Change back to 20 before production launch.
+const FAST_BUILD_CREDIT_COST = process.env["FAST_BUILD_CREDIT_COST"]
+  ? parseInt(process.env["FAST_BUILD_CREDIT_COST"], 10)
+  : 20;
 
 // ── In-memory cancel registry ─────────────────────────────────────────────────
 
@@ -572,12 +575,13 @@ export async function runFastBuild(
         : isFullstackBuild
           ? [
               "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-              "Generate ALL of: src/db/schema.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css, package.json, src/db/seed.ts.",
+              "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css, package.json.",
               "Add src/server/auth.ts ONLY if the app needs login/accounts.",
               "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-              "Backend: Hono.js + Drizzle ORM (drizzle-orm/pg-core); export const api = new Hono(); routes prefixed /api/; Zod validation.",
-              "package.json must include hono, drizzle-orm, zod, react, and react-dom.",
-              "Also output .env.example with DATABASE_URL and VITE_API_URL placeholders.",
+              "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+              "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table; src/lib/db.ts must create the Supabase client.",
+              "package.json must include hono, @supabase/supabase-js, zod, react, and react-dom.",
+              "Also output .env.example with VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, and VITE_API_URL placeholders.",
             ]
           : [
               "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
@@ -721,6 +725,24 @@ export async function runFastBuild(
             missingFiles: missing,
           });
         }
+      }
+    }
+
+    // ── Validate the parsed file set before writing ─────────────────────────
+    // Catches missing entry points, missing default exports, and server-side
+    // imports leaking into browser-bundled files (which would crash Sandpack).
+    {
+      const fileRecord: Record<string, string> = Object.fromEntries(
+        filesToWrite.map((f) => [f.path, f.code]),
+      );
+      const { valid, errors } = validateSandpackFiles(fileRecord);
+      if (!valid) {
+        logger.warn({ sessionId, errors }, "Sandpack validation found issues in generated files");
+        server?.emitToRoom(sessionId, "build:warning", {
+          sessionId,
+          message: `Validation found issues: ${errors.join("; ")}`,
+          validationErrors: errors,
+        });
       }
     }
 

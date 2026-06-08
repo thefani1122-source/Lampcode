@@ -471,12 +471,12 @@ export function stripEditMarkers(code: string): string {
 // ── Empty / required-file validator ───────────────────────────────────────────
 
 // Fullstack builds must produce these with real content. Empty or whitespace-only
-// output here is the root cause of blank .env.example / README.md / api.ts files.
+// output here is the root cause of blank previews (missing types/db client/server).
 const REQUIRED_FULLSTACK_FILES = [
+  "src/db/types.ts",
+  "src/server/index.ts",
   "src/server/routes/api.ts",
   "src/lib/db.ts",
-  ".env.example",
-  "README.md",
 ] as const;
 
 // A file is "empty" if it has no meaningful content — blank, or only comments /
