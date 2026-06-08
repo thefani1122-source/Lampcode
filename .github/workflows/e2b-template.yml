@@ -15,7 +15,7 @@ jobs:
           node-version: '20'
 
       - name: Install E2B CLI
-        run: npm install -g @e2b/cli@latest
+        run: npm install -g @e2b/cli@0.2.0
 
       - name: Build E2B Template
         run: e2b template build

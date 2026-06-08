@@ -1,8 +1,5 @@
-[template]
 dockerfile = "e2b.Dockerfile"
-name = "lampcode-react"
+template_name = "lampcode-react"
 start_cmd = "cd /home/user/app && npx vite --host 0.0.0.0 --port 5173"
-
-[resources]
-cpu = 2
-memory = 2048
+cpu_count = 2
+memory_mb = 2048
