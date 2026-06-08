@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, desc, isNotNull } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
-import { join, dirname, relative } from "path";
+import { join, dirname, relative, resolve, sep } from "path";
 import { db } from "../../db/client.js";
 import {
   projects,
@@ -777,9 +777,15 @@ export async function runFastBuild(
       if (!file) continue;
       const { path: filePath, code } = file;
 
-      // Sanitise path: strip leading slashes / traversal attempts
-      const safePath = filePath.replace(/^[\\/]+/, "").replace(/\.\.\//g, "");
-      const fullPath = join(outputDir, safePath);
+      // Sanitise path: resolve against the output dir and verify containment —
+      // a regex strip of "../" can be bypassed with absolute paths or encoded
+      // sequences, but a resolved-path prefix check cannot.
+      const fullPath = resolve(outputDir, filePath);
+      if (fullPath !== outputDir && !fullPath.startsWith(outputDir + sep)) {
+        logger.warn({ sessionId, filePath }, "Path traversal attempt blocked");
+        continue;
+      }
+      const safePath = relative(outputDir, fullPath);
       await mkdir(dirname(fullPath), { recursive: true });
 
       let finalCode = code;
