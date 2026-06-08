@@ -130,6 +130,33 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   }
 }
 
+async function patchViteAllowedHosts(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  // Vite rejects requests from unrecognized hosts by default. E2B serves the
+  // preview from a dynamically generated subdomain, so until our custom
+  // template (which bakes this in) is built, every fresh sandbox needs its
+  // generated vite.config.ts overwritten with allowedHosts: true.
+  try {
+    log("Patching vite.config.ts for E2B preview host...");
+    await sandbox.files.write(
+      `${PROJECT_DIR}/vite.config.ts`,
+      `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: true,
+  },
+})
+`,
+    );
+  } catch (err) {
+    logger.error({ err }, "[e2b] Failed to patch vite.config.ts");
+    throw err;
+  }
+}
+
 async function installDependencies(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
   try {
     // Always run install, but with --prefer-offline: npm uses the template's
@@ -280,6 +307,7 @@ export async function createPreviewSandbox(
     await saveSandboxId(projectId, sandbox.sandboxId);
 
     await writeFiles(sandbox, files, log);
+    await patchViteAllowedHosts(sandbox, log);
     await installDependencies(sandbox, log);
     await startDevServer(sandbox, log);
 
