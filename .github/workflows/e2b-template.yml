@@ -1,20 +1,26 @@
 name: Build E2B Template
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
+    paths:
+      - 'e2b.Dockerfile'
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 20
       - name: Install E2B CLI
         run: npm install -g @e2b/cli@latest
       - name: Build E2B Template
         env:
           E2B_ACCESS_TOKEN: ${{ secrets.E2B_ACCESS_TOKEN }}
-        run: e2b template build --name lampcode-react
+        run: |
+          e2b template create lampcode-react \
+            --dockerfile e2b.Dockerfile \
+            --cmd "cd /home/user/app && npx vite --host 0.0.0.0 --port 5173" \
+            --cpu-count 2 \
+            --memory-mb 2048
