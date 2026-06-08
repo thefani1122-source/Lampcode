@@ -30,7 +30,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, writeFilesToSandbox } from "../../preview/e2b-service.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -966,25 +966,46 @@ export async function runFastBuild(
     // fullstack builds (which may include non-Node backends) we additionally
     // spin up a real Linux sandbox that can run the full stack end to end.
     // Runs out-of-band so it never blocks or delays build:complete.
-    if (isFullstackBuild) {
-      console.log(`[E2B] Fullstack build detected — queueing preview sandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
-      server?.emitPreviewLoading(sessionId, { sessionId });
-      setImmediate(() => {
-        console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
-        void createPreviewSandbox(sessionId, projectId, allFiles, (line) => {
+    const sandboxAlreadyRunning = hasSandbox(projectId);
+    if (isFullstackBuild || (hasExistingCode && sandboxAlreadyRunning)) {
+      if (hasExistingCode && sandboxAlreadyRunning) {
+        // Follow-up build with a live preview sandbox — push the new files
+        // straight in and let Vite's HMR refresh the preview. Skips
+        // createPreviewSandbox entirely (no recreate, no install, no poll).
+        console.log(`[E2B] Follow-up build — writing files directly to running sandbox for project=${projectId}`);
+        void writeFilesToSandbox(projectId, allFiles, (line) => {
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
         })
           .then((url) => {
-            console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
+            console.log(`[E2B] Sandbox files updated for project=${projectId} url=${url}`);
             server?.emitPreviewUrl(sessionId, { sessionId, url });
           })
           .catch((err) => {
-            const message = err instanceof Error ? err.message : "Failed to start preview sandbox";
-            console.error(`[E2B] Preview sandbox FAILED for session=${sessionId}:`, message);
-            logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
+            const message = err instanceof Error ? err.message : "Failed to update preview sandbox";
+            console.error(`[E2B] Sandbox file write FAILED for project=${projectId}:`, message);
+            logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed");
             server?.emitPreviewError(sessionId, { sessionId, message });
           });
-      });
+      } else {
+        console.log(`[E2B] Fullstack build detected — queueing preview sandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
+        server?.emitPreviewLoading(sessionId, { sessionId });
+        setImmediate(() => {
+          console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
+          void createPreviewSandbox(sessionId, projectId, allFiles, (line) => {
+            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+          })
+            .then((url) => {
+              console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
+              server?.emitPreviewUrl(sessionId, { sessionId, url });
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : "Failed to start preview sandbox";
+              console.error(`[E2B] Preview sandbox FAILED for session=${sessionId}:`, message);
+              logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
+              server?.emitPreviewError(sessionId, { sessionId, message });
+            });
+        });
+      }
     }
 
     // ── Update build session ────────────────────────────────────────────────

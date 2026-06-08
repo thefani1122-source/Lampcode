@@ -191,6 +191,41 @@ function previewUrlFor(sandbox: Sandbox): string {
   return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
 }
 
+/** Whether a live, in-process sandbox is currently held for this project. */
+export function hasSandbox(projectId: string): boolean {
+  return sandboxes.has(projectId);
+}
+
+/**
+ * Pushes new files straight into a project's already-running sandbox and
+ * returns its preview URL — no install, no dev-server (re)start, no
+ * readiness poll. Used for follow-up builds: Vite's HMR picks up the file
+ * changes and refreshes the preview automatically.
+ *
+ * Throws if no live sandbox is held for the project — callers should guard
+ * with `hasSandbox(projectId)` first.
+ */
+export async function writeFilesToSandbox(
+  projectId: string,
+  files: Record<string, string>,
+  onLog?: PreviewLogCallback,
+): Promise<string> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) {
+    throw new Error(`No live E2B sandbox for project ${projectId}`);
+  }
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ projectId, line }, "[e2b]");
+  };
+
+  await writeFiles(sandbox, files, log);
+  const url = previewUrlFor(sandbox);
+  log(`Preview updated at ${url} (HMR will refresh automatically)`);
+  return url;
+}
+
 /**
  * Returns the live preview URL for a project's sandbox, creating, resuming,
  * or reusing one as needed (the "Lovable" get-or-create pattern):

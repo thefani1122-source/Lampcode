@@ -1,6 +1,10 @@
 import { type Namespace, type Socket } from "socket.io";
+import { eq } from "drizzle-orm";
 import { logger } from "../../server/logger.js";
 import { createRedis } from "../../lib/redis.js";
+import { db } from "../../db/client.js";
+import { buildSessions } from "../../db/schema.js";
+import { pauseSandbox } from "../../preview/e2b-service.js";
 
 const redis = createRedis();
 import {
@@ -18,6 +22,46 @@ type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, Bu
 type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
 
 const SESSION_ROOM = (sessionId: string) => sessionId;
+
+// ── Pause E2B preview sandbox on disconnect ───────────────────────────────────
+// Sandboxes are billed while running. If everyone navigates away from a build
+// session, pause its sandbox after a short grace period so a quick reconnect
+// (refresh, flaky connection) doesn't pay the cold-start cost again.
+const PAUSE_GRACE_MS = 2 * 60 * 1000;
+const pendingPauseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+async function resolveProjectId(sessionId: string): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({ projectId: buildSessions.projectId })
+      .from(buildSessions)
+      .where(eq(buildSessions.id, sessionId))
+      .limit(1);
+    return rows[0]?.projectId ?? null;
+  } catch (err) {
+    logger.warn({ sessionId, err }, "Failed to resolve projectId for sandbox pause");
+    return null;
+  }
+}
+
+function cancelPendingPause(projectId: string): void {
+  const timer = pendingPauseTimers.get(projectId);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingPauseTimers.delete(projectId);
+  logger.debug({ projectId }, "Cancelled pending sandbox pause — client reconnected");
+}
+
+function schedulePause(projectId: string, sessionId: string): void {
+  cancelPendingPause(projectId);
+  const timer = setTimeout(() => {
+    pendingPauseTimers.delete(projectId);
+    void pauseSandbox(projectId).catch((err) => {
+      logger.warn({ projectId, sessionId, err }, "Failed to pause preview sandbox after disconnect");
+    });
+  }, PAUSE_GRACE_MS);
+  pendingPauseTimers.set(projectId, timer);
+}
 
 async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<void> {
   const buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);
@@ -39,6 +83,16 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
     console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
     logger.info({ socketId: socket.id, userId }, "Build WS connected");
 
+    // Tracks the most recently joined session for this socket so that, on
+    // disconnect, we can resolve its projectId and schedule a sandbox pause.
+    let activeSessionId: string | undefined;
+
+    const trackSession = async (sessionId: string): Promise<void> => {
+      activeSessionId = sessionId;
+      const projectId = await resolveProjectId(sessionId);
+      if (projectId) cancelPendingPause(projectId);
+    };
+
     // Auto-join session room if sessionId provided in handshake query (Step 1)
     const querySid = socket.handshake.query["sessionId"];
     if (typeof querySid === "string" && querySid.length > 0) {
@@ -48,6 +102,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       console.log(`[WS JOIN] auto-join room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.info({ socketId: socket.id, sessionId: querySid, totalClients: size }, "Auto-joined build session room from query");
       await replayBuffer(socket, querySid);
+      await trackSession(querySid);
     } else {
       console.log(`[WS CONNECT] no sessionId in query — client must emit join_session manually`);
     }
@@ -59,6 +114,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       if (!sid) return;
       socket.join(sid);
       logger.debug({ socketId: socket.id, sessionId: sid }, "Joined session room (join event)");
+      void trackSession(sid);
     });
 
     // Client joins a session room to receive updates for that build
@@ -69,6 +125,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       console.log(`[WS JOIN] join_session room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.debug({ socketId: socket.id, sessionId, totalClients: size }, "Joined build session room");
       await replayBuffer(socket, sessionId);
+      await trackSession(sessionId);
       ack(true);
     });
 
@@ -79,6 +136,15 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
 
     socket.on("disconnect", (reason) => {
       logger.info({ socketId: socket.id, userId, reason }, "Build WS disconnected");
+
+      // Pause this project's preview sandbox after a grace period — gives a
+      // quick reconnect (page refresh, brief network blip) time to cancel it
+      // via trackSession() before we pay to spin the sandbox back up.
+      const sessionId = activeSessionId;
+      if (!sessionId) return;
+      void resolveProjectId(sessionId).then((projectId) => {
+        if (projectId) schedulePause(projectId, sessionId);
+      });
     });
   });
 }
