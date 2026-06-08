@@ -197,6 +197,42 @@ export class WebSocketServer {
     this.emitToRoom(sessionId, "build:preview_error", data);
   }
 
+  // ── Fast-build progress events (fullstack + frontend builds) ────────────────
+
+  thinking(sessionId: string, data: { text: string; sessionId: string }): void {
+    this.emitToRoom(sessionId, "build:thinking", data);
+  }
+
+  fileWrite(sessionId: string, data: { path: string; isBackend: boolean; sessionId: string }): void {
+    this.emitToRoom(sessionId, "build:file_write", data);
+  }
+
+  backendReady(
+    sessionId: string,
+    data: {
+      sessionId: string;
+      files: Record<string, string>;
+      backendFileCount: number;
+      note: string;
+    },
+  ): void {
+    this.emitToRoom(sessionId, "build:backend_ready", data);
+  }
+
+  buildComplete(
+    sessionId: string,
+    data: {
+      sessionId: string;
+      files: Record<string, string>;
+      backendFiles: Record<string, string>;
+      backendFileCount: number;
+      previewUrl: string;
+      totalFiles: number;
+    },
+  ): void {
+    this.emitToRoom(sessionId, "build:complete", data);
+  }
+
   // ── StreamBroadcaster implementation ────────────────────────────────────────
 
   /**

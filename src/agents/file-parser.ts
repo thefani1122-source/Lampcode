@@ -239,23 +239,15 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
     fileMap.delete("App.tsx");
   }
 
-  // Generate fallback src/App.tsx if still missing after all parse strategies
-  if (!fileMap.has("src/App.tsx")) {
-    if (content.length > 500) {
-      console.error('[parser] CRITICAL: App.tsx missing from output of', content.length, 'chars')
-      console.log('[parser] Files found:', Array.from(fileMap.keys()))
-      console.log('[parser] First 1000 chars:', content.slice(0, 1000))
-    }
-    console.log('[parser] WARNING: src/App.tsx not found — inserting fallback placeholder')
-    fileMap.set("src/App.tsx", `import React from 'react';
-export default function App() {
-  return (
-    <div style={{ padding: 20, color: 'white', background: '#0a0a0f', minHeight: '100vh' }}>
-      <h1>App loaded successfully</h1>
-      <p>The main component could not be extracted. Please try again.</p>
-    </div>
-  );
-}`);
+  // NOTE: We deliberately do NOT inject a placeholder src/App.tsx when parsing
+  // fails to find one — doing so let broken builds silently report "success"
+  // with a fake "could not be extracted" component. The caller (runFastBuild)
+  // is responsible for detecting a missing src/App.tsx on new builds, emitting
+  // a build:warning, and failing the build with a real error instead.
+  if (!fileMap.has("src/App.tsx") && content.length > 500) {
+    console.error('[parser] CRITICAL: App.tsx missing from output of', content.length, 'chars')
+    console.log('[parser] Files found:', Array.from(fileMap.keys()))
+    console.log('[parser] First 1000 chars:', content.slice(0, 1000))
   }
 
   // Generate src/index.tsx if absent

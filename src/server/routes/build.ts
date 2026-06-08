@@ -30,7 +30,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox } from "../../preview/e2b-service.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -48,8 +48,12 @@ const cancelledSessions = new Set<string>();
 // ── WS helper — never throws ──────────────────────────────────────────────────
 
 function ws() {
-  try { return getWebSocketServer(); }
-  catch { return null; }
+  try {
+    return getWebSocketServer();
+  } catch (err) {
+    logger.error({ err }, "WebSocketServer not initialised — build events will not be emitted");
+    return null;
+  }
 }
 
 // ── Input schemas ─────────────────────────────────────────────────────────────
@@ -437,7 +441,7 @@ export async function runFastBuild(
       "WebContainers support Node.js only. I can build your backend in Hono.js " +
       "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
       "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
-    server?.emitToRoom(sessionId, "build:thinking", { text: redirectMsg, sessionId });
+    server?.thinking(sessionId, { text: redirectMsg, sessionId });
     const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
     server?.buildFailed(sessionId, {
       sessionId,
@@ -591,14 +595,14 @@ export async function runFastBuild(
             ];
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
-    server?.emitToRoom(sessionId, "build:thinking", { text: `Building: ${prompt}`, sessionId });
-    server?.emitToRoom(sessionId, "build:thinking", {
+    server?.thinking(sessionId, { text: `Building: ${prompt}`, sessionId });
+    server?.thinking(sessionId, {
       text: hasExistingCode
         ? `Editing existing project (${Object.keys(existingFiles).length} files loaded)...`
         : "Starting new build...",
       sessionId,
     });
-    server?.emitToRoom(sessionId, "build:thinking", { text: "Calling AI model...", sessionId });
+    server?.thinking(sessionId, { text: "Calling AI model...", sessionId });
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
@@ -651,6 +655,23 @@ export async function runFastBuild(
       }
     }
 
+    // ── Fail loudly on missing App.tsx for NEW builds ───────────────────────
+    // parseFilesFromContent no longer injects a placeholder component when it
+    // can't find src/App.tsx — that used to let broken generations silently
+    // report "success" with a fake "could not be extracted" component. For a
+    // brand-new build (no existing code to fall back on), a missing App.tsx
+    // means the generation genuinely failed: warn the client and abort.
+    if (!hasExistingCode && !parsedFiles.some((f) => f.path === "src/App.tsx")) {
+      const msg = "The AI did not produce a valid src/App.tsx — generation failed.";
+      logger.error({ sessionId, projectId }, "Parse failure: src/App.tsx missing from new build output");
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message: msg,
+        missingFiles: ["src/App.tsx"],
+      });
+      throw new Error(msg);
+    }
+
     let filesToWrite: ParsedFile[] =
       parsedFiles.length > 0
         ? parsedFiles
@@ -666,7 +687,7 @@ export async function runFastBuild(
       const missing = findMissingFullstackFiles(fileRecord);
       if (missing.length > 0) {
         logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
-        server?.emitToRoom(sessionId, "build:thinking", {
+        server?.thinking(sessionId, {
           text: `Retrying generation for missing files: ${missing.join(", ")}`,
           sessionId,
         });
@@ -779,7 +800,7 @@ export async function runFastBuild(
         const validationError = validateAppTsx(code);
         if (validationError !== null) {
           console.warn(`[build] App.tsx validation failed: ${validationError}`);
-          server?.emitToRoom(sessionId, "build:thinking", {
+          server?.thinking(sessionId, {
             text: `⚠️ Could not safely apply this change to App.tsx: ${validationError}. Keeping existing file.`,
             sessionId,
           });
@@ -845,7 +866,7 @@ export async function runFastBuild(
       });
 
       // Emit build:file_write so fullstack clients can track per-file progress
-      server?.emitToRoom(sessionId, "build:file_write", {
+      server?.fileWrite(sessionId, {
         path: safePath,
         isBackend: isBackendFile(safePath),
         sessionId,
@@ -906,11 +927,11 @@ export async function runFastBuild(
     // Users run these files in their own deployment using the emitted .env.example.
     if (isFullstackBuild) {
       const backendPaths = writtenPaths.filter(isBackendFile);
-      server?.emitToRoom(sessionId, "build:backend_ready", {
+      server?.backendReady(sessionId, {
         sessionId,
         files: allFiles,
         backendFileCount: backendPaths.length,
-        note: "Backend + DB files generated. Run drizzle migrations + seed in your own environment (see .env.example).",
+        note: "Backend + DB files generated. Run the SQL in src/db/schema.sql against your Supabase project (see .env.example).",
       });
       console.log(`[build] backend_ready project=${projectId} files=[${backendPaths.join(", ")}]`);
     }
@@ -925,7 +946,7 @@ export async function runFastBuild(
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
 
-    server?.emitToRoom(sessionId, "build:complete", {
+    server?.buildComplete(sessionId, {
       sessionId,
       files: frontendFiles,       // Sandpack-safe: no Node.js imports
       backendFiles: allFiles,
@@ -1229,6 +1250,12 @@ buildRouter.post("/:sessionId/cancel", async (c) => {
 
   // Signal the background runner to stop before writing the next file
   cancelledSessions.add(sessionId);
+
+  // Tear down any E2B preview sandbox tied to this session — otherwise it
+  // keeps running (and billing) until E2B's own 30-minute idle timeout.
+  killSandbox(sessionId).catch((err) => {
+    logger.warn({ sessionId, err }, "Failed to kill preview sandbox on cancel");
+  });
 
   // Update DB immediately
   await db

@@ -17,7 +17,30 @@ const PROJECT_DIR = "/home/user/app";
 const DEV_SERVER_PORT = 5173;
 const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+const READY_POLL_TIMEOUT_MS = 30_000;
+const READY_POLL_INTERVAL_MS = 2_000;
+
 const sandboxes = new Map<string, Sandbox>();
+
+/**
+ * Polls the preview URL until it responds or the timeout elapses. The dev
+ * server is started in the background with no readiness signal, so without
+ * this we'd hand the user a URL that may still be 404ing/connection-refused.
+ * Any HTTP response (even an error status) means the server is up and routing.
+ */
+async function waitForServerReady(url: string): Promise<boolean> {
+  const deadline = Date.now() + READY_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (res.ok || res.status < 500) return true;
+    } catch {
+      // Connection refused / not yet listening — keep polling
+    }
+    await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
+  }
+  return false;
+}
 
 /**
  * Spins up a fresh E2B sandbox, writes the build's files into it, installs
@@ -56,9 +79,11 @@ export async function createPreviewSandbox(
     sandboxes.set(sessionId, sandbox);
 
     log(`Writing ${Object.keys(files).length} files...`);
-    for (const [path, content] of Object.entries(files)) {
-      await sandbox.files.write(`${PROJECT_DIR}/${path}`, content);
-    }
+    await Promise.all(
+      Object.entries(files).map(([path, content]) =>
+        sandbox!.files.write(`${PROJECT_DIR}/${path}`, content),
+      ),
+    );
 
     // Vite rejects requests from unrecognized hosts by default. E2B serves the
     // preview from a dynamically generated subdomain, so a React+Vite project's
@@ -113,6 +138,14 @@ export default defineConfig({
 
     const url = `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
     console.log("[E2B] Preview URL:", url);
+
+    log("Waiting for dev server to become ready...");
+    const ready = await waitForServerReady(url);
+    if (!ready) {
+      throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
+    }
+
+    console.log("[E2B] Dev server is ready:", url);
     log(`Preview ready at ${url}`);
     return url;
   } catch (err) {
@@ -134,4 +167,16 @@ export async function killSandbox(sessionId: string): Promise<void> {
   await existing.kill().catch((err) => {
     logger.warn({ sessionId, err }, "Failed to kill E2B sandbox");
   });
+}
+
+/**
+ * Tears down every active sandbox. Used on process shutdown (SIGTERM) so we
+ * don't leak running E2B VMs when the server restarts/redeploys — without this,
+ * sandboxes only die via their own 30-minute idle timeout on E2B's side.
+ */
+export async function killAllSandboxes(): Promise<void> {
+  const sessionIds = [...sandboxes.keys()];
+  if (sessionIds.length === 0) return;
+  logger.info({ count: sessionIds.length }, "Killing all active E2B sandboxes");
+  await Promise.all(sessionIds.map((sessionId) => killSandbox(sessionId)));
 }

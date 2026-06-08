@@ -30,6 +30,7 @@ import { webhooksRouter } from "./routes/webhooks.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { adminRouter } from "./routes/admin.js";
 import { createWebSocketServer } from "../websocket/server.js";
+import { killAllSandboxes } from "../preview/e2b-service.js";
 
 // ── Startup diagnostics ───────────────────────────────────────────────────────
 // Log enough detail to diagnose connection issues without exposing credentials.
@@ -118,5 +119,15 @@ const httpServer = serve(
 
 // Attach WebSocket server to the same HTTP server
 createWebSocketServer(httpServer);
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Kill any live E2B preview sandboxes so redeploys/restarts don't leak running
+// VMs — without this they only die via E2B's own 30-minute idle timeout.
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received — shutting down");
+  void killAllSandboxes().finally(() => {
+    httpServer.close(() => process.exit(0));
+  });
+});
 
 export { app };
