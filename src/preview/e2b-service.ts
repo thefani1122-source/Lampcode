@@ -23,7 +23,8 @@ const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 // Custom template (see e2b.Dockerfile / e2b.toml) that pre-installs Node,
 // frontend deps, and a baseline Vite/React scaffold. Falls back to the stock
 // "base" template if no custom template has been built/configured yet.
-const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "base";
+// Railway Env Var: E2B_TEMPLATE_ID=lampcode-vite
+const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
 
 // E2B sandbox snapshots (created on pause) expire after 30 days. We key the
 // Redis record's TTL slightly below that — 25 days — so we never hand back a
@@ -130,33 +131,6 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   }
 }
 
-async function patchViteAllowedHosts(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
-  // Vite rejects requests from unrecognized hosts by default. E2B serves the
-  // preview from a dynamically generated subdomain, so until our custom
-  // template (which bakes this in) is built, every fresh sandbox needs its
-  // generated vite.config.ts overwritten with allowedHosts: true.
-  try {
-    log("Patching vite.config.ts for E2B preview host...");
-    await sandbox.files.write(
-      `${PROJECT_DIR}/vite.config.ts`,
-      `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 5173,
-    allowedHosts: true,
-  },
-})
-`,
-    );
-  } catch (err) {
-    logger.error({ err }, "[e2b] Failed to patch vite.config.ts");
-    throw err;
-  }
-}
-
 async function installDependencies(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
   try {
     // Always run install, but with --prefer-offline: npm uses the template's
@@ -197,7 +171,7 @@ async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promis
 }
 
 function previewUrlFor(sandbox: Sandbox): string {
-  return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+  return `https://5173-${sandbox.sandboxId}.e2b.dev`;
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */
@@ -230,7 +204,6 @@ export async function writeFilesToSandbox(
   };
 
   await writeFiles(sandbox, files, log);
-  await patchViteAllowedHosts(sandbox, log);
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
@@ -275,7 +248,6 @@ export async function createPreviewSandbox(
   if (live) {
     console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
     await writeFiles(live, files, log);
-    await patchViteAllowedHosts(live, log);
     const url = previewUrlFor(live);
     log(`Preview updated at ${url} (HMR will refresh automatically)`);
     return url;
@@ -292,7 +264,6 @@ export async function createPreviewSandbox(
         sandboxes.set(projectId, sandbox);
 
         await writeFiles(sandbox, files, log);
-        await patchViteAllowedHosts(sandbox, log);
         const url = previewUrlFor(sandbox);
         log(`Preview ready at ${url}`);
         return url;
@@ -310,7 +281,6 @@ export async function createPreviewSandbox(
     await saveSandboxId(projectId, sandbox.sandboxId);
 
     await writeFiles(sandbox, files, log);
-    await patchViteAllowedHosts(sandbox, log);
     await installDependencies(sandbox, log);
     await startDevServer(sandbox, log);
 
