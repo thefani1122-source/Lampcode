@@ -235,13 +235,15 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5173, host: true },
+  server: { port: 5173, host: true, allowedHosts: true },
   envPrefix: 'VITE_',
 })
 \`\`\`
 
 SANDBOX RESTRICTIONS:
 - Do NOT use fetch() or any HTTP requests
+  EXCEPTION: If this is a fullstack build (server files present), fetch() IS allowed
+  in src/lib/api.ts only. This overrides the above restriction.
 - Do NOT use localStorage or sessionStorage
 - Do NOT import external libraries beyond react and react-dom
 - All icons must be inline SVG or emoji — no icon libraries

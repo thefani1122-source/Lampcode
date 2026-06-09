@@ -230,6 +230,7 @@ export async function writeFilesToSandbox(
   };
 
   await writeFiles(sandbox, files, log);
+  await patchViteAllowedHosts(sandbox, log);
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
@@ -274,6 +275,7 @@ export async function createPreviewSandbox(
   if (live) {
     console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
     await writeFiles(live, files, log);
+    await patchViteAllowedHosts(live, log);
     const url = previewUrlFor(live);
     log(`Preview updated at ${url} (HMR will refresh automatically)`);
     return url;
@@ -290,6 +292,7 @@ export async function createPreviewSandbox(
         sandboxes.set(projectId, sandbox);
 
         await writeFiles(sandbox, files, log);
+        await patchViteAllowedHosts(sandbox, log);
         const url = previewUrlFor(sandbox);
         log(`Preview ready at ${url}`);
         return url;
