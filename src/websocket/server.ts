@@ -10,7 +10,7 @@ interface StreamBroadcaster {
   broadcast(sessionId: string, taskId: string, chunk: StreamChunk): void | Promise<void>;
 }
 import { type AgentTaskType } from "../agents/model-gateway.js";
-import { wsAuthMiddleware } from "./middleware/auth.js";
+import { wsAuthMiddleware, wsBuildAuthMiddleware } from "./middleware/auth.js";
 import { wsRateLimitMiddleware } from "./middleware/rate-limit.js";
 import { registerBuildHandlers } from "./handlers/build-handler.js";
 import { registerProjectHandlers } from "./handlers/project-handler.js";
@@ -79,7 +79,7 @@ import {
 
 // ── Namespace type aliases ────────────────────────────────────────────────────
 
-type BuildNsp = Namespace<BuildClientEvents, BuildServerEvents, object, Partial<SocketData>>;
+type BuildNsp = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
 type ProjectNsp = Namespace<ProjectClientEvents, ProjectServerEvents, object, SocketData>;
 type UserNsp = Namespace<UserClientEvents, UserServerEvents, object, SocketData>;
 type InterviewNsp = Namespace<InterviewClientEvents, InterviewServerEvents, object, SocketData>;
@@ -130,16 +130,20 @@ export class WebSocketServer {
     this.interviewNsp = this.io.of("/interview") as InterviewNsp;
 
     // ── Auth + rate-limit middleware per namespace ─────────────────────────────
-    // Root (/) is auth-optional: only sessionId query param needed to stream progress.
-    // All other namespaces require a valid JWT.
+    // All namespaces require a valid JWT — the build namespace uses its own
+    // auth middleware so it can embed a 401 code that the client can distinguish
+    // from the 403 emitted when a user tries to join a session they don't own.
     // Socket.io middleware types use `any` internally; cast is unavoidable
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.buildNsp.use(wsBuildAuthMiddleware as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.buildNsp.use(wsRateLimitMiddleware as any);
     for (const nsp of [this.projectNsp, this.userNsp, this.interviewNsp]) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsAuthMiddleware as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       nsp.use(wsRateLimitMiddleware as any);
     }
-    // Root (/): no auth or rate-limit — clients join session rooms via sessionId query param
 
     registerBuildHandlers(this.buildNsp);
     registerProjectHandlers(this.projectNsp);

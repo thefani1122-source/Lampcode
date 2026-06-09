@@ -16,10 +16,8 @@ import {
   type SocketData,
 } from "../types.js";
 
-// /build namespace is auth-optional, so userId may be undefined
-type BuildSocketData = Partial<SocketData>;
-type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
-type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, BuildSocketData>;
+type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
+type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, SocketData>;
 
 const SESSION_ROOM = (sessionId: string) => sessionId;
 
@@ -41,6 +39,20 @@ async function resolveProjectId(sessionId: string): Promise<string | null> {
   } catch (err) {
     logger.warn({ sessionId, err }, "Failed to resolve projectId for sandbox pause");
     return null;
+  }
+}
+
+async function verifySessionOwner(sessionId: string, userId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ userId: buildSessions.userId })
+      .from(buildSessions)
+      .where(eq(buildSessions.id, sessionId))
+      .limit(1);
+    return rows[0]?.userId === userId;
+  } catch (err) {
+    logger.warn({ sessionId, userId, err }, "Failed to verify session ownership");
+    return false;
   }
 }
 
@@ -78,8 +90,7 @@ async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<voi
 
 export function registerBuildHandlers(nsp: BuildNamespace): void {
   nsp.on("connection", async (socket: BuildSocket) => {
-    const userId = socket.data.userId;
-    // Step 3: log every connection with full query so we can confirm the client reaches us
+    const userId = socket.data.userId; // always set — wsBuildAuthMiddleware required it
     console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
     logger.info({ socketId: socket.id, userId }, "Build WS connected");
 
@@ -96,6 +107,13 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
     // Auto-join session room if sessionId provided in handshake query (Step 1)
     const querySid = socket.handshake.query["sessionId"];
     if (typeof querySid === "string" && querySid.length > 0) {
+      const owned = await verifySessionOwner(querySid, userId);
+      if (!owned) {
+        logger.warn({ socketId: socket.id, userId, sessionId: querySid }, "Build WS forbidden — user does not own session");
+        socket.emit("error", { code: 403, message: "Forbidden" });
+        socket.disconnect(true);
+        return;
+      }
       const room = SESSION_ROOM(querySid);
       socket.join(room); // synchronous in Socket.IO v4
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
@@ -112,13 +130,29 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
     socket.on("join", (payload: string | { sessionId: string }) => {
       const sid = typeof payload === "string" ? payload : payload.sessionId;
       if (!sid) return;
-      socket.join(sid);
-      logger.debug({ socketId: socket.id, sessionId: sid }, "Joined session room (join event)");
-      void trackSession(sid);
+      void verifySessionOwner(sid, userId).then((owned) => {
+        if (!owned) {
+          logger.warn({ socketId: socket.id, userId, sessionId: sid }, "Build WS forbidden — user does not own session (join)");
+          socket.emit("error", { code: 403, message: "Forbidden" });
+          socket.disconnect(true);
+          return;
+        }
+        socket.join(sid);
+        logger.debug({ socketId: socket.id, sessionId: sid }, "Joined session room (join event)");
+        void trackSession(sid);
+      });
     });
 
     // Client joins a session room to receive updates for that build
     socket.on("join_session", async (sessionId, ack) => {
+      const owned = await verifySessionOwner(sessionId, userId);
+      if (!owned) {
+        logger.warn({ socketId: socket.id, userId, sessionId }, "Build WS forbidden — user does not own session (join_session)");
+        socket.emit("error", { code: 403, message: "Forbidden" });
+        socket.disconnect(true);
+        ack(false);
+        return;
+      }
       const room = SESSION_ROOM(sessionId);
       socket.join(room); // synchronous in Socket.IO v4
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
