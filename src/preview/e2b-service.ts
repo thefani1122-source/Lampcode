@@ -171,7 +171,10 @@ async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promis
 }
 
 function previewUrlFor(sandbox: Sandbox): string {
-  return `https://5173-${sandbox.sandboxId}.e2b.dev`;
+  // Use the SDK's getHost() — it returns the correct public preview host for
+  // this E2B deployment (domain + region). A hardcoded "5173-{id}.e2b.dev"
+  // string is fragile and was the cause of preview URLs that never resolved.
+  return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */
