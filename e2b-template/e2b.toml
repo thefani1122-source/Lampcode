@@ -1,2 +1,4 @@
-id = "lampcode-vite"
-name = "Lampcode Vite Template"
+# E2B sandbox template config — https://e2b.dev/docs/template
+# Build with:  e2b template build --name lampcode-vite
+template_name = "lampcode-vite"
+dockerfile = "e2b.Dockerfile"
