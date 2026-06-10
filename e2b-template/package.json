@@ -1,22 +1,13 @@
 {
-  "name": "lampcode-app",
+  "name": "lampcode-e2b-template",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "hono": "^4.6.0",
-    "zod": "^3.23.0",
-    "@supabase/supabase-js": "^2.45.0"
+    "build": "tsx build.ts"
   },
   "devDependencies": {
-    "vite": "^5.4.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "typescript": "^5.5.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0"
+    "e2b": "^2.28.0",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.22.0"
   }
 }
