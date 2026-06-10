@@ -46,5 +46,8 @@
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.22.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.0"
   }
 }
