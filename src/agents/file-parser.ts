@@ -464,11 +464,13 @@ export function stripEditMarkers(code: string): string {
 
 // Fullstack builds must produce these with real content. Empty or whitespace-only
 // output here is the root cause of blank previews (missing types/db client/server).
+// Supabase-direct apps talk to Supabase straight from the frontend (no separate
+// backend server), so the load-bearing files are the Supabase client, the
+// shared types, and the schema the user runs in their project.
 const REQUIRED_FULLSTACK_FILES = [
   "src/db/types.ts",
-  "src/server/index.ts",
-  "src/server/routes/api.ts",
-  "src/lib/db.ts",
+  "src/db/schema.sql",
+  "src/lib/supabase.ts",
 ] as const;
 
 // A file is "empty" if it has no meaningful content — blank, or only comments /

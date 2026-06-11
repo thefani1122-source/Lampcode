@@ -435,78 +435,37 @@ export function detectDatabase(prompt: string): Database {
 
 const DB_INSTRUCTIONS: Record<Database, string> = {
   supabase: `
-DATABASE: Supabase (PostgreSQL via @supabase/supabase-js)
+DATABASE: Supabase (PostgreSQL), accessed DIRECTLY from the frontend via
+@supabase/supabase-js — there is NO backend server and NO src/lib/db.ts.
 
 DATABASE RULES:
-- Use @supabase/supabase-js — NOT drizzle-orm, NOT the postgres package, NOT any TCP DB driver.
-- Define TypeScript interfaces for each table's row type in src/db/types.ts.
-- Generate CREATE TABLE SQL in src/db/schema.sql (user runs it once in the Supabase SQL editor).
-- Include created_at TIMESTAMPTZ DEFAULT now() on every table.
-- Column types: UUID DEFAULT gen_random_uuid(), TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ.
+- All reads/writes use the client from src/lib/supabase.ts: supabase.from('table')…
+- Never use drizzle-orm, the postgres package, or any TCP driver.
+- Never use the service_role key in the app — only the anon key (public, RLS-secured).
+- Define a TypeScript interface per table's row in src/db/types.ts.
+- Put every table's CREATE TABLE in src/db/schema.sql WITH Row Level Security.
+  Include created_at TIMESTAMPTZ DEFAULT now() and (for per-user data) a
+  user_id UUID REFERENCES auth.users(id).
 
 DB SCHEMA FILES:
 1. \`\`\`filename:src/db/types.ts   — TypeScript interfaces for each table row
-2. \`\`\`filename:src/db/schema.sql — CREATE TABLE SQL to run in Supabase dashboard
+2. \`\`\`filename:src/db/schema.sql — CREATE TABLE + RLS to run in the Supabase SQL editor
 
-DB CLIENT — \`\`\`filename:src/lib/db.ts:
-  import { createClient } from '@supabase/supabase-js'
-  export const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+schema.sql MUST enable RLS and add owner policies, e.g.:
+  create table todos (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    title text not null,
+    completed boolean not null default false,
+    created_at timestamptz not null default now()
+  );
+  alter table todos enable row level security;
+  create policy "own rows" on todos for all to authenticated
+    using (user_id = auth.uid()) with check (user_id = auth.uid());
 
-API ROUTES EXAMPLE — src/server/routes/api.ts:
-  import { db } from '../../lib/db'
-  api.get('/items', async (c) => {
-    const { data, error } = await db.from('items').select('*').order('created_at', { ascending: false })
-    if (error) return c.json({ error: error.message }, 500)
-    return c.json(data)
-  })
-  api.post('/items', async (c) => {
-    const body = await c.req.json()
-    const { data, error } = await db.from('items').insert(body).select().single()
-    if (error) return c.json({ error: error.message }, 500)
-    return c.json(data, 201)
-  })
-
-PACKAGE.JSON DEPS: hono, @supabase/supabase-js, zod (plus frontend framework deps)
-
-ENV FILES — generate BOTH, each fully filled in (never empty):
-\`\`\`filename:.env.example:
-  SUPABASE_URL=your_supabase_project_url
-  SUPABASE_SERVICE_KEY=your_service_role_key
-  VITE_SUPABASE_URL=your_supabase_project_url
-  VITE_SUPABASE_ANON_KEY=your_anon_key
-  VITE_API_URL=http://localhost:3001
-\`\`\`filename:.env:
-  SUPABASE_URL=placeholder_replace_with_your_supabase_url
-  SUPABASE_SERVICE_KEY=placeholder_replace_with_your_service_role_key
-  VITE_SUPABASE_URL=placeholder_replace_with_your_supabase_url
-  VITE_SUPABASE_ANON_KEY=placeholder_replace_with_your_anon_key
-  VITE_API_URL=http://localhost:3001
-
-README — also generate \`\`\`filename:README.md (NEVER empty) with these sections filled in for this app:
-\`\`\`
-# [App Name]
-
-## 1. Supabase Project Setup
-- Create a project at https://supabase.com
-- Copy your Project URL, anon key, and service_role key from **Project Settings → API**
-
-## 2. Auth Provider Configuration (optional)
-- **Authentication → Providers** → enable Google and/or GitHub
-- Add the redirect URL under **Authentication → URL Configuration → Redirect URLs**
-
-## 3. Database Schema Setup
-- Open **SQL Editor** in the Supabase dashboard
-- Paste and run the contents of \`src/db/schema.sql\`
-
-## 4. Environment Variables
-- Copy \`.env.example\` to \`.env\` and fill in your real Supabase values
-
-## 5. Deployment
-- Backend: Railway/Render — set SUPABASE_URL + SUPABASE_SERVICE_KEY
-- Frontend: Vercel — set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL (your Railway backend URL)
-
-> ⚠️ OAuth (Google/GitHub) does NOT work in the iframe preview. Test on the published URL after deploying.
-\`\`\``,
+Do NOT generate package.json or .env — the preview environment already provides
+them with the Supabase anon key wired in. (If you want to document setup, you
+may add a short README.md.)`,
 
   mongodb: `
 DATABASE: MongoDB Atlas (via Mongoose)
@@ -603,205 +562,68 @@ VITE_API_URL=http://localhost:3001
 
 const FULLSTACK_INSTRUCTION = `
 
-## CRITICAL RULES — VIOLATION CAUSES BLANK PREVIEW
+## ARCHITECTURE — SUPABASE-DIRECT (NO SEPARATE BACKEND SERVER)
 
-RULE 1: src/db/types.ts MUST export every interface the app uses.
-Example for todo app:
-  export interface Todo { id: string; title: string; completed: boolean; user_id: string; created_at: string }
-  export interface User { id: string; email: string }
+This is the single most important rule. The generated app talks to Supabase
+DIRECTLY from the frontend using the @supabase/supabase-js client. There is NO
+Hono/Express server, NO src/server/ directory, NO src/lib/api.ts fetch layer,
+NO src/lib/db.ts, and NO VITE_API_URL. The whole app runs in the Vite dev
+server; the preview is the running app.
 
-RULE 2: src/server/index.ts MUST be a complete working Hono server:
-  import { serve } from '@hono/node-server'
-  import { Hono } from 'hono'
-  import { cors } from 'hono/cors'
-  import api from './routes/api.js'
-  const app = new Hono()
-  app.use('*', cors())
-  app.route('/api', api)
-  serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
+Why: the live preview only runs the Vite frontend. A separate backend server
+would never start, so every fetch('/api/...') call fails and the preview breaks.
+Supabase (Postgres + Auth + REST, secured by Row Level Security) IS the backend.
 
-RULE 3: src/server/routes/api.ts MUST have all CRUD routes implemented.
-  Complete with auth middleware, DB queries, error handling.
+DATA ACCESS — always via the Supabase client, never fetch():
+  import { supabase } from '../lib/supabase'
 
-RULE 4: package.json MUST have "type": "module"
+  // read
+  const { data, error } = await supabase
+    .from('todos').select('*').order('created_at', { ascending: false })
+  // insert
+  const { data, error } = await supabase
+    .from('todos').insert({ title, user_id: user.id }).select().single()
+  // update
+  await supabase.from('todos').update({ completed }).eq('id', id)
+  // delete
+  await supabase.from('todos').delete().eq('id', id)
 
-RULE 5: .env MUST have placeholder values (not empty):
-  VITE_SUPABASE_URL=https://placeholder.supabase.co
-  VITE_SUPABASE_ANON_KEY=placeholder_key
-  VITE_API_URL=http://localhost:3001
+RULES — VIOLATION CAUSES A BROKEN PREVIEW:
+RULE 1: NEVER generate src/server/**, src/lib/api.ts, or src/lib/db.ts.
+        NEVER call fetch() to a /api/... endpoint. Use the supabase client.
+RULE 2: src/lib/supabase.ts MUST create the client from env (exact content):
+          import { createClient } from '@supabase/supabase-js'
+          export const supabase = createClient(
+            import.meta.env.VITE_SUPABASE_URL,
+            import.meta.env.VITE_SUPABASE_ANON_KEY,
+          )
+RULE 3: src/db/types.ts MUST export a TypeScript interface for every table.
+          export interface Todo { id: string; title: string; completed: boolean; user_id: string; created_at: string }
+RULE 4: src/db/schema.sql MUST contain complete CREATE TABLE statements AND
+        Row Level Security so the anon/auth client is safe and works:
+          - enable RLS on every table
+          - a policy scoping rows to auth.uid() (e.g. user_id = auth.uid())
+          for any table holding per-user data.
+RULE 5: Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html,
+        or .env — the preview environment already provides correct versions of
+        all of these (with Supabase env wired in). Only write src/** files.
+        (If you add an npm dependency the environment doesn't have, say so in
+        your chat text instead of editing package.json.)
+RULE 6: Keep it small. A todo-with-login app is roughly these files only:
+          src/db/types.ts, src/db/schema.sql, src/lib/supabase.ts,
+          src/hooks/useAuth.ts, src/components/AuthProvider.tsx,
+          src/components/Login.tsx, src/App.tsx, src/index.tsx, src/styles.css
 
-RULE 6: Never generate more than 15 files for a simple app.
-  Todo with login = exactly these files:
-  src/db/types.ts, src/db/schema.sql, src/lib/db.ts,
-  src/server/index.ts, src/server/routes/api.ts,
-  src/lib/api.ts, src/lib/supabase.ts, src/hooks/useAuth.ts,
-  src/components/AuthProvider.tsx, src/components/Login.tsx,
-  src/App.tsx, src/index.tsx, src/styles.css,
-  index.html, vite.config.ts, package.json, .env, .env.example
+AUTH — Supabase Auth, directly from the client:
+- supabase.auth.signInWithPassword / signUp / signOut / onAuthStateChange.
+- Gate the app on the session; show <Login/> when signed out.
 
-FULLSTACK MODE — You are building a complete full-stack application (frontend + backend + database).
+FILE GENERATION CONTRACT:
+- Every file MUST have complete, non-empty content. Empty files are forbidden.
+- src/db/types.ts, src/db/schema.sql, src/lib/supabase.ts are always required.
 
-DEFAULT TECH STACK:
-- Detect the framework/language from user prompt keywords (case-insensitive).
-  Default to Next.js if no framework is mentioned:
-    "React" or "Vite"     → React + Vite frontend + Hono.js backend + Supabase
-    "Vue"                 → Vue 3 + Vite frontend + Hono.js backend + Supabase
-    "Svelte"              → SvelteKit frontend + Supabase
-    "Python" or "FastAPI" → React + Vite frontend + FastAPI backend + Supabase
-    (none of the above)   → Next.js 14 (App Router) + Supabase + TypeScript
-                            Reason: Vercel deployment ready out of the box.
-
-PREVIEW & RUNTIME CONSTRAINTS — NON-NEGOTIABLE:
-- The instant in-browser preview (WebContainer/Sandpack) can ONLY run Node.js /
-  TypeScript — it cannot execute Python, PHP, Ruby, Go, Rust, Java, or any other
-  non-Node runtime. A separate cloud sandbox (E2B, a real Linux VM) loads
-  shortly after for fullstack builds and CAN run any backend runtime.
-- DEFAULT (no framework/language requested): generate a Node.js backend —
-  Hono.js (preferred), Express.js, or Fastify. This keeps the instant preview
-  working immediately for every user.
-- ONLY if the user explicitly names a non-Node stack (e.g. "Python", "FastAPI",
-  "Django", "Go", "PHP", "Laravel", "Ruby on Rails"), generate that stack as
-  requested — the E2B cloud sandbox will run it. In that case mention in your
-  response that the instant preview shows the frontend immediately while the
-  full live preview (with backend) finishes loading in the cloud sandbox.
-- Database: External cloud database detected from user prompt — see DATABASE section below for the exact rules.
-  Never run or assume a locally-hosted PostgreSQL/MySQL/Redis server process —
-  always connect to an external managed/cloud database over the network.
-- Auth: Supabase Auth or JWT — avoid OS-level session stores that need local disk/process state.
-- If generating a Node.js backend, avoid native C++ modules — every npm package
-  must be pure JavaScript/TypeScript or WebAssembly so the instant preview can run it.
-
-FRONTEND RULES:
-- ALL data fetching goes through functions exported from src/lib/api.ts.
-- Load data with appropriate lifecycle hooks; always show loading and error states.
-- fetch() IS allowed, but ONLY inside src/lib/api.ts (this overrides the no-fetch sandbox rule).
-
-BACKEND RULES:
-- Default (Node.js backend): use Hono.js for API routes. Export the router as:
-  export const api = new Hono()
-- Only when the user explicitly requested Python/FastAPI: generate a FastAPI
-  app instead (main.py + requirements.txt), following the same route shape.
-- Import the database client from src/lib/db.ts (or db.py for FastAPI) for all data access.
-- Prefix every route with /api/.
-- Add permissive CORS headers.
-- Validate every request body with Zod (or Pydantic models for FastAPI).
-
-RUNTIME ENV — NON-NEGOTIABLE:
-- Vite reads .env files from the filesystem at dev-server start. The WebContainer
-  writes the .env file, then Vite reads it on startup.
-- Do NOT bake env vars into vite.config.ts via a \`define:\` block. \`process.env\`
-  is undefined on the build machine, so \`define\` would inject \`undefined\`.
-- vite.config.ts MUST only set \`envPrefix: 'VITE_'\` (no \`define\` block).
-- Client code reads vars via \`import.meta.env.VITE_*\` — Vite substitutes them
-  at runtime from the .env file.
-- package.json MUST always include: "type": "module"
-  Without this, import.meta.env will throw "Cannot use import.meta outside a module".
-- ALWAYS generate BOTH files:
-    1. \`\`\`filename:.env         — real placeholder values (so the app boots immediately)
-    2. \`\`\`filename:.env.example — same keys, documented values (committed to git)
-  The .env file MUST use these placeholder values:
-    \`\`\`filename:.env
-    VITE_SUPABASE_URL=placeholder_replace_with_your_supabase_url
-    VITE_SUPABASE_ANON_KEY=placeholder_replace_with_your_anon_key
-    VITE_API_URL=http://localhost:3001
-    \`\`\`
-
-FILE GENERATION CONTRACT — NON-NEGOTIABLE:
-- EVERY file you emit MUST have complete, non-empty content. An empty file is a
-  broken file. Never emit an empty fence or a file containing only a
-  comment/placeholder. EMPTY FILES ARE FORBIDDEN — if you cannot write a file's
-  real content, do not list it at all.
-- src/db/types.ts: MUST export all TypeScript interfaces for every database
-  table used in the app. Never empty.
-    Example:
-    export interface Task { id: string; title: string; completed: boolean; created_at: string }
-    export interface User { id: string; email: string; name: string }
-- src/server/index.ts: MUST have a complete Hono server with all routes mounted,
-  listening on \`process.env.PORT || 3001\`. Never empty.
-- src/server/routes/api.ts: MUST have ALL CRUD endpoints implemented, with auth
-  middleware applied where the app requires login. Never empty.
-- src/lib/db.ts: MUST have real database client/connection setup and query
-  helpers. Never empty.
-- src/db/schema.sql: MUST have complete CREATE TABLE statements for every table.
-- .env and .env.example: MUST list every required env var with placeholder values:
-    VITE_SUPABASE_URL=your_supabase_url
-    VITE_SUPABASE_ANON_KEY=your_anon_key
-    VITE_API_URL=http://localhost:3001
-- README.md: REQUIRED, must contain real setup/run instructions.
-
-CONSISTENCY RULE:
-- Always generate the SAME file structure for the same type of app. A todo app
-  always has ~12-15 files. A fitness tracker always has ~15-18 files. Do not add
-  extra files unless the user specifically requested that feature.
-
-FILE FORMAT — generate EXACTLY these files, in this order, each in its own \`\`\`filename: fence:
-
-BACKEND FILES (always required regardless of frontend framework):
-1. [DB schema/types files — see DATABASE section below]
-2. \`\`\`filename:src/lib/db.ts            — database client singleton (see DATABASE section below)
-3. \`\`\`filename:src/server/routes/api.ts — Hono CRUD routes importing { db } or { connectDB } from ../../lib/db
-4. \`\`\`filename:src/lib/api.ts           — typed frontend fetch wrappers calling /api/...
-
-src/server/routes/api.ts — ALWAYS generate complete Hono.js API routes, NEVER empty. It MUST include:
-- All CRUD endpoints matching the frontend API client in src/lib/api.ts (every function in api.ts has a route here)
-- Zod validation for every request body
-- Supabase/database integration via the client imported from ../../lib/db
-- Permissive CORS headers
-- Error handling on every route (return c.json({ error }, status) on failure)
-Example structure (adapt entity names to the app):
-    import { Hono } from 'hono'
-    import { z } from 'zod'
-    import { db } from '../../lib/db'
-
-    export const api = new Hono()
-
-    const itemSchema = z.object({ name: z.string().min(1) })
-
-    // GET /api/items
-    api.get('/items', async (c) => {
-      const { data, error } = await db.from('items').select('*').order('created_at', { ascending: false })
-      if (error) return c.json({ error: error.message }, 500)
-      return c.json(data)
-    })
-
-    // POST /api/items
-    api.post('/items', async (c) => {
-      const parsed = itemSchema.safeParse(await c.req.json())
-      if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
-      const { data, error } = await db.from('items').insert(parsed.data).select().single()
-      if (error) return c.json({ error: error.message }, 500)
-      return c.json(data, 201)
-    })
-
-    // DELETE /api/items/:id
-    api.delete('/items/:id', async (c) => {
-      const { error } = await db.from('items').delete().eq('id', c.req.param('id'))
-      if (error) return c.json({ error: error.message }, 500)
-      return c.body(null, 204)
-    })
-
-FRONTEND FILES (adapt to the framework detected above):
-- React (default): src/App.tsx, src/styles.css, src/index.tsx, vite.config.ts
-- Vue:    src/App.vue, src/style.css, src/main.ts, index.html, vite.config.ts
-- Next.js: app/page.tsx, app/layout.tsx, app/globals.css
-- Svelte: src/App.svelte, src/app.css, src/main.ts, index.html, vite.config.ts
-- SolidJS: src/App.tsx, src/index.css, src/index.tsx, vite.config.ts
-- Preact: src/App.tsx, src/styles.css, src/index.tsx, vite.config.ts
-
-PACKAGE.JSON scripts must be EXACTLY:
-   { "scripts": { "dev": "vite", "build": "vite build" } }
-(Next.js exception: "dev": "next dev", "build": "next build")
-"server" and "db:seed" must NOT be included — Sandpack runs only "dev".
-
-FRONTEND DATA FETCHING — adapt to framework but the import pattern is the same:
-  import { fetchItems, createItem } from './lib/api'
-  // React: useEffect + useState
-  // Vue: onMounted + ref
-  // Svelte: onMount + let variable
-  // SolidJS: createResource or onMount + createSignal
-  // Next.js: async server component or useEffect in client component
-
-Skip src/server/auth.ts entirely if the app has no login/account concept.`;
+ALLOWED IMPORTS: react, react-dom, @supabase/supabase-js. These are
+pre-installed in the preview. Do not import other libraries.`;
 
 // ── Auth sub-mode instruction ─────────────────────────────────────────────────
 // Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
@@ -851,12 +673,11 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     - Clean card layout, centered on screen, white background, subtle box-shadow
     - Export default Login
 
-15. \`\`\`filename:.env.example
-    Use this EXACT content (overrides the base .env.example):
+15. \`\`\`filename:README.md may document these env vars (the preview already
+    provides them; the user sets their own when they deploy):
     \`\`\`
     VITE_SUPABASE_URL=your_supabase_url
     VITE_SUPABASE_ANON_KEY=your_anon_key
-    VITE_API_URL=http://localhost:5173
     \`\`\`
 
 16. \`\`\`filename:README.md
@@ -884,8 +705,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     > Test on the published URL after deploying.
     \`\`\`
 
-PACKAGE.JSON — add @supabase/supabase-js to the dependencies object:
-    "@supabase/supabase-js": "^2.39.0"
+(@supabase/supabase-js is already installed in the preview — do NOT edit package.json.)
 
 APP.TSX — integrate auth into the main app:
 - Import AuthProvider from './components/AuthProvider'
@@ -1050,10 +870,10 @@ export class PromptBuilder {
     const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
 
     // ── Framework detection (frontend agent only) ──────────────────────────
-    // Frontend-only builds default to React (Sandpack-friendly). Fullstack
-    // builds with no framework keyword default to Next.js (Vercel-ready).
+    // Always default to React + Vite: the preview sandbox runs a Vite dev
+    // server, so a Next.js app (its own server/build) would not boot there.
     const framework = agentType === "frontend"
-      ? detectFramework(task.description, isFullstackMode ? "nextjs" : "react")
+      ? detectFramework(task.description, "react")
       : "react";
     const frameworkInstruction = agentType === "frontend"
       ? FRAMEWORK_RULES[framework]
