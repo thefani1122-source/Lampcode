@@ -235,7 +235,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5173, host: true, allowedHosts: true },
+  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
   envPrefix: 'VITE_',
 })
 \`\`\`
@@ -265,7 +265,7 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
-  server: { port: 5173, host: true, allowedHosts: true },
+  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
   envPrefix: 'VITE_',
 })
 \`\`\`
@@ -333,7 +333,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 export default defineConfig({
   plugins: [svelte()],
-  server: { port: 5173, host: true, allowedHosts: true },
+  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
   envPrefix: 'VITE_',
 })
 \`\`\`
@@ -370,7 +370,7 @@ import solid from 'vite-plugin-solid'
 
 export default defineConfig({
   plugins: [solid()],
-  server: { port: 5173, host: true, allowedHosts: true },
+  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
   envPrefix: 'VITE_',
 })
 \`\`\`
@@ -406,7 +406,7 @@ import preact from '@preact/preset-vite'
 
 export default defineConfig({
   plugins: [preact()],
-  server: { port: 5173, host: true, allowedHosts: true },
+  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
   envPrefix: 'VITE_',
 })
 \`\`\`

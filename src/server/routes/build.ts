@@ -621,6 +621,10 @@ export async function runFastBuild(
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {
       cancelledSessions.delete(sessionId);
+      // Tell the client the build actually stopped — the frontend listens for
+      // "build:cancelled" to clear its "building" state. Without this the UI
+      // hangs forever after the user presses cancel.
+      server?.buildCancelled(sessionId);
       return;
     }
 

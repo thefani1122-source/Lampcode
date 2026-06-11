@@ -67,30 +67,53 @@ async function waitForServerReady(url: string): Promise<boolean> {
 
 const VITE_CONFIG_FILENAMES = ["vite.config.ts", "vite.config.js"];
 
+// Injected into the generated vite.config.ts server block so the E2B preview
+// works end to end:
+//  - allowedHosts: Vite 5+ rejects requests from hosts it doesn't recognize,
+//    but E2B serves the preview from a dynamic `*.e2b.app` subdomain.
+//  - hmr.clientPort 443 + protocol wss: the preview iframe loads over HTTPS,
+//    but Vite otherwise advertises `ws://localhost:5173` for HMR — the browser
+//    can't reach that, so live-reload silently dies. Pinning the client to the
+//    public HTTPS port makes HMR connect back through E2B's TLS endpoint.
+const HMR_SNIPPET = "hmr: { clientPort: 443, protocol: 'wss' },";
+const ALLOWED_HOSTS_SNIPPET = "allowedHosts: true,";
+
 /**
- * Vite 5+ rejects requests from hosts it doesn't recognize, but E2B serves the
- * preview from a dynamically generated subdomain (`*.e2b.app`). The LLM
- * doesn't reliably include `allowedHosts: true` in the vite.config.ts it
- * generates (it often writes a custom `server: {}` block, e.g. with a
- * `/api` proxy, that omits it), so every write is patched in-place here —
- * preserving whatever else the LLM configured.
+ * Forces the generated vite.config.ts to be E2B-preview-safe. The LLM doesn't
+ * reliably emit `allowedHosts`/`hmr` (it often writes a custom `server: {}`
+ * block with just a proxy), so every write is patched in-place here, injecting
+ * only the pieces that are missing and preserving everything else the LLM set.
  */
 function patchViteConfig(files: Record<string, string>, log: PreviewLogCallback): void {
   for (const filename of VITE_CONFIG_FILENAMES) {
     const content = files[filename];
     if (content === undefined) continue;
-    if (/allowedHosts/.test(content)) return;
+
+    const needsAllowedHosts = !/allowedHosts/.test(content);
+    const needsHmr = !/\bhmr\s*:/.test(content);
+    if (!needsAllowedHosts && !needsHmr) return;
+
+    const additions = [
+      needsAllowedHosts ? ALLOWED_HOSTS_SNIPPET : null,
+      needsHmr ? HMR_SNIPPET : null,
+    ].filter(Boolean);
 
     let patched: string;
     if (/server\s*:\s*\{/.test(content)) {
-      patched = content.replace(/server\s*:\s*\{/, (m) => `${m}\n    allowedHosts: true,`);
+      patched = content.replace(
+        /server\s*:\s*\{/,
+        (m) => `${m}\n    ${additions.join("\n    ")}`,
+      );
     } else if (/defineConfig\(\s*\{/.test(content)) {
-      patched = content.replace(/defineConfig\(\s*\{/, (m) => `${m}\n  server: { allowedHosts: true },`);
+      patched = content.replace(
+        /defineConfig\(\s*\{/,
+        (m) => `${m}\n  server: { ${additions.join(" ")} },`,
+      );
     } else {
       continue;
     }
 
-    log(`Patched ${filename}: added allowedHosts: true for E2B preview host`);
+    log(`Patched ${filename} for E2B preview (${additions.length} setting(s) injected)`);
     files[filename] = patched;
     return;
   }

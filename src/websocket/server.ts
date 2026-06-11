@@ -311,6 +311,15 @@ export class WebSocketServer {
 
   buildFailed(sessionId: string, event: BuildFailedEvent): void {
     emitBuildFailed(this.buildNsp, sessionId, event);
+    // The typed "build_failed" event above is for internal/replay consumers,
+    // but the frontend workspace only listens for the colon-namespaced
+    // "build:error". Emit both so a failed build actually surfaces to the user
+    // instead of leaving the UI hung in the "building" state.
+    this.emitToRoom(sessionId, "build:error", { sessionId, message: event.reason });
+  }
+
+  buildCancelled(sessionId: string): void {
+    this.emitToRoom(sessionId, "build:cancelled", { sessionId });
   }
 
   planPhaseStart(sessionId: string, event: PlanPhaseStartEvent): void {
