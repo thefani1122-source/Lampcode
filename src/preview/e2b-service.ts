@@ -125,15 +125,35 @@ function patchViteConfig(files: Record<string, string>, log: PreviewLogCallback)
   }
 }
 
+// The preview template already ships known-good versions of these files (with
+// the right Vite host/allowedHosts/HMR config and pre-installed node_modules).
+// Overwriting them with LLM-generated copies is what broke the preview: a bad
+// vite.config restarts/crashes Vite, and a different package.json triggers a
+// runtime `npm install` that disrupts the already-running dev server ("no
+// service on port 5173"). So we never write these into the sandbox — the model
+// only contributes src/** app files on top of the baked baseline.
+const BAKED_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "bun.lockb",
+  "vite.config.ts",
+  "vite.config.js",
+  "tsconfig.json",
+  "tsconfig.node.json",
+  "index.html",
+]);
+
 async function writeFiles(
   sandbox: Sandbox,
   files: Record<string, string>,
   log: PreviewLogCallback,
 ): Promise<void> {
-  log(`Writing ${Object.keys(files).length} files...`);
+  const writable = Object.entries(files).filter(([path]) => !BAKED_FILES.has(path));
+  const skipped = Object.keys(files).length - writable.length;
+  log(`Writing ${writable.length} files...${skipped ? ` (${skipped} baked config file(s) skipped)` : ""}`);
   try {
     await Promise.all(
-      Object.entries(files).map(([path, content]) =>
+      writable.map(([path, content]) =>
         sandbox.files.write(`${PROJECT_DIR}/${path}`, content),
       ),
     );
@@ -347,10 +367,6 @@ export async function writeFilesToSandbox(
 
   patchViteConfig(files, log);
   await writeFiles(sandbox, files, log);
-  // A follow-up build that changed package.json needs its new deps installed
-  // before Vite can serve them; otherwise the HMR reload 500s on a missing
-  // module. Baked node_modules keeps this fast for already-present packages.
-  if (files["package.json"]) await installDependencies(sandbox, log);
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
@@ -401,9 +417,6 @@ export async function createPreviewSandbox(
   if (live) {
     console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
     await writeFiles(live, files, log);
-    // Pre-warmed sandboxes booted on the baked scaffold only — install the
-    // generated app's own deps before handing back the URL.
-    if (files["package.json"]) await installDependencies(live, log);
     const url = previewUrlFor(live);
     log(`Preview updated at ${url} (HMR will refresh automatically)`);
     return url;
