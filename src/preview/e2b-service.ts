@@ -45,6 +45,12 @@ function redisKey(projectId: string): string {
 // network round-trip to resume. Lost on restart; Redis is the durable record.
 const sandboxes = new Map<string, Sandbox>();
 
+// In-flight pre-warm promises, keyed by projectId. When a build starts we kick
+// off sandbox boot in the background (parallel with AI generation); the
+// preview-write path awaits this so it never races into creating a second
+// sandbox for the same project.
+const warmingSandboxes = new Map<string, Promise<Sandbox>>();
+
 /**
  * Polls the preview URL until it responds or the timeout elapses. The dev
  * server is started in the background with no readiness signal, so without
@@ -237,6 +243,84 @@ export function hasSandbox(projectId: string): boolean {
 }
 
 /**
+ * Resumes (or, failing that, creates) a running sandbox for the project and
+ * makes sure its Vite dev server is up — WITHOUT writing any app files. The
+ * template already ships a baked baseline scaffold, so a fresh sandbox serves a
+ * "Loading…" page immediately; the real files are streamed in later via HMR.
+ * Registers the sandbox in the in-process map and Redis.
+ */
+async function acquireRunningSandbox(
+  projectId: string,
+  log: PreviewLogCallback,
+): Promise<Sandbox> {
+  const savedSandboxId = await loadSandboxId(projectId);
+  if (savedSandboxId) {
+    const resumed = await tryResumeSandbox(projectId, savedSandboxId);
+    if (resumed) {
+      sandboxes.set(projectId, resumed);
+      log("Resumed existing sandbox — Vite already running");
+      return resumed;
+    }
+  }
+
+  log("Creating fresh sandbox from template...");
+  const sandbox = await Sandbox.create(TEMPLATE_ID, {
+    ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
+    timeoutMs: SANDBOX_TIMEOUT_MS,
+  });
+  console.log("[E2B] Sandbox created (prewarm):", sandbox.sandboxId);
+  sandboxes.set(projectId, sandbox);
+  await saveSandboxId(projectId, sandbox.sandboxId);
+
+  // Baked scaffold already has node_modules, so this is just Vite startup.
+  await startDevServer(sandbox, log);
+  await waitForServerReady(previewUrlFor(sandbox));
+  return sandbox;
+}
+
+/**
+ * Kicks off sandbox boot in the BACKGROUND at build start so it warms up in
+ * parallel with AI code generation (the "ensure sandbox first" pattern). By the
+ * time files are ready, Vite is already running and we only stream the files in.
+ * Idempotent: a no-op if the sandbox is already live or already warming.
+ */
+export function prewarmSandbox(projectId: string, onLog?: PreviewLogCallback): void {
+  if (!config.E2B_API_KEY) return;
+  if (sandboxes.has(projectId) || warmingSandboxes.has(projectId)) return;
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ projectId, line }, "[e2b:prewarm]");
+  };
+
+  const promise = acquireRunningSandbox(projectId, log)
+    .catch((err) => {
+      // Don't let a prewarm failure kill anything — the complete path will
+      // fall back to a full create. Just surface it and clear the entry.
+      logger.warn({ projectId, err }, "[e2b] prewarm failed (will cold-start on complete)");
+      throw err;
+    })
+    .finally(() => {
+      warmingSandboxes.delete(projectId);
+    });
+
+  warmingSandboxes.set(projectId, promise);
+  void promise.catch(() => {});
+}
+
+/** Awaits an in-flight prewarm (if any) so we never race into a 2nd sandbox. */
+async function awaitWarming(projectId: string): Promise<void> {
+  const warming = warmingSandboxes.get(projectId);
+  if (warming) {
+    try {
+      await warming;
+    } catch {
+      // prewarm failed — fall through; caller's own create path handles it.
+    }
+  }
+}
+
+/**
  * Pushes new files straight into a project's already-running sandbox and
  * returns its preview URL — no install, no dev-server (re)start, no
  * readiness poll. Used for follow-up builds: Vite's HMR picks up the file
@@ -250,6 +334,7 @@ export async function writeFilesToSandbox(
   files: Record<string, string>,
   onLog?: PreviewLogCallback,
 ): Promise<string> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) {
     throw new Error(`No live E2B sandbox for project ${projectId}`);
@@ -262,6 +347,10 @@ export async function writeFilesToSandbox(
 
   patchViteConfig(files, log);
   await writeFiles(sandbox, files, log);
+  // A follow-up build that changed package.json needs its new deps installed
+  // before Vite can serve them; otherwise the HMR reload 500s on a missing
+  // module. Baked node_modules keeps this fast for already-present packages.
+  if (files["package.json"]) await installDependencies(sandbox, log);
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
@@ -303,11 +392,18 @@ export async function createPreviewSandbox(
 
   patchViteConfig(files, log);
 
+  // If a prewarm is mid-flight for this project, wait for it instead of racing
+  // into a second sandbox — afterwards the sandbox is live (Case 1 below).
+  await awaitWarming(projectId);
+
   // ── Case 1: already running in this process — reuse directly ──────────────
   const live = sandboxes.get(projectId);
   if (live) {
     console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
     await writeFiles(live, files, log);
+    // Pre-warmed sandboxes booted on the baked scaffold only — install the
+    // generated app's own deps before handing back the URL.
+    if (files["package.json"]) await installDependencies(live, log);
     const url = previewUrlFor(live);
     log(`Preview updated at ${url} (HMR will refresh automatically)`);
     return url;

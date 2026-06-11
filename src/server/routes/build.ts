@@ -30,7 +30,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, writeFilesToSandbox } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, writeFilesToSandbox, prewarmSandbox } from "../../preview/e2b-service.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -526,6 +526,14 @@ export async function runFastBuild(
     const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
+      // Warm the preview sandbox NOW, in the background, so Vite is already
+      // running by the time the AI finishes generating. Without this the
+      // sandbox cold-starts AFTER generation and the user stares at
+      // "installing dependencies" before any preview appears.
+      prewarmSandbox(projectId, (line) =>
+        server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+      );
+      server?.emitPreviewLoading(sessionId, { sessionId });
     }
 
     // ── Build task description ────────────────────────────────────────────
