@@ -228,17 +228,12 @@ FILE FORMAT — ALWAYS in this exact order:
 3. \`\`\`filename:src/index.tsx — always identical render boilerplate
 4. \`\`\`filename:package.json — only react + react-dom
 
-VITE CONFIG (fullstack only — for frontend-only builds Sandpack supplies its own):
-\`\`\`filename:vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
-  envPrefix: 'VITE_',
-})
-\`\`\`
+BUILD CONFIG IS PRE-CONFIGURED — DO NOT GENERATE:
+The preview sandbox already contains a correct vite.config.ts, tsconfig.json,
+and index.html (with allowedHosts + HMR set up for the preview host). Do NOT
+emit vite.config.ts, tsconfig.json, or index.html — they will be ignored or
+cause conflicts. Only write your app's src/** files (and package.json if you
+need to add dependencies).
 
 SANDBOX RESTRICTIONS:
 - Do NOT use fetch() or any HTTP requests
