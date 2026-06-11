@@ -141,7 +141,33 @@ const BAKED_FILES = new Set([
   "tsconfig.json",
   "tsconfig.node.json",
   "index.html",
+  // The model emits an empty .env; we write the real one (with the preview
+  // Supabase creds) ourselves, before Vite starts, in writePreviewEnv().
+  ".env",
+  ".env.example",
 ]);
+
+/**
+ * Writes the preview `.env` with the Supabase credentials the generated app
+ * needs to initialise its client. Must run BEFORE the dev server starts — Vite
+ * only reads VITE_* env at startup, so injecting after boot wouldn't take.
+ * No-op if no preview Supabase project is configured.
+ */
+async function writePreviewEnv(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  const url = config.PREVIEW_SUPABASE_URL;
+  const anon = config.PREVIEW_SUPABASE_ANON_KEY;
+  if (!url || !anon) {
+    log("No PREVIEW_SUPABASE_* configured — skipping .env injection");
+    return;
+  }
+  const env = `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n`;
+  try {
+    await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
+    log("Injected preview Supabase credentials into .env");
+  } catch (err) {
+    logger.warn({ err }, "[e2b] Failed to write preview .env");
+  }
+}
 
 async function writeFiles(
   sandbox: Sandbox,
@@ -292,6 +318,8 @@ async function acquireRunningSandbox(
   sandboxes.set(projectId, sandbox);
   await saveSandboxId(projectId, sandbox.sandboxId);
 
+  // Inject preview env BEFORE Vite boots (it only reads VITE_* at startup).
+  await writePreviewEnv(sandbox, log);
   // Baked scaffold already has node_modules, so this is just Vite startup.
   await startDevServer(sandbox, log);
   await waitForServerReady(previewUrlFor(sandbox));
@@ -450,6 +478,7 @@ export async function createPreviewSandbox(
     await saveSandboxId(projectId, sandbox.sandboxId);
 
     await writeFiles(sandbox, files, log);
+    await writePreviewEnv(sandbox, log);
     await installDependencies(sandbox, log);
     await startDevServer(sandbox, log);
 

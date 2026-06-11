@@ -14,6 +14,11 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   KIMI_API_KEY: z.string().min(1).optional(),
   E2B_API_KEY: z.string().min(1).optional(),
+  // Supabase project whose URL + anon key get injected into every preview
+  // sandbox so generated Supabase-direct apps can initialise their client and
+  // render. The anon key is public (RLS-protected) — safe to embed in previews.
+  PREVIEW_SUPABASE_URL: z.string().url().optional(),
+  PREVIEW_SUPABASE_ANON_KEY: z.string().min(1).optional(),
   REDIS_URL: z.string().url().optional(),
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),
