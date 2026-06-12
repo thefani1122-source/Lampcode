@@ -49,14 +49,21 @@ import react from '@vitejs/plugin-react'
 //  - allowedHosts: E2B serves the preview from a dynamic *.e2b.app host.
 //  - hmr.clientPort 443 + wss: the iframe loads over HTTPS, so HMR must connect
 //    back through E2B's TLS endpoint, not ws://localhost:5173.
+//  - strictPort: crash loudly instead of silently moving to 5174 (the backend
+//    health-checks exactly :5173).
+//  - watch.usePolling: files arrive via the E2B API (files.write), whose
+//    filesystem events are unreliable for inotify — without polling, HMR
+//    doesn't notice the new files and the preview goes stale.
 export default defineConfig({
   plugins: [react()],
   envPrefix: 'VITE_',
   server: {
     host: true,
     port: 5173,
+    strictPort: true,
     allowedHosts: true,
     hmr: { clientPort: 443, protocol: 'wss' },
+    watch: { usePolling: true, interval: 300 },
   },
 })`
 

@@ -174,7 +174,13 @@ async function writeFiles(
   files: Record<string, string>,
   log: PreviewLogCallback,
 ): Promise<void> {
-  const writable = Object.entries(files).filter(([path]) => !BAKED_FILES.has(path));
+  const writable = Object.entries(files).filter(
+    ([path]) =>
+      !BAKED_FILES.has(path) &&
+      // LLM-controlled paths: block traversal/absolute escapes out of PROJECT_DIR.
+      !path.includes("..") &&
+      !path.startsWith("/"),
+  );
   const skipped = Object.keys(files).length - writable.length;
   log(`Writing ${writable.length} files...${skipped ? ` (${skipped} baked config file(s) skipped)` : ""}`);
   try {
@@ -227,6 +233,10 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   try {
     const sandbox = await Sandbox.connect(sandboxId, {
       ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
+      // CRITICAL: connect/resume defaults the sandbox lifetime to 5 minutes
+      // (same SDK default as create) — without this every resumed sandbox
+      // died 5 minutes later, killing the preview mid-session.
+      timeoutMs: SANDBOX_TIMEOUT_MS,
     });
     console.log("[E2B] Resumed sandbox:", sandboxId, "for project:", projectId);
     return sandbox;
@@ -237,29 +247,9 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   }
 }
 
-async function installDependencies(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
-  try {
-    // Always run install, but with --prefer-offline: npm uses the template's
-    // cached node_modules/cache for packages it already has (fast, no network)
-    // and only hits the registry for anything new the LLM added to
-    // package.json. Simpler and safer than trying to detect what's missing.
-    log("Installing dependencies (npm install --prefer-offline)...");
-    const install = await sandbox.commands.run("npm install --prefer-offline", {
-      cwd: PROJECT_DIR,
-      timeoutMs: 5 * 60 * 1000,
-      onStdout: log,
-      onStderr: log,
-    });
-    console.log("[E2B] Install exit code:", install.exitCode);
-    if (install.exitCode !== 0) {
-      console.error("[E2B] Install stderr:", install.stderr);
-      throw new Error(`npm install exited with code ${install.exitCode}`);
-    }
-  } catch (err) {
-    logger.error({ err }, "[e2b] Dependency install step failed");
-    throw err;
-  }
-}
+// NOTE: no runtime `npm install` anywhere in this service — deps are baked
+// into the template (skill rule: template owns package.json/node_modules).
+// Runtime installs were a root cause of dev-server crashes mid-session.
 
 async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
   try {
@@ -304,6 +294,11 @@ async function ensureDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promi
     // not listening — fall through to restart
   }
   log("Dev server not responding — (re)starting Vite...");
+  // Kill any half-dead Vite first (process alive but not serving) so the
+  // restart can't lose a port conflict against a zombie instance.
+  await sandbox.commands
+    .run("pkill -f vite || true", { timeoutMs: 10_000 })
+    .catch(() => {});
   await startDevServer(sandbox, log);
   const ready = await waitForServerReady(url);
   if (!ready) {
@@ -439,6 +434,9 @@ export async function writeFilesToSandbox(
   };
 
   patchViteConfig(files, log);
+  // Heartbeat: every follow-up write extends the sandbox lifetime so an
+  // actively-used session never hits the timeout set at create/resume.
+  await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
   await writeFiles(sandbox, files, log);
   await ensureDevServer(sandbox, log);
   const url = previewUrlFor(sandbox);
@@ -450,14 +448,12 @@ export async function writeFilesToSandbox(
  * Returns the live preview URL for a project's sandbox, creating, resuming,
  * or reusing one as needed (the "Lovable" get-or-create pattern):
  *
- *   1. Already running in this process?  → just write files, return URL (HMR
- *      picks up the change — no install/start/poll needed).
- *   2. Previously paused (Redis has a saved sandboxId)? → try to resume it;
- *      on success, write files and return URL (Vite is already running).
- *   3. Otherwise (or resume failed)  → create a fresh sandbox from
- *      TEMPLATE_ID, save its ID, install deps if needed, start Vite, and
- *      poll until ready.
+ *   1. Already running in this process?  → write files, verify Vite, return URL.
+ *   2. A prewarm/acquire in flight?       → await the SAME promise (no 2nd sandbox).
+ *   3. Otherwise → acquireRunningSandbox: resume the paused snapshot or create
+ *      fresh from TEMPLATE_ID, inject preview env, start Vite, wait until ready.
  *
+ * Every turn refreshes the sandbox lifetime (setTimeout heartbeat).
  * Never kills an existing sandbox — reuse, not replace.
  */
 export async function createPreviewSandbox(
@@ -482,63 +478,35 @@ export async function createPreviewSandbox(
 
   patchViteConfig(files, log);
 
-  // If a prewarm is mid-flight for this project, wait for it instead of racing
-  // into a second sandbox — afterwards the sandbox is live (Case 1 below).
-  await awaitWarming(projectId);
-
-  // ── Case 1: already running in this process — reuse directly ──────────────
-  const live = sandboxes.get(projectId);
-  if (live) {
-    console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
-    await writeFiles(live, files, log);
-    await ensureDevServer(live, log);
-    const url = previewUrlFor(live);
-    log(`Preview updated at ${url} (HMR will refresh automatically)`);
-    return url;
-  }
-
   let sandbox: Sandbox | undefined;
   try {
-    // ── Case 2: previously paused — try to resume ────────────────────────────
-    const savedSandboxId = await loadSandboxId(projectId);
-    if (savedSandboxId) {
-      const resumed = await tryResumeSandbox(projectId, savedSandboxId);
-      if (resumed) {
-        sandbox = resumed;
-        sandboxes.set(projectId, sandbox);
-
-        await writeFiles(sandbox, files, log);
-        await ensureDevServer(sandbox, log);
-        const url = previewUrlFor(sandbox);
-        log(`Preview ready at ${url}`);
-        return url;
+    // ── Acquire (race-proof): live → in-flight warm → resume-or-create ──────
+    // All acquisition funnels through the warmingSandboxes promise-cache, so
+    // concurrent callers (prewarm vs completion, double builds) always share
+    // ONE sandbox instead of leaking a second one.
+    await awaitWarming(projectId);
+    sandbox = sandboxes.get(projectId);
+    if (sandbox) {
+      console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
+    } else {
+      let warm = warmingSandboxes.get(projectId);
+      if (!warm) {
+        warm = acquireRunningSandbox(projectId, log).finally(() => {
+          warmingSandboxes.delete(projectId);
+        });
+        warmingSandboxes.set(projectId, warm);
       }
-      // tryResumeSandbox already deleted the stale Redis key on failure.
+      sandbox = await warm;
     }
 
-    // ── Case 3: nothing to resume — create a fresh sandbox ───────────────────
-    sandbox = await Sandbox.create(TEMPLATE_ID, {
-      apiKey: config.E2B_API_KEY,
-      timeoutMs: SANDBOX_TIMEOUT_MS,
-    });
-    console.log("[E2B] Sandbox created:", sandbox.sandboxId);
-    sandboxes.set(projectId, sandbox);
-    await saveSandboxId(projectId, sandbox.sandboxId);
+    // Each build turn extends the sandbox lifetime — a long iterate session
+    // must not die at the timeout set when the sandbox was first created.
+    await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
 
     await writeFiles(sandbox, files, log);
-    await writePreviewEnv(sandbox, log);
-    await installDependencies(sandbox, log);
-    await startDevServer(sandbox, log);
+    await ensureDevServer(sandbox, log);
 
     const url = previewUrlFor(sandbox);
-    console.log("[E2B] Preview URL:", url);
-
-    log("Waiting for dev server to become ready...");
-    const ready = await waitForServerReady(url);
-    if (!ready) {
-      throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
-    }
-
     console.log("[E2B] Dev server is ready:", url);
     log(`Preview ready at ${url}`);
     return url;
