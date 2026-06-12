@@ -267,6 +267,12 @@ async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promis
     await sandbox.commands.run("npx vite --host 0.0.0.0 --port 5173", {
       cwd: PROJECT_DIR,
       background: true,
+      // CRITICAL: the SDK's default command timeout is 60s and it applies to
+      // background commands too — without this, E2B killed Vite one minute
+      // after boot, which is exactly when a prewarmed sandbox was still
+      // waiting for generation to finish ("no service running on port 5173").
+      // 0 = no timeout; the dev server lives as long as the sandbox.
+      timeoutMs: 0,
       onStdout: log,
       onStderr: log,
     });
@@ -281,6 +287,29 @@ function previewUrlFor(sandbox: Sandbox): string {
   // this E2B deployment (domain + region). A hardcoded "5173-{id}.e2b.dev"
   // string is fragile and was the cause of preview URLs that never resolved.
   return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+}
+
+/**
+ * Self-healing guard: makes sure Vite is actually listening before we hand the
+ * preview URL to the client. Covers every "the sandbox exists" path — resumed
+ * snapshots whose dev server died, processes killed by timeouts/OOM, etc.
+ * Quick single probe when healthy (~one HTTP round-trip).
+ */
+async function ensureDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  const url = previewUrlFor(sandbox);
+  try {
+    const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(3_000) });
+    if (res.ok || res.status < 500) return; // listening — nothing to do
+  } catch {
+    // not listening — fall through to restart
+  }
+  log("Dev server not responding — (re)starting Vite...");
+  await startDevServer(sandbox, log);
+  const ready = await waitForServerReady(url);
+  if (!ready) {
+    throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
+  }
+  log("Dev server is up");
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */
@@ -304,7 +333,10 @@ async function acquireRunningSandbox(
     const resumed = await tryResumeSandbox(projectId, savedSandboxId);
     if (resumed) {
       sandboxes.set(projectId, resumed);
-      log("Resumed existing sandbox — Vite already running");
+      // A resumed snapshot's dev server may not have survived the pause —
+      // verify and restart it if needed rather than assuming.
+      await ensureDevServer(resumed, log);
+      log("Resumed existing sandbox");
       return resumed;
     }
   }
@@ -318,12 +350,25 @@ async function acquireRunningSandbox(
   sandboxes.set(projectId, sandbox);
   await saveSandboxId(projectId, sandbox.sandboxId);
 
-  // Inject preview env BEFORE Vite boots (it only reads VITE_* at startup).
-  await writePreviewEnv(sandbox, log);
-  // Baked scaffold already has node_modules, so this is just Vite startup.
-  await startDevServer(sandbox, log);
-  await waitForServerReady(previewUrlFor(sandbox));
-  return sandbox;
+  try {
+    // Inject preview env BEFORE Vite boots (it only reads VITE_* at startup).
+    await writePreviewEnv(sandbox, log);
+    // Baked scaffold already has node_modules, so this is just Vite startup.
+    await startDevServer(sandbox, log);
+    const ready = await waitForServerReady(previewUrlFor(sandbox));
+    if (!ready) {
+      throw new Error("Prewarmed sandbox dev server did not become ready");
+    }
+    return sandbox;
+  } catch (err) {
+    // Don't leave a dead sandbox registered as "live" — the completion path
+    // would reuse it and hand the client a broken preview URL. Clean up fully
+    // so it does a fresh cold start instead.
+    sandboxes.delete(projectId);
+    await deleteSandboxId(projectId).catch(() => {});
+    await sandbox.kill().catch(() => {});
+    throw err;
+  }
 }
 
 /**
@@ -395,6 +440,7 @@ export async function writeFilesToSandbox(
 
   patchViteConfig(files, log);
   await writeFiles(sandbox, files, log);
+  await ensureDevServer(sandbox, log);
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
@@ -445,6 +491,7 @@ export async function createPreviewSandbox(
   if (live) {
     console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
     await writeFiles(live, files, log);
+    await ensureDevServer(live, log);
     const url = previewUrlFor(live);
     log(`Preview updated at ${url} (HMR will refresh automatically)`);
     return url;
@@ -461,6 +508,7 @@ export async function createPreviewSandbox(
         sandboxes.set(projectId, sandbox);
 
         await writeFiles(sandbox, files, log);
+        await ensureDevServer(sandbox, log);
         const url = previewUrlFor(sandbox);
         log(`Preview ready at ${url}`);
         return url;
