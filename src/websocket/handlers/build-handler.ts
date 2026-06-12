@@ -23,9 +23,14 @@ const SESSION_ROOM = (sessionId: string) => sessionId;
 
 // ── Pause E2B preview sandbox on disconnect ───────────────────────────────────
 // Sandboxes are billed while running. If everyone navigates away from a build
-// session, pause its sandbox after a short grace period so a quick reconnect
+// session, pause its sandbox after a grace period so a quick reconnect
 // (refresh, flaky connection) doesn't pay the cold-start cost again.
-const PAUSE_GRACE_MS = 2 * 60 * 1000;
+//
+// The grace must be generous: the build WS often closes right after a build
+// completes while the user is still LOOKING at the preview. A short grace
+// paused the sandbox out from under them ("Sandbox Not Found" in the iframe).
+// Default 15 min gives a real testing window; tune via SANDBOX_GRACE_MS.
+const PAUSE_GRACE_MS = Number(process.env["SANDBOX_GRACE_MS"] ?? 15 * 60 * 1000);
 const pendingPauseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 async function resolveProjectId(sessionId: string): Promise<string | null> {
