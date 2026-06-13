@@ -18,7 +18,10 @@ export type PreviewLogCallback = (line: string) => void;
 
 const PROJECT_DIR = "/home/user/app";
 const DEV_SERVER_PORT = 5173;
-const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+// Sandbox lifetime per session. Set on create AND resume, and refreshed every
+// build turn (heartbeat). Generous so an active testing session never expires
+// mid-use; idle sandboxes are paused on WS disconnect well before this.
+const SANDBOX_TIMEOUT_MS = Number(process.env["SANDBOX_RUN_TIMEOUT_MS"] ?? 60 * 60 * 1000); // 1 hour
 
 // Custom template (see e2b.Dockerfile / e2b.toml) that pre-installs Node,
 // frontend deps, and a baseline Vite/React scaffold. Falls back to the stock
@@ -456,6 +459,65 @@ export async function writeFilesToSandbox(
   const url = previewUrlFor(sandbox);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
+}
+
+/**
+ * Resume-on-open: when a user re-opens a project (no new build), bring its
+ * preview back to life and return a FRESH URL. Resume-only — it never creates a
+ * brand-new sandbox, because a fresh sandbox wouldn't contain the user's
+ * generated files (those live in the paused snapshot). Returns null when there
+ * is nothing to resume (no prior build, or the snapshot expired) so the caller
+ * simply leaves the preview as-is until the next build.
+ */
+export async function ensurePreviewForProject(
+  projectId: string,
+  onLog?: PreviewLogCallback,
+): Promise<string | null> {
+  if (!config.E2B_API_KEY) return null;
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ projectId, line }, "[e2b:resume-on-open]");
+  };
+
+  await awaitWarming(projectId);
+
+  // Already live in this process — just make sure Vite is up.
+  const live = sandboxes.get(projectId);
+  if (live) {
+    try {
+      await ensureDevServer(live, log);
+      await live.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
+      return previewUrlFor(live);
+    } catch {
+      // live ref is dead — drop it and try to resume the snapshot below.
+      sandboxes.delete(projectId);
+    }
+  }
+
+  const savedId = await loadSandboxId(projectId);
+  if (!savedId) return null; // never built / snapshot gone — nothing to resume.
+
+  let warm = warmingSandboxes.get(projectId);
+  if (!warm) {
+    warm = (async () => {
+      const resumed = await tryResumeSandbox(projectId, savedId);
+      if (!resumed) throw new Error("resume-on-open: snapshot unavailable");
+      sandboxes.set(projectId, resumed);
+      await ensureDevServer(resumed, log);
+      return resumed;
+    })().finally(() => warmingSandboxes.delete(projectId));
+    warmingSandboxes.set(projectId, warm);
+  }
+
+  try {
+    const sb = await warm;
+    await sb.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
+    return previewUrlFor(sb);
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] resume-on-open failed — preview needs a rebuild");
+    return null;
+  }
 }
 
 /**

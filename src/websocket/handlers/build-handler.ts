@@ -4,7 +4,7 @@ import { logger } from "../../server/logger.js";
 import { createRedis } from "../../lib/redis.js";
 import { db } from "../../db/client.js";
 import { buildSessions } from "../../db/schema.js";
-import { pauseSandbox } from "../../preview/e2b-service.js";
+import { pauseSandbox, ensurePreviewForProject } from "../../preview/e2b-service.js";
 
 const redis = createRedis();
 import {
@@ -106,7 +106,25 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
     const trackSession = async (sessionId: string): Promise<void> => {
       activeSessionId = sessionId;
       const projectId = await resolveProjectId(sessionId);
-      if (projectId) cancelPendingPause(projectId);
+      if (!projectId) return;
+      cancelPendingPause(projectId);
+
+      // Resume-on-open: opening/reconnecting to a project should bring its
+      // preview back (resume the paused snapshot) and hand the client a FRESH
+      // URL — otherwise a revisit shows a stale URL pointing at a dead sandbox
+      // ("Sandbox Not Found"). Resume-only; no-op if there's nothing to resume.
+      // The colon-namespaced preview events live outside the typed build event
+      // map, so emit them through a loose-typed handle.
+      const emitRaw = socket.emit.bind(socket) as (event: string, data: unknown) => boolean;
+      void ensurePreviewForProject(projectId, (line) =>
+        emitRaw("build:preview_log", { sessionId, line }),
+      )
+        .then((url) => {
+          if (url) emitRaw("build:preview_url", { sessionId, url });
+        })
+        .catch((err) => {
+          logger.warn({ projectId, sessionId, err }, "resume-on-open failed");
+        });
     };
 
     // Auto-join session room if sessionId provided in handshake query (Step 1)
