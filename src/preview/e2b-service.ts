@@ -160,6 +160,20 @@ async function writePreviewEnv(sandbox: Sandbox, log: PreviewLogCallback): Promi
     log("No PREVIEW_SUPABASE_* configured — skipping .env injection");
     return;
   }
+  // SAFETY: never let a generated preview app authenticate / read / write
+  // against Lampcode's OWN Supabase project. If they're the same, sign-ups and
+  // data from arbitrary generated apps would land in the real product's auth
+  // and tables, and OAuth would redirect to the real dashboard. Refuse loudly —
+  // PREVIEW_SUPABASE_* MUST be a separate, throwaway Supabase project.
+  if (config.SUPABASE_URL && url === config.SUPABASE_URL) {
+    logger.error(
+      { url },
+      "[e2b] REFUSING preview env injection: PREVIEW_SUPABASE_URL equals the platform SUPABASE_URL. " +
+        "Generated apps must use a SEPARATE Supabase project. Point PREVIEW_SUPABASE_URL at a dedicated preview project.",
+    );
+    log("⚠️ Preview Supabase = platform Supabase — refusing to inject (data-safety). Use a separate preview project.");
+    return;
+  }
   const env = `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n`;
   try {
     await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
