@@ -48,6 +48,16 @@ function redisKey(projectId: string): string {
 // network round-trip to resume. Lost on restart; Redis is the durable record.
 const sandboxes = new Map<string, Sandbox>();
 
+// Per-project preview Supabase override (the project owner's OWN connected
+// Supabase). Set at build start; used by writePreviewEnv before Vite boots.
+const projectPreviewEnv = new Map<string, { url: string; anonKey: string }>();
+
+/** Point a project's preview at the owner's connected Supabase (anon key only). */
+export function setProjectPreviewEnv(projectId: string, creds: { url: string; anonKey: string } | null): void {
+  if (creds) projectPreviewEnv.set(projectId, creds);
+  else projectPreviewEnv.delete(projectId);
+}
+
 // In-flight pre-warm promises, keyed by projectId. When a build starts we kick
 // off sandbox boot in the background (parallel with AI generation); the
 // preview-write path awaits this so it never races into creating a second
@@ -156,11 +166,16 @@ const BAKED_FILES = new Set([
  * only reads VITE_* env at startup, so injecting after boot wouldn't take.
  * No-op if no preview Supabase project is configured.
  */
-async function writePreviewEnv(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
-  const url = config.PREVIEW_SUPABASE_URL;
-  const anon = config.PREVIEW_SUPABASE_ANON_KEY;
+async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: PreviewLogCallback): Promise<void> {
+  // Prefer the USER'S own connected Supabase project (set per-project at build
+  // start) over the shared preview project — so each user's app runs on their
+  // own database. Both are anon-key only (public, RLS-safe).
+  const override = projectPreviewEnv.get(projectId);
+  const url = override?.url ?? config.PREVIEW_SUPABASE_URL;
+  const anon = override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY;
+  if (override) log("Using the project owner's connected Supabase for the preview");
   if (!url || !anon) {
-    log("No PREVIEW_SUPABASE_* configured — skipping .env injection");
+    log("No Supabase configured for preview — skipping .env injection");
     return;
   }
   // SAFETY: never let a generated preview app authenticate / read / write
@@ -378,7 +393,7 @@ async function acquireRunningSandbox(
 
   try {
     // Inject preview env BEFORE Vite boots (it only reads VITE_* at startup).
-    await writePreviewEnv(sandbox, log);
+    await writePreviewEnv(sandbox, projectId, log);
     // Baked scaffold already has node_modules, so this is just Vite startup.
     await startDevServer(sandbox, log);
     const ready = await waitForServerReady(previewUrlFor(sandbox));

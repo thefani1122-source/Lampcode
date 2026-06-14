@@ -8,6 +8,7 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { encrypt, decrypt } from "../env-crypto.js";
 import { logger } from "../logger.js";
+import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
@@ -17,6 +18,12 @@ integrationsRouter.use("/*", requireAuth);
 const connectSupabaseSchema = z.object({
   supabaseUrl: z.string().url("Must be a valid URL, e.g. https://xxx.supabase.co"),
   serviceRoleKey: z.string().min(20, "Service role key looks too short"),
+});
+
+const connectSupabaseMcpSchema = z.object({
+  // Supabase Personal Access Token from https://supabase.com/dashboard/account/tokens
+  accessToken: z.string().min(20, "Access token looks too short"),
+  projectRef: z.string().min(10, "project ref looks too short").optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -166,6 +173,87 @@ integrationsRouter.post("/supabase", async (c) => {
   }, 201);
 });
 
+// ── POST /api/integrations/supabase/mcp ──────────────────────────────────────
+// Connect the user's OWN Supabase via the hosted MCP server using a Personal
+// Access Token. We verify the PAT by listing tools, then (best-effort) fetch the
+// project's public URL + anon key so the preview can target the user's project.
+// The PAT + service key never leave the backend; only the anon key (public,
+// RLS-safe) is ever injected into a preview.
+
+integrationsRouter.post("/supabase/mcp", async (c) => {
+  const { id: userId } = c.get("authUser");
+
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const parsed = connectSupabaseMcpSchema.safeParse(body);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => i.message).join("; ");
+    throw new AppError(400, msg, "VALIDATION_ERROR");
+  }
+  const { accessToken, projectRef } = parsed.data;
+
+  // Verify the PAT against the public MCP server (this is the "does it work
+  // publicly" check) by opening a session and listing tools.
+  let toolCount = 0;
+  try {
+    const tools = await listSupabaseMcpTools({ accessToken, projectRef });
+    toolCount = tools.length;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new AppError(422, `Could not connect to Supabase MCP: ${msg}`, "MCP_CONNECT_FAILED");
+  }
+  if (toolCount === 0) {
+    throw new AppError(422, "Connected but the MCP server returned no tools — check the token's scope", "MCP_NO_TOOLS");
+  }
+
+  // Best-effort: fetch the project's public URL + anon key for previews.
+  let creds: { url: string | null; anonKey: string | null } = { url: null, anonKey: null };
+  if (projectRef) {
+    creds = await fetchSupabaseProjectCreds({ accessToken, projectRef }).catch(() => creds);
+  }
+
+  const patEnc = encrypt(accessToken);
+  const anonEnc = creds.anonKey ? encrypt(creds.anonKey) : null;
+  const now = new Date();
+  const id = randomUUID();
+
+  const config = {
+    projectRef: projectRef ?? undefined,
+    supabaseUrl: creds.url ?? undefined,
+    // PAT (admin) — encrypted, backend-only.
+    encryptedToken: patEnc.encrypted,
+    encryptedTokenIv: patEnc.iv,
+    encryptedTokenTag: patEnc.tag,
+    // anon key (public) — encrypted at rest too; injected into previews.
+    encryptedAnonKey: anonEnc?.encrypted,
+    encryptedAnonKeyIv: anonEnc?.iv,
+    encryptedAnonKeyTag: anonEnc?.tag,
+  };
+
+  await db
+    .insert(userIntegrations)
+    .values({
+      id, userId, provider: "supabase", status: "connected",
+      config, lastTestedAt: now, lastError: null, createdAt: now, updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [userIntegrations.userId, userIntegrations.provider],
+      set: { status: "connected", config, lastTestedAt: now, lastError: null, updatedAt: now },
+    });
+
+  logger.info({ userId, projectRef, toolCount, hasAnonKey: Boolean(creds.anonKey) }, "Supabase MCP connected");
+
+  return c.json({
+    provider: "supabase",
+    status: "connected",
+    toolCount,
+    projectRef: projectRef ?? null,
+    supabaseUrl: creds.url,
+    anonKeyResolved: Boolean(creds.anonKey),
+  }, 201);
+});
+
 // ── POST /api/integrations/:id/test ──────────────────────────────────────────
 
 integrationsRouter.post("/:id/test", async (c) => {
@@ -229,3 +317,67 @@ integrationsRouter.delete("/:id", async (c) => {
   logger.info({ userId, integrationId: id }, "Integration disconnected");
   return c.json({ success: true });
 });
+
+// ── Helpers for the build/preview flow ────────────────────────────────────────
+
+async function loadSupabaseIntegration(userId: string) {
+  const rows = await db
+    .select()
+    .from(userIntegrations)
+    .where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "supabase")))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.status !== "connected") return null;
+  return row;
+}
+
+/**
+ * The user's own Supabase project URL + anon key (decrypted) for injecting into
+ * a preview, when they've connected via MCP. anon key is public/RLS-safe. Null
+ * if not connected or the anon key wasn't resolved.
+ */
+export async function getUserSupabasePreviewCreds(
+  userId: string,
+): Promise<{ url: string; anonKey: string } | null> {
+  const row = await loadSupabaseIntegration(userId);
+  if (!row) return null;
+  const cfg = row.config;
+  if (!cfg.supabaseUrl || !cfg.encryptedAnonKey || !cfg.encryptedAnonKeyIv || !cfg.encryptedAnonKeyTag) {
+    return null;
+  }
+  try {
+    const anonKey = decrypt({
+      encrypted: cfg.encryptedAnonKey,
+      iv: cfg.encryptedAnonKeyIv,
+      tag: cfg.encryptedAnonKeyTag,
+    });
+    return { url: cfg.supabaseUrl, anonKey };
+  } catch (err) {
+    logger.warn({ userId, err }, "Failed to decrypt user Supabase anon key");
+    return null;
+  }
+}
+
+/**
+ * The user's Supabase MCP auth (PAT + projectRef), decrypted, for running their
+ * generated schema against their own project. Backend-only — never exposed.
+ */
+export async function getUserSupabaseMcpAuth(
+  userId: string,
+): Promise<{ accessToken: string; projectRef?: string } | null> {
+  const row = await loadSupabaseIntegration(userId);
+  if (!row) return null;
+  const cfg = row.config;
+  if (!cfg.encryptedToken || !cfg.encryptedTokenIv || !cfg.encryptedTokenTag) return null;
+  try {
+    const accessToken = decrypt({
+      encrypted: cfg.encryptedToken,
+      iv: cfg.encryptedTokenIv,
+      tag: cfg.encryptedTokenTag,
+    });
+    return { accessToken, ...(cfg.projectRef ? { projectRef: cfg.projectRef } : {}) };
+  } catch (err) {
+    logger.warn({ userId, err }, "Failed to decrypt user Supabase PAT");
+    return null;
+  }
+}

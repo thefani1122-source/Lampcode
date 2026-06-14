@@ -499,10 +499,15 @@ export type UserIntegrationConfig = {
   encryptedServiceKeyIv?: string | undefined;
   encryptedServiceKeyTag?: string | undefined;
   projectRef?: string | undefined;
-  // Vercel / GitHub / Railway — extend as needed
+  // Supabase MCP: Personal Access Token (admin, backend-only) + the project's
+  // public anon key (RLS-safe; injected into previews).
   encryptedToken?: string | undefined;
   encryptedTokenIv?: string | undefined;
   encryptedTokenTag?: string | undefined;
+  encryptedAnonKey?: string | undefined;
+  encryptedAnonKeyIv?: string | undefined;
+  encryptedAnonKeyTag?: string | undefined;
+  // Vercel / GitHub / Railway — extend as needed
   teamId?: string | undefined;
 };
 

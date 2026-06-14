@@ -30,7 +30,9 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv } from "../../preview/e2b-service.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth } from "./integrations.js";
+import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -526,10 +528,14 @@ export async function runFastBuild(
     const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
+      // If the user has connected their OWN Supabase (via MCP), point this
+      // project's preview at THEIR project; else fall back to the shared
+      // preview project. Must be set BEFORE prewarm writes the sandbox .env.
+      const userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+      setProjectPreviewEnv(projectId, userSupa);
+      if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
-      // running by the time the AI finishes generating. Without this the
-      // sandbox cold-starts AFTER generation and the user stares at
-      // "installing dependencies" before any preview appears.
+      // running by the time the AI finishes generating.
       prewarmSandbox(projectId, (line) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       );
@@ -952,6 +958,29 @@ export async function runFastBuild(
         note: "Backend + DB files generated. Run the SQL in src/db/schema.sql against your Supabase project (see .env.example).",
       });
       console.log(`[build] backend_ready project=${projectId} files=[${backendPaths.join(", ")}]`);
+
+      // If the user connected their OWN Supabase via MCP, actually provision it:
+      // run the generated schema as a migration against THEIR project so the
+      // app's tables/RLS exist. Best-effort + out-of-band — never blocks the
+      // build, and only ever touches the user's own project (never the platform
+      // DB). We do NOT run generated SQL against any shared/platform database.
+      const schemaSql = allFiles["src/db/schema.sql"];
+      if (schemaSql && schemaSql.trim()) {
+        void getUserSupabaseMcpAuth(userId)
+          .then(async (auth) => {
+            if (!auth) return;
+            server?.emitToRoom(sessionId, "build:preview_log", {
+              sessionId,
+              line: "Applying schema to your Supabase project…",
+            });
+            const r = await applySupabaseSchema(auth, `lampcode_${Date.now()}`, schemaSql);
+            server?.emitToRoom(sessionId, "build:preview_log", {
+              sessionId,
+              line: r.ok ? "✅ Schema applied to your Supabase project" : `⚠️ Schema apply failed: ${r.error}`,
+            });
+          })
+          .catch((err) => logger.warn({ projectId, err }, "Supabase schema apply failed"));
+      }
     }
 
     // Filter out backend/server/db files and non-source artifacts before sending
