@@ -663,15 +663,21 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     - Export default AuthProvider
 
 14. \`\`\`filename:src/components/Login.tsx
-    - Two tabs: "Sign In" | "Sign Up" — switching between them changes the form
-    - Email + password fields (controlled inputs) for both Sign In and Sign Up
-    - "Continue with Google" button with Google's red (#DB4437) color
-    - "Continue with GitHub" button with GitHub's dark (#24292e) color
-    - Both OAuth buttons call the matching method from useAuthContext()
+    - Rendered as a MODAL/OVERLAY (dimmed full-screen backdrop + centered card),
+      NOT a full-page route. Props: { onClose?: () => void }.
+    - A close (×) button in the card corner calls onClose; clicking the backdrop
+      also closes. Auto-close when login succeeds (useAuthContext().user != null
+      → call onClose in a useEffect).
+    - Two tabs: "Sign In" | "Sign Up" — switching changes the form
+    - Email + password fields (controlled inputs) — EMAIL/PASSWORD IS THE PRIMARY
+      path and works in the preview.
+    - "Continue with Google" (#DB4437) and "Continue with GitHub" (#24292e)
+      buttons calling the matching useAuthContext() method. Show a small note:
+      "Social login works on the deployed site" (OAuth can't redirect inside the
+      preview iframe). Keep them, just don't rely on them for the preview.
     - Error message display (red text, below the form)
     - Loading state: disable buttons and show "Loading..." during async calls
-    - Clean card layout, centered on screen, white background, subtle box-shadow
-    - Export default Login
+    - Export default Login (accepting the optional onClose prop)
 
 15. \`\`\`filename:README.md may document these env vars (the preview already
     provides them; the user sets their own when they deploy):
@@ -707,23 +713,37 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
 
 (@supabase/supabase-js is already installed in the preview — do NOT edit package.json.)
 
-APP.TSX — integrate auth into the main app:
-- Import AuthProvider from './components/AuthProvider'
-- Import Login from './components/Login'
-- Import useAuthContext from './components/AuthProvider'
-- The root return must wrap everything in <AuthProvider>
-- Inside, use a guard: if (user === null) return <Login />
-- When authenticated: render the full app UI with a sign-out button in the header
+APP.TSX — integrate auth WITHOUT a hard login wall:
+- Import AuthProvider + useAuthContext from './components/AuthProvider', Login from './components/Login'.
+- The root wraps everything in <AuthProvider>.
+- DO NOT block the whole app behind login. The app's MAIN UI must render first
+  (logged-out state visible), with a "Sign In" button in the header. Only when
+  the user CLICKS Sign In do you show the <Login /> screen (as a modal/overlay
+  or a toggled view). This way the preview shows the actual app, not a login wall.
+- Logged-out state: show the real UI shell + sample/empty state + a clear
+  "Sign in to save your data" call-to-action. Actions that need a user (e.g.
+  saving a todo) should open the login view instead of failing silently.
+- Logged-in state: show the user's email + a "Sign out" button, and load their
+  real data via the supabase client.
 - Example skeleton:
-    function AuthenticatedApp() {
-      const { user, signOut } = useAuthContext();
+    function AppContent() {
+      const { user, loading } = useAuthContext();
+      const [showLogin, setShowLogin] = useState(false);
+      if (loading) return <div>Loading...</div>;
       return (
         <div>
           <header>
-            <span>{user?.email}</span>
-            <button onClick={signOut}>Sign out</button>
+            <span>MyApp</span>
+            {user ? (
+              <SignOutButton />
+            ) : (
+              <button onClick={() => setShowLogin(true)}>Sign In</button>
+            )}
           </header>
-          {/* rest of app */}
+          <MainUI onRequireAuth={() => setShowLogin(true)} />
+          {showLogin && !user && (
+            <Login onClose={() => setShowLogin(false)} />
+          )}
         </div>
       );
     }
@@ -734,12 +754,8 @@ APP.TSX — integrate auth into the main app:
         </AuthProvider>
       );
     }
-    function AppContent() {
-      const { user, loading } = useAuthContext();
-      if (loading) return <div>Loading...</div>;
-      if (!user) return <Login />;
-      return <AuthenticatedApp />;
-    }`;
+- <MainUI> renders the app for everyone; when logged out, calls onRequireAuth()
+  for actions that need a signed-in user. Login should auto-close once user != null.`;
 
 // ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
