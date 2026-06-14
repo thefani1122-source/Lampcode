@@ -30,7 +30,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, writeFilesToSandbox, prewarmSandbox } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox } from "../../preview/e2b-service.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -973,17 +973,26 @@ export async function runFastBuild(
       totalFiles: Object.keys(allFiles).length,
     });
 
-    // ── E2B cloud sandbox preview (fullstack builds only) ───────────────────
-    // The instant Sandpack preview above can only run JS/TS in-browser. For
-    // fullstack builds (which may include non-Node backends) we additionally
-    // spin up a real Linux sandbox that can run the full stack end to end.
-    // Runs out-of-band so it never blocks or delays build:complete.
-    const sandboxAlreadyRunning = hasSandbox(projectId);
-    if (isFullstackBuild || (hasExistingCode && sandboxAlreadyRunning)) {
-      if (hasExistingCode && sandboxAlreadyRunning) {
-        // Follow-up build with a live preview sandbox — push the new files
-        // straight in and let Vite's HMR refresh the preview. Skips
-        // createPreviewSandbox entirely (no recreate, no install, no poll).
+    // ── E2B cloud sandbox preview ───────────────────────────────────────────
+    // The instant Sandpack preview above only runs JS/TS in-browser and CANNOT
+    // run a Supabase-direct app. So any fullstack/Supabase project — including
+    // EDITS to one — must use the real E2B sandbox. Falling back to Sandpack on
+    // a follow-up edit was why "change the design" showed a broken Sandpack
+    // preview. Detect a fullstack project three ways: a fresh fullstack build,
+    // the generated files contain the Supabase client, or we still hold a
+    // sandbox record (live or paused) for the project.
+    const hasFullstackFiles = Boolean(
+      allFiles["src/lib/supabase.ts"] ||
+        allFiles["src/db/schema.sql"] ||
+        existingFiles["src/lib/supabase.ts"],
+    );
+    const wantsE2BPreview =
+      isFullstackBuild || hasFullstackFiles || (await hasSandboxRecord(projectId));
+
+    if (wantsE2BPreview) {
+      const sandboxAlreadyRunning = hasSandbox(projectId);
+      if (sandboxAlreadyRunning) {
+        // Live in this process — push files straight in (Vite HMR refreshes).
         console.log(`[E2B] Follow-up build — writing files directly to running sandbox for project=${projectId}`);
         void writeFilesToSandbox(projectId, allFiles, (line) => {
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
@@ -999,7 +1008,9 @@ export async function runFastBuild(
             server?.emitPreviewError(sessionId, { sessionId, message });
           });
       } else {
-        console.log(`[E2B] Fullstack build detected — queueing preview sandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
+        // Not live in-process — createPreviewSandbox resumes the paused
+        // snapshot (or creates fresh for a brand-new fullstack build).
+        console.log(`[E2B] Preview needed — queueing createPreviewSandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
         server?.emitPreviewLoading(sessionId, { sessionId });
         setImmediate(() => {
           console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);

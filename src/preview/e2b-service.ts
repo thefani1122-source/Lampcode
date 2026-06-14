@@ -330,6 +330,20 @@ export function hasSandbox(projectId: string): boolean {
 }
 
 /**
+ * Whether this project has ANY sandbox record (live in-process OR a paused
+ * snapshot saved in Redis). Used to route follow-up edits of a fullstack
+ * project back to the E2B preview instead of falling through to Sandpack.
+ */
+export async function hasSandboxRecord(projectId: string): Promise<boolean> {
+  if (sandboxes.has(projectId)) return true;
+  try {
+    return (await loadSandboxId(projectId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resumes (or, failing that, creates) a running sandbox for the project and
  * makes sure its Vite dev server is up — WITHOUT writing any app files. The
  * template already ships a baked baseline scaffold, so a fresh sandbox serves a

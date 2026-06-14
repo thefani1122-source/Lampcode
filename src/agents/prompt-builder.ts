@@ -588,6 +588,16 @@ DATA ACCESS — always via the Supabase client, never fetch():
   // delete
   await supabase.from('todos').delete().eq('id', id)
 
+GENERATE THESE TWO FILES FIRST, FULLY — they are mandatory and must NEVER be
+empty (an empty one triggers a "files incomplete" warning and the user can't
+create their tables):
+  1. src/db/types.ts   — a complete exported interface for EVERY table, with
+     every column typed (matching schema.sql exactly).
+  2. src/db/schema.sql — complete CREATE TABLE statements for every table, with
+     RLS enabled + owner policies (see DATABASE section). Run order: tables the
+     app reads/writes must all be present.
+Write these two BEFORE the UI files so they're never dropped when output is long.
+
 RULES — VIOLATION CAUSES A BROKEN PREVIEW:
 RULE 1: NEVER generate src/server/**, src/lib/api.ts, or src/lib/db.ts.
         NEVER call fetch() to a /api/... endpoint. Use the supabase client.
@@ -717,14 +727,16 @@ APP.TSX — integrate auth WITHOUT a hard login wall:
 - Import AuthProvider + useAuthContext from './components/AuthProvider', Login from './components/Login'.
 - The root wraps everything in <AuthProvider>.
 - DO NOT block the whole app behind login. The app's MAIN UI must render first
-  (logged-out state visible), with a "Sign In" button in the header. Only when
-  the user CLICKS Sign In do you show the <Login /> screen (as a modal/overlay
-  or a toggled view). This way the preview shows the actual app, not a login wall.
-- Logged-out state: show the real UI shell + sample/empty state + a clear
-  "Sign in to save your data" call-to-action. Actions that need a user (e.g.
-  saving a todo) should open the login view instead of failing silently.
-- Logged-in state: show the user's email + a "Sign out" button, and load their
-  real data via the supabase client.
+  (logged-out state visible). Only when the user opens login do you show the
+  <Login /> modal. This way the preview shows the actual app, not a login wall.
+- EXACTLY ONE visible "Sign In" button — in the HEADER. Do NOT add extra Sign In
+  buttons, "Sign in to…" banners, or sample-data notices anywhere else. The
+  logged-out state just shows the real UI with sample/empty data; that's enough.
+- Actions that need a user (e.g. Save) call setShowLogin(true) to open the SAME
+  modal — they must NOT render their own Sign In button. When signed out, such a
+  button keeps its normal label (e.g. "Save"); clicking it opens login.
+- Logged-in state: replace the header Sign In with the user's email + a "Sign
+  out" button, and load their real data via the supabase client.
 - Example skeleton:
     function AppContent() {
       const { user, loading } = useAuthContext();
