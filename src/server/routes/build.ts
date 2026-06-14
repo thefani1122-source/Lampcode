@@ -15,6 +15,7 @@ import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt } from "../../agents/prompt-builder.js";
+import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
   findMissingFullstackFiles,
@@ -763,6 +764,79 @@ export async function runFastBuild(
             message: `Retry for missing files failed. Continuing with available files. Missing: ${missing.join(", ")}`,
             missingFiles: missing,
           });
+        }
+      }
+    }
+
+    // ── Syntax validation + auto-fix loop ───────────────────────────────────
+    // The #1 cause of "Preview failed to load: syntax error" is the model
+    // emitting a truncated/broken source file. Parse every generated source
+    // file with esbuild (the same parser the preview uses); if any fail, ask
+    // the model to return the COMPLETE corrected file, then re-validate. Bounded
+    // retries + an error fingerprint prevent loops. Broken code never reaches
+    // the preview unless we genuinely can't repair it.
+    {
+      const MAX_FIX_ATTEMPTS = 2;
+      let lastFingerprint = "";
+      for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+        const errors = await validateSyntax(filesToWrite).catch(() => []);
+        if (errors.length === 0) break;
+
+        const fingerprint = errors.map((e) => `${e.path}:${e.message}`).sort().join("|");
+        if (attempt === MAX_FIX_ATTEMPTS || fingerprint === lastFingerprint) {
+          // Out of attempts or the same errors keep coming back — surface it
+          // instead of shipping broken code as if it succeeded.
+          logger.warn({ sessionId, errors }, "Syntax errors remain after fix attempts");
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Some generated files still have syntax errors: ${errors.map((e) => e.path).join(", ")}. Try a follow-up prompt to fix them.`,
+            validationErrors: errors.map((e) => `${e.path}: ${e.message}`),
+          });
+          break;
+        }
+        lastFingerprint = fingerprint;
+
+        logger.warn({ sessionId, errors, attempt }, "Syntax errors — dispatching fix");
+        server?.thinking(sessionId, {
+          text: `Fixing a syntax error in ${errors.map((e) => e.path).join(", ")}…`,
+          sessionId,
+        });
+
+        const broken = new Set(errors.map((e) => e.path));
+        const brokenFiles = filesToWrite.filter((f) => broken.has(f.path));
+        const fixDescription =
+          `These files have syntax errors that break the preview. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
+          brokenFiles
+            .map((f) => {
+              const errMsg = errors.find((e) => e.path === f.path)?.message ?? "syntax error";
+              return `### ${f.path} — error: ${errMsg}\n\`\`\`filename:${f.path}\n${f.code}\n\`\`\``;
+            })
+            .join("\n\n");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "frontend",
+            task: {
+              description: fixDescription,
+              requirements: [
+                `Output ONLY these files: ${[...broken].join(", ")}.`,
+                "Return each file COMPLETE — never truncate, close every JSX tag and brace.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          const fixedMap = new Map(fixedParsed.filter((f) => broken.has(f.path)).map((f) => [f.path, f.code]));
+          if (fixedMap.size > 0) {
+            filesToWrite = filesToWrite.map((f) => (fixedMap.has(f.path) ? { ...f, code: fixedMap.get(f.path)! } : f));
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Syntax fix dispatch failed");
+          break;
         }
       }
     }

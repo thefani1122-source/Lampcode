@@ -40,7 +40,8 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "ws": "^8.21.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "esbuild": "0.28.0"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
