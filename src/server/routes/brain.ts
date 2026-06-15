@@ -78,7 +78,6 @@ brainRouter.get("/", async (c) => {
     content: latest.content,
     agentType: latest.agentType,
     modelUsed: latest.modelUsed,
-    sessionId: latest.sessionId,
     createdAt: latest.createdAt.toISOString(),
   });
 });
@@ -116,7 +115,6 @@ brainRouter.post("/", async (c) => {
       version: record.version,
       agentType: record.agentType,
       modelUsed: record.modelUsed,
-      sessionId: record.sessionId,
       createdAt: record.createdAt.toISOString(),
     },
     201,
@@ -143,7 +141,6 @@ brainRouter.get("/:fileId/history", async (c) => {
       version: r.version,
       agentType: r.agentType,
       modelUsed: r.modelUsed,
-      sessionId: r.sessionId,
       contentLength: r.content.length,
       createdAt: r.createdAt.toISOString(),
     })),

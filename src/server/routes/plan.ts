@@ -821,7 +821,7 @@ planRouter.get("/:sessionId/status", async (c) => {
     model: t.modelUsed,
     tier: t.tierUsed,
     status: t.status,
-    lastAction: t.completedAt?.toISOString() ?? t.startedAt.toISOString(),
+    lastAction: t.completedAt?.toISOString() ?? t.startedAt?.toISOString() ?? null,
     error: t.error,
   }));
 
@@ -983,12 +983,12 @@ planRouter.post("/:id/approve", async (c) => {
     // Rejected with no modifications — cancel
     await db.update(buildSessions).set({ status: "cancelled", planStatus: "cancelled", completedAt: new Date() })
       .where(eq(buildSessions.id, sessionId));
-    await db.update(projects).set({ status: "completed" }).where(eq(projects.id, session.projectId));
+    await db.update(projects).set({ status: "idle" }).where(eq(projects.id, session.projectId));
     return c.json({ sessionId, status: "cancelled" });
   }
 
   // Approved — kick off FOUNDATION phase in background
-  void runPlanPhase(sessionId, authUser.id, session.projectId, "FOUNDATION", session.contractContent ?? session.prompt);
+  void runPlanPhase(sessionId, authUser.id, session.projectId, "FOUNDATION", session.contractContent ?? session.prompt ?? "");
 
   return c.json({ sessionId, status: "building", message: "Build started. Monitor via GET /api/plan/:id/status" });
 });
@@ -1028,7 +1028,7 @@ planRouter.post("/:sessionId/phase/:phaseParam/approve", async (c) => {
     authUser.id,
     session.projectId,
     nextPhase,
-    session.contractContent ?? session.prompt,
+    session.contractContent ?? session.prompt ?? "",
   );
 
   return c.json({ sessionId, status: "running", currentPhase: phase, nextPhase });

@@ -165,7 +165,7 @@ export class DeployPipeline {
     if (previewUrl) {
       await db
         .update(integrations)
-        .set({ lastDeployedAt: new Date() })
+        .set({ updatedAt: new Date() })
         .where(and(
           eq(integrations.projectId, projectId),
           eq(integrations.provider, "vercel"),

@@ -213,16 +213,16 @@ projectsRouter.patch("/:id", async (c) => {
     updatedAt: Date;
     name?: string;
     description?: string | null;
-    settings?: ProjectSettings | null;
-    branding?: ProjectBranding | null;
+    settings?: ProjectSettings;
+    branding?: ProjectBranding;
     isArchived?: boolean;
   };
 
   const updates: ProjectUpdate = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = body.name;
   if (body.description !== undefined) updates.description = body.description;
-  if (body.settings !== undefined) updates.settings = body.settings;
-  if (body.branding !== undefined) updates.branding = body.branding;
+  if (body.settings != null) updates.settings = body.settings;
+  if (body.branding != null) updates.branding = body.branding;
   if (body.isArchived !== undefined) updates.isArchived = body.isArchived;
 
   const [updated] = await db

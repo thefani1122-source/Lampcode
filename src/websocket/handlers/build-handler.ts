@@ -93,8 +93,7 @@ async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<voi
   }
 }
 
-export function registerBuildHandlers(nsp: BuildNamespace): void {
-  nsp.on("connection", async (socket: BuildSocket) => {
+export function registerBuildHandlers(nsp: BuildNamespace): void {  nsp.on("connection", async (socket: BuildSocket) => {
     const userId = socket.data.userId; // always set — wsBuildAuthMiddleware required it
     console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
     logger.info({ socketId: socket.id, userId }, "Build WS connected");
@@ -133,7 +132,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       const owned = await verifySessionOwner(querySid, userId);
       if (!owned) {
         logger.warn({ socketId: socket.id, userId, sessionId: querySid }, "Build WS forbidden — user does not own session");
-        socket.emit("error", { code: 403, message: "Forbidden" });
+        (socket.emit as (e: string, d: unknown) => boolean)("error", { code: 403, message: "Forbidden" });
         socket.disconnect(true);
         return;
       }
@@ -156,7 +155,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       void verifySessionOwner(sid, userId).then((owned) => {
         if (!owned) {
           logger.warn({ socketId: socket.id, userId, sessionId: sid }, "Build WS forbidden — user does not own session (join)");
-          socket.emit("error", { code: 403, message: "Forbidden" });
+          (socket.emit as (e: string, d: unknown) => boolean)("error", { code: 403, message: "Forbidden" });
           socket.disconnect(true);
           return;
         }
@@ -171,7 +170,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       const owned = await verifySessionOwner(sessionId, userId);
       if (!owned) {
         logger.warn({ socketId: socket.id, userId, sessionId }, "Build WS forbidden — user does not own session (join_session)");
-        socket.emit("error", { code: 403, message: "Forbidden" });
+        (socket.emit as (e: string, d: unknown) => boolean)("error", { code: 403, message: "Forbidden" });
         socket.disconnect(true);
         ack(false);
         return;
