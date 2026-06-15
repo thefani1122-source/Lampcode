@@ -34,14 +34,19 @@ const PKG_JSON = `{
     "@supabase/supabase-js": "^2.45.0",
     "hono": "^4.6.3",
     "@hono/node-server": "^1.13.1",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "mongoose": "^8.7.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.10",
     "typescript": "^5.5.4",
     "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0"
+    "@types/react-dom": "^18.3.0",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/bcryptjs": "^2.4.6"
   }
 }`
 

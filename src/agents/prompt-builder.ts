@@ -436,37 +436,25 @@ export function detectDatabase(prompt: string): Database {
 
 const DB_INSTRUCTIONS: Record<Database, string> = {
   supabase: `
-DATABASE: Supabase (PostgreSQL), accessed DIRECTLY from the frontend via
-@supabase/supabase-js — there is NO backend server and NO src/lib/db.ts.
+DATABASE: Supabase (PostgreSQL) — the Hono BACKEND accesses it server-side via
+@supabase/supabase-js (NOT directly from the frontend; the frontend calls /api).
 
-DATABASE RULES:
-- All reads/writes use the client from src/lib/supabase.ts: supabase.from('table')…
-- Never use drizzle-orm, the postgres package, or any TCP driver.
-- Never use the service_role key in the app — only the anon key (public, RLS-secured).
-- Define a TypeScript interface per table's row in src/db/types.ts.
-- Put every table's CREATE TABLE in src/db/schema.sql WITH Row Level Security.
-  Include created_at TIMESTAMPTZ DEFAULT now() and (for per-user data) a
-  user_id UUID REFERENCES auth.users(id).
+DB CLIENT — at the top of src/server/routes/api.ts:
+  import { createClient } from '@supabase/supabase-js'
+  // Service key (full access, bypasses RLS — backend-only) when present, else anon.
+  const db = createClient(
+    process.env.SUPABASE_URL || '',
+    process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '',
+  )
+  // read:  const { data, error } = await db.from('riders').select('*')
+  // write: const { data, error } = await db.from('riders').insert(body).select().single()
 
-DB SCHEMA FILES:
-1. \`\`\`filename:src/db/types.ts   — TypeScript interfaces for each table row
-2. \`\`\`filename:src/db/schema.sql — CREATE TABLE + RLS to run in the Supabase SQL editor
+DB SCHEMA FILES (also generate):
+1. \`\`\`filename:src/db/types.ts   — TypeScript interface per table row (shared)
+2. \`\`\`filename:src/db/schema.sql — CREATE TABLE statements (+ RLS) to run in Supabase
 
-schema.sql MUST enable RLS and add owner policies, e.g.:
-  create table todos (
-    id uuid primary key default gen_random_uuid(),
-    user_id uuid not null references auth.users(id) on delete cascade,
-    title text not null,
-    completed boolean not null default false,
-    created_at timestamptz not null default now()
-  );
-  alter table todos enable row level security;
-  create policy "own rows" on todos for all to authenticated
-    using (user_id = auth.uid()) with check (user_id = auth.uid());
-
-Do NOT generate package.json or .env — the preview environment already provides
-them with the Supabase anon key wired in. (If you want to document setup, you
-may add a short README.md.)`,
+The env (SUPABASE_URL + keys) is injected by the preview — do NOT generate .env
+or package.json. Read everything from process.env in the backend.`,
 
   mongodb: `
 DATABASE: MongoDB Atlas (via Mongoose)
@@ -513,47 +501,10 @@ API ROUTES EXAMPLE — src/server/routes/api.ts:
     return c.body(null, 204)
   })
 
-PACKAGE.JSON DEPS: hono, mongoose, zod (plus frontend framework deps)
-Note: do NOT add mongodb separately — mongoose already includes it.
-
-ENV EXAMPLE — \`\`\`filename:.env.example:
-  MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/dbname?retryWrites=true&w=majority
-  VITE_API_URL=http://localhost:5173
-
-README — also generate \`\`\`filename:README.md with this EXACT content:
-\`\`\`
-# MongoDB Atlas Setup Guide
-
-## 1. Create Cluster
-- Go to mongodb.com/atlas → Sign up free
-- Create Shared Cluster (FREE tier)
-- Choose AWS/Google Cloud region closest to your users
-
-## 2. Network Access
-- Database → Network Access → Add IP Address
-- Click "Allow Access from Anywhere" → 0.0.0.0/0
-- (Required because WebContainer preview runs from browser networks with dynamic IPs)
-
-## 3. Database User
-- Database → Database Access → Add New User
-- Username: lampcode_user
-- Password: (auto-generate and save)
-- Built-in Role: Read and Write to any database
-
-## 4. Connection String
-- Database → Clusters → Connect → Drivers → Node.js
-- Copy connection string: mongodb+srv://lampcode_user:<password>@cluster0.xxxxx.mongodb.net/lampcode?retryWrites=true&w=majority
-- Replace <password> with your generated password
-
-## 5. Environment Variables
-Create .env file with:
-MONGODB_URI=mongodb+srv://lampcode_user:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/lampcode?retryWrites=true&w=majority
-VITE_API_URL=http://localhost:3001
-
-## 6. Deploy
-- Backend: Railway/Render (set MONGODB_URI env var)
-- Frontend: Vercel (set VITE_API_URL to your Railway backend URL)
-\`\`\``,
+mongoose (+ mongodb driver bundled) is pre-installed. MONGODB_URI is injected by
+the preview env — do NOT generate .env or package.json. The frontend always
+calls same-origin /api (no VITE_API_URL). connectDB() must run at the start of
+every route (idempotent) so the lazy connection is established.`,
 };
 
 // ── Fullstack mode instruction ────────────────────────────────────────────────
@@ -596,29 +547,21 @@ FIRST so it's never dropped when output is long):
      console.log('API on :' + (process.env.PORT || 3001))
 
 4. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
-   Use Supabase server-side; ALWAYS handle errors so the server never crashes
-   (return [] / an error json, never throw). EXACT shape:
+   Read/write data with the DB CLIENT defined in the DATABASE section below
+   (Supabase OR MongoDB — exactly the one specified there; never mix two DBs).
+   ALWAYS handle errors so the server never crashes (return [] / an error json,
+   never throw). Shape:
      import { Hono } from 'hono'
-     import { createClient } from '@supabase/supabase-js'
-     // Backend uses the SERVICE key when available (full server-side access,
-     // bypasses RLS — safe, it only exists in the backend process), else anon.
-     const supabase = createClient(
-       process.env.SUPABASE_URL || '',
-       process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '',
-     )
+     // ...import the DB client per the DATABASE section...
      export const api = new Hono()
-     // GET /api/riders
      api.get('/riders', async (c) => {
-       const { data, error } = await supabase.from('riders').select('*').order('created_at', { ascending: false })
-       if (error) return c.json([], 200)         // table not set up yet → empty, don't crash
-       return c.json(data ?? [])
+       try { /* read via the DB client */ return c.json(rows ?? []) }
+       catch { return c.json([], 200) }   // not set up yet → empty, don't crash
      })
-     // POST /api/riders
      api.post('/riders', async (c) => {
        const body = await c.req.json().catch(() => ({}))
-       const { data, error } = await supabase.from('riders').insert(body).select().single()
-       if (error) return c.json({ error: error.message }, 400)
-       return c.json(data, 201)
+       try { /* insert via the DB client */ return c.json(created, 201) }
+       catch (e) { return c.json({ error: String(e) }, 400) }
      })
    Add every route the app needs (orders, webhooks, etc.) in this same style.
    For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
@@ -838,6 +781,50 @@ APP.TSX — integrate auth WITHOUT a hard login wall:
 - <MainUI> renders the app for everyone; when logged out, calls onRequireAuth()
   for actions that need a signed-in user. Login should auto-close once user != null.`;
 
+// ── MongoDB auth (custom JWT — MongoDB has no built-in auth like Supabase) ─────
+const MONGODB_AUTH_INSTRUCTION = `
+
+AUTH MODE (MongoDB) — MongoDB has NO built-in auth service, so build a real
+custom JWT auth in the Hono backend. Generate:
+
+1. \`\`\`filename:src/server/routes/auth.ts — Hono router with register + login,
+   using bcryptjs (hash) + jsonwebtoken (sign with process.env.JWT_SECRET), and a
+   User mongoose model (email unique + passwordHash). EXACT shape:
+     import { Hono } from 'hono'
+     import bcrypt from 'bcryptjs'
+     import jwt from 'jsonwebtoken'
+     import mongoose from 'mongoose'
+     import { connectDB } from '../../lib/db.js'
+     const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
+       { email: { type: String, unique: true, required: true }, passwordHash: String },
+       { timestamps: true }))
+     const SECRET = process.env.JWT_SECRET || 'dev'
+     export const auth = new Hono()
+     auth.post('/register', async (c) => {
+       await connectDB(); const { email, password } = await c.req.json()
+       if (!email || !password) return c.json({ error: 'email & password required' }, 400)
+       if (await User.findOne({ email })) return c.json({ error: 'email taken' }, 409)
+       const u = await User.create({ email, passwordHash: await bcrypt.hash(password, 10) })
+       return c.json({ token: jwt.sign({ sub: u.id, email }, SECRET, { expiresIn: '7d' }), user: { id: u.id, email } }, 201)
+     })
+     auth.post('/login', async (c) => {
+       await connectDB(); const { email, password } = await c.req.json()
+       const u = await User.findOne({ email })
+       if (!u || !(await bcrypt.compare(password, u.passwordHash))) return c.json({ error: 'invalid credentials' }, 401)
+       return c.json({ token: jwt.sign({ sub: u.id, email }, SECRET, { expiresIn: '7d' }), user: { id: u.id, email } })
+     })
+   Mount it in src/server/index.ts:  app.route('/api/auth', auth)
+
+2. A requireAuth helper (verify the Bearer token with jwt.verify) used by routes
+   that need a logged-in user; read user id from the token, scope data by it.
+
+3. FRONTEND: src/lib/api.ts stores the JWT in localStorage after register/login
+   and sends it as 'Authorization: Bearer <token>' on every /api call. The
+   useAuth hook tracks { user, token }. Same app-first UI as the Supabase flow:
+   main UI renders for everyone, ONE 'Sign In' button opens a Login modal
+   (email/password → POST /api/auth/login|register), modal auto-closes on success.
+   No social/OAuth (custom auth is email/password).`;
+
 // ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "security",
@@ -970,10 +957,12 @@ export class PromptBuilder {
       : "";
 
     // ── Framework detection (frontend agent only) ──────────────────────────
-    // Always default to React + Vite: the preview sandbox runs a Vite dev
-    // server, so a Next.js app (its own server/build) would not boot there.
+    // FULLSTACK (E2B) builds are FORCED to React: the preview template bakes a
+    // React+Vite scaffold, so vue/svelte/solid/preact/next would generate config
+    // the sandbox can't run. Frontend-only builds (Sandpack) can use any of the
+    // detected frameworks since Sandpack supports them.
     const framework = agentType === "frontend"
-      ? detectFramework(task.description, "react")
+      ? (isFullstackMode ? "react" : detectFramework(task.description, "react"))
       : "react";
     const frameworkInstruction = agentType === "frontend"
       ? FRAMEWORK_RULES[framework]
@@ -985,7 +974,10 @@ export class PromptBuilder {
     const isFullstackAuthMode =
       agentType === "frontend" &&
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    const authInstruction = isFullstackAuthMode ? FULLSTACK_AUTH_INSTRUCTION : "";
+    // Supabase has built-in auth; MongoDB has none → custom JWT auth.
+    const authInstruction = isFullstackAuthMode
+      ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
+      : "";
 
     const isEditMode =
       agentType === "frontend" &&

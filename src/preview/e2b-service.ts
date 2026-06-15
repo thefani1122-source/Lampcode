@@ -172,39 +172,47 @@ const BAKED_FILES = new Set([
 async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: PreviewLogCallback): Promise<void> {
   // Prefer the USER'S own connected Supabase project (set per-project at build
   // start) over the shared preview project — so each user's app runs on their
-  // own database. Both are anon-key only (public, RLS-safe).
+  // own database. The anon key is public/RLS-safe.
   const override = projectPreviewEnv.get(projectId);
-  const url = override?.url ?? config.PREVIEW_SUPABASE_URL;
-  const anon = override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY;
+  let url = override?.url ?? config.PREVIEW_SUPABASE_URL;
+  let anon = override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY;
   if (override) log("Using the project owner's connected Supabase for the preview");
-  if (!url || !anon) {
-    log("No Supabase configured for preview — skipping .env injection");
-    return;
+
+  // SAFETY: never point a generated preview app at Lampcode's OWN Supabase
+  // project — test sign-ups/data would pollute the real product. Drop it.
+  if (url && config.SUPABASE_URL && url === config.SUPABASE_URL) {
+    logger.error({ url }, "[e2b] REFUSING preview Supabase = platform SUPABASE_URL (data-safety)");
+    log("⚠️ Preview Supabase = platform Supabase — skipping Supabase env. Use a separate preview project.");
+    url = undefined;
+    anon = undefined;
   }
-  // SAFETY: never let a generated preview app authenticate / read / write
-  // against Lampcode's OWN Supabase project. If they're the same, sign-ups and
-  // data from arbitrary generated apps would land in the real product's auth
-  // and tables, and OAuth would redirect to the real dashboard. Refuse loudly —
-  // PREVIEW_SUPABASE_* MUST be a separate, throwaway Supabase project.
-  if (config.SUPABASE_URL && url === config.SUPABASE_URL) {
-    logger.error(
-      { url },
-      "[e2b] REFUSING preview env injection: PREVIEW_SUPABASE_URL equals the platform SUPABASE_URL. " +
-        "Generated apps must use a SEPARATE Supabase project. Point PREVIEW_SUPABASE_URL at a dedicated preview project.",
-    );
-    log("⚠️ Preview Supabase = platform Supabase — refusing to inject (data-safety). Use a separate preview project.");
-    return;
-  }
-  // VITE_* for the frontend (import.meta.env), plain SUPABASE_* for the Node
-  // backend (process.env, loaded via tsx --env-file=.env). The anon key is
-  // public/RLS-safe. The SERVICE key (RLS-bypass) is written WITHOUT a VITE_
-  // prefix, so Vite never exposes it to the browser — only the backend reads it.
+
   const serviceKey = override?.serviceKey ?? config.PREVIEW_SUPABASE_SERVICE_KEY;
-  const env =
-    `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n` +
-    `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n` +
-    (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
-  if (serviceKey) log("Backend has service-role access to Supabase");
+  const mongoUri = config.PREVIEW_MONGODB_URI;
+
+  // VITE_* → frontend (import.meta.env); plain keys → Node backend (process.env
+  // via tsx --env-file). SERVICE/JWT/MONGO keys have NO VITE_ prefix, so Vite
+  // never exposes them to the browser. A JWT secret is always provided so
+  // MongoDB apps can do custom auth.
+  let env = "";
+  if (url && anon) {
+    env +=
+      `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n` +
+      `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n` +
+      (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
+    if (serviceKey) log("Backend has service-role access to Supabase");
+  }
+  if (mongoUri) {
+    env += `MONGODB_URI=${mongoUri}\n`;
+    log("Backend has a MongoDB connection (MONGODB_URI)");
+  }
+  // Stable per-project secret for custom (MongoDB) JWT auth.
+  env += `JWT_SECRET=lampcode_${projectId}\n`;
+
+  if (!env.trim()) {
+    log("No preview DB configured — skipping .env injection");
+    return;
+  }
   try {
     await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
     log("Injected preview Supabase credentials into .env");

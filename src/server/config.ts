@@ -23,6 +23,9 @@ const envSchema = z.object({
   // backend process env (never VITE_, never the frontend) so generated Node/Hono
   // backends can do real server-side work (bypass RLS, admin writes, webhooks).
   PREVIEW_SUPABASE_SERVICE_KEY: z.string().min(1).optional(),
+  // Shared preview MongoDB connection string — injected into the backend env
+  // (MONGODB_URI) so generated MongoDB apps can connect & persist in the preview.
+  PREVIEW_MONGODB_URI: z.string().min(1).optional(),
   REDIS_URL: z.string().url().optional(),
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),
