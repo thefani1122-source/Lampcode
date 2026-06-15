@@ -492,7 +492,12 @@ function isEffectivelyEmpty(code: string | undefined): boolean {
 export function findMissingFullstackFiles(
   files: Record<string, string>,
 ): string[] {
-  return REQUIRED_FULLSTACK_FILES.filter((path) => isEffectivelyEmpty(files[path]));
+  // Python/FastAPI apps ship src/server/main.py instead of the .ts backend —
+  // don't demand the Node files (or we'd trigger a wrong retry).
+  const required = !isEffectivelyEmpty(files["src/server/main.py"])
+    ? ["src/db/types.ts", "src/server/main.py"]
+    : REQUIRED_FULLSTACK_FILES;
+  return required.filter((path) => isEffectivelyEmpty(files[path]));
 }
 
 // ── Sandpack validator ────────────────────────────────────────────────────────

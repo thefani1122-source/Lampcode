@@ -652,6 +652,57 @@ HARD RULES:
 ALLOWED IMPORTS: react, react-dom, hono, @hono/node-server, @supabase/supabase-js,
 zod. All pre-installed. Do not import other libraries.`;
 
+// Use a Python/FastAPI backend when the prompt asks for it (or implies a
+// Python-only ecosystem: ML/data work).
+const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
+
+const FASTAPI_OVERRIDE = `
+
+## PYTHON BACKEND OVERRIDE — use FastAPI instead of Hono/Node
+
+The user wants a Python backend. REPLACE the Node/Hono backend with FastAPI.
+Do NOT generate src/server/index.ts, src/server/routes/api.ts, or any .ts
+backend file. Everything else (the React frontend + src/lib/api.ts calling
+'/api/...') stays exactly the same — Vite proxies /api to this server on :3001.
+
+Generate INSTEAD:
+
+1. \`\`\`filename:src/server/main.py — a FastAPI app. The ASGI app MUST be named
+   exactly \`app\`. All routes under /api. Use the supabase Python client; handle
+   errors so the server never crashes on startup. EXACT shape:
+     import os
+     from fastapi import FastAPI, Request
+     from fastapi.middleware.cors import CORSMiddleware
+     from supabase import create_client
+     app = FastAPI()
+     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+     # Service key (full access) when present, else anon. Both come from env.
+     _key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or ""
+     supabase = create_client(os.environ.get("SUPABASE_URL", ""), _key)
+
+     @app.get("/api/riders")
+     def list_riders():
+         try:
+             return (supabase.table("riders").select("*").order("created_at", desc=True).execute()).data or []
+         except Exception:
+             return []
+
+     @app.post("/api/riders")
+     async def create_rider(req: Request):
+         body = await req.json()
+         try:
+             res = supabase.table("riders").insert(body).execute()
+             return (res.data or [None])[0]
+         except Exception as e:
+             return {"error": str(e)}
+   Add every route the app needs in this same defensive style.
+
+2. \`\`\`filename:requirements.txt — list: fastapi, uvicorn, supabase
+   (these are pre-installed in the environment; list them for completeness).
+
+The server is started for you as: uvicorn main:app --port 3001 (from src/server).
+Do NOT write your own __main__ / uvicorn.run() block.`;
+
 // ── Auth sub-mode instruction ─────────────────────────────────────────────────
 // Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
 
@@ -912,7 +963,10 @@ export class PromptBuilder {
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
        task.description.startsWith("FULLSTACK AUTH BUILD:"));
-    const fullstackInstruction = isFullstackMode ? FULLSTACK_INSTRUCTION : "";
+    const wantsPython = isFullstackMode && PYTHON_BACKEND_RE.test(task.description);
+    const fullstackInstruction = isFullstackMode
+      ? FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : "")
+      : "";
 
     // ── Framework detection (frontend agent only) ──────────────────────────
     // Always default to React + Vite: the preview sandbox runs a Vite dev

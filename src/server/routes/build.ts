@@ -1086,9 +1086,11 @@ export async function runFastBuild(
     // sandbox record (live or paused) for the project.
     const hasFullstackFiles = Boolean(
       allFiles["src/server/index.ts"] ||
+        allFiles["src/server/main.py"] ||
         allFiles["src/lib/supabase.ts"] ||
         allFiles["src/db/schema.sql"] ||
         existingFiles["src/server/index.ts"] ||
+        existingFiles["src/server/main.py"] ||
         existingFiles["src/lib/supabase.ts"],
     );
     const wantsE2BPreview =

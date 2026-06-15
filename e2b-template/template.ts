@@ -133,8 +133,10 @@ const writeFile = (path: string, body: string): string => {
 
 const dockerfile = [
   'FROM node:20-slim',
-  'RUN apt-get update && apt-get install -y git curl ca-certificates && rm -rf /var/lib/apt/lists/*',
+  'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
   'RUN npm install -g vite tsx typescript',
+  // Python backends (FastAPI) run on the same :3001 the frontend proxies /api to.
+  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv',
   'WORKDIR /home/user/app',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),

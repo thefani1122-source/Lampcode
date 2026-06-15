@@ -363,25 +363,33 @@ async function ensureDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promi
  * frontend-only / Supabase-direct apps. Runs under tsx (baked in the template).
  */
 async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
-  let hasBackend = false;
-  let hasEnv = false;
+  // Detect the backend's runtime by its entry file: Node/Hono (src/server/index.ts)
+  // or Python/FastAPI (src/server/main.py). Either runs on :3001.
+  let runtime: "node" | "python" | null = null;
+  let envText = "";
   try {
     const r = await sandbox.commands.run(
-      "test -f src/server/index.ts && echo SERVER; test -f .env && echo ENV",
+      "test -f src/server/index.ts && echo NODE; test -f src/server/main.py && echo PY; cat .env 2>/dev/null || true",
       { cwd: PROJECT_DIR, timeoutMs: 10_000 },
     );
-    hasBackend = r.stdout.includes("SERVER");
-    hasEnv = r.stdout.includes("ENV");
+    if (r.stdout.includes("PY")) runtime = "python";
+    else if (r.stdout.includes("NODE")) runtime = "node";
+    envText = r.stdout;
   } catch {
     return;
   }
-  if (!hasBackend) return;
+  if (!runtime) return;
 
-  // Restart with the latest code (the backend isn't HMR'd like Vite).
-  await sandbox.commands.run("pkill -f 'src/server/index' || true", { timeoutMs: 10_000 }).catch(() => {});
-  log("Starting backend server on :3001...");
-  // Capture the backend's output into a ring buffer so the agentic verify step
-  // can read its crash error and fix it.
+  // Parse .env (KEY=VALUE lines) so we can pass Supabase creds to BOTH runtimes
+  // uniformly via the process env (Python's uvicorn doesn't read --env-file).
+  const envs: Record<string, string> = { PORT: "3001" };
+  for (const line of envText.split("\n")) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (m && m[1] && m[2] !== undefined) envs[m[1]] = m[2];
+  }
+
+  await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
+  log(`Starting ${runtime} backend server on :3001...`);
   const buf: string[] = [];
   backendLogs.set(sandbox.sandboxId, buf);
   const capture = (line: string): void => {
@@ -389,14 +397,19 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
     buf.push(line);
     if (buf.length > 80) buf.shift();
   };
-  // --env-file loads .env (Supabase creds) into the backend's process.env.
-  const cmd = hasEnv ? "tsx --env-file=.env src/server/index.ts" : "tsx src/server/index.ts";
+
+  // Node: tsx runs the Hono server. Python: uvicorn serves the FastAPI `app`
+  // from src/server/main.py (run from that dir so `main:app` resolves).
+  const cmd =
+    runtime === "python"
+      ? "cd src/server && python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
+      : "tsx src/server/index.ts";
   try {
     await sandbox.commands.run(cmd, {
       cwd: PROJECT_DIR,
       background: true,
       timeoutMs: 0, // lives as long as the sandbox (default 60s would kill it)
-      envs: { PORT: "3001" },
+      envs,
       onStdout: capture,
       onStderr: capture,
     });
@@ -433,7 +446,10 @@ export async function verifyPreview(projectId: string): Promise<{ ok: boolean; i
 
   let hasBackend = false;
   try {
-    const r = await sandbox.commands.run("test -f src/server/index.ts && echo y", { cwd: PROJECT_DIR, timeoutMs: 10_000 });
+    const r = await sandbox.commands.run(
+      "test -f src/server/index.ts -o -f src/server/main.py && echo y",
+      { cwd: PROJECT_DIR, timeoutMs: 10_000 },
+    );
     hasBackend = r.stdout.includes("y");
   } catch {
     return { ok: true, issues: [] };
