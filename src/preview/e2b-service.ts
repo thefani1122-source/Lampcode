@@ -192,7 +192,12 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
     log("⚠️ Preview Supabase = platform Supabase — refusing to inject (data-safety). Use a separate preview project.");
     return;
   }
-  const env = `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n`;
+  // VITE_* for the frontend (import.meta.env), plain SUPABASE_* for the Node
+  // backend (process.env, loaded via tsx --env-file=.env). Same anon key, which
+  // is public/RLS-safe — the service key never enters the sandbox.
+  const env =
+    `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n` +
+    `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n`;
   try {
     await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
     log("Injected preview Supabase credentials into .env");
@@ -319,24 +324,69 @@ function previewUrlFor(sandbox: Sandbox): string {
  */
 async function ensureDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
   const url = previewUrlFor(sandbox);
+  let viteUp = false;
   try {
     const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(3_000) });
-    if (res.ok || res.status < 500) return; // listening — nothing to do
+    viteUp = res.ok || res.status < 500;
   } catch {
-    // not listening — fall through to restart
+    // not listening — restart below
   }
-  log("Dev server not responding — (re)starting Vite...");
-  // Kill any half-dead Vite first (process alive but not serving) so the
-  // restart can't lose a port conflict against a zombie instance.
-  await sandbox.commands
-    .run("pkill -f vite || true", { timeoutMs: 10_000 })
-    .catch(() => {});
-  await startDevServer(sandbox, log);
-  const ready = await waitForServerReady(url);
-  if (!ready) {
-    throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
+  if (!viteUp) {
+    log("Dev server not responding — (re)starting Vite...");
+    // Kill any half-dead Vite first (process alive but not serving) so the
+    // restart can't lose a port conflict against a zombie instance.
+    await sandbox.commands.run("pkill -f vite || true", { timeoutMs: 10_000 }).catch(() => {});
+    await startDevServer(sandbox, log);
+    const ready = await waitForServerReady(url);
+    if (!ready) {
+      throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
+    }
+    log("Dev server is up");
   }
-  log("Dev server is up");
+  // Also (re)start the app's own backend if it ships one — no-op otherwise.
+  await ensureBackendServer(sandbox, log).catch(() => {});
+}
+
+/**
+ * Starts the app's REAL backend inside the sandbox when it ships one
+ * (src/server/index.ts). The backend (Hono/Node) listens on :3001 and Vite
+ * proxies /api/* to it, so generated apps can serve real API routes
+ * (/api/riders, /api/orders, Stripe webhooks, …) — not just Supabase-direct
+ * calls. Always (re)started after a write so it runs the latest code; no-op for
+ * frontend-only / Supabase-direct apps. Runs under tsx (baked in the template).
+ */
+async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  let hasBackend = false;
+  let hasEnv = false;
+  try {
+    const r = await sandbox.commands.run(
+      "test -f src/server/index.ts && echo SERVER; test -f .env && echo ENV",
+      { cwd: PROJECT_DIR, timeoutMs: 10_000 },
+    );
+    hasBackend = r.stdout.includes("SERVER");
+    hasEnv = r.stdout.includes("ENV");
+  } catch {
+    return;
+  }
+  if (!hasBackend) return;
+
+  // Restart with the latest code (the backend isn't HMR'd like Vite).
+  await sandbox.commands.run("pkill -f 'src/server/index' || true", { timeoutMs: 10_000 }).catch(() => {});
+  log("Starting backend server on :3001...");
+  // --env-file loads .env (Supabase creds) into the backend's process.env.
+  const cmd = hasEnv ? "tsx --env-file=.env src/server/index.ts" : "tsx src/server/index.ts";
+  try {
+    await sandbox.commands.run(cmd, {
+      cwd: PROJECT_DIR,
+      background: true,
+      timeoutMs: 0, // lives as long as the sandbox (default 60s would kill it)
+      envs: { PORT: "3001" },
+      onStdout: log,
+      onStderr: log,
+    });
+  } catch (err) {
+    logger.warn({ err }, "[e2b] Failed to start backend server");
+  }
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */

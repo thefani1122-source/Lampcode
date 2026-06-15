@@ -562,78 +562,90 @@ VITE_API_URL=http://localhost:3001
 
 const FULLSTACK_INSTRUCTION = `
 
-## ARCHITECTURE — SUPABASE-DIRECT (NO SEPARATE BACKEND SERVER)
+## ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND
 
-This is the single most important rule. The generated app talks to Supabase
-DIRECTLY from the frontend using the @supabase/supabase-js client. There is NO
-Hono/Express server, NO src/server/ directory, NO src/lib/api.ts fetch layer,
-NO src/lib/db.ts, and NO VITE_API_URL. The whole app runs in the Vite dev
-server; the preview is the running app.
+This app ships a REAL backend server with real API routes — not just direct
+Supabase calls. The preview runs BOTH: a Vite frontend on :5173 and a Hono
+(Node) backend on :3001. Vite proxies /api/* to the backend, so the frontend
+calls same-origin '/api/...'. This is how you build real /api/riders,
+/api/orders, Stripe /api/webhooks, and any custom server-side logic.
 
-Why: the live preview only runs the Vite frontend. A separate backend server
-would never start, so every fetch('/api/...') call fails and the preview breaks.
-Supabase (Postgres + Auth + REST, secured by Row Level Security) IS the backend.
+DATA: the backend uses Supabase (Postgres) server-side. The DB tables come from
+src/db/schema.sql; the backend reads/writes them with the supabase-js client.
 
-DATA ACCESS — always via the Supabase client, never fetch():
-  import { supabase } from '../lib/supabase'
+GENERATE THESE FILES (this exact set is the backbone — generate the backend
+FIRST so it's never dropped when output is long):
 
-  // read
-  const { data, error } = await supabase
-    .from('todos').select('*').order('created_at', { ascending: false })
-  // insert
-  const { data, error } = await supabase
-    .from('todos').insert({ title, user_id: user.id }).select().single()
-  // update
-  await supabase.from('todos').update({ completed }).eq('id', id)
-  // delete
-  await supabase.from('todos').delete().eq('id', id)
+1. \`\`\`filename:src/db/types.ts — shared TypeScript interfaces for every table
+   (used by BOTH backend and frontend). Never empty.
+     export interface Rider { id: string; name: string; phone: string; status: string; created_at: string }
 
-GENERATE THESE TWO FILES FIRST, FULLY — they are mandatory and must NEVER be
-empty (an empty one triggers a "files incomplete" warning and the user can't
-create their tables):
-  1. src/db/types.ts   — a complete exported interface for EVERY table, with
-     every column typed (matching schema.sql exactly).
-  2. src/db/schema.sql — complete CREATE TABLE statements for every table, with
-     RLS enabled + owner policies (see DATABASE section). Run order: tables the
-     app reads/writes must all be present.
-Write these two BEFORE the UI files so they're never dropped when output is long.
+2. \`\`\`filename:src/db/schema.sql — complete CREATE TABLE statements for every
+   table, with RLS enabled. Never empty.
 
-RULES — VIOLATION CAUSES A BROKEN PREVIEW:
-RULE 1: NEVER generate src/server/**, src/lib/api.ts, or src/lib/db.ts.
-        NEVER call fetch() to a /api/... endpoint. Use the supabase client.
-RULE 2: src/lib/supabase.ts MUST create the client from env (exact content):
-          import { createClient } from '@supabase/supabase-js'
-          export const supabase = createClient(
-            import.meta.env.VITE_SUPABASE_URL,
-            import.meta.env.VITE_SUPABASE_ANON_KEY,
-          )
-RULE 3: src/db/types.ts MUST export a TypeScript interface for every table.
-          export interface Todo { id: string; title: string; completed: boolean; user_id: string; created_at: string }
-RULE 4: src/db/schema.sql MUST contain complete CREATE TABLE statements AND
-        Row Level Security so the anon/auth client is safe and works:
-          - enable RLS on every table
-          - a policy scoping rows to auth.uid() (e.g. user_id = auth.uid())
-          for any table holding per-user data.
-RULE 5: Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html,
-        or .env — the preview environment already provides correct versions of
-        all of these (with Supabase env wired in). Only write src/** files.
-        (If you add an npm dependency the environment doesn't have, say so in
-        your chat text instead of editing package.json.)
-RULE 6: Keep it small. A todo-with-login app is roughly these files only:
-          src/db/types.ts, src/db/schema.sql, src/lib/supabase.ts,
-          src/hooks/useAuth.ts, src/components/AuthProvider.tsx,
-          src/components/Login.tsx, src/App.tsx, src/index.tsx, src/styles.css
+3. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
+     import { serve } from '@hono/node-server'
+     import { Hono } from 'hono'
+     import { cors } from 'hono/cors'
+     import { api } from './routes/api.js'
+     const app = new Hono()
+     app.use('/*', cors())
+     app.route('/api', api)
+     serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
+     console.log('API on :' + (process.env.PORT || 3001))
 
-AUTH — Supabase Auth, directly from the client:
-- supabase.auth.signInWithPassword / signUp / signOut / onAuthStateChange.
-- Gate the app on the session; show <Login/> when signed out.
+4. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
+   Use Supabase server-side; ALWAYS handle errors so the server never crashes
+   (return [] / an error json, never throw). EXACT shape:
+     import { Hono } from 'hono'
+     import { createClient } from '@supabase/supabase-js'
+     const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_ANON_KEY || '')
+     export const api = new Hono()
+     // GET /api/riders
+     api.get('/riders', async (c) => {
+       const { data, error } = await supabase.from('riders').select('*').order('created_at', { ascending: false })
+       if (error) return c.json([], 200)         // table not set up yet → empty, don't crash
+       return c.json(data ?? [])
+     })
+     // POST /api/riders
+     api.post('/riders', async (c) => {
+       const body = await c.req.json().catch(() => ({}))
+       const { data, error } = await supabase.from('riders').insert(body).select().single()
+       if (error) return c.json({ error: error.message }, 400)
+       return c.json(data, 201)
+     })
+   Add every route the app needs (orders, webhooks, etc.) in this same style.
+   For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
+   reads the raw body — keep it defensive (try/catch, 200 by default).
 
-FILE GENERATION CONTRACT:
-- Every file MUST have complete, non-empty content. Empty files are forbidden.
-- src/db/types.ts, src/db/schema.sql, src/lib/supabase.ts are always required.
+5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
+     import type { Rider } from '../db/types'
+     export async function getRiders(): Promise<Rider[]> {
+       const r = await fetch('/api/riders'); if (!r.ok) return []; return r.json()
+     }
+     export async function createRider(input: Partial<Rider>): Promise<Rider | null> {
+       const r = await fetch('/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
+       return r.ok ? r.json() : null
+     }
 
-ALLOWED IMPORTS: react, react-dom, @supabase/supabase-js. These are
-pre-installed in the preview. Do not import other libraries.`;
+6. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
+   and renders the app (loading + error + empty states). Show the MAIN UI first
+   (not a login wall). Polished, complete, realistic.
+
+7. \`\`\`filename:src/index.tsx — standard React 18 createRoot rendering <App/> + './styles.css'.
+8. \`\`\`filename:src/styles.css — app styles.
+
+HARD RULES:
+- The frontend talks to the backend ONLY through src/lib/api.ts (fetch '/api/...').
+  Never put a hardcoded http://localhost or external URL — always relative '/api'.
+- The backend listens on Number(process.env.PORT) || 3001. Never hardcode another port.
+- Every file COMPLETE and non-empty. Backend routes must never throw uncaught.
+- Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html, or .env —
+  the environment provides them (hono, @hono/node-server, zod, react, supabase
+  are pre-installed; Supabase env is injected).
+
+ALLOWED IMPORTS: react, react-dom, hono, @hono/node-server, @supabase/supabase-js,
+zod. All pre-installed. Do not import other libraries.`;
 
 // ── Auth sub-mode instruction ─────────────────────────────────────────────────
 // Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".

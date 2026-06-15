@@ -31,7 +31,10 @@ const PKG_JSON = `{
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@supabase/supabase-js": "^2.45.0"
+    "@supabase/supabase-js": "^2.45.0",
+    "hono": "^4.6.3",
+    "@hono/node-server": "^1.13.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -54,6 +57,9 @@ import react from '@vitejs/plugin-react'
 //  - watch.usePolling: files arrive via the E2B API (files.write), whose
 //    filesystem events are unreliable for inotify — without polling, HMR
 //    doesn't notice the new files and the preview goes stale.
+//  - proxy /api -> :3001: when the app ships a real backend (Hono/Node), the
+//    backend listens on 3001 and the frontend calls same-origin /api/*; Vite
+//    forwards those to it. No CORS, one public URL.
 export default defineConfig({
   plugins: [react()],
   envPrefix: 'VITE_',
@@ -64,6 +70,9 @@ export default defineConfig({
     allowedHosts: true,
     hmr: { clientPort: 443, protocol: 'wss' },
     watch: { usePolling: true, interval: 300 },
+    proxy: {
+      '/api': { target: 'http://localhost:3001', changeOrigin: true },
+    },
   },
 })`
 

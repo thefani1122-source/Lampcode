@@ -1085,8 +1085,10 @@ export async function runFastBuild(
     // the generated files contain the Supabase client, or we still hold a
     // sandbox record (live or paused) for the project.
     const hasFullstackFiles = Boolean(
-      allFiles["src/lib/supabase.ts"] ||
+      allFiles["src/server/index.ts"] ||
+        allFiles["src/lib/supabase.ts"] ||
         allFiles["src/db/schema.sql"] ||
+        existingFiles["src/server/index.ts"] ||
         existingFiles["src/lib/supabase.ts"],
     );
     const wantsE2BPreview =
