@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
+import { matchProviderRules } from "../mcp/providers/index.js";
 interface BuildContext {
   projectId: string;
   userId: string;
@@ -1010,7 +1011,11 @@ export class PromptBuilder {
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + jsonInstruction;
+    // Connected-service codegen hints (WordPress/Shopify/Make/n8n/Zapier) when
+    // the prompt mentions them.
+    const providerRules = agentType === "frontend" ? matchProviderRules(task.description) : "";
+
+    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + jsonInstruction;
   }
 
   private async buildContextBlock(

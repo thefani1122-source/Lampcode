@@ -9,6 +9,7 @@ import { AppError } from "../middleware/error-handler.js";
 import { encrypt, decrypt } from "../env-crypto.js";
 import { logger } from "../logger.js";
 import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
+import { getProvider } from "../../mcp/providers/index.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
@@ -90,6 +91,7 @@ integrationsRouter.get("/", async (c) => {
       meta: {
         supabaseUrl: cfg["supabaseUrl"] ?? null,
         projectRef: cfg["projectRef"] ?? null,
+        ...((cfg["meta"] as Record<string, string> | undefined) ?? {}),
       },
     };
   });
@@ -316,6 +318,73 @@ integrationsRouter.delete("/:id", async (c) => {
 
   logger.info({ userId, integrationId: id }, "Integration disconnected");
   return c.json({ success: true });
+});
+
+// ── POST /api/integrations/provider/:id ──────────────────────────────────────
+// Generic connect for registry providers (wordpress, shopify, make, n8n,
+// zapier). Validates with the provider's Zod schema, runs testConnection, then
+// stores the full creds object ENCRYPTED (one blob) + a few non-secret fields
+// for display. Credentials never leave the backend.
+
+integrationsRouter.post("/provider/:id", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const providerId = c.req.param("id");
+
+  const provider = getProvider(providerId);
+  if (!provider) throw new AppError(404, `Unknown provider: ${providerId}`, "UNKNOWN_PROVIDER");
+
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const parsed = provider.schema.safeParse(body);
+  if (!parsed.success) {
+    const zerr = parsed as { error: { issues: { message: string }[] } };
+    throw new AppError(400, zerr.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
+  }
+  const params = parsed.data as Record<string, unknown>;
+
+  const test = await provider.testConnection(params);
+  if (!test.ok) throw new AppError(422, test.error ?? "Could not verify credentials", "INTEGRATION_TEST_FAILED");
+
+  // Encrypt the whole creds object as one blob.
+  const enc = encrypt(JSON.stringify(params));
+
+  // Non-secret display fields (skip passwords; show host for URLs).
+  const meta: Record<string, string> = {};
+  for (const f of provider.fields) {
+    if (f.type === "password") continue;
+    const v = params[f.key];
+    if (typeof v !== "string" || !v) continue;
+    if (f.type === "url") {
+      try { meta[f.key] = new URL(v).host; } catch { /* skip malformed */ }
+    } else {
+      meta[f.key] = v;
+    }
+  }
+
+  const now = new Date();
+  const id = randomUUID();
+  const config = {
+    encryptedCreds: enc.encrypted,
+    encryptedCredsIv: enc.iv,
+    encryptedCredsTag: enc.tag,
+    meta,
+  };
+
+  await db
+    .insert(userIntegrations)
+    .values({
+      id, userId,
+      provider: providerId as typeof userIntegrations.$inferInsert.provider,
+      status: "connected", config, lastTestedAt: now, lastError: null, createdAt: now, updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [userIntegrations.userId, userIntegrations.provider],
+      set: { status: "connected", config, lastTestedAt: now, lastError: null, updatedAt: now },
+    });
+
+  logger.info({ userId, provider: providerId }, "Provider integration connected");
+  return c.json({ provider: providerId, status: "connected", meta }, 201);
 });
 
 // ── Helpers for the build/preview flow ────────────────────────────────────────

@@ -484,6 +484,11 @@ export const userIntegrationProviderEnum = pgEnum("user_integration_provider", [
   "vercel",
   "github",
   "railway",
+  "wordpress",
+  "shopify",
+  "make",
+  "n8n",
+  "zapier",
 ]);
 
 export const userIntegrationStatusEnum = pgEnum("user_integration_status", [
@@ -509,6 +514,12 @@ export type UserIntegrationConfig = {
   encryptedAnonKeyTag?: string | undefined;
   // Vercel / GitHub / Railway — extend as needed
   teamId?: string | undefined;
+  // Generic provider creds (WordPress/Shopify/Make/n8n/Zapier): the full params
+  // object encrypted as one blob, plus a few non-secret fields for display.
+  encryptedCreds?: string | undefined;
+  encryptedCredsIv?: string | undefined;
+  encryptedCredsTag?: string | undefined;
+  meta?: Record<string, string> | undefined;
 };
 
 export const userIntegrations = pgTable("user_integrations", {
