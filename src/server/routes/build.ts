@@ -31,7 +31,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -1094,6 +1094,64 @@ export async function runFastBuild(
     const wantsE2BPreview =
       isFullstackBuild || hasFullstackFiles || (await hasSandboxRecord(projectId));
 
+    // Agentic verify-and-fix: after the preview is live, check the real backend
+    // actually started. If it crashed, capture the error, re-prompt the model to
+    // fix src/server, write the fix back (which restarts the backend), and
+    // re-verify. Bounded so it can't loop forever. Then hand back the URL.
+    const finishPreview = async (url: string): Promise<void> => {
+      const MAX = 2;
+      for (let attempt = 0; attempt < MAX; attempt++) {
+        const { ok, issues } = await verifyPreview(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+        if (ok || issues.length === 0) break;
+
+        const errText = issues.map((i) => `${i.source}: ${i.message}`).join("\n");
+        logger.warn({ sessionId, projectId, errText, attempt }, "Backend failed to start — agentic fix");
+        server?.thinking(sessionId, { text: "Backend hit an error — fixing it automatically…", sessionId });
+
+        const serverFiles = Object.entries(allFiles).filter(
+          ([p]) => p.startsWith("src/server/"),
+        );
+        if (serverFiles.length === 0) break;
+        const fixDesc =
+          `The generated backend CRASHED on startup. Fix it and return the COMPLETE corrected file(s) — no diffs, no truncation.\n\n` +
+          `Startup error:\n${errText}\n\n` +
+          `Current backend files:\n` +
+          serverFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
+
+        let fixedCount = 0;
+        try {
+          const fix = await dispatcher.dispatch({
+            agentType: "frontend",
+            task: {
+              description: fixDesc,
+              requirements: [
+                "Return each backend file COMPLETE and runnable under tsx.",
+                "Keep the server on Number(process.env.PORT) || 3001 and mount routes under /api.",
+                "Handle all errors defensively — the server must never throw on startup.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          for (const f of parseFilesFromContent(fix.content)) {
+            if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; }
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Backend agentic fix dispatch failed");
+          break;
+        }
+        if (fixedCount === 0) break;
+        // Write the fix back — this restarts the backend with the new code.
+        await writeFilesToSandbox(projectId, allFiles, (line) =>
+          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+        ).catch(() => {});
+      }
+      server?.emitPreviewUrl(sessionId, { sessionId, url });
+    };
+
     if (wantsE2BPreview) {
       const sandboxAlreadyRunning = hasSandbox(projectId);
       if (sandboxAlreadyRunning) {
@@ -1104,7 +1162,7 @@ export async function runFastBuild(
         })
           .then((url) => {
             console.log(`[E2B] Sandbox files updated for project=${projectId} url=${url}`);
-            server?.emitPreviewUrl(sessionId, { sessionId, url });
+            return finishPreview(url);
           })
           .catch((err) => {
             const message = err instanceof Error ? err.message : "Failed to update preview sandbox";
@@ -1124,7 +1182,7 @@ export async function runFastBuild(
           })
             .then((url) => {
               console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
-              server?.emitPreviewUrl(sessionId, { sessionId, url });
+              return finishPreview(url);
             })
             .catch((err) => {
               const message = err instanceof Error ? err.message : "Failed to start preview sandbox";

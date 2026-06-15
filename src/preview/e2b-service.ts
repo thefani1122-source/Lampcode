@@ -380,6 +380,15 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   // Restart with the latest code (the backend isn't HMR'd like Vite).
   await sandbox.commands.run("pkill -f 'src/server/index' || true", { timeoutMs: 10_000 }).catch(() => {});
   log("Starting backend server on :3001...");
+  // Capture the backend's output into a ring buffer so the agentic verify step
+  // can read its crash error and fix it.
+  const buf: string[] = [];
+  backendLogs.set(sandbox.sandboxId, buf);
+  const capture = (line: string): void => {
+    log(line);
+    buf.push(line);
+    if (buf.length > 80) buf.shift();
+  };
   // --env-file loads .env (Supabase creds) into the backend's process.env.
   const cmd = hasEnv ? "tsx --env-file=.env src/server/index.ts" : "tsx src/server/index.ts";
   try {
@@ -388,12 +397,67 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
       background: true,
       timeoutMs: 0, // lives as long as the sandbox (default 60s would kill it)
       envs: { PORT: "3001" },
-      onStdout: log,
-      onStderr: log,
+      onStdout: capture,
+      onStderr: capture,
     });
   } catch (err) {
     logger.warn({ err }, "[e2b] Failed to start backend server");
   }
+}
+
+// Recent backend stdout/stderr per sandbox, for the agentic verify-and-fix step.
+const backendLogs = new Map<string, string[]>();
+
+function extractBackendError(lines: string[]): string {
+  const text = lines.join("\n");
+  // Pull the most informative error lines (stack header + message).
+  const errLines = lines.filter((l) => /error|exception|cannot|undefined|not a function|ENOENT|throw|SyntaxError|TypeError|ReferenceError/i.test(l));
+  return (errLines.slice(-12).join("\n") || text.slice(-1200)).trim();
+}
+
+export interface PreviewIssue {
+  source: string;
+  message: string;
+}
+
+/**
+ * Agentic verification: after the app is written and the servers (re)started,
+ * checks whether the REAL backend actually came up. If the Hono server crashed
+ * on startup (bad import, runtime error, etc.) the preview's /api calls would
+ * silently fail — instead we capture its error so the build flow can re-prompt
+ * the model to fix src/server and try again. No-op for frontend-only apps.
+ */
+export async function verifyPreview(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return { ok: true, issues: [] };
+
+  let hasBackend = false;
+  try {
+    const r = await sandbox.commands.run("test -f src/server/index.ts && echo y", { cwd: PROJECT_DIR, timeoutMs: 10_000 });
+    hasBackend = r.stdout.includes("y");
+  } catch {
+    return { ok: true, issues: [] };
+  }
+  if (!hasBackend) return { ok: true, issues: [] };
+
+  // Give the backend a moment, then check it's listening. Any HTTP status
+  // (even 404) means it's up; a refused connection means it crashed.
+  await new Promise((r) => setTimeout(r, 2_500));
+  let up = false;
+  try {
+    const probe = await sandbox.commands.run(
+      "curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:3001/ || echo DOWN",
+      { timeoutMs: 12_000 },
+    );
+    const code = probe.stdout.trim();
+    up = code !== "" && code !== "DOWN" && code !== "000";
+  } catch {
+    up = false;
+  }
+
+  if (up) return { ok: true, issues: [] };
+  const message = extractBackendError(backendLogs.get(sandbox.sandboxId) ?? []) || "backend did not start on port 3001";
+  return { ok: false, issues: [{ source: "src/server/index.ts", message }] };
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */
