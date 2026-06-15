@@ -19,6 +19,10 @@ const envSchema = z.object({
   // render. The anon key is public (RLS-protected) — safe to embed in previews.
   PREVIEW_SUPABASE_URL: z.string().url().optional(),
   PREVIEW_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  // Service-role key for the shared preview project. Injected ONLY into the
+  // backend process env (never VITE_, never the frontend) so generated Node/Hono
+  // backends can do real server-side work (bypass RLS, admin writes, webhooks).
+  PREVIEW_SUPABASE_SERVICE_KEY: z.string().min(1).optional(),
   REDIS_URL: z.string().url().optional(),
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),

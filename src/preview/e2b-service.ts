@@ -50,10 +50,13 @@ const sandboxes = new Map<string, Sandbox>();
 
 // Per-project preview Supabase override (the project owner's OWN connected
 // Supabase). Set at build start; used by writePreviewEnv before Vite boots.
-const projectPreviewEnv = new Map<string, { url: string; anonKey: string }>();
+const projectPreviewEnv = new Map<string, { url: string; anonKey: string; serviceKey?: string }>();
 
 /** Point a project's preview at the owner's connected Supabase (anon key only). */
-export function setProjectPreviewEnv(projectId: string, creds: { url: string; anonKey: string } | null): void {
+export function setProjectPreviewEnv(
+  projectId: string,
+  creds: { url: string; anonKey: string; serviceKey?: string } | null,
+): void {
   if (creds) projectPreviewEnv.set(projectId, creds);
   else projectPreviewEnv.delete(projectId);
 }
@@ -193,11 +196,15 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
     return;
   }
   // VITE_* for the frontend (import.meta.env), plain SUPABASE_* for the Node
-  // backend (process.env, loaded via tsx --env-file=.env). Same anon key, which
-  // is public/RLS-safe — the service key never enters the sandbox.
+  // backend (process.env, loaded via tsx --env-file=.env). The anon key is
+  // public/RLS-safe. The SERVICE key (RLS-bypass) is written WITHOUT a VITE_
+  // prefix, so Vite never exposes it to the browser — only the backend reads it.
+  const serviceKey = override?.serviceKey ?? config.PREVIEW_SUPABASE_SERVICE_KEY;
   const env =
     `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n` +
-    `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n`;
+    `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n` +
+    (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
+  if (serviceKey) log("Backend has service-role access to Supabase");
   try {
     await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
     log("Injected preview Supabase credentials into .env");

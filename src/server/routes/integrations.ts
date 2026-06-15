@@ -338,7 +338,7 @@ async function loadSupabaseIntegration(userId: string) {
  */
 export async function getUserSupabasePreviewCreds(
   userId: string,
-): Promise<{ url: string; anonKey: string } | null> {
+): Promise<{ url: string; anonKey: string; serviceKey?: string } | null> {
   const row = await loadSupabaseIntegration(userId);
   if (!row) return null;
   const cfg = row.config;
@@ -351,7 +351,19 @@ export async function getUserSupabasePreviewCreds(
       iv: cfg.encryptedAnonKeyIv,
       tag: cfg.encryptedAnonKeyTag,
     });
-    return { url: cfg.supabaseUrl, anonKey };
+    // Service key (RLS-bypass) only if the user connected via the service-key
+    // flow. Backend-only — never returned to the frontend.
+    let serviceKey: string | undefined;
+    if (cfg.encryptedServiceKey && cfg.encryptedServiceKeyIv && cfg.encryptedServiceKeyTag) {
+      try {
+        serviceKey = decrypt({
+          encrypted: cfg.encryptedServiceKey,
+          iv: cfg.encryptedServiceKeyIv,
+          tag: cfg.encryptedServiceKeyTag,
+        });
+      } catch { /* ignore */ }
+    }
+    return { url: cfg.supabaseUrl, anonKey, ...(serviceKey ? { serviceKey } : {}) };
   } catch (err) {
     logger.warn({ userId, err }, "Failed to decrypt user Supabase anon key");
     return null;

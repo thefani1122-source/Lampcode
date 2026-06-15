@@ -599,7 +599,12 @@ FIRST so it's never dropped when output is long):
    (return [] / an error json, never throw). EXACT shape:
      import { Hono } from 'hono'
      import { createClient } from '@supabase/supabase-js'
-     const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_ANON_KEY || '')
+     // Backend uses the SERVICE key when available (full server-side access,
+     // bypasses RLS — safe, it only exists in the backend process), else anon.
+     const supabase = createClient(
+       process.env.SUPABASE_URL || '',
+       process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '',
+     )
      export const api = new Hono()
      // GET /api/riders
      api.get('/riders', async (c) => {
