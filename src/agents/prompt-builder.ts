@@ -517,25 +517,21 @@ const FULLSTACK_INSTRUCTION = `
 ## ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND
 
 This app ships a REAL backend server with real API routes — not just direct
-Supabase calls. The preview runs BOTH: a Vite frontend on :5173 and a Hono
-(Node) backend on :3001. Vite proxies /api/* to the backend, so the frontend
-calls same-origin '/api/...'. This is how you build real /api/riders,
+DB calls from the frontend. The preview runs BOTH: a Vite frontend on :5173 and
+a Hono (Node) backend on :3001. Vite proxies /api/* to the backend, so the
+frontend calls same-origin '/api/...'. This is how you build real /api/riders,
 /api/orders, Stripe /api/webhooks, and any custom server-side logic.
 
-DATA: the backend uses Supabase (Postgres) server-side. The DB tables come from
-src/db/schema.sql; the backend reads/writes them with the supabase-js client.
+DATA: the backend reads/writes its database server-side using EXACTLY the DB
+client described in the DATABASE section below (Supabase OR MongoDB — never
+both). Generate the DB schema file(s) from that section FIRST so they're never
+dropped when output is long.
 
-GENERATE THESE FILES (this exact set is the backbone — generate the backend
-FIRST so it's never dropped when output is long):
+GENERATE THESE FILES (this exact set is the backbone, IN ADDITION to the DB
+schema file(s) from the DATABASE section — generate the backend FIRST so it's
+never dropped when output is long):
 
-1. \`\`\`filename:src/db/types.ts — shared TypeScript interfaces for every table
-   (used by BOTH backend and frontend). Never empty.
-     export interface Rider { id: string; name: string; phone: string; status: string; created_at: string }
-
-2. \`\`\`filename:src/db/schema.sql — complete CREATE TABLE statements for every
-   table, with RLS enabled. Never empty.
-
-3. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
+1. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
      import { serve } from '@hono/node-server'
      import { Hono } from 'hono'
      import { cors } from 'hono/cors'
@@ -546,7 +542,7 @@ FIRST so it's never dropped when output is long):
      serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
      console.log('API on :' + (process.env.PORT || 3001))
 
-4. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
+2. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
    Read/write data with the DB CLIENT defined in the DATABASE section below
    (Supabase OR MongoDB — exactly the one specified there; never mix two DBs).
    ALWAYS handle errors so the server never crashes (return [] / an error json,
@@ -567,8 +563,8 @@ FIRST so it's never dropped when output is long):
    For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
    reads the raw body — keep it defensive (try/catch, 200 by default).
 
-5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
-     import type { Rider } from '../db/types'
+3. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
+     import type { Rider } from '../db/types' // or wherever the DATABASE section defines row types
      export async function getRiders(): Promise<Rider[]> {
        const r = await fetch('/api/riders'); if (!r.ok) return []; return r.json()
      }
@@ -577,12 +573,12 @@ FIRST so it's never dropped when output is long):
        return r.ok ? r.json() : null
      }
 
-6. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
+4. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
    and renders the app (loading + error + empty states). Show the MAIN UI first
    (not a login wall). Polished, complete, realistic.
 
-7. \`\`\`filename:src/index.tsx — standard React 18 createRoot rendering <App/> + './styles.css'.
-8. \`\`\`filename:src/styles.css — app styles.
+5. \`\`\`filename:src/index.tsx — standard React 18 createRoot rendering <App/> + './styles.css'.
+6. \`\`\`filename:src/styles.css — app styles.
 
 HARD RULES:
 - The frontend talks to the backend ONLY through src/lib/api.ts (fetch '/api/...').
@@ -590,11 +586,11 @@ HARD RULES:
 - The backend listens on Number(process.env.PORT) || 3001. Never hardcode another port.
 - Every file COMPLETE and non-empty. Backend routes must never throw uncaught.
 - Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html, or .env —
-  the environment provides them (hono, @hono/node-server, zod, react, supabase
-  are pre-installed; Supabase env is injected).
+  the environment provides them and injects the DB env per the DATABASE section.
 
-ALLOWED IMPORTS: react, react-dom, hono, @hono/node-server, @supabase/supabase-js,
-zod. All pre-installed. Do not import other libraries.`;
+ALLOWED IMPORTS: react, react-dom, hono, @hono/node-server, zod, plus EXACTLY
+the DB/auth libraries named in the DATABASE/AUTH sections below. All
+pre-installed. Do not import other libraries.`;
 
 // Use a Python/FastAPI backend when the prompt asks for it (or implies a
 // Python-only ecosystem: ML/data work).

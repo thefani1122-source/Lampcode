@@ -93,7 +93,8 @@ async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<voi
   }
 }
 
-export function registerBuildHandlers(nsp: BuildNamespace): void {  nsp.on("connection", async (socket: BuildSocket) => {
+export function registerBuildHandlers(nsp: BuildNamespace): void {
+  nsp.on("connection", async (socket: BuildSocket) => {
     const userId = socket.data.userId; // always set — wsBuildAuthMiddleware required it
     console.log(`[WS CONNECT] socketId=${socket.id} userId=${userId} query=${JSON.stringify(socket.handshake.query)}`);
     logger.info({ socketId: socket.id, userId }, "Build WS connected");

@@ -14,7 +14,7 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { expandUserPrompt } from "../../agents/prompt-builder.js";
+import { detectDatabase, expandUserPrompt } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -527,6 +527,7 @@ export async function runFastBuild(
     // Edits and follow-ups keep their existing flows untouched; only a fresh
     // build with no prior code can be promoted to a full-stack generation.
     const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
+    const fullstackDb = isFullstackBuild ? detectDatabase(prompt) : "supabase";
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -592,16 +593,25 @@ export async function runFastBuild(
               "Use inline styles or plain src/styles.css — never Tailwind.",
             ]
         : isFullstackBuild
-          ? [
-              "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-              "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css, package.json.",
-              "Add src/server/auth.ts ONLY if the app needs login/accounts.",
-              "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-              "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
-              "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table; src/lib/db.ts must create the Supabase client.",
-              "package.json must include hono, @supabase/supabase-js, zod, react, and react-dom.",
-              "Also output .env.example with VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, and VITE_API_URL placeholders.",
-            ]
+          ? fullstackDb === "mongodb"
+            ? [
+                "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                "Add src/server/routes/auth.ts ONLY if the app needs login/accounts (see AUTH MODE).",
+                "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
+              ]
+            : [
+                "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                "Add src/server/auth.ts ONLY if the app needs login/accounts.",
+                "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+              ]
           : [
               "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
               "Always include src/App.tsx, src/index.tsx, and package.json.",
