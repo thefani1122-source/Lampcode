@@ -11,8 +11,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url().optional(),
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_KEY: z.string().min(1).optional(),
-  OPENROUTER_API_KEY: z.string().min(1).optional(),
-  KIMI_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
   E2B_API_KEY: z.string().min(1).optional(),
   // Supabase project whose URL + anon key get injected into every preview
   // sandbox so generated Supabase-direct apps can initialise their client and
@@ -41,7 +40,7 @@ const REQUIRED_VARS = [
   "DATABASE_URL",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_KEY",
-  "OPENROUTER_API_KEY",
+  "ANTHROPIC_API_KEY",
   "REDIS_URL",
   "ENCRYPTION_KEY",
 ] as const;

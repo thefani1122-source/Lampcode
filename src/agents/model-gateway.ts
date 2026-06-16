@@ -1,22 +1,21 @@
-import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
-export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
-
 // Tier arrays: [tier1, tier2, tier3]
+// All Anthropic native model IDs — no OpenRouter prefix needed.
 export const MODEL_TIERS = {
-  planning:   ["anthropic/claude-opus-4-6",    "anthropic/claude-sonnet-4-6",  "openai/gpt-4o"] as const,
-  frontend:   ["anthropic/claude-sonnet-4-6",   "google/gemini-2.5-pro",        "moonshotai/kimi-k2.6"] as const,
-  backend:    ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  db:         ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  security:   ["deepseek/deepseek-v4-pro",      "anthropic/claude-sonnet-4-6",  "openai/gpt-4o-mini"] as const,
-  connection: ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
-  fix:        ["anthropic/claude-sonnet-4-6",   "anthropic/claude-haiku-4-5",   "deepseek/deepseek-chat"] as const,
-  deploy:     ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
-  monitor:    ["deepseek/deepseek-v4-flash",    "anthropic/claude-haiku-4-5",   "openai/gpt-4o-mini"] as const,
+  planning:   ["claude-opus-4-8",              "claude-sonnet-4-6",           "claude-sonnet-4-6"]   as const,
+  frontend:   ["claude-sonnet-4-6",            "claude-sonnet-4-6",           "claude-haiku-4-5-20251001"] as const,
+  backend:    ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  db:         ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  security:   ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  connection: ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  fix:        ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  deploy:     ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
+  monitor:    ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
 } as const satisfies Record<string, readonly [string, string, string]>;
 
 export type AgentTaskType = keyof typeof MODEL_TIERS;
@@ -41,7 +40,7 @@ export interface GatewayRequest {
   maxTokens?: number | undefined;
 }
 
-// Parsed chunk yielded to callers
+// Parsed chunk yielded to callers — same shape as before, stream-handler unchanged.
 export type StreamChunkType = "content" | "reasoning" | "tool_call" | "usage" | "done";
 
 export interface StreamChunk {
@@ -74,264 +73,169 @@ export class GatewayError extends Error {
   }
 }
 
-// ── SSE payload schemas ───────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-const toolCallDeltaSchema = z.object({
-  index: z.number().int(),
-  id: z.string().optional(),
-  function: z
-    .object({
-      name: z.string().optional(),
-      arguments: z.string().optional(),
-    })
-    .optional(),
-});
+/** Whether a model supports extended thinking (budget_tokens). */
+function supportsThinking(model: string): boolean {
+  // Haiku does not support thinking; Sonnet and Opus do.
+  return !model.includes("haiku");
+}
 
-const deltaSchema = z.object({
-  content: z.string().nullable().optional(),
-  reasoning_content: z.string().nullable().optional(),
-  tool_calls: z.array(toolCallDeltaSchema).optional(),
-});
+/** Convert our internal ChatMessage[] to Anthropic's messages + system param. */
+function splitMessages(messages: ChatMessage[]): {
+  system: string | undefined;
+  anthropicMessages: Anthropic.MessageParam[];
+} {
+  const systemMsg = messages.find((m) => m.role === "system");
+  const rest = messages.filter((m) => m.role !== "system");
+  return {
+    system: systemMsg?.content,
+    anthropicMessages: rest.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+  };
+}
 
-const sseChunkSchema = z.object({
-  choices: z
-    .array(
-      z.object({
-        index: z.number().int(),
-        delta: deltaSchema,
-        finish_reason: z.string().nullable().optional(),
-      }),
-    )
-    .optional(),
-  usage: z
-    .object({
-      prompt_tokens: z.number().int().optional(),
-      completion_tokens: z.number().int().optional(),
-    })
-    .optional(),
-});
+/** Map Anthropic SDK errors to our GatewayError codes. */
+function mapAnthropicError(err: unknown): GatewayError {
+  if (err instanceof Anthropic.APIError) {
+    const status = err.status;
+    const msg = err.message ?? String(err);
+    if (status === 401 || status === 403) return new GatewayError("INVALID_KEY", "Invalid Anthropic API key");
+    if (status === 429) {
+      const retryAfter = err.headers?.["retry-after"];
+      const retryMs = retryAfter ? parseInt(String(retryAfter), 10) * 1000 : 60_000;
+      return new GatewayError("RATE_LIMIT", "Rate limit exceeded", retryMs);
+    }
+    if (status === 529 || status === 503) return new GatewayError("MODEL_DOWN", `Model unavailable (${status})`);
+    if (status === 402) return new GatewayError("PAYMENT_REQUIRED", "Anthropic credits exhausted");
+    if (status === 400 && msg.includes("context_length")) return new GatewayError("CONTEXT_LENGTH", msg);
+    return new GatewayError("UNKNOWN", `HTTP ${status}: ${msg.slice(0, 200)}`);
+  }
+  if (err instanceof Error) {
+    if (err.name === "AbortError" || err.message.includes("timed out")) {
+      return new GatewayError("NETWORK", err.message);
+    }
+    return new GatewayError("NETWORK", `Fetch failed: ${err.message}`);
+  }
+  return new GatewayError("UNKNOWN", String(err));
+}
 
 // ── ModelGateway ──────────────────────────────────────────────────────────────
 
 export class ModelGateway {
-  private readonly apiKey: string;
+  private readonly client: Anthropic;
   private readonly timeoutMs: number;
 
-  constructor(apiKey: string = config.OPENROUTER_API_KEY, timeoutMs = 180_000) {
-    this.apiKey = apiKey;
+  constructor(apiKey: string = config.ANTHROPIC_API_KEY, timeoutMs = 180_000) {
+    this.client = new Anthropic({ apiKey, timeout: timeoutMs });
     this.timeoutMs = timeoutMs;
   }
 
-  /** Yield parsed SSE chunks from an OpenAI-compatible streaming completion. */
+  /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    const baseUrl = OPENROUTER_BASE;
-    const apiKey = this.apiKey;
-    const resolvedModel = req.model;
+    const { system, anthropicMessages } = splitMessages(req.messages);
+    const model = req.model;
+    const maxTokens = req.maxTokens ?? 16_000;
     const effectiveTimeout = overrideTimeoutMs ?? this.timeoutMs;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
+    logger.debug({ model }, "ModelGateway: Anthropic stream");
 
-    logger.debug({ model: resolvedModel, baseUrl }, "ModelGateway routing");
+    // Extended thinking — enabled for models that support it.
+    const thinkingParam: Anthropic.ThinkingConfigParam | undefined = supportsThinking(model)
+      ? { type: "enabled", budget_tokens: 4_000 }
+      : undefined;
 
-    let response: Response;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let stream: AsyncIterable<Anthropic.RawMessageStreamEvent>;
     try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env["FRONTEND_URL"] ?? "https://lampcode.dev",
-          "X-Title": "Lampcode",
-        },
-        body: JSON.stringify({
-          model: resolvedModel,
-          messages: req.messages,
-          stream: true,
-          // Anthropic extended thinking requires temperature=1; skip the 0.2 default.
-          temperature: resolvedModel.startsWith("anthropic/") ? 1 : (req.temperature ?? 0.2),
-          max_tokens: req.maxTokens ?? 16_000,
-          ...(resolvedModel.startsWith("anthropic/") &&
-            !resolvedModel.includes("haiku") && {
-            thinking: { type: "enabled", budget_tokens: 4000 },
-          }),
-        }),
-        signal: controller.signal,
+      // Use a per-request client with the correct timeout so overrides work.
+      const client = effectiveTimeout === this.timeoutMs
+        ? this.client
+        : new Anthropic({ apiKey: this.client.apiKey as string, timeout: effectiveTimeout });
+
+      stream = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        messages: anthropicMessages,
+        stream: true,
+        ...(system !== undefined ? { system } : {}),
+        ...(thinkingParam ? { thinking: thinkingParam } : {}),
       });
     } catch (err) {
-      clearTimeout(timeoutId);
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new GatewayError("NETWORK", `Request timed out after ${effectiveTimeout}ms`);
-      }
-      throw new GatewayError("NETWORK", `Fetch failed: ${String(err)}`);
+      throw mapAnthropicError(err);
     }
 
-    if (!response.ok) {
-      clearTimeout(timeoutId);
-      throw await this.parseHttpError(response);
-    }
-
-    const body = response.body;
-    if (body === null) {
-      clearTimeout(timeoutId);
-      throw new GatewayError("NETWORK", "Empty response body");
-    }
-
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    // Accumulate tool call argument fragments keyed by call index
-    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    // Track per-content-block state for tool-call input accumulation.
+    const toolInputBuffers = new Map<number, { id: string; name: string; args: string }>();
+    let currentBlockIndex = -1;
+    let currentBlockType: string = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     try {
-      outer: while (true) {
-        let result: Awaited<ReturnType<typeof reader.read>>;
-        try {
-          result = await reader.read();
-        } catch (err) {
-          if (err instanceof Error && err.name === "AbortError") {
-            throw new GatewayError("NETWORK", "Stream timed out");
+      for await (const event of stream) {
+        switch (event.type) {
+          case "message_start":
+            inputTokens = event.message.usage?.input_tokens ?? 0;
+            break;
+
+          case "content_block_start":
+            currentBlockIndex = event.index;
+            currentBlockType = event.content_block.type;
+            if (event.content_block.type === "tool_use") {
+              toolInputBuffers.set(event.index, {
+                id: event.content_block.id,
+                name: event.content_block.name,
+                args: "",
+              });
+            }
+            break;
+
+          case "content_block_delta": {
+            const delta = event.delta;
+            if (delta.type === "text_delta" && delta.text) {
+              yield { type: "content", content: delta.text };
+            } else if (delta.type === "thinking_delta" && delta.thinking) {
+              yield { type: "reasoning", reasoning: delta.thinking };
+            } else if (delta.type === "input_json_delta" && delta.partial_json) {
+              const buf = toolInputBuffers.get(currentBlockIndex);
+              if (buf) buf.args += delta.partial_json;
+            }
+            break;
           }
-          throw new GatewayError("NETWORK", `Stream read error: ${String(err)}`);
-        }
 
-        if (result.done) break;
+          case "content_block_stop":
+            // Flush completed tool call when its block ends.
+            if (currentBlockType === "tool_use") {
+              const buf = toolInputBuffers.get(currentBlockIndex);
+              if (buf) {
+                yield {
+                  type: "tool_call",
+                  toolCall: { id: buf.id, name: buf.name, arguments: buf.args },
+                };
+                toolInputBuffers.delete(currentBlockIndex);
+              }
+            }
+            break;
 
-        const raw = decoder.decode(result.value, { stream: true });
-        buffer += raw;
+          case "message_delta":
+            outputTokens = event.usage?.output_tokens ?? outputTokens;
+            break;
 
-        // SSE events are delimited by \n\n
-        const events = buffer.split("\n\n");
-        buffer = events.pop() ?? "";
-
-        for (const event of events) {
-          for (const line of event.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) continue;
-
-            const payload = trimmed.slice(5).trim();
-            if (payload === "[DONE]") break outer;
-            if (payload.length === 0) continue;
-
-            const chunks = this.parseSSEPayload(payload, toolCallBuffers);
-            for (const chunk of chunks) yield chunk;
-          }
+          case "message_stop":
+            break;
         }
       }
-    } finally {
-      clearTimeout(timeoutId);
-      reader.releaseLock();
+    } catch (err) {
+      throw mapAnthropicError(err);
     }
 
+    yield {
+      type: "usage",
+      usage: { promptTokens: inputTokens, completionTokens: outputTokens },
+    };
     yield { type: "done" };
-  }
-
-  // ── Private ─────────────────────────────────────────────────────────────────
-
-  private parseSSEPayload(
-    payload: string,
-    toolCallBuffers: Map<number, { id: string; name: string; args: string }>,
-  ): StreamChunk[] {
-    let raw: unknown;
-    try {
-      raw = JSON.parse(payload);
-    } catch {
-      logger.debug({ payload }, "Non-JSON SSE payload, skipping");
-      return [];
-    }
-
-    const result = sseChunkSchema.safeParse(raw);
-    if (!result.success) {
-      logger.debug({ payload }, "SSE payload failed schema validation");
-      return [];
-    }
-
-    const data = result.data;
-    const chunks: StreamChunk[] = [];
-
-    // Usage (may appear on last chunk or standalone)
-    if (data.usage !== undefined) {
-      chunks.push({
-        type: "usage",
-        usage: {
-          promptTokens: data.usage.prompt_tokens ?? 0,
-          completionTokens: data.usage.completion_tokens ?? 0,
-        },
-      });
-    }
-
-    const choice = data.choices?.[0];
-    if (choice === undefined) return chunks;
-
-    const delta = choice.delta;
-
-    if (delta.content !== null && delta.content !== undefined && delta.content.length > 0) {
-      chunks.push({ type: "content", content: delta.content });
-    }
-
-    if (
-      delta.reasoning_content !== null &&
-      delta.reasoning_content !== undefined &&
-      delta.reasoning_content.length > 0
-    ) {
-      chunks.push({ type: "reasoning", reasoning: delta.reasoning_content });
-    }
-
-    for (const tc of delta.tool_calls ?? []) {
-      const existing = toolCallBuffers.get(tc.index) ?? {
-        id: tc.id ?? "",
-        name: tc.function?.name ?? "",
-        args: "",
-      };
-      existing.args += tc.function?.arguments ?? "";
-      if (tc.id !== undefined) existing.id = tc.id;
-      if (tc.function?.name !== undefined) existing.name = tc.function.name;
-      toolCallBuffers.set(tc.index, existing);
-
-      // Flush complete tool calls (when finish_reason is "tool_calls")
-      if (choice.finish_reason === "tool_calls") {
-        chunks.push({
-          type: "tool_call",
-          toolCall: { id: existing.id, name: existing.name, arguments: existing.args },
-        });
-      }
-    }
-
-    return chunks;
-  }
-
-  private async parseHttpError(response: Response): Promise<GatewayError> {
-    const retryAfter = response.headers.get("Retry-After");
-    const retryMs = retryAfter !== null ? parseInt(retryAfter, 10) * 1000 : undefined;
-
-    let body = "";
-    try {
-      body = await response.text();
-    } catch {
-      // ignore
-    }
-
-    logger.warn({ status: response.status, body }, "LLM API HTTP error");
-
-    switch (response.status) {
-      case 401:
-      case 403:
-        return new GatewayError("INVALID_KEY", "Invalid OpenRouter API key");
-      case 429:
-        return new GatewayError("RATE_LIMIT", "Rate limit exceeded", retryMs ?? 60_000);
-      case 503:
-      case 529:
-        return new GatewayError("MODEL_DOWN", `Model unavailable (${response.status})`);
-      case 402:
-        return new GatewayError("PAYMENT_REQUIRED", "OpenRouter credits exhausted — add credits at openrouter.ai/credits");
-      case 400:
-        if (body.includes("context_length")) {
-          return new GatewayError("CONTEXT_LENGTH", "Prompt exceeds model context length");
-        }
-        return new GatewayError("UNKNOWN", `Bad request: ${body.slice(0, 200)}`);
-      default:
-        return new GatewayError("UNKNOWN", `HTTP ${response.status}: ${body.slice(0, 200)}`);
-    }
   }
 }
