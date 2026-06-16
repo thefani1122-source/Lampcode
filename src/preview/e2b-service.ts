@@ -2,6 +2,7 @@ import { Sandbox } from "e2b";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
+import type { FullstackFramework } from "../agents/prompt-builder.js";
 
 /**
  * E2B cloud sandbox preview for fullstack builds.
@@ -28,6 +29,30 @@ const SANDBOX_TIMEOUT_MS = Number(process.env["SANDBOX_RUN_TIMEOUT_MS"] ?? 60 * 
 // "base" template if no custom template has been built/configured yet.
 // Railway Env Var: E2B_TEMPLATE_ID=lampcode-vite
 const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
+
+/**
+ * Returns the E2B sandbox template ID for the given fullstack framework.
+ *
+ * TODO: Next.js and TanStack Start each need their own E2B template:
+ *   - nextjs: run `next dev` on :3000, bake Next.js + node_modules
+ *   - tanstack: run `vinxi dev` on :3000 (or whatever @tanstack/start uses), bake deps
+ * Once those templates are built, replace the TEMPLATE_ID fallback here with the
+ * real template IDs (set via Railway env vars NEXTJS_TEMPLATE_ID, TANSTACK_TEMPLATE_ID).
+ * Until then, Next.js and TanStack builds use the React template — generated code
+ * will be correct but the preview will show the React scaffold instead.
+ */
+export function selectTemplate(framework: FullstackFramework): string {
+  switch (framework) {
+    case "nextjs":
+      // TODO: build a Next.js E2B template (next dev on :3000) and set NEXTJS_TEMPLATE_ID
+      return process.env["NEXTJS_TEMPLATE_ID"] ?? TEMPLATE_ID;
+    case "tanstack":
+      // TODO: build a TanStack Start E2B template (vinxi dev on :3000) and set TANSTACK_TEMPLATE_ID
+      return process.env["TANSTACK_TEMPLATE_ID"] ?? TEMPLATE_ID;
+    default:
+      return TEMPLATE_ID;
+  }
+}
 
 // E2B sandbox snapshots (created on pause) expire after 30 days. We key the
 // Redis record's TTL slightly below that — 25 days — so we never hand back a
@@ -513,6 +538,7 @@ export async function hasSandboxRecord(projectId: string): Promise<boolean> {
 async function acquireRunningSandbox(
   projectId: string,
   log: PreviewLogCallback,
+  framework: FullstackFramework = "react",
 ): Promise<Sandbox> {
   const savedSandboxId = await loadSandboxId(projectId);
   if (savedSandboxId) {
@@ -528,7 +554,7 @@ async function acquireRunningSandbox(
   }
 
   log("Creating fresh sandbox from template...");
-  const sandbox = await Sandbox.create(TEMPLATE_ID, {
+  const sandbox = await Sandbox.create(selectTemplate(framework), {
     ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
     timeoutMs: SANDBOX_TIMEOUT_MS,
   });
@@ -563,7 +589,7 @@ async function acquireRunningSandbox(
  * time files are ready, Vite is already running and we only stream the files in.
  * Idempotent: a no-op if the sandbox is already live or already warming.
  */
-export function prewarmSandbox(projectId: string, onLog?: PreviewLogCallback): void {
+export function prewarmSandbox(projectId: string, framework: FullstackFramework = "react", onLog?: PreviewLogCallback): void {
   if (!config.E2B_API_KEY) return;
   if (sandboxes.has(projectId) || warmingSandboxes.has(projectId)) return;
 
@@ -572,7 +598,7 @@ export function prewarmSandbox(projectId: string, onLog?: PreviewLogCallback): v
     logger.debug({ projectId, line }, "[e2b:prewarm]");
   };
 
-  const promise = acquireRunningSandbox(projectId, log)
+  const promise = acquireRunningSandbox(projectId, log, framework)
     .catch((err) => {
       // Don't let a prewarm failure kill anything — the complete path will
       // fall back to a full create. Just surface it and clear the entry.
@@ -709,6 +735,7 @@ export async function ensurePreviewForProject(
 export async function createPreviewSandbox(
   sessionId: string,
   projectId: string,
+  framework: FullstackFramework,
   files: Record<string, string>,
   onLog?: PreviewLogCallback,
 ): Promise<string> {
@@ -741,7 +768,7 @@ export async function createPreviewSandbox(
     } else {
       let warm = warmingSandboxes.get(projectId);
       if (!warm) {
-        warm = acquireRunningSandbox(projectId, log).finally(() => {
+        warm = acquireRunningSandbox(projectId, log, framework).finally(() => {
           warmingSandboxes.delete(projectId);
         });
         warmingSandboxes.set(projectId, warm);

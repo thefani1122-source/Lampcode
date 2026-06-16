@@ -200,7 +200,7 @@ Output configuration files and instrumentation code for the specified stack.`,
 
 // ── Framework detection + per-framework rules ─────────────────────────────────
 
-export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid" | "preact";
+export type Framework = "react" | "vue" | "nextjs" | "svelte" | "solid" | "preact" | "tanstack";
 export type Database = "supabase" | "mongodb";
 
 /**
@@ -210,13 +210,22 @@ export type Database = "supabase" | "mongodb";
 export function detectFramework(prompt: string, fallback: Framework = "react"): Framework {
   if (/\bpreact\b/i.test(prompt)) return "preact";
   if (/\bvue\b/i.test(prompt)) return "vue";
-  if (/\bnext\.?js\b|\bnextjs\b/i.test(prompt)) return "nextjs";
+  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
+  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
   if (/\bsvelte\b/i.test(prompt)) return "svelte";
   if (/\bsolid\.?js\b|\bsolidjs\b|\bsolid[- ]?js\b/i.test(prompt)) return "solid";
   // React/Vite, and Python/FastAPI/Django prompts (which pair a React+Vite
   // frontend with a non-Node backend) all use the React frontend template.
   if (/\breact\b|\bvite\b|\bpython\b|\bfastapi\b|\bdjango\b/i.test(prompt)) return "react";
   return fallback;
+}
+
+export type FullstackFramework = "react" | "nextjs" | "tanstack";
+
+export function detectFullstackFramework(prompt: string): FullstackFramework {
+  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
+  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
+  return "react";
 }
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
@@ -284,34 +293,49 @@ SANDBOX RESTRICTIONS:
 
   nextjs: `
 FRAMEWORK: Next.js 14+ (App Router, TypeScript)
+Static/preview mode — all data is mock data in the component.
 
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:app/page.tsx — main page (Server Component by default)
+FILE FORMAT:
+1. \`\`\`filename:app/page.tsx — main page (Server Component by default; "use client" only if needed)
 2. \`\`\`filename:app/layout.tsx — root layout with <html lang="en"><body>
 3. \`\`\`filename:app/globals.css — all CSS using variables
 4. \`\`\`filename:package.json — next + react + react-dom only
 
-## Next.js Fullstack Architecture
-For fullstack builds with Next.js, the backend API is generated as a SEPARATE Hono.js server (src/server/routes/api.ts), NOT as Next.js App Router API routes.
-
-Why: WebContainer runs the Next.js frontend dev server (port 3000 or 5173) and the Hono backend server (port 3001) as two separate processes. This gives you a clean separation between frontend (Next.js App Router) and backend (Hono API).
-
-In production deployment, you may optionally migrate API routes into Next.js app/api/ if desired.
-
 FRAMEWORK RULES:
-- Server Components (default): no "use client" directive, can be async
-- Client Components: add "use client" at the very top when using useState / useEffect / event handlers
+- Server Components by default (no "use client"); add "use client" only for useState/useEffect/event handlers
 - Prefer Server Components — only promote to Client Component when interactivity is needed
 - Routing is file-based (app/about/page.tsx → /about) — do NOT use react-router
 - Export page components as: export default function Page() { }
 - Layout: export default function RootLayout({ children }: { children: React.ReactNode }) { }
 
 SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or external APIs — all data must be static
+- All data must be static mock data defined in the component — no fetch() or DB
 - Do NOT use localStorage or sessionStorage
-- Do NOT generate app/api/ routes — static/client data only for preview
-- All icons must be inline SVG or emoji
-- All data must be static mock data defined in the component`,
+- Do NOT generate app/api/ routes
+- All icons must be inline SVG or emoji — no icon libraries`,
+
+  tanstack: `
+FRAMEWORK: TanStack Start (TypeScript)
+Static/preview mode — all data is mock data in the component.
+
+FILE FORMAT:
+1. \`\`\`filename:app/routes/__root.tsx — root route with createRootRoute + Outlet
+2. \`\`\`filename:app/routes/index.tsx — index route with createFileRoute('/')
+3. \`\`\`filename:app/client.tsx — createRouter + StartClient
+4. \`\`\`filename:app/globals.css — all CSS using variables
+5. \`\`\`filename:package.json — @tanstack/start + react + react-dom only
+
+FRAMEWORK RULES:
+- Use createFileRoute for every route file
+- Root route exports createRootRoute with a shell component containing <Outlet />
+- Use TanStack Router Link for navigation, not <a> tags
+- All state with useState; no server functions in static mode
+
+SANDBOX RESTRICTIONS:
+- All data must be static mock data defined in the component — no fetch() or DB
+- Do NOT use localStorage or sessionStorage
+- Do NOT generate server functions (createServerFn) in preview mode
+- All icons must be inline SVG or emoji — no icon libraries`,
 
   svelte: `
 FRAMEWORK: Svelte 4 + TypeScript + Vite
@@ -821,6 +845,129 @@ custom JWT auth in the Hono backend. Generate:
    (email/password → POST /api/auth/login|register), modal auto-closes on success.
    No social/OAuth (custom auth is email/password).`;
 
+// ── Next.js fullstack instruction ─────────────────────────────────────────────
+const NEXTJS_INSTRUCTION = `
+
+## ARCHITECTURE — NEXT.JS APP ROUTER + API ROUTES (no separate server process)
+
+This is a fullstack Next.js App Router application. The API backend is built using
+Next.js Route Handlers (app/api/) — there is NO separate Hono/Node server process.
+The preview runs a SINGLE \`next dev\` process on :3000.
+
+GENERATE THESE FILES (generate API routes FIRST so they're never dropped):
+
+1. \`\`\`filename:app/api/[collection]/route.ts — Route Handler per resource. EXACT shape:
+     import { NextRequest, NextResponse } from 'next/server'
+     // ...import DB client per DATABASE section...
+     export async function GET() {
+       try { /* read from DB */ return NextResponse.json(rows ?? []) }
+       catch { return NextResponse.json([], { status: 200 }) }
+     }
+     export async function POST(req: NextRequest) {
+       try {
+         const body = await req.json()
+         /* insert into DB */
+         return NextResponse.json(created, { status: 201 })
+       } catch (e) { return NextResponse.json({ error: String(e) }, { status: 400 }) }
+     }
+   Create one route.ts per resource under app/api/[resourceName]/route.ts.
+   For Stripe webhooks: app/api/webhooks/stripe/route.ts.
+
+2. \`\`\`filename:app/page.tsx — Main page, Server Component by default.
+   Fetch data using server-side DB client directly (no fetch() to /api for page data —
+   Server Components can call the DB directly). "use client" only for interactive parts.
+
+3. \`\`\`filename:app/layout.tsx — Root layout:
+     import './globals.css'
+     export default function RootLayout({ children }: { children: React.ReactNode }) {
+       return <html lang="en"><body>{children}</body></html>
+     }
+
+4. \`\`\`filename:app/globals.css — app styles (CSS variables, global resets).
+
+5. \`\`\`filename:next.config.ts — minimal config:
+     import type { NextConfig } from 'next'
+     const config: NextConfig = {}
+     export default config
+
+HARD RULES:
+- NO separate Hono/Node server — Next.js Route Handlers ARE the backend.
+- Server Components can query the DB directly (server-side only, no leaking keys).
+- Client Components ("use client") must use fetch('/api/...') — never import DB client.
+- The DB client (per DATABASE section) is server-only — only import in Server Components
+  or Route Handlers, never in "use client" components.
+- Do NOT emit package.json or .env — the environment provides them.
+- Port is 3000 (next dev default) — do NOT hardcode another port.
+
+ALLOWED IMPORTS: react, react-dom, next, plus EXACTLY the DB/auth libraries named
+in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
+
+// ── TanStack Start fullstack instruction ──────────────────────────────────────
+const TANSTACK_INSTRUCTION = `
+
+## ARCHITECTURE — TANSTACK START (full-stack server functions, no separate server)
+
+This is a fullstack TanStack Start application. The backend is built using TanStack
+Start's createServerFn — server functions that run ONLY on the server and can access
+the DB directly. NO separate Hono/Node server process.
+
+GENERATE THESE FILES (generate server functions FIRST):
+
+1. \`\`\`filename:app/routes/__root.tsx — root route. EXACT shape:
+     import { createRootRoute, Outlet } from '@tanstack/react-router'
+     import '../globals.css'
+     export const Route = createRootRoute({
+       component: () => <Outlet />,
+     })
+
+2. \`\`\`filename:app/routes/index.tsx — index route. Uses createServerFn to fetch data:
+     import { createFileRoute } from '@tanstack/react-router'
+     import { createServerFn } from '@tanstack/start'
+     // ...import DB client per DATABASE section (server-only)...
+     const getItems = createServerFn({ method: 'GET' }).handler(async () => {
+       /* read from DB — this runs server-side only */
+       return items ?? []
+     })
+     export const Route = createFileRoute('/')({
+       loader: () => getItems(),
+       component: function IndexPage() {
+         const items = Route.useLoaderData()
+         return <main>{/* render items */}</main>
+       },
+     })
+
+3. \`\`\`filename:app/client.tsx — client entry:
+     import { StartClient } from '@tanstack/start'
+     import { createRouter } from './router'
+     import { hydrateRoot } from 'react-dom/client'
+     const router = createRouter()
+     hydrateRoot(document, <StartClient router={router} />)
+
+4. \`\`\`filename:app/router.tsx — router config:
+     import { createRouter as createTanStackRouter } from '@tanstack/react-router'
+     import { routeTree } from './routeTree.gen'
+     export function createRouter() {
+       return createTanStackRouter({ routeTree })
+     }
+
+5. \`\`\`filename:app/globals.css — app styles (CSS variables, global resets).
+
+6. \`\`\`filename:app.config.ts — TanStack Start config:
+     import { defineConfig } from '@tanstack/start/config'
+     export default defineConfig({ react: {} })
+
+HARD RULES:
+- Server functions (createServerFn) run server-side only — safe to import DB client there.
+- Client-rendered code must use TanStack Router loaders (which call server functions)
+  to get data — never import DB client in client components.
+- Do NOT generate a Hono server or src/server/ directory.
+- Do NOT emit package.json or .env — the environment provides them.
+- For mutations: use createServerFn({ method: 'POST' }) and call it from a form or button handler.
+
+ALLOWED IMPORTS: react, react-dom, @tanstack/start, @tanstack/react-router, plus EXACTLY
+the DB/auth libraries named in the DATABASE/AUTH sections below. All pre-installed.
+Do not import other libraries.`;
+
 // ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "security",
@@ -947,21 +1094,35 @@ export class PromptBuilder {
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
        task.description.startsWith("FULLSTACK AUTH BUILD:"));
-    const wantsPython = isFullstackMode && PYTHON_BACKEND_RE.test(task.description);
+    // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
+    // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
+    const fullstackFramework: FullstackFramework = isFullstackMode
+      ? detectFullstackFramework(task.description)
+      : "react";
+
+    // FASTAPI_OVERRIDE only applies to react fullstack (Hono → FastAPI swap).
+    // Next.js and TanStack have their own backend model (API routes / server functions).
+    const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
+
     const fullstackInstruction = isFullstackMode
-      ? FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : "")
+      ? (fullstackFramework === "nextjs"
+          ? NEXTJS_INSTRUCTION
+          : fullstackFramework === "tanstack"
+            ? TANSTACK_INSTRUCTION
+            : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
       : "";
 
-    // ── Framework detection (frontend agent only) ──────────────────────────
-    // FULLSTACK (E2B) builds are FORCED to React: the preview template bakes a
-    // React+Vite scaffold, so vue/svelte/solid/preact/next would generate config
-    // the sandbox can't run. Frontend-only builds (Sandpack) can use any of the
-    // detected frameworks since Sandpack supports them.
+    // framework detection for frameworkInstruction (Sandpack rules):
+    // - For fullstack nextjs/tanstack: skip FRAMEWORK_RULES (their instruction covers everything).
+    // - For fullstack react: use FRAMEWORK_RULES.react (gives sandbox restrictions + fetch exception).
+    // - For Sandpack builds: detect from prompt, can be any framework.
     const framework = agentType === "frontend"
-      ? (isFullstackMode ? "react" : detectFramework(task.description, "react"))
+      ? (isFullstackMode && fullstackFramework !== "react"
+          ? fullstackFramework  // nextjs or tanstack — frameworkInstruction will be "" below
+          : detectFramework(task.description, "react"))
       : "react";
     const frameworkInstruction = agentType === "frontend"
-      ? FRAMEWORK_RULES[framework]
+      ? (isFullstackMode && fullstackFramework !== "react" ? "" : FRAMEWORK_RULES[framework])
       : "";
 
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
@@ -970,8 +1131,9 @@ export class PromptBuilder {
     const isFullstackAuthMode =
       agentType === "frontend" &&
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // Supabase has built-in auth; MongoDB has none → custom JWT auth.
-    const authInstruction = isFullstackAuthMode
+    // Auth instructions: react fullstack only (nextjs/tanstack embed auth in their own instruction).
+    // For react+mongodb: custom JWT. For react+supabase: Supabase auth.
+    const authInstruction = isFullstackAuthMode && fullstackFramework === "react"
       ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
       : "";
 

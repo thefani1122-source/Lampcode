@@ -14,7 +14,7 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { detectDatabase, expandUserPrompt } from "../../agents/prompt-builder.js";
+import { detectDatabase, detectFullstackFramework, expandUserPrompt } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -303,6 +303,7 @@ function needsBackend(prompt: string): boolean {
     "signin", "signup", "oauth", "authentication",
     "user account", "user profile", "admin panel",
     "save data", "store data", "data storage",
+    "nextjs", "next.js", "next js", "tanstack",
   ];
   if (explicitTriggers.some((t) => lower.includes(t))) return true;
 
@@ -528,6 +529,7 @@ export async function runFastBuild(
     // build with no prior code can be promoted to a full-stack generation.
     const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
     const fullstackDb = isFullstackBuild ? detectDatabase(prompt) : "supabase";
+    const fullstackFramework = isFullstackBuild ? detectFullstackFramework(prompt) : "react";
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -538,7 +540,7 @@ export async function runFastBuild(
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.
-      prewarmSandbox(projectId, (line) =>
+      prewarmSandbox(projectId, fullstackFramework, (line) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       );
       server?.emitPreviewLoading(sessionId, { sessionId });
@@ -593,25 +595,65 @@ export async function runFastBuild(
               "Use inline styles or plain src/styles.css — never Tailwind.",
             ]
         : isFullstackBuild
-          ? fullstackDb === "mongodb"
-            ? [
-                "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
-                "Add src/server/routes/auth.ts ONLY if the app needs login/accounts (see AUTH MODE).",
-                "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-                "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
-                "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
-                "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
-              ]
-            : [
-                "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
-                "Add src/server/auth.ts ONLY if the app needs login/accounts.",
-                "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-                "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
-                "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
-                "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
-              ]
+          ? fullstackFramework === "nextjs"
+            ? fullstackDb === "mongodb"
+              ? [
+                  "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, next.config.ts, src/db/schema.ts, src/lib/db.ts.",
+                  "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                  "app/api/*/route.ts: call connectDB() then use Mongoose models — server-side only.",
+                  "app/page.tsx is a Server Component — it can call connectDB() + Mongoose directly. Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
+                  "Do NOT generate package.json or .env — the environment provides them.",
+                ]
+              : [
+                  "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, next.config.ts, src/db/types.ts, src/db/schema.sql.",
+                  "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                  "app/api/*/route.ts: use the Supabase service key (server-side only, process.env.SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY) — NEVER import supabase-js in 'use client' components.",
+                  "app/page.tsx is a Server Component — it can query Supabase directly (import supabase-js with the service key). Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
+                  "Do NOT generate package.json or .env — the environment provides them.",
+                ]
+            : fullstackFramework === "tanstack"
+              ? fullstackDb === "mongodb"
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/schema.ts, src/lib/db.ts.",
+                    "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                    "Data fetching: use createServerFn (server-side) — call connectDB() + Mongoose inside the server fn. Never call Mongoose from client components.",
+                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                    "Do NOT generate package.json or .env — the environment provides them.",
+                  ]
+                : [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
+                    "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                    "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
+                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                    "Do NOT generate package.json or .env — the environment provides them.",
+                  ]
+              : fullstackDb === "mongodb"
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "Add src/server/routes/auth.ts ONLY if the app needs login/accounts (see AUTH MODE).",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                    "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
+                  ]
+                : [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "Add src/server/auth.ts ONLY if the app needs login/accounts.",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+                  ]
           : [
               "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
               "Always include src/App.tsx, src/index.tsx, and package.json.",
@@ -1099,9 +1141,12 @@ export async function runFastBuild(
         allFiles["src/server/main.py"] ||
         allFiles["src/lib/supabase.ts"] ||
         allFiles["src/db/schema.sql"] ||
+        allFiles["app/api"] ||
+        allFiles["app/routes/__root.tsx"] ||
         existingFiles["src/server/index.ts"] ||
         existingFiles["src/server/main.py"] ||
-        existingFiles["src/lib/supabase.ts"],
+        existingFiles["src/lib/supabase.ts"] ||
+        existingFiles["app/routes/__root.tsx"],
     );
     const wantsE2BPreview =
       isFullstackBuild || hasFullstackFiles || (await hasSandboxRecord(projectId));
@@ -1189,7 +1234,7 @@ export async function runFastBuild(
         server?.emitPreviewLoading(sessionId, { sessionId });
         setImmediate(() => {
           console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
-          void createPreviewSandbox(sessionId, projectId, allFiles, (line) => {
+          void createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
           })
             .then((url) => {
