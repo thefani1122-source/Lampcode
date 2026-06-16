@@ -18,7 +18,6 @@ import type { FullstackFramework } from "../agents/prompt-builder.js";
 export type PreviewLogCallback = (line: string) => void;
 
 const PROJECT_DIR = "/home/user/app";
-const DEV_SERVER_PORT = 5173;
 // Sandbox lifetime per session. Set on create AND resume, and refreshed every
 // build turn (heartbeat). Generous so an active testing session never expires
 // mid-use; idle sandboxes are paused on WS disconnect well before this.
@@ -72,6 +71,32 @@ function redisKey(projectId: string): string {
 // follow-up builds in the same process can write files directly without a
 // network round-trip to resume. Lost on restart; Redis is the durable record.
 const sandboxes = new Map<string, Sandbox>();
+// Tracks which fullstack framework each live sandbox was created for, so
+// framework-aware helpers (port/start-command) work without extra parameters
+// at call sites that only have a projectId (resume-on-open, follow-up writes).
+const sandboxFrameworks = new Map<string, FullstackFramework>();
+
+/** Port the dev server listens on inside the sandbox. */
+function devPort(framework: FullstackFramework): number {
+  return framework === "nextjs" || framework === "tanstack" ? 3000 : 5173;
+}
+
+/** Shell command that starts the dev server. */
+function devStartCommand(framework: FullstackFramework): string {
+  switch (framework) {
+    case "nextjs":
+    case "tanstack":
+      // package.json `dev` script already includes --port 3000 / --hostname 0.0.0.0
+      return "npm run dev";
+    default:
+      return "npx vite --host 0.0.0.0 --port 5173";
+  }
+}
+
+/** Process name pattern used to kill a stale dev-server before restarting. */
+function devKillPattern(framework: FullstackFramework): string {
+  return framework === "nextjs" ? "next" : framework === "tanstack" ? "vinxi" : "vite";
+}
 
 // Per-project preview Supabase override (the project owner's OWN connected
 // Supabase). Set at build start; used by writePreviewEnv before Vite boots.
@@ -177,13 +202,20 @@ const BAKED_FILES = new Set([
   "package.json",
   "package-lock.json",
   "bun.lockb",
+  // React/Vite template config — must not be overwritten (allowedHosts/HMR would break)
   "vite.config.ts",
   "vite.config.js",
   "tsconfig.json",
   "tsconfig.node.json",
   "index.html",
+  // Next.js template config
+  "next.config.ts",
+  "next.config.js",
+  "next.config.mjs",
+  // TanStack Start / Vinxi config (controls server port — must stay as baked)
+  "app.config.ts",
   // The model emits an empty .env; we write the real one (with the preview
-  // Supabase creds) ourselves, before Vite starts, in writePreviewEnv().
+  // Supabase creds) ourselves, before the dev server starts, in writePreviewEnv().
   ".env",
   ".env.example",
 ]);
@@ -328,16 +360,20 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
 // into the template (skill rule: template owns package.json/node_modules).
 // Runtime installs were a root cause of dev-server crashes mid-session.
 
-async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+async function startDevServer(
+  sandbox: Sandbox,
+  log: PreviewLogCallback,
+  framework: FullstackFramework,
+): Promise<void> {
+  const cmd = devStartCommand(framework);
   try {
-    log("Starting dev server...");
-    await sandbox.commands.run("npx vite --host 0.0.0.0 --port 5173", {
+    log(`Starting dev server (${framework})...`);
+    await sandbox.commands.run(cmd, {
       cwd: PROJECT_DIR,
       background: true,
       // CRITICAL: the SDK's default command timeout is 60s and it applies to
-      // background commands too — without this, E2B killed Vite one minute
-      // after boot, which is exactly when a prewarmed sandbox was still
-      // waiting for generation to finish ("no service running on port 5173").
+      // background commands too — without this, E2B killed the dev server one
+      // minute after boot ("no service running on port …").
       // 0 = no timeout; the dev server lives as long as the sandbox.
       timeoutMs: 0,
       onStdout: log,
@@ -349,11 +385,11 @@ async function startDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promis
   }
 }
 
-function previewUrlFor(sandbox: Sandbox): string {
+function previewUrlFor(sandbox: Sandbox, framework: FullstackFramework): string {
   // Use the SDK's getHost() — it returns the correct public preview host for
-  // this E2B deployment (domain + region). A hardcoded "5173-{id}.e2b.dev"
+  // this E2B deployment (domain + region). A hardcoded "port-{id}.e2b.dev"
   // string is fragile and was the cause of preview URLs that never resolved.
-  return `https://${sandbox.getHost(DEV_SERVER_PORT)}`;
+  return `https://${sandbox.getHost(devPort(framework))}`;
 }
 
 /**
@@ -362,29 +398,36 @@ function previewUrlFor(sandbox: Sandbox): string {
  * snapshots whose dev server died, processes killed by timeouts/OOM, etc.
  * Quick single probe when healthy (~one HTTP round-trip).
  */
-async function ensureDevServer(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
-  const url = previewUrlFor(sandbox);
-  let viteUp = false;
+async function ensureDevServer(
+  sandbox: Sandbox,
+  log: PreviewLogCallback,
+  framework: FullstackFramework,
+): Promise<void> {
+  const url = previewUrlFor(sandbox, framework);
+  let serverUp = false;
   try {
     const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(3_000) });
-    viteUp = res.ok || res.status < 500;
+    serverUp = res.ok || res.status < 500;
   } catch {
     // not listening — restart below
   }
-  if (!viteUp) {
-    log("Dev server not responding — (re)starting Vite...");
-    // Kill any half-dead Vite first (process alive but not serving) so the
-    // restart can't lose a port conflict against a zombie instance.
-    await sandbox.commands.run("pkill -f vite || true", { timeoutMs: 10_000 }).catch(() => {});
-    await startDevServer(sandbox, log);
+  if (!serverUp) {
+    log(`Dev server not responding — (re)starting ${framework} dev server...`);
+    // Kill any half-dead process first so the restart won't lose a port conflict.
+    const killPat = devKillPattern(framework);
+    await sandbox.commands.run(`pkill -f ${killPat} || true`, { timeoutMs: 10_000 }).catch(() => {});
+    await startDevServer(sandbox, log, framework);
     const ready = await waitForServerReady(url);
     if (!ready) {
       throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
     }
     log("Dev server is up");
   }
-  // Also (re)start the app's own backend if it ships one — no-op otherwise.
-  await ensureBackendServer(sandbox, log).catch(() => {});
+  // Also (re)start the app's own Hono/Node backend if it ships one — no-op for
+  // Next.js/TanStack (Route Handlers / createServerFn are served by the framework).
+  if (framework === "react") {
+    await ensureBackendServer(sandbox, log).catch(() => {});
+  }
 }
 
 /**
@@ -545,9 +588,10 @@ async function acquireRunningSandbox(
     const resumed = await tryResumeSandbox(projectId, savedSandboxId);
     if (resumed) {
       sandboxes.set(projectId, resumed);
+      sandboxFrameworks.set(projectId, framework);
       // A resumed snapshot's dev server may not have survived the pause —
       // verify and restart it if needed rather than assuming.
-      await ensureDevServer(resumed, log);
+      await ensureDevServer(resumed, log, framework);
       log("Resumed existing sandbox");
       return resumed;
     }
@@ -560,14 +604,15 @@ async function acquireRunningSandbox(
   });
   console.log("[E2B] Sandbox created (prewarm):", sandbox.sandboxId);
   sandboxes.set(projectId, sandbox);
+  sandboxFrameworks.set(projectId, framework);
   await saveSandboxId(projectId, sandbox.sandboxId);
 
   try {
-    // Inject preview env BEFORE Vite boots (it only reads VITE_* at startup).
+    // Inject preview env BEFORE the dev server boots (env is only read at startup).
     await writePreviewEnv(sandbox, projectId, log);
-    // Baked scaffold already has node_modules, so this is just Vite startup.
-    await startDevServer(sandbox, log);
-    const ready = await waitForServerReady(previewUrlFor(sandbox));
+    // Baked scaffold already has node_modules — this is just dev-server startup.
+    await startDevServer(sandbox, log, framework);
+    const ready = await waitForServerReady(previewUrlFor(sandbox, framework));
     if (!ready) {
       throw new Error("Prewarmed sandbox dev server did not become ready");
     }
@@ -577,6 +622,7 @@ async function acquireRunningSandbox(
     // would reuse it and hand the client a broken preview URL. Clean up fully
     // so it does a fresh cold start instead.
     sandboxes.delete(projectId);
+    sandboxFrameworks.delete(projectId);
     await deleteSandboxId(projectId).catch(() => {});
     await sandbox.kill().catch(() => {});
     throw err;
@@ -650,13 +696,14 @@ export async function writeFilesToSandbox(
     logger.debug({ projectId, line }, "[e2b]");
   };
 
+  const framework = sandboxFrameworks.get(projectId) ?? "react";
   patchViteConfig(files, log);
   // Heartbeat: every follow-up write extends the sandbox lifetime so an
   // actively-used session never hits the timeout set at create/resume.
   await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
   await writeFiles(sandbox, files, log);
-  await ensureDevServer(sandbox, log);
-  const url = previewUrlFor(sandbox);
+  await ensureDevServer(sandbox, log, framework);
+  const url = previewUrlFor(sandbox, framework);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
   return url;
 }
@@ -682,16 +729,18 @@ export async function ensurePreviewForProject(
 
   await awaitWarming(projectId);
 
-  // Already live in this process — just make sure Vite is up.
+  // Already live in this process — just make sure the dev server is up.
   const live = sandboxes.get(projectId);
   if (live) {
+    const framework = sandboxFrameworks.get(projectId) ?? "react";
     try {
-      await ensureDevServer(live, log);
+      await ensureDevServer(live, log, framework);
       await live.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
-      return previewUrlFor(live);
+      return previewUrlFor(live, framework);
     } catch {
       // live ref is dead — drop it and try to resume the snapshot below.
       sandboxes.delete(projectId);
+      sandboxFrameworks.delete(projectId);
     }
   }
 
@@ -704,7 +753,10 @@ export async function ensurePreviewForProject(
       const resumed = await tryResumeSandbox(projectId, savedId);
       if (!resumed) throw new Error("resume-on-open: snapshot unavailable");
       sandboxes.set(projectId, resumed);
-      await ensureDevServer(resumed, log);
+      // Framework unknown on resume-on-open: default react (port 5173).
+      // The sandbox already has the right template — only the port matters.
+      const framework = sandboxFrameworks.get(projectId) ?? "react";
+      await ensureDevServer(resumed, log, framework);
       return resumed;
     })().finally(() => warmingSandboxes.delete(projectId));
     warmingSandboxes.set(projectId, warm);
@@ -713,7 +765,8 @@ export async function ensurePreviewForProject(
   try {
     const sb = await warm;
     await sb.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
-    return previewUrlFor(sb);
+    const framework = sandboxFrameworks.get(projectId) ?? "react";
+    return previewUrlFor(sb, framework);
   } catch (err) {
     logger.warn({ projectId, err }, "[e2b] resume-on-open failed — preview needs a rebuild");
     return null;
@@ -781,9 +834,9 @@ export async function createPreviewSandbox(
     await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
 
     await writeFiles(sandbox, files, log);
-    await ensureDevServer(sandbox, log);
+    await ensureDevServer(sandbox, log, framework);
 
-    const url = previewUrlFor(sandbox);
+    const url = previewUrlFor(sandbox, framework);
     console.log("[E2B] Dev server is ready:", url);
     log(`Preview ready at ${url}`);
     return url;
@@ -793,6 +846,7 @@ export async function createPreviewSandbox(
     console.error("[E2B] Error message:", err instanceof Error ? err.message : String(err));
     console.error("[E2B] Error stack:", err instanceof Error ? err.stack : undefined);
     sandboxes.delete(projectId);
+    sandboxFrameworks.delete(projectId);
     await sandbox?.kill().catch(() => {});
     throw err;
   }
@@ -811,6 +865,7 @@ export async function pauseSandbox(projectId: string): Promise<void> {
   try {
     await sandbox.pause();
     sandboxes.delete(projectId);
+    sandboxFrameworks.delete(projectId);
     console.log("[E2B] Paused sandbox for project:", projectId);
   } catch (err) {
     logger.error({ projectId, err }, "[e2b] Failed to pause sandbox");
@@ -828,6 +883,7 @@ export async function killSandbox(projectId: string): Promise<void> {
   try {
     const existing = sandboxes.get(projectId);
     sandboxes.delete(projectId);
+    sandboxFrameworks.delete(projectId);
     if (existing) {
       await existing.kill().catch((err) => {
         logger.warn({ projectId, err }, "Failed to kill E2B sandbox");
