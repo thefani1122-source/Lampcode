@@ -1103,32 +1103,28 @@ Always generate:
 - Never hardcode API keys — read from os.environ`;
 
 const ANIMATION_DEFAULT_INSTRUCTION = `
+IMPORTANT: This is a visual website/UI build.
+Apply animation-expert skill fully:
 
-ANIMATION MODE — The user wants an animated, visually impressive website. Follow these rules:
+COLOR RULE: Choose a modern sophisticated palette
+appropriate to the content type and brand.
+Light or dark — decide based on context.
+Never use plain boring default colors.
 
-Default libraries (install all unless user specifies otherwise):
-- motion (Framer Motion) — component animations, hover, tap, scroll reveal
-- gsap + ScrollTrigger — scroll-based storytelling, counters, horizontal scroll
-- lenis — smooth scrolling (always include)
+ANIMATION RULE:
+- Import AOS, initialize in App.tsx, add data-aos to
+  every section and card grid
+- Use Motion (Framer Motion) for component interactions
+- Use GSAP ScrollTrigger for complex scroll effects only
+- Every section MUST have an entrance animation
 
-MANDATORY on every website:
-1. Smooth scrolling via Lenis (wrap app in useSmoothScroll hook)
-2. Hero section: animated headline with fade-in or split-text effect
-3. Every section: fade-in on scroll using Motion useInView (opacity 0->1, y 60->0)
-4. Cards/grid: stagger animation with 0.1s delay per item
-5. Buttons: spring hover (scale 1.05) + tap (scale 0.95)
-6. Navigation: hide/show on scroll direction
-
-Default dark design system:
-- Background: #030712 (near black)
-- Surface: #111827 (dark gray)
-- Primary: #6366f1 (indigo)
-- Accent: #f59e0b (amber)
-- Text: #f9fafb
-- Font: Inter (import from Google Fonts)
-- Cards: glassmorphism (rgba(255,255,255,0.05) + backdrop-filter blur(20px) + border rgba(255,255,255,0.1))
-
-Static websites are unacceptable. Every element must animate.`;
+UI QUALITY RULE:
+- Use shadcn/ui for all base components (never raw HTML)
+- Use Aceternity UI or Magic UI for hero/feature sections
+- Buttons: spring hover + tap (Motion whileHover/whileTap)
+- Cards: subtle lift on hover (translateY + shadow)
+- Think: would this win an Awwwards honorable mention?
+`;
 
 /**
  * Expand a short user prompt with completeness expectations for its app type.

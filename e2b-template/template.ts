@@ -46,7 +46,8 @@ const PKG_JSON = `{
     "@splinetool/react-spline": "^4.0.0",
     "@react-three/fiber": "^8.17.10",
     "@react-three/drei": "^9.114.3",
-    "three": "^0.169.0"
+    "three": "^0.169.0",
+    "aos": "^2.3.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

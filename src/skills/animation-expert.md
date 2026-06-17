@@ -230,6 +230,103 @@ function AnimatedBlob() {
 
 ---
 
+## AOS (Animate On Scroll) — Simple Scroll Animations
+
+Lighter than ScrollTrigger — perfect for most websites.
+
+```bash
+npm install aos
+npm install --save-dev @types/aos
+```
+
+### Setup
+
+```tsx
+// main.tsx or App.tsx
+import AOS from "aos"
+import "aos/dist/aos.css"
+import { useEffect } from "react"
+
+useEffect(() => {
+  AOS.init({
+    duration: 800,
+    easing: "ease-out-cubic",
+    once: true,
+    offset: 100,
+  })
+}, [])
+```
+
+### Usage — add data attributes to any element
+
+```tsx
+// Fade up (most common — use on every section)
+<div data-aos="fade-up">Content</div>
+
+// Directional fades
+<div data-aos="fade-right">Left content</div>
+<div data-aos="fade-left">Right content</div>
+
+// Zoom in for cards/features
+<div data-aos="zoom-in">Feature card</div>
+
+// Stagger cards with delay
+{cards.map((card, i) => (
+  <div key={i} data-aos="fade-up" data-aos-delay={i * 100}>
+    {card}
+  </div>
+))}
+
+// Flip effects
+<div data-aos="flip-left">Flip card</div>
+```
+
+### AOS vs GSAP ScrollTrigger:
+- AOS → simple reveals, cards, sections (use 80% of the time)
+- GSAP ScrollTrigger → complex timelines, pinning,
+  horizontal scroll, counter animations (use 20% of time)
+
+---
+
+## Modern UI Libraries — Always Prefer Over Plain HTML
+
+### shadcn/ui (base — always use)
+Clean, accessible, customizable base components.
+Use for: buttons, forms, dialogs, dropdowns, toasts, tables.
+NEVER use raw HTML buttons or inputs when shadcn exists.
+
+### Aceternity UI (impressive hero/feature components)
+
+```bash
+npm install tailwindcss-animate clsx tailwind-merge framer-motion
+```
+
+Key components:
+- CardSpotlight → glowing spotlight on hover
+- BackgroundLines → animated background grid  
+- TypewriterEffect → text that types itself
+- InfiniteMovingCards → scrolling testimonials/logos
+- Spotlight → dramatic hero background lighting
+- TracingBeam → scroll progress sidebar
+- Bento Grid → modern feature grid layout
+
+### Magic UI (animation-focused micro-components)
+Key components:
+- NumberTicker → animated number counter
+- WordFadeIn → word-by-word headline reveal
+- ShimmerButton → button with shimmer effect
+- BorderBeam → glowing animated border
+- AnimatedGradientText → gradient text animation
+- Marquee → infinite scrolling logo/card strip
+
+### When to use which:
+- shadcn/ui → forms, navigation, utility UI
+- Aceternity UI → hero sections, feature showcases, cards
+- Magic UI → stats, headlines, CTAs, loading states
+- All three can be used together in one project
+
+---
+
 ## Smooth Scrolling (Lenis)
 
 ```tsx
@@ -307,17 +404,32 @@ Conditional (if requested or fits):
 
 ## Design System — Award-Winning Defaults
 
-### Colors
+### Colors — Modern Palette Strategy
 
-```css
-/* If user doesn't specify — use this modern palette */
---primary: #6366f1;      /* indigo */
---accent: #f59e0b;       /* amber */
---bg: #030712;           /* near black */
---surface: #111827;      /* dark gray */
---text: #f9fafb;
---muted: #6b7280;
-```
+DO NOT default to dark theme. Choose based on context:
+- Portfolio / Agency / Creative → Dark (deep navy or near-black)
+- SaaS / Dashboard / Business → Light (clean white or warm gray)
+- Ecommerce / Product → Light with vibrant accents
+- Gaming / Tech → Dark with neon accents
+
+ALWAYS avoid:
+✗ Plain white (#ffffff) with plain black (#000000) — boring
+✗ Default blue (#0000ff) — looks amateur  
+✗ Bright saturated primaries without tint — looks like 2005
+✗ Low contrast text — accessibility fail
+
+USE instead:
+✓ Off-whites: #fafaf9, #f8fafc, #fffef7
+✓ Rich darks: #0a0a0a, #030712, #0d0f1a
+✓ Modern grays: #111827, #1e293b, #18181b
+✓ Sophisticated accents:
+    Indigo: #6366f1   Violet: #8b5cf6
+    Emerald: #10b981  Amber: #f59e0b
+    Rose: #f43f5e     Cyan: #06b6d4
+✓ Always add gradient accents — never flat solid only:
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+Ask: "Would a top designer at Apple/Stripe/Linear approve this?"
 
 ### Typography
 
