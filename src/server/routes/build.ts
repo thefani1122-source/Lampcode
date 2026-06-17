@@ -37,6 +37,7 @@ import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
+import { generateProjectMemory } from "../../agents/memory-generator.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -476,6 +477,7 @@ export async function runFastBuild(
   hasReferenceImage: boolean = false,
   agentBuildFlag: boolean = false,
   animationFlag: boolean = false,
+  projectMemory: string | null = null,
 ): Promise<void> {
   const server = ws();
 
@@ -759,6 +761,7 @@ export async function runFastBuild(
         hasReferenceImage,
         isAgentBuild: agentBuildFlag,
         hasAnimationContext: animationFlag,
+        projectMemory,
       },
       sessionId,
       userId,
@@ -1208,6 +1211,22 @@ export async function runFastBuild(
       totalFiles: Object.keys(allFiles).length,
     });
 
+    // ── Async project memory update — never blocks the build ───────────────
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const allCode = Object.values(allFiles).join("\n")
+          const newMemory = await generateProjectMemory(allCode, projectMemory, prompt)
+          await db.update(projects)
+            .set({ projectMemory: newMemory })
+            .where(eq(projects.id, projectId))
+          console.log(`[memory] saved for project ${projectId}`)
+        } catch (err) {
+          console.error("[memory] update failed:", err)
+        }
+      })()
+    })
+
     // ── E2B cloud sandbox preview ───────────────────────────────────────────
     // The instant Sandpack preview above only runs JS/TS in-browser and CANNOT
     // run a Supabase-direct app. So any fullstack/Supabase project — including
@@ -1532,6 +1551,14 @@ buildRouter.post("/fast", async (c) => {
     const refImgFlag = hasImageAttachment(attachments);
     const agentFlag = isAgentBuild(prompt);
     const animationFlag = isAnimationBuild(prompt);
+
+    // Fetch project memory before kicking off the build (non-blocking read)
+    const projectRow = await db.query.projects.findFirst({
+      where: eq(projects.id, projectId),
+      columns: { projectMemory: true },
+    });
+    const memoryFlag = projectRow?.projectMemory ?? null;
+
     setImmediate(() => {
       void (async () => {
         // Action mode: if the user has connected MCP providers AND the prompt
@@ -1550,7 +1577,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });

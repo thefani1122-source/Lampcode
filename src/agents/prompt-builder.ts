@@ -17,6 +17,7 @@ interface BuildContext {
   mode: "fast" | "plan";
   prompt: string;
   businessContext?: BusinessContext | undefined;
+  projectMemory?: string | null;
 }
 import { logger } from "../server/logger.js";
 
@@ -37,6 +38,7 @@ export const taskInputSchema = z.object({
   hasReferenceImage: z.boolean().optional(),
   isAgentBuild: z.boolean().optional(),
   hasAnimationContext: z.boolean().optional(),
+  projectMemory: z.string().nullable().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -1267,7 +1269,11 @@ export class PromptBuilder {
     const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
     const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;
+    const projectMemoryBlock = task.projectMemory
+      ? `## Current Project State\nYou are editing an EXISTING project. Read this carefully before making any changes:\n\n${task.projectMemory}\n\nRULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n\n`
+      : "";
+
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
