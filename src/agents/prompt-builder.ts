@@ -35,6 +35,7 @@ export const taskInputSchema = z.object({
   outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
   targetFiles: z.array(z.string()).optional(),
   hasReferenceImage: z.boolean().optional(),
+  isAgentBuild: z.boolean().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -1081,6 +1082,25 @@ Only after completing this analysis, generate pixel-accurate code using exclusiv
 Do NOT approximate any value. Every hex color must match exactly.
 When the user says "same design" or "like the screenshot" — this means 100% visual fidelity to the reference.`;
 
+const AGENT_BUILD_INSTRUCTION = `
+
+AGENT BUILD MODE — The user wants an AI agent or automated workflow. Follow these rules:
+
+Choose framework based on complexity:
+- Simple single-step task → Anthropic SDK directly (no framework)
+- Multi-step pipeline (Research → Analyze → Write) → CrewAI (simplest, most readable)
+- Complex branching / retry / persistent memory / checkpointing → LangGraph
+
+Backend: Python + FastAPI (NOT Hono.js / Node.js)
+Always generate:
+- FastAPI endpoints: POST /run, GET /results, GET /status
+- APScheduler for time-based triggers (cron / recurring runs)
+- Supabase storage: store every run output with { id, output, created_at, status, run_duration }
+- React dashboard (frontend): show results table, manual "Run Now" button, status indicator
+- try/except on every LLM call with error logging to Supabase
+- Type hints on every Python function
+- Never hardcode API keys — read from os.environ`;
+
 /**
  * Expand a short user prompt with completeness expectations for its app type.
  * Pure and additive — never replaces the user's intent, only appends guidance.
@@ -1219,8 +1239,9 @@ export class PromptBuilder {
     const providerRules = agentType === "frontend" ? matchProviderRules(task.description) : "";
 
     const screenshotInstruction = task.hasReferenceImage === true ? SCREENSHOT_DESIGN_INSTRUCTION : "";
+    const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + jsonInstruction;
+    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
@@ -1358,6 +1379,11 @@ export class PromptBuilder {
     }
     if (/\b(research|competitor|analyze|analyse|similar|reference|like|inspiration|inspired)\b/i.test(prompt)) {
       toLoad.add("exa.md");
+    }
+    if (/\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crew|research\s+and|find\s+and|analyz)\b/i.test(prompt)) {
+      toLoad.add("crewai.md");
+      toLoad.add("langgraph.md");
+      toLoad.add("agent-architecture.md");
     }
 
     const sections: string[] = [];

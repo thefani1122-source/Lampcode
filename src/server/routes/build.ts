@@ -336,6 +336,12 @@ function hasImageAttachment(attachments?: string[]): boolean {
   return attachments.some((a) => typeof a === "string" && /^data:image\//i.test(a));
 }
 
+// ── Agent build detection ─────────────────────────────────────────────────────
+
+function isAgentBuild(prompt: string): boolean {
+  return /\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crewai|crew\s+ai|langgraph|research\s+and|find\s+and|analyz)\b/i.test(prompt);
+}
+
 // ── Full-stack detection ──────────────────────────────────────────────────────
 
 /**
@@ -464,6 +470,7 @@ export async function runFastBuild(
   prompt: string,
   userId: string,
   hasReferenceImage: boolean = false,
+  agentBuildFlag: boolean = false,
 ): Promise<void> {
   const server = ws();
 
@@ -745,6 +752,7 @@ export async function runFastBuild(
         requirements: effectiveRequirements,
         outputFormat: "code",
         hasReferenceImage,
+        isAgentBuild: agentBuildFlag,
       },
       sessionId,
       userId,
@@ -1516,6 +1524,7 @@ buildRouter.post("/fast", async (c) => {
     // ── Fire-and-forget build ───────────────────────────────────────────────
     const userId = authUser.id;
     const refImgFlag = hasImageAttachment(attachments);
+    const agentFlag = isAgentBuild(prompt);
     setImmediate(() => {
       void (async () => {
         // Action mode: if the user has connected MCP providers AND the prompt
@@ -1534,7 +1543,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });

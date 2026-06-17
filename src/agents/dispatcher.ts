@@ -35,6 +35,7 @@ export const dispatchOptionsSchema = z.object({
     outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
     targetFiles: z.array(z.string()).optional(),
     hasReferenceImage: z.boolean().optional(),
+    isAgentBuild: z.boolean().optional(),
   }),
   sessionId: z.string().uuid(),
   userId: z.string().optional(),
