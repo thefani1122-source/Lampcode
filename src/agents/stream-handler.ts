@@ -28,6 +28,7 @@ export async function handleAgentStream(
   let fullContent = ""
   let inputTokens = 0
   let outputTokens = 0
+  let stopReason: string | undefined
 
   // Accumulates every file emitted via build:file_write so build:complete
   // can hand the full Record<string, string> to the frontend in one shot.
@@ -132,6 +133,7 @@ export async function handleAgentStream(
           break
 
         case "done":
+          if (chunk.stopReason) stopReason = chunk.stopReason
           break
       }
     }
@@ -141,7 +143,15 @@ export async function handleAgentStream(
     throw err
   }
 
-  console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length}`)
+  console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length} stopReason=${stopReason}`)
+
+  if (stopReason === "max_tokens") {
+    emit("build:warning", {
+      message: "Generation was cut off — some files may be incomplete. Try rebuilding or simplifying the request.",
+      truncated: true,
+      sessionId,
+    })
+  }
 
   // ── Write raw LLM output to disk (for audit / replay) ──────────────────────
   try {

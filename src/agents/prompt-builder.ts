@@ -164,6 +164,13 @@ RULE 5 — Every import at the top of a file MUST have a corresponding export/de
 Always include a complete root component with all state and event handlers.
 If you are simplifying due to scope: add a comment at the top: // Simplified version
 
+RULE 6 — When editing existing code:
+- Read the existing App.tsx structure before making any changes
+- Add new components or sections WITHOUT removing existing ones
+- Keep all existing imports — never delete a working import
+- If App.tsx is already over 400 lines, create a NEW separate component file rather than extending App.tsx further
+- NEVER rename the app, change its primary purpose, or restructure working code unprompted
+
 PLANNING — REQUIRED BEFORE CODE:
 Before writing any code, explain your plan in 2-3 sentences. Describe what you will build and the key components. Only AFTER this explanation, begin writing files.
 
@@ -1126,6 +1133,13 @@ UI QUALITY RULE:
 - Buttons: spring hover + tap (Motion whileHover/whileTap)
 - Cards: subtle lift on hover (translateY + shadow)
 - Think: would this win an Awwwards honorable mention?
+
+EDITING RULE (when modifying existing code):
+- Read existing App.tsx structure before writing anything
+- Add new components/sections WITHOUT removing existing ones
+- Keep all existing imports — never remove a working import
+- If App.tsx is over 400 lines, create a NEW separate component file
+- NEVER rename the app or change its primary purpose
 `;
 
 /**
@@ -1270,7 +1284,7 @@ export class PromptBuilder {
     const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
 
     const projectMemoryBlock = task.projectMemory
-      ? `## Current Project State\nYou are editing an EXISTING project. Read this carefully before making any changes:\n\n${task.projectMemory}\n\nRULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n\n`
+      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}\n\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
       : "";
 
     return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;

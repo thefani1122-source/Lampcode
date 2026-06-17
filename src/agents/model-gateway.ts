@@ -49,6 +49,7 @@ export interface StreamChunk {
   reasoning?: string | undefined;
   toolCall?: { id: string; name: string; arguments: string } | undefined;
   usage?: { promptTokens: number; completionTokens: number } | undefined;
+  stopReason?: string | undefined;
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ export class ModelGateway {
     let currentBlockType: string = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    let stopReason: string | undefined;
 
     try {
       for await (const event of stream) {
@@ -222,6 +224,7 @@ export class ModelGateway {
 
           case "message_delta":
             outputTokens = event.usage?.output_tokens ?? outputTokens;
+            stopReason = event.delta.stop_reason ?? stopReason;
             break;
 
           case "message_stop":
@@ -236,6 +239,6 @@ export class ModelGateway {
       type: "usage",
       usage: { promptTokens: inputTokens, completionTokens: outputTokens },
     };
-    yield { type: "done" };
+    yield { type: "done", stopReason };
   }
 }
