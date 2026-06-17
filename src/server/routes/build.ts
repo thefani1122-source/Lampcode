@@ -32,11 +32,16 @@ import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
+import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+// Prompts that match these keywords in "action mode" execute real MCP tool
+// calls (create GitHub repo, build n8n workflow, etc.) instead of generating code.
+const ACTION_MODE_RE = /\b(create|build|add|send|trigger|automate|setup|set up|connect|deploy|post|update|delete|sync|make|push|commit|generate|new repo|new workflow|new issue|new page|new project)\b/i;
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
@@ -1399,10 +1404,25 @@ buildRouter.post("/fast", async (c) => {
     // ── Fire-and-forget build ───────────────────────────────────────────────
     const userId = authUser.id;
     setImmediate(() => {
-      runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
-        console.error(err);
-        if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
-      });
+      void (async () => {
+        // Action mode: if the user has connected MCP providers AND the prompt
+        // looks like a direct action ("create a GitHub repo", "build n8n workflow"),
+        // route to the MCP action agent instead of code generation.
+        if (ACTION_MODE_RE.test(prompt)) {
+          const mcpServers = await getConnectedMcpServers(userId).catch(() => []);
+          if (mcpServers.length > 0) {
+            return runMcpAction({ sessionId, userId, prompt, mcpServers }).catch((err) => {
+              console.error("[mcp-action] error:", err);
+              if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
+            });
+          }
+        }
+        // Default: normal code-generation build
+        return runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
+          console.error(err);
+          if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
+        });
+      })();
     });
   } catch (err) {
     // Refund credits if session creation failed (DB insert or project update)
