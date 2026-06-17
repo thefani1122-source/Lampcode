@@ -36,8 +36,43 @@ import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpSer
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const CLARIFY_SYSTEM = `You are a technical analyst. Analyze user prompts and determine if clarification is needed before building.
+
+Only ask questions when the prompt is for:
+- SaaS tools, platforms, marketplaces
+- Apps with multiple user types or roles
+- Apps that handle payments or subscriptions
+- Apps with complex data relationships
+
+DO NOT ask questions for:
+- Simple UI components or pages
+- Landing pages or portfolios
+- Design clones ("make it look like X")
+- Single-purpose utilities
+
+Return ONLY valid JSON, no markdown, no explanation:
+{
+  "needsClarification": boolean,
+  "questions": [
+    {
+      "id": "q1",
+      "heading": "Short heading (3-5 words)",
+      "reason": "One sentence: why you need this info and how it affects the build",
+      "question": "The actual question (concise)",
+      "options": ["Option 1", "Option 2", "Option 3"],
+      "allowMultiple": false,
+      "allowCustom": true
+    }
+  ]
+}
+
+Max 4 questions. Min 0 (needsClarification: false).
+Options must be exactly 3 per question.
+allowMultiple: true only for user-type questions.`;
 
 // Prompts that match these keywords in "action mode" execute real MCP tool
 // calls (create GitHub repo, build n8n workflow, etc.) instead of generating code.
@@ -65,6 +100,11 @@ function ws() {
 }
 
 // ── Input schemas ─────────────────────────────────────────────────────────────
+
+const clarifyBodySchema = z.object({
+  prompt: z.string().min(1).max(4_000),
+  projectId: z.string().min(1),
+});
 
 // Accept both camelCase and snake_case for projectId to handle frontend naming conventions
 const fastBuildBodySchema = z.preprocess(
@@ -1345,6 +1385,57 @@ export async function runFastBuild(
 
 export const buildRouter = new Hono();
 buildRouter.use("/*", requireAuth);
+
+// POST /api/build/clarify
+buildRouter.post("/clarify", async (c) => {
+  const bodyRaw = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+
+  const parsed = clarifyBodySchema.safeParse(bodyRaw);
+  if (!parsed.success) {
+    throw new AppError(
+      400,
+      parsed.error.issues.map(i => i.message).join("; "),
+      "VALIDATION_ERROR",
+    );
+  }
+  const { prompt } = parsed.data;
+
+  if (!config.ANTHROPIC_API_KEY) {
+    return c.json({ needsClarification: false, questions: [] });
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: CLARIFY_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this prompt and generate clarification questions if needed:\n\n${prompt}`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map(b => b.text)
+      .join("");
+
+    try {
+      const result = JSON.parse(text) as unknown;
+      return c.json(result);
+    } catch {
+      return c.json({ needsClarification: false, questions: [] });
+    }
+  } catch (err) {
+    logger.warn({ err }, "Clarify endpoint error — skipping clarification");
+    return c.json({ needsClarification: false, questions: [] });
+  }
+});
 
 // POST /api/build/fast
 buildRouter.post("/fast", async (c) => {
