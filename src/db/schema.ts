@@ -536,6 +536,23 @@ export const userIntegrations = pgTable("user_integrations", {
 (t) => [uniqueIndex("user_integrations_user_provider_idx").on(t.userId, t.provider)],
 );
 
+// ── MCP provider connections (new flexible table, text slug not enum) ─────────
+
+export const userMcpConnections = pgTable("user_mcp_connections", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  providerSlug: text("provider_slug").notNull(),
+  encryptedCreds: text("encrypted_creds").notNull(),
+  encryptedCredsIv: text("encrypted_creds_iv").notNull(),
+  encryptedCredsTag: text("encrypted_creds_tag").notNull(),
+  meta: jsonb("meta").$type<Record<string, string>>().default({}),
+  connectedAt: timestamp("connected_at", { mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("user_mcp_connections_user_provider_idx").on(t.userId, t.providerSlug),
+]);
+
+export type UserMcpConnection = typeof userMcpConnections.$inferSelect;
+
 // ── Encrypted project env vars ────────────────────────────────────────────────
 
 export const envEnvironmentEnum = pgEnum("env_environment", [

@@ -3,13 +3,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { userIntegrations } from "../../db/schema.js";
+import { userIntegrations, userMcpConnections } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { encrypt, decrypt } from "../env-crypto.js";
 import { logger } from "../logger.js";
 import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
 import { getProvider } from "../../mcp/providers/index.js";
+import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
@@ -461,4 +462,141 @@ export async function getUserSupabaseMcpAuth(
     logger.warn({ userId, err }, "Failed to decrypt user Supabase PAT");
     return null;
   }
+}
+
+// ── MCP Provider routes ────────────────────────────────────────────────────────
+
+// POST /api/integrations/mcp/:slug/connect
+integrationsRouter.post("/mcp/:slug/connect", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  const provider = getMcpProvider(slug);
+  if (!provider) throw new AppError(404, `Unknown provider: ${slug}`, "UNKNOWN_PROVIDER");
+
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR");
+  }) as Record<string, string>;
+
+  // Encrypt all creds as one blob
+  const enc = encrypt(JSON.stringify(body));
+
+  // Extract non-secret display fields
+  const meta: Record<string, string> = {};
+  for (const field of provider.credentialFields) {
+    if (field.type === "password") continue;
+    const v = body[field.key];
+    if (typeof v === "string" && v) {
+      if (field.type === "url") {
+        try {
+          meta[field.key] = new URL(v).host;
+        } catch {
+          meta[field.key] = v;
+        }
+      } else {
+        meta[field.key] = v;
+      }
+    }
+  }
+
+  const id = randomUUID();
+  const now = new Date();
+  await db.insert(userMcpConnections).values({
+    id,
+    userId,
+    providerSlug: slug,
+    encryptedCreds: enc.encrypted,
+    encryptedCredsIv: enc.iv,
+    encryptedCredsTag: enc.tag,
+    meta,
+    connectedAt: now,
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: {
+      encryptedCreds: enc.encrypted,
+      encryptedCredsIv: enc.iv,
+      encryptedCredsTag: enc.tag,
+      meta,
+      connectedAt: now,
+    },
+  });
+
+  logger.info({ userId, slug }, "MCP provider connected");
+  return c.json({ slug, status: "connected", meta }, 201);
+});
+
+// DELETE /api/integrations/mcp/:slug
+integrationsRouter.delete("/mcp/:slug", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  await db
+    .delete(userMcpConnections)
+    .where(and(eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, slug)));
+  return c.json({ success: true });
+});
+
+// GET /api/integrations/mcp — list connected providers
+integrationsRouter.get("/mcp", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const rows = await db
+    .select({
+      providerSlug: userMcpConnections.providerSlug,
+      meta: userMcpConnections.meta,
+      connectedAt: userMcpConnections.connectedAt,
+    })
+    .from(userMcpConnections)
+    .where(eq(userMcpConnections.userId, userId));
+  return c.json({ connected: rows });
+});
+
+// ── Helper: get connected MCP servers ready for Anthropic beta ────────────────
+
+export interface ActiveMcpServer {
+  slug: string;
+  name: string;
+  url: string;
+  authToken: string;
+}
+
+/**
+ * Returns all connected MCP providers for a user with decrypted creds,
+ * ready to pass directly to Anthropic's beta mcp_servers param.
+ * Only returns providers that supportsRealMCP = true AND have a resolvable URL.
+ */
+export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpServer[]> {
+  const rows = await db
+    .select()
+    .from(userMcpConnections)
+    .where(eq(userMcpConnections.userId, userId));
+
+  const servers: ActiveMcpServer[] = [];
+
+  for (const row of rows) {
+    try {
+      const provider = getMcpProvider(row.providerSlug);
+      if (!provider?.supportsRealMCP) continue;
+
+      const creds = JSON.parse(
+        decrypt({
+          encrypted: row.encryptedCreds,
+          iv: row.encryptedCredsIv,
+          tag: row.encryptedCredsTag,
+        }),
+      ) as Record<string, string>;
+
+      const url = resolveServerUrl(provider, creds);
+      if (!url) continue;
+
+      // Determine the bearer token from creds based on authType
+      const tokenKey =
+        provider.credentialFields.find((f) => f.type === "password")?.key ?? "api_key";
+      const authToken = creds[tokenKey] ?? "";
+      if (!authToken) continue;
+
+      servers.push({ slug: row.providerSlug, name: provider.name, url, authToken });
+    } catch (err) {
+      logger.warn({ userId, slug: row.providerSlug, err }, "Failed to decrypt MCP creds");
+    }
+  }
+
+  return servers;
 }
