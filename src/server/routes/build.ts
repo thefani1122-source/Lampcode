@@ -32,7 +32,7 @@ import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
@@ -1409,9 +1409,12 @@ buildRouter.post("/fast", async (c) => {
         // looks like a direct action ("create a GitHub repo", "build n8n workflow"),
         // route to the MCP action agent instead of code generation.
         if (ACTION_MODE_RE.test(prompt)) {
-          const mcpServers = await getConnectedMcpServers(userId).catch(() => []);
-          if (mcpServers.length > 0) {
-            return runMcpAction({ sessionId, userId, prompt, mcpServers }).catch((err) => {
+          const [mcpServers, restProviders] = await Promise.all([
+            getConnectedMcpServers(userId).catch(() => []),
+            getConnectedRestProviders(userId).catch(() => []),
+          ]);
+          if (mcpServers.length > 0 || restProviders.length > 0) {
+            return runMcpAction({ sessionId, userId, prompt, mcpServers, restProviders }).catch((err) => {
               console.error("[mcp-action] error:", err);
               if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
             });

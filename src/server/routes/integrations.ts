@@ -554,13 +554,23 @@ export interface ActiveMcpServer {
   slug: string;
   name: string;
   url: string;
-  authToken: string;
+  /** null for mcp_url authType — the token is already embedded in the URL */
+  authToken: string | null;
+}
+
+export interface ConnectedRestProvider {
+  slug: string;
+  name: string;
+  restApiHint: string;
+  creds: Record<string, string>;
 }
 
 /**
  * Returns all connected MCP providers for a user with decrypted creds,
  * ready to pass directly to Anthropic's beta mcp_servers param.
  * Only returns providers that supportsRealMCP = true AND have a resolvable URL.
+ *
+ * For mcp_url authType the token is embedded in the URL — authToken is null.
  */
 export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpServer[]> {
   const rows = await db
@@ -586,7 +596,13 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       const url = resolveServerUrl(provider, creds);
       if (!url) continue;
 
-      // Determine the bearer token from creds based on authType
+      // mcp_url: token is embedded in the URL — no separate authorization_token
+      if (provider.authType === "mcp_url") {
+        servers.push({ slug: row.providerSlug, name: provider.name, url, authToken: null });
+        continue;
+      }
+
+      // All other real-MCP types: find the password field for the bearer token
       const tokenKey =
         provider.credentialFields.find((f) => f.type === "password")?.key ?? "api_key";
       const authToken = creds[tokenKey] ?? "";
@@ -599,4 +615,43 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
   }
 
   return servers;
+}
+
+/**
+ * Returns all connected REST-only providers (supportsRealMCP = false) with
+ * decrypted creds so the action agent can inject them into the system prompt.
+ */
+export async function getConnectedRestProviders(userId: string): Promise<ConnectedRestProvider[]> {
+  const rows = await db
+    .select()
+    .from(userMcpConnections)
+    .where(eq(userMcpConnections.userId, userId));
+
+  const providers: ConnectedRestProvider[] = [];
+
+  for (const row of rows) {
+    try {
+      const provider = getMcpProvider(row.providerSlug);
+      if (!provider || provider.supportsRealMCP || !provider.restApiHint) continue;
+
+      const creds = JSON.parse(
+        decrypt({
+          encrypted: row.encryptedCreds,
+          iv: row.encryptedCredsIv,
+          tag: row.encryptedCredsTag,
+        }),
+      ) as Record<string, string>;
+
+      providers.push({
+        slug: row.providerSlug,
+        name: provider.name,
+        restApiHint: provider.restApiHint,
+        creds,
+      });
+    } catch (err) {
+      logger.warn({ userId, slug: row.providerSlug, err }, "Failed to decrypt REST provider creds");
+    }
+  }
+
+  return providers;
 }
