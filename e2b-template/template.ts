@@ -141,7 +141,7 @@ const dockerfile = [
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
   'RUN npm install -g vite tsx typescript',
   // Python backends (FastAPI) run on the same :3001 the frontend proxies /api to.
-  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv',
+  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py',
   'WORKDIR /home/user/app',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),
