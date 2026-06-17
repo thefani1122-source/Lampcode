@@ -13,6 +13,9 @@ const envSchema = z.object({
   SUPABASE_SERVICE_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   E2B_API_KEY: z.string().min(1).optional(),
+  // Internal platform-level MCP tools — loaded automatically, not user-configured
+  FIRECRAWL_API_KEY: z.string().min(1).optional(),
+  EXA_API_KEY: z.string().min(1).optional(),
   // Supabase project whose URL + anon key get injected into every preview
   // sandbox so generated Supabase-direct apps can initialise their client and
   // render. The anon key is public (RLS-protected) — safe to embed in previews.

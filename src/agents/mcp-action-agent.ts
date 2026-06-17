@@ -23,16 +23,51 @@ export interface McpActionOptions {
   mcpServers: McpServer[];
   /** REST-only providers whose creds are injected into the system prompt */
   restProviders?: ConnectedRestProvider[];
+  /** True when the prompt contains a reference URL — instructs the agent to use Firecrawl */
+  hasReferenceUrl?: boolean;
 }
 
 export async function runMcpAction(opts: McpActionOptions): Promise<string> {
   const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
-  // Build REST provider context for system prompt
+  // ── Platform-level internal MCP tools (always injected from env vars) ───────
+  const platformDefs: BetaRequestMCPServerURLDefinition[] = [];
+  if (config.FIRECRAWL_API_KEY) {
+    platformDefs.push({
+      type: "url" as const,
+      name: "firecrawl",
+      url: "https://mcp.firecrawl.dev",
+      authorization_token: config.FIRECRAWL_API_KEY,
+    });
+  }
+  if (config.EXA_API_KEY) {
+    platformDefs.push({
+      type: "url" as const,
+      name: "exa",
+      url: "https://mcp.exa.ai/mcp",
+      authorization_token: config.EXA_API_KEY,
+    });
+  }
+
+  // ── User-connected MCP servers ────────────────────────────────────────────
+  const userMcpDefs: BetaRequestMCPServerURLDefinition[] = opts.mcpServers.map((s) => {
+    const def: BetaRequestMCPServerURLDefinition = {
+      type: "url" as const,
+      name: s.slug,
+      url: s.url,
+    };
+    if (s.authToken !== null) {
+      def.authorization_token = s.authToken;
+    }
+    return def;
+  });
+
+  const mcpDefs = [...platformDefs, ...userMcpDefs];
+
+  // ── Build REST provider context ───────────────────────────────────────────
   let restContext = "";
   if (opts.restProviders && opts.restProviders.length > 0) {
     const entries = opts.restProviders.map((rp) => {
-      // Interpolate cred placeholders like {api_key} in the restApiHint
       const hint = rp.restApiHint.replace(/\{(\w+)\}/g, (_match, key: string) => {
         return rp.creds[key] ?? `{${key}}`;
       });
@@ -41,36 +76,38 @@ export async function runMcpAction(opts: McpActionOptions): Promise<string> {
     restContext = `\n\nAvailable REST APIs (call these directly via fetch/HTTP — no MCP needed):\n${entries.join("\n\n")}`;
   }
 
-  const systemPrompt = `You are an automation agent with access to the user's connected services.
+  // ── URL-scraping hint ─────────────────────────────────────────────────────
+  const urlHint = opts.hasReferenceUrl && config.FIRECRAWL_API_KEY
+    ? "\n\nThe user's prompt contains a reference URL. Use the Firecrawl MCP tool to scrape it first and incorporate the content into your response or actions."
+    : "";
 
-Connected services: ${[
+  // ── Built-in platform tool names for system prompt ────────────────────────
+  const platformNames: string[] = [];
+  if (config.FIRECRAWL_API_KEY) platformNames.push("Firecrawl (web scraping & crawling)");
+  if (config.EXA_API_KEY) platformNames.push("Exa (semantic web search)");
+
+  const allServiceNames = [
+    ...platformNames,
     ...opts.mcpServers.map((s) => s.name),
     ...(opts.restProviders?.map((r) => r.name) ?? []),
-  ].join(", ")}
+  ];
+
+  const systemPrompt = `You are an automation agent with access to the user's connected services.
+
+Always-available tools: ${platformNames.length > 0 ? platformNames.join(", ") : "none"}
+Connected user services: ${opts.mcpServers.length > 0 || (opts.restProviders?.length ?? 0) > 0
+    ? allServiceNames.slice(platformNames.length).join(", ")
+    : "none"}
 
 Execute the user's request by calling the appropriate MCP tools or REST APIs.
 Be specific about what you did. Show results and IDs.
 If creating code repos, create them with a proper README and initial structure.
-If creating workflows, make them complete and production-ready.${restContext}`;
-
-  const mcpDefs: BetaRequestMCPServerURLDefinition[] = opts.mcpServers.map((s) => {
-    const def: BetaRequestMCPServerURLDefinition = {
-      type: "url" as const,
-      name: s.slug,
-      url: s.url,
-    };
-    // Only set authorization_token when we have one — mcp_url type embeds it in the URL
-    if (s.authToken !== null) {
-      def.authorization_token = s.authToken;
-    }
-    return def;
-  });
+If creating workflows, make them complete and production-ready.${urlHint}${restContext}`;
 
   let ws: ReturnType<typeof getWebSocketServer> | null = null;
   try {
     ws = getWebSocketServer();
   } catch {
-    // WebSocket server may not be initialised in test environments — continue without it
     logger.warn({ sessionId: opts.sessionId }, "WebSocket server not available for MCP action events");
   }
 

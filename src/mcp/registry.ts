@@ -36,6 +36,11 @@ export interface McpProvider {
   supportsRealMCP: boolean;
   /** System-prompt hint injected into REST-only action context. */
   restApiHint?: string;
+  /**
+   * Internal platform-level tools — loaded automatically from env vars,
+   * not shown in the MCP store, not requiring user credentials.
+   */
+  internal?: boolean;
 }
 
 export const MCP_REGISTRY: Record<string, McpProvider> = {
@@ -630,8 +635,39 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
   },
 };
 
+// ── Internal platform-level tools (not user-facing) ──────────────────────────
+// These load from env vars automatically; users don't need to connect them.
+
+export const INTERNAL_MCP_PROVIDERS: Record<string, McpProvider> = {
+  firecrawl: {
+    slug: "firecrawl",
+    name: "Firecrawl",
+    category: "devtools",
+    icon: "🔥",
+    description: "Scrape and crawl any URL, extract structured data, search the web",
+    mcpServerUrl: "https://mcp.firecrawl.dev",
+    authType: "bearer_token",
+    credentialFields: [{ key: "firecrawl_api_key", label: "Firecrawl API Key", type: "password", placeholder: "fc-..." }],
+    supportsRealMCP: true,
+    internal: true,
+  },
+
+  exa: {
+    slug: "exa",
+    name: "Exa",
+    category: "devtools",
+    icon: "🔍",
+    description: "Semantic web search and content retrieval optimised for AI agents",
+    mcpServerUrl: "https://mcp.exa.ai/mcp",
+    authType: "bearer_token",
+    credentialFields: [{ key: "exa_api_key", label: "Exa API Key", type: "password", placeholder: "..." }],
+    supportsRealMCP: true,
+    internal: true,
+  },
+};
+
 export function getMcpProvider(slug: string): McpProvider | undefined {
-  return MCP_REGISTRY[slug];
+  return MCP_REGISTRY[slug] ?? INTERNAL_MCP_PROVIDERS[slug];
 }
 
 export function resolveServerUrl(

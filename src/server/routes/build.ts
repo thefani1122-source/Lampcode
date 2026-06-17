@@ -43,6 +43,10 @@ import { config } from "../config.js";
 // calls (create GitHub repo, build n8n workflow, etc.) instead of generating code.
 const ACTION_MODE_RE = /\b(create|build|add|send|trigger|automate|setup|set up|connect|deploy|post|update|delete|sync|make|push|commit|generate|new repo|new workflow|new issue|new page|new project)\b/i;
 
+// Detects a reference URL in the prompt — when present, Firecrawl is used to
+// scrape the page before the agent executes the rest of the request.
+const URL_REGEX = /https?:\/\/[^\s]+/;
+
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
 const FAST_BUILD_CREDIT_COST = process.env["FAST_BUILD_CREDIT_COST"]
@@ -1405,16 +1409,17 @@ buildRouter.post("/fast", async (c) => {
     const userId = authUser.id;
     setImmediate(() => {
       void (async () => {
-        // Action mode: if the user has connected MCP providers AND the prompt
-        // looks like a direct action ("create a GitHub repo", "build n8n workflow"),
-        // route to the MCP action agent instead of code generation.
-        if (ACTION_MODE_RE.test(prompt)) {
+        // Action mode: route to the MCP action agent when the prompt looks like
+        // a direct action OR contains a reference URL (Firecrawl is always available).
+        const hasReferenceUrl = URL_REGEX.test(prompt);
+        if (ACTION_MODE_RE.test(prompt) || hasReferenceUrl) {
           const [mcpServers, restProviders] = await Promise.all([
             getConnectedMcpServers(userId).catch(() => []),
             getConnectedRestProviders(userId).catch(() => []),
           ]);
-          if (mcpServers.length > 0 || restProviders.length > 0) {
-            return runMcpAction({ sessionId, userId, prompt, mcpServers, restProviders }).catch((err) => {
+          // Route if user has connected MCPs OR if a URL is present (firecrawl handles it)
+          if (mcpServers.length > 0 || restProviders.length > 0 || hasReferenceUrl) {
+            return runMcpAction({ sessionId, userId, prompt, mcpServers, restProviders, hasReferenceUrl }).catch((err) => {
               console.error("[mcp-action] error:", err);
               if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
             });
