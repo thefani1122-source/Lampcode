@@ -46,9 +46,8 @@ export async function handleAgentStream(
   let codeStarted = false
   let chunkCount = 0
   let contentChunkCount = 0
-  let lastProgressEmitTime = 0
-  let lastProgressLineCount = 0
-  let currentWritingFile = ""
+  let lastEmittedWritingFile = ""
+  let lastFenceCount = 0
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   emit("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
@@ -80,35 +79,24 @@ export async function handleAgentStream(
           // Mark code as started the moment a fence appears anywhere in fullContent
           if (!codeStarted && fullContent.includes("```filename:")) {
             codeStarted = true
-            emit("build:thinking", { text: "Writing files...", sessionId })
-            lastProgressEmitTime = Date.now()
-            lastProgressLineCount = fullContent.split("\n").length
           }
 
           if (!codeStarted) {
             // Forward pre-code planning/explanation text to the thinking panel
             emit("build:thinking", { text, sessionId })
           } else {
-            // Emit progress updates during code accumulation: every 20 lines or 5 s
-            const linesSoFar = fullContent.split("\n").length
-            const linesSinceLastEmit = linesSoFar - lastProgressLineCount
-            const timeSinceLastEmit = Date.now() - lastProgressEmitTime
-
-            if (linesSinceLastEmit >= 20 || timeSinceLastEmit >= 5000) {
-              const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
-              const lastFence = fenceMatches[fenceMatches.length - 1]
-              const capturedFile = lastFence?.[1]
-              if (capturedFile) {
-                currentWritingFile = capturedFile.trim()
+            // Detect file transitions — scan only when fence count may have changed
+            const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
+            if (fenceMatches.length > lastFenceCount) {
+              lastFenceCount = fenceMatches.length
+              const capturedFile = fenceMatches[fenceMatches.length - 1]?.[1]?.trim()
+              if (capturedFile && capturedFile !== lastEmittedWritingFile) {
+                if (lastEmittedWritingFile) {
+                  emit("build:file_done", { filename: lastEmittedWritingFile, sessionId })
+                }
+                emit("build:file_writing", { filename: capturedFile, sessionId })
+                lastEmittedWritingFile = capturedFile
               }
-              if (currentWritingFile) {
-                emit("build:thinking", {
-                  text: `Writing ${currentWritingFile}... (${linesSoFar} lines so far)`,
-                  sessionId,
-                })
-              }
-              lastProgressEmitTime = Date.now()
-              lastProgressLineCount = linesSoFar
             }
           }
           break
@@ -144,6 +132,11 @@ export async function handleAgentStream(
   }
 
   console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length} stopReason=${stopReason}`)
+
+  // Close the last file that was being written
+  if (lastEmittedWritingFile) {
+    emit("build:file_done", { filename: lastEmittedWritingFile, sessionId })
+  }
 
   if (stopReason === "max_tokens") {
     emit("build:warning", {
@@ -192,7 +185,6 @@ export async function handleAgentStream(
     // build.ts (runFastBuild) emits the single authoritative build:complete
     // AFTER files are written to disk, with files + previewUrl + totalFiles.
     // Emitting here too caused a duplicate event reaching the frontend.
-    emit("build:thinking", { text: "Finalizing and preparing preview...", sessionId })
   }
 
   return { content: fullContent, inputTokens, outputTokens }

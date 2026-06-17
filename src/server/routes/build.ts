@@ -1202,6 +1202,25 @@ export async function runFastBuild(
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
 
+    // ── Generate AI summary with Haiku (fast, non-blocking path) ─────────────
+    let buildSummary = ""
+    try {
+      const anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
+      const fileList = Object.keys(allFiles).slice(0, 20).join(", ")
+      const summaryResp = await anthropicClient.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 120,
+        messages: [{
+          role: "user",
+          content: `A web app was just built. Describe it in 1-2 enthusiastic sentences.\nPrompt: "${prompt.slice(0, 300)}"\nFiles: ${fileList}\n\nBe specific about what was built. No preamble, no "Here's" opener.`,
+        }],
+      })
+      const block = summaryResp.content[0]
+      if (block?.type === "text") buildSummary = block.text.trim()
+    } catch (err) {
+      logger.warn({ sessionId, err }, "AI summary generation failed — using fallback")
+    }
+
     server?.buildComplete(sessionId, {
       sessionId,
       files: frontendFiles,       // Sandpack-safe: no Node.js imports
@@ -1209,6 +1228,7 @@ export async function runFastBuild(
       backendFileCount,           // >0 signals fullstack build to the client
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
+      ...(buildSummary ? { summary: buildSummary } : {}),
     });
 
     // ── Async project memory update — never blocks the build ───────────────
