@@ -34,6 +34,7 @@ export const taskInputSchema = z.object({
   constraints: z.array(z.string()).optional(),
   outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
   targetFiles: z.array(z.string()).optional(),
+  hasReferenceImage: z.boolean().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -1043,6 +1044,43 @@ Use realistic task names relevant to the app's domain — generate fresh names e
   },
 ];
 
+// ── Screenshot / design-reference instruction ────────────────────────────────
+
+const SCREENSHOT_DESIGN_INSTRUCTION = `
+
+SCREENSHOT/DESIGN REFERENCE MODE — The user has provided a reference screenshot or design image.
+Before writing a single line of code, perform this analysis in order:
+
+1. EXTRACT EXACT VALUES (zero approximation):
+   - Every hex color visible: backgrounds, text, borders, accents, hover states, gradients
+   - Font sizes (exact px or rem), font weights (100–900), font families
+   - All spacing values: padding, margin, gap (px or rem)
+   - Border radius on every distinct element (px or %)
+   - Box-shadow definitions: x-offset, y-offset, blur, spread, color, opacity
+   - Any transition/animation hints (duration, easing curves)
+
+2. NAME THE DESIGN STYLE:
+   glassmorphism / neumorphism / flat / material / brutalist / skeuomorphic / other
+
+3. MAP THE LAYOUT:
+   - Exact grid columns/rows and breakpoints if visible
+   - Card patterns, groupings, and nesting levels
+   - Navigation type: top bar / sidebar / bottom nav / floating / none
+
+4. INVENTORY EVERY VISIBLE COMPONENT with approximate dimensions (width × height):
+   buttons, inputs, cards, modals, badges, avatars, charts, icons, tables — list all
+
+5. DOCUMENT ALL SPECIAL EFFECTS:
+   - Gradient definitions (direction, color stops, opacity)
+   - backdrop-filter / blur values (glassmorphism)
+   - Glass border color and opacity
+   - Particle effects, SVG decorations, background patterns
+   - Glow, neon, or inner-shadow effects
+
+Only after completing this analysis, generate pixel-accurate code using exclusively the extracted values.
+Do NOT approximate any value. Every hex color must match exactly.
+When the user says "same design" or "like the screenshot" — this means 100% visual fidelity to the reference.`;
+
 /**
  * Expand a short user prompt with completeness expectations for its app type.
  * Pure and additive — never replaces the user's intent, only appends guidance.
@@ -1180,7 +1218,9 @@ export class PromptBuilder {
     // the prompt mentions them.
     const providerRules = agentType === "frontend" ? matchProviderRules(task.description) : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + jsonInstruction;
+    const screenshotInstruction = task.hasReferenceImage === true ? SCREENSHOT_DESIGN_INSTRUCTION : "";
+
+    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(

@@ -34,6 +34,7 @@ export const dispatchOptionsSchema = z.object({
     constraints: z.array(z.string()).optional(),
     outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
     targetFiles: z.array(z.string()).optional(),
+    hasReferenceImage: z.boolean().optional(),
   }),
   sessionId: z.string().uuid(),
   userId: z.string().optional(),

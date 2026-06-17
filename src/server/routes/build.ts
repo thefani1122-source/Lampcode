@@ -289,6 +289,13 @@ function validateAppTsx(code: string): string | null {
   return null;
 }
 
+// ── Image attachment detection ────────────────────────────────────────────────
+
+function hasImageAttachment(attachments?: string[]): boolean {
+  if (!attachments || attachments.length === 0) return false;
+  return attachments.some((a) => typeof a === "string" && /^data:image\//i.test(a));
+}
+
 // ── Full-stack detection ──────────────────────────────────────────────────────
 
 /**
@@ -416,6 +423,7 @@ export async function runFastBuild(
   projectId: string,
   prompt: string,
   userId: string,
+  hasReferenceImage: boolean = false,
 ): Promise<void> {
   const server = ws();
 
@@ -678,12 +686,25 @@ export async function runFastBuild(
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
+
+    // When a reference image is attached, prepend a pixel-fidelity requirement
+    // so it surfaces prominently in the user message alongside the system-prompt
+    // instruction injected by buildSystemPrompt().
+    const effectiveRequirements = hasReferenceImage
+      ? [
+          "A reference screenshot/design has been provided. Extract ALL exact hex colors, font sizes, spacing, border-radius, and shadow values from it before writing any code.",
+          "Every color and spacing value in your output must exactly match the reference — no approximations.",
+          ...requirements,
+        ]
+      : requirements;
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       task: {
         description: taskDescription,
-        requirements,
+        requirements: effectiveRequirements,
         outputFormat: "code",
+        hasReferenceImage,
       },
       sessionId,
       userId,
@@ -1403,6 +1424,7 @@ buildRouter.post("/fast", async (c) => {
 
     // ── Fire-and-forget build ───────────────────────────────────────────────
     const userId = authUser.id;
+    const refImgFlag = hasImageAttachment(attachments);
     setImmediate(() => {
       void (async () => {
         // Action mode: if the user has connected MCP providers AND the prompt
@@ -1421,7 +1443,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });
