@@ -117,6 +117,14 @@ export type ProjectBranding = {
   faviconUrl?: string | undefined;
 };
 
+export type BusinessContext = {
+  appDescription?: string | undefined;
+  userType?: string | undefined;
+  isMultiTenant?: boolean | undefined;
+  hasPaidFeatures?: boolean | undefined;
+  industry?: string | undefined;
+};
+
 // ── Enums ────────────────────────────────────────────────────────────────────
 
 export const projectModeEnum = pgEnum("project_mode", ["fast", "plan"]);
@@ -163,6 +171,7 @@ export const projects = pgTable("projects", {
   techStack: jsonb("tech_stack").$type<string[]>().notNull().default([]),
   settings: jsonb("settings").$type<ProjectSettings>().notNull().default({}),
   branding: jsonb("branding").$type<ProjectBranding>().notNull().default({}),
+  businessContext: jsonb("business_context").$type<BusinessContext>().notNull().default({}),
   isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),

@@ -3,11 +3,20 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
+type BusinessContext = {
+  appDescription?: string | undefined;
+  userType?: string | undefined;
+  isMultiTenant?: boolean | undefined;
+  hasPaidFeatures?: boolean | undefined;
+  industry?: string | undefined;
+};
+
 interface BuildContext {
   projectId: string;
   userId: string;
   mode: "fast" | "plan";
   prompt: string;
+  businessContext?: BusinessContext | undefined;
 }
 import { logger } from "../server/logger.js";
 
@@ -1064,8 +1073,14 @@ export class PromptBuilder {
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
-    const systemPrompt = this.buildSystemPrompt(agentType, task);
-    const contextBlock = await this.buildContextBlock(agentType, workspaceDir, contextFiles);
+    const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
+      Promise.resolve(this.buildSystemPrompt(agentType, task)),
+      this.loadRelevantSkills(context.prompt),
+      this.buildContextBlock(agentType, workspaceDir, contextFiles),
+    ]);
+    const systemPrompt = skillsBlock
+      ? `${baseSystemPrompt}\n\n${skillsBlock}`
+      : baseSystemPrompt;
     const taskBlock = this.buildTaskBlock(task, context);
 
     const userMessage = this.truncate(
@@ -1241,6 +1256,19 @@ export class PromptBuilder {
       `- User prompt: ${context.prompt}`,
     );
 
+    const bc = context.businessContext;
+    if (bc !== undefined) {
+      const lines: string[] = [];
+      if (bc.appDescription) lines.push(`- App: ${bc.appDescription}`);
+      if (bc.userType) lines.push(`- Target users: ${bc.userType}`);
+      if (bc.industry) lines.push(`- Industry: ${bc.industry}`);
+      if (bc.isMultiTenant !== undefined) lines.push(`- Multi-tenant: ${bc.isMultiTenant ? "yes" : "no"}`);
+      if (bc.hasPaidFeatures !== undefined) lines.push(`- Paid features: ${bc.hasPaidFeatures ? "yes" : "no"}`);
+      if (lines.length > 0) {
+        parts.push("## Business Context", lines.join("\n"));
+      }
+    }
+
     return parts.join("\n\n");
   }
 
@@ -1276,5 +1304,32 @@ export class PromptBuilder {
     const lastNewline = truncated.lastIndexOf("\n");
     return (lastNewline > maxChars * 0.8 ? truncated.slice(0, lastNewline) : truncated) +
       "\n\n[Context truncated to fit token budget]";
+  }
+
+  private async loadRelevantSkills(prompt: string): Promise<string> {
+    const skillsDir = join(process.cwd(), "src", "skills");
+    const toLoad = new Set(["react-production.md", "typescript-strict.md"]);
+
+    if (/\b(database|rls|row.?level.?security|supabase|postgres|table|schema|auth)\b/i.test(prompt)) {
+      toLoad.add("supabase-rls.md");
+    }
+    if (/\b(api|rest|endpoint|route|backend|server|hono)\b/i.test(prompt)) {
+      toLoad.add("api-design.md");
+    }
+
+    const sections: string[] = [];
+    for (const filename of toLoad) {
+      try {
+        const content = await readFile(join(skillsDir, filename), "utf8");
+        const title = filename.replace(".md", "").replace(/-/g, " ");
+        sections.push(`## Skill: ${title}\n${content.trim()}`);
+      } catch {
+        // skill file missing — skip silently
+      }
+    }
+
+    return sections.length > 0
+      ? `# Engineering Skills\n\n${sections.join("\n\n")}`
+      : "";
   }
 }

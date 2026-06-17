@@ -10,6 +10,7 @@ import {
   auditLog,
   type ProjectSettings,
   type ProjectBranding,
+  type BusinessContext,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -42,6 +43,14 @@ const updateProjectSchema = z.object({
   settings: projectSettingsSchema.nullable().optional(),
   branding: projectBrandingSchema.nullable().optional(),
   isArchived: z.boolean().optional(),
+});
+
+const businessContextSchema = z.object({
+  appDescription: z.string().max(500).optional(),
+  userType: z.string().max(100).optional(),
+  isMultiTenant: z.boolean().optional(),
+  hasPaidFeatures: z.boolean().optional(),
+  industry: z.string().max(100).optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -295,6 +304,35 @@ projectsRouter.post("/:id/duplicate", async (c) => {
   });
 
   return c.json({ project: duplicate }, 201);
+});
+
+// POST /api/projects/:id/business-context
+projectsRouter.post("/:id/business-context", async (c) => {
+  const authUser = c.get("authUser");
+  const project = await ownerProject(c.req.param("id"), authUser.id);
+  const body = parseBody(businessContextSchema, await c.req.json());
+
+  const context: BusinessContext = {
+    appDescription: body.appDescription,
+    userType: body.userType,
+    isMultiTenant: body.isMultiTenant,
+    hasPaidFeatures: body.hasPaidFeatures,
+    industry: body.industry,
+  };
+
+  const [updated] = await db
+    .update(projects)
+    .set({ businessContext: context, updatedAt: new Date() })
+    .where(eq(projects.id, project.id))
+    .returning();
+
+  if (updated === undefined) {
+    throw new AppError(500, "Failed to update business context", "INTERNAL_ERROR");
+  }
+
+  await writeAudit(authUser.id, "project.businessContext.updated", project.id, {});
+
+  return c.json({ project: updated });
 });
 
 export { projectsRouter };
