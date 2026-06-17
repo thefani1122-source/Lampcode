@@ -37,7 +37,16 @@ const PKG_JSON = `{
     "zod": "^3.23.8",
     "mongoose": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "gsap": "^3.12.5",
+    "motion": "^11.11.0",
+    "lenis": "^1.1.14",
+    "@tsparticles/react": "^3.0.0",
+    "@tsparticles/slim": "^3.5.0",
+    "@splinetool/react-spline": "^4.0.0",
+    "@react-three/fiber": "^8.17.10",
+    "@react-three/drei": "^9.114.3",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -46,7 +55,8 @@ const PKG_JSON = `{
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@types/jsonwebtoken": "^9.0.6",
-    "@types/bcryptjs": "^2.4.6"
+    "@types/bcryptjs": "^2.4.6",
+    "@types/three": "^0.169.0"
   }
 }`
 

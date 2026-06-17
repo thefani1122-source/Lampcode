@@ -36,6 +36,7 @@ export const taskInputSchema = z.object({
   targetFiles: z.array(z.string()).optional(),
   hasReferenceImage: z.boolean().optional(),
   isAgentBuild: z.boolean().optional(),
+  hasAnimationContext: z.boolean().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -1101,6 +1102,34 @@ Always generate:
 - Type hints on every Python function
 - Never hardcode API keys — read from os.environ`;
 
+const ANIMATION_DEFAULT_INSTRUCTION = `
+
+ANIMATION MODE — The user wants an animated, visually impressive website. Follow these rules:
+
+Default libraries (install all unless user specifies otherwise):
+- motion (Framer Motion) — component animations, hover, tap, scroll reveal
+- gsap + ScrollTrigger — scroll-based storytelling, counters, horizontal scroll
+- lenis — smooth scrolling (always include)
+
+MANDATORY on every website:
+1. Smooth scrolling via Lenis (wrap app in useSmoothScroll hook)
+2. Hero section: animated headline with fade-in or split-text effect
+3. Every section: fade-in on scroll using Motion useInView (opacity 0->1, y 60->0)
+4. Cards/grid: stagger animation with 0.1s delay per item
+5. Buttons: spring hover (scale 1.05) + tap (scale 0.95)
+6. Navigation: hide/show on scroll direction
+
+Default dark design system:
+- Background: #030712 (near black)
+- Surface: #111827 (dark gray)
+- Primary: #6366f1 (indigo)
+- Accent: #f59e0b (amber)
+- Text: #f9fafb
+- Font: Inter (import from Google Fonts)
+- Cards: glassmorphism (rgba(255,255,255,0.05) + backdrop-filter blur(20px) + border rgba(255,255,255,0.1))
+
+Static websites are unacceptable. Every element must animate.`;
+
 /**
  * Expand a short user prompt with completeness expectations for its app type.
  * Pure and additive — never replaces the user's intent, only appends guidance.
@@ -1240,8 +1269,9 @@ export class PromptBuilder {
 
     const screenshotInstruction = task.hasReferenceImage === true ? SCREENSHOT_DESIGN_INSTRUCTION : "";
     const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
+    const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + jsonInstruction;
+    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
@@ -1384,6 +1414,9 @@ export class PromptBuilder {
       toLoad.add("crewai.md");
       toLoad.add("langgraph.md");
       toLoad.add("agent-architecture.md");
+    }
+    if (/\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt)) {
+      toLoad.add("animation-expert.md");
     }
 
     const sections: string[] = [];

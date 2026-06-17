@@ -342,6 +342,10 @@ function isAgentBuild(prompt: string): boolean {
   return /\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crewai|crew\s+ai|langgraph|research\s+and|find\s+and|analyz)\b/i.test(prompt);
 }
 
+function isAnimationBuild(prompt: string): boolean {
+  return /\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt);
+}
+
 // ── Full-stack detection ──────────────────────────────────────────────────────
 
 /**
@@ -471,6 +475,7 @@ export async function runFastBuild(
   userId: string,
   hasReferenceImage: boolean = false,
   agentBuildFlag: boolean = false,
+  animationFlag: boolean = false,
 ): Promise<void> {
   const server = ws();
 
@@ -753,6 +758,7 @@ export async function runFastBuild(
         outputFormat: "code",
         hasReferenceImage,
         isAgentBuild: agentBuildFlag,
+        hasAnimationContext: animationFlag,
       },
       sessionId,
       userId,
@@ -1525,6 +1531,7 @@ buildRouter.post("/fast", async (c) => {
     const userId = authUser.id;
     const refImgFlag = hasImageAttachment(attachments);
     const agentFlag = isAgentBuild(prompt);
+    const animationFlag = isAnimationBuild(prompt);
     setImmediate(() => {
       void (async () => {
         // Action mode: if the user has connected MCP providers AND the prompt
@@ -1543,7 +1550,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });
