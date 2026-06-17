@@ -369,48 +369,6 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     restApiHint: "Framer REST API: https://api.framer.com/store/v1\nHeader: Authorization: Bearer {framer_api_token}",
   },
 
-  airtable: {
-    slug: "airtable",
-    name: "Airtable",
-    category: "database",
-    icon: "📊",
-    description: "Read and write Airtable bases, tables, and records via the REST API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "api_key",
-        label: "Airtable Personal Access Token",
-        type: "password",
-        placeholder: "pat...",
-        help: "Create at airtable.com/account under Personal Access Tokens",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Airtable REST API: https://api.airtable.com/v0/{baseId}/{tableId}\nHeader: Authorization: Bearer {api_key}",
-  },
-
-  hubspot: {
-    slug: "hubspot",
-    name: "HubSpot",
-    category: "analytics",
-    icon: "🧲",
-    description: "Manage CRM contacts, deals, and companies via the HubSpot API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "api_key",
-        label: "HubSpot Private App Access Token",
-        type: "password",
-        placeholder: "pat-na1-...",
-        help: "Create a Private App at app.hubspot.com/settings/integrations/private-apps",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "HubSpot REST API: https://api.hubapi.com\nHeader: Authorization: Bearer {api_key}",
-  },
-
   mailchimp: {
     slug: "mailchimp",
     name: "Mailchimp",
@@ -508,83 +466,6 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     ],
     supportsRealMCP: false,
     restApiHint: "SendGrid API: POST https://api.sendgrid.com/v3/mail/send\nHeader: Authorization: Bearer {api_key}",
-  },
-
-  jira: {
-    slug: "jira",
-    name: "Jira",
-    category: "devtools",
-    icon: "🎫",
-    description: "Create and manage Jira issues, sprints, and projects via the Atlassian API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "site_url",
-        label: "Jira Site URL",
-        type: "url",
-        placeholder: "https://yourcompany.atlassian.net",
-        help: "Your Atlassian cloud site URL",
-      },
-      {
-        key: "email",
-        label: "Atlassian Account Email",
-        type: "text",
-        placeholder: "you@company.com",
-        help: "The email address of your Atlassian account",
-      },
-      {
-        key: "api_token",
-        label: "Atlassian API Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create at id.atlassian.com/manage-profile/security/api-tokens",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Jira REST API: {site_url}/rest/api/3\nAuth: Basic base64({email}:{api_token})\nPOST /issue to create",
-  },
-
-  mixpanel: {
-    slug: "mixpanel",
-    name: "Mixpanel",
-    category: "analytics",
-    icon: "📈",
-    description: "Track events and query analytics data via the Mixpanel API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "project_token",
-        label: "Mixpanel Project Token",
-        type: "password",
-        placeholder: "...",
-        help: "Find at mixpanel.com → Project Settings → Access Keys",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Mixpanel Ingestion API: POST https://api.mixpanel.com/track\nData: base64(JSON array of events with token: {project_token})",
-  },
-
-  segment: {
-    slug: "segment",
-    name: "Segment",
-    category: "analytics",
-    icon: "📡",
-    description: "Send events and identify users via the Segment tracking API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "write_key",
-        label: "Segment Write Key",
-        type: "password",
-        placeholder: "...",
-        help: "Find at app.segment.com → Sources → Your Source → Settings → API Keys",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Segment API: POST https://api.segment.io/v1/track\nAuth: Basic base64({write_key}:)",
   },
 
   mongodb: {
