@@ -1420,13 +1420,16 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(prompt: string): Promise<string> {
     const skillsDir = join(process.cwd(), "src", "skills");
-    const toLoad = new Set(["react-production.md", "typescript-strict.md", "firecrawl.md"]);
+    const toLoad = new Set(["react-production.md", "typescript-strict.md"]);
 
     if (/\b(database|rls|row.?level.?security|supabase|postgres|table|schema|auth)\b/i.test(prompt)) {
       toLoad.add("supabase-rls.md");
     }
     if (/\b(api|rest|endpoint|route|backend|server|hono)\b/i.test(prompt)) {
       toLoad.add("api-design.md");
+    }
+    if (/\b(scrape|crawl|firecrawl|web.?data|extract.*web|website.*data|fetch.*page)\b/i.test(prompt)) {
+      toLoad.add("firecrawl.md");
     }
     if (/\b(research|competitor|analyze|analyse|similar|reference|like|inspiration|inspired)\b/i.test(prompt)) {
       toLoad.add("exa.md");
