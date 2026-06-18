@@ -76,9 +76,8 @@ Max 4 questions. Min 0 (needsClarification: false).
 Options must be exactly 3 per question.
 allowMultiple: true only for user-type questions.`;
 
-// Prompts that match these keywords in "action mode" execute real MCP tool
-// calls (create GitHub repo, build n8n workflow, etc.) instead of generating code.
-const ACTION_MODE_RE = /\b(create|build|add|send|trigger|automate|setup|set up|connect|deploy|post|update|delete|sync|make|push|commit|generate|new repo|new workflow|new issue|new page|new project)\b/i;
+// Only match explicit external-service commands — NOT general app-building language.
+const ACTION_MODE_RE = /\b(push (?:to|commit to) github|create (?:github repo|repository|issue|pull request|pr)|send (?:email via|slack message|webhook to|notification to)|trigger (?:webhook|zapier|n8n workflow)|deploy to (?:vercel|cloudflare|railway|netlify)|post to (?:slack|twitter|discord|notion)|sync (?:to|with) (?:github|notion|linear|jira)|create (?:n8n workflow|linear issue|jira ticket|notion page)|push (?:code|files) to|commit and push)\b/i;
 
 // Detects a reference URL in the prompt — when present, Firecrawl is used to
 // scrape the page before the agent executes the rest of the request.
@@ -349,7 +348,7 @@ function isAgentBuild(prompt: string): boolean {
 }
 
 function isAnimationBuild(prompt: string): boolean {
-  return /\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt);
+  return /\b(animat(?:ed|ion)|3d.website|3d.character|3d.scene|parallax|scroll.reveal|scroll.animation|landing.page.with.animation|animated.portfolio|interactive.3d|motion.design|gsap|framer.motion|lottie|spline|particle|hero.animation)\b/i.test(prompt);
 }
 
 // ── Full-stack detection ──────────────────────────────────────────────────────
@@ -359,25 +358,9 @@ function isAnimationBuild(prompt: string): boolean {
  * storage, etc.) and therefore warrants generating backend + database files.
  */
 function needsBackend(prompt: string): boolean {
-  const lower = prompt.toLowerCase();
-
-  const explicitTriggers = [
-    "fullstack", "full stack", "full-stack",
-    "backend", "server-side", "server side",
-    "database", "postgres", "postgresql", "sqlite", "mysql",
-    "rest api", "graphql", "endpoint",
-    "crud", "create read update delete",
-    "persist", "cloud sync",
-    "signin", "signup", "oauth", "authentication",
-    "user account", "user profile", "admin panel",
-    "save data", "store data", "data storage",
-    "nextjs", "next.js", "next js", "tanstack",
-  ];
-  if (explicitTriggers.some((t) => lower.includes(t))) return true;
-
-  return /\b(user|login|auth|account|save|store|db|api|admin|dashboard|post|blog|todo|task|expense|income|product|order|payment|upload|file|message|chat|notification|setting|profile)\b/i.test(
-    prompt,
-  );
+  // Only trigger fullstack mode when user explicitly mentions auth/database/backend.
+  // Simple "todo app", "dashboard", "task manager" should stay frontend-only (Sandpack).
+  return /\b(user.auth|login.system|sign.up.flow|real.database|save.to.db|store.in.database|backend.api|server.api|rest.api|multi.user|different.users|user.accounts|real.time.with.websocket|live.updates.from.server|stripe.payment|payment.processing|admin.panel.with.real.data|deploy.with.backend|production.backend|fullstack|full.stack|full-stack|backend|server.side|postgres(?:ql)?|sqlite|mysql|graphql|crud|cloud.sync|signin|signup|oauth|authentication|user.account|user.profile|save.data|store.data|data.storage|nextjs|next\.js|tanstack)\b/i.test(prompt);
 }
 
 /**

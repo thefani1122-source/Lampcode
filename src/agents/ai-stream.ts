@@ -8,7 +8,7 @@ import { config } from "../server/config.js";
 import { db } from "../db/client.js";
 import { projects, buildSessions } from "../db/schema.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { getFrontendSystemPrompt, expandUserPrompt } from "./prompt-builder.js";
+import { getFrontendSystemPrompt, getReactFrameworkRules, loadRelevantSkillsForPrompt, expandUserPrompt } from "./prompt-builder.js";
 import { generateProjectMemory } from "./memory-generator.js";
 import { ALLOWED_ORIGINS } from "../server/config.js";
 
@@ -24,8 +24,12 @@ export interface StreamBuildRequest {
   origin?: string;
 }
 
-function buildStreamSystemPrompt(projectMemory?: string | null): string {
-  const base = getFrontendSystemPrompt();
+async function buildStreamSystemPrompt(prompt: string, projectMemory?: string | null): Promise<string> {
+  const [base, frameworkRules, skills] = await Promise.all([
+    Promise.resolve(getFrontendSystemPrompt()),
+    Promise.resolve(getReactFrameworkRules()),
+    loadRelevantSkillsForPrompt(prompt),
+  ]);
 
   const toolInstructions = `
 
@@ -40,7 +44,7 @@ Never output \`\`\`filename: fences — the tool handles file delivery.`;
       ? `\n\n🚨 CRITICAL: This is an EDIT to an existing app.\n${projectMemory}`
       : "";
 
-  return base + toolInstructions + memoryBlock;
+  return base + frameworkRules + skills + toolInstructions + memoryBlock;
 }
 
 function buildUserMessage(
@@ -88,8 +92,10 @@ export async function handleBuildStream(
     apiKey: config.ANTHROPIC_API_KEY,
   });
 
-  const systemPrompt = buildStreamSystemPrompt(projectMemory);
-  const userMessage = buildUserMessage(prompt, existingFiles);
+  const [systemPrompt, userMessage] = await Promise.all([
+    buildStreamSystemPrompt(prompt, projectMemory),
+    Promise.resolve(buildUserMessage(prompt, existingFiles)),
+  ]);
 
   const result = streamText({
     model: anthropicProvider("claude-sonnet-4-6"),

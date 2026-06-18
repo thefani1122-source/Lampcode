@@ -1127,34 +1127,28 @@ Always generate:
 - Never hardcode API keys — read from os.environ`;
 
 const ANIMATION_DEFAULT_INSTRUCTION = `
-IMPORTANT: This is a visual website/UI build.
-Apply animation-expert skill fully:
+## Animation Requirements
+User specifically requested animations. Apply these:
 
-COLOR RULE: Choose a modern sophisticated palette
-appropriate to the content type and brand.
-Light or dark — decide based on context.
-Never use plain boring default colors.
+### Allowed in Sandbox (no external libs needed):
+- CSS transitions: all 0.3s ease (hover effects)
+- CSS keyframes: fade-in, slide-up, scale-in
+- CSS animation on scroll: use IntersectionObserver
+- Transform + opacity for smooth reveals
 
-ANIMATION RULE:
-- Import AOS, initialize in App.tsx, add data-aos to
-  every section and card grid
-- Use Motion (Framer Motion) for component interactions
-- Use GSAP ScrollTrigger for complex scroll effects only
-- Every section MUST have an entrance animation
+### External libraries (add to package.json):
+- "aos": "^2.3.4" → data-aos attributes for scroll reveals
+  Import: import AOS from 'aos'; import 'aos/dist/aos.css';
+  Init: useEffect(() => AOS.init({ duration: 700, once: true }), [])
+  Usage: <div data-aos="fade-up">content</div>
 
-UI QUALITY RULE:
-- Use shadcn/ui for all base components (never raw HTML)
-- Use Aceternity UI or Magic UI for hero/feature sections
-- Buttons: spring hover + tap (Motion whileHover/whileTap)
-- Cards: subtle lift on hover (translateY + shadow)
-- Think: would this win an Awwwards honorable mention?
+### DO NOT use in sandbox (will break):
+- framer-motion (motion/react) ← NOT available in sandbox
+- @splinetool/react-spline ← NOT available in sandbox
+- gsap ← NOT available in sandbox
+- three.js ← NOT available in sandbox
 
-EDITING RULE (when modifying existing code):
-- Read existing App.tsx structure before writing anything
-- Add new components/sections WITHOUT removing existing ones
-- Keep all existing imports — never remove a working import
-- If App.tsx is over 400 lines, create a NEW separate component file
-- NEVER rename the app or change its primary purpose
+Use CSS keyframes + AOS only for sandbox builds.
 `;
 
 /**
@@ -1174,6 +1168,71 @@ export function expandUserPrompt(prompt: string): string {
 /** Returns the base frontend agent system prompt for use in external streaming handlers. */
 export function getFrontendSystemPrompt(): string {
   return SYSTEM_PROMPTS.frontend;
+}
+
+/** Returns the React framework rules block for use in external streaming handlers. */
+export function getReactFrameworkRules(): string {
+  return FRAMEWORK_RULES.react ?? "";
+}
+
+/** Module-level skill loader — shared by PromptBuilder and stream path. */
+async function loadSkillsForPrompt(prompt: string): Promise<string> {
+  const skillsToLoad = new Set<string>();
+  const skillsDir = join(process.cwd(), "src", "skills");
+
+  // Always load (small, always relevant)
+  skillsToLoad.add("react-production");
+  skillsToLoad.add("typescript-strict");
+
+  // DATABASE/AUTH — only when explicitly about data storage or accounts
+  if (/\b(database|supabase|postgres|sql|rls|row.level|auth|login|signup|sign.up|register|user.account|password|session|jwt|oauth)\b/i.test(prompt)) {
+    skillsToLoad.add("supabase-rls");
+  }
+
+  // BACKEND/API — only when explicitly about server code
+  if (/\b(api.route|rest.api|endpoint|server|hono|fastapi|express|backend.server|http.route)\b/i.test(prompt)) {
+    skillsToLoad.add("api-design");
+  }
+
+  // ANIMATION — ONLY when explicitly requested (not "modern", "beautiful", "clean")
+  if (/\b(animat(?:ed|ion)|3d.website|3d.character|3d.scene|parallax|scroll.reveal|scroll.animation|landing.page.with.animation|animated.portfolio|interactive.3d|motion.design|gsap|framer.motion|lottie|spline|particle|hero.animation)\b/i.test(prompt)) {
+    skillsToLoad.add("animation-expert");
+  }
+
+  // FIRECRAWL — only when scraping/crawling requested
+  if (/\b(scrape|crawl|firecrawl|web.scraping|extract.from.website|read.website|parse.webpage)\b/i.test(prompt)) {
+    skillsToLoad.add("firecrawl");
+  }
+
+  // EXA — only when research/semantic search requested
+  if (/\b(research.tool|semantic.search|exa|competitor.research|market.research|find.and.analyze|search.the.web)\b/i.test(prompt)) {
+    skillsToLoad.add("exa");
+  }
+
+  // AI AGENTS — only when explicitly building an agent
+  if (/\b(ai.agent|autonomous.agent|crewai|langgraph|multi.agent|agent.workflow|agent.pipeline|background.agent|scheduled.agent|daily.automation|cron.job)\b/i.test(prompt)) {
+    skillsToLoad.add("crewai");
+    skillsToLoad.add("langgraph");
+    skillsToLoad.add("agent-architecture");
+  }
+
+  const skillContents: string[] = [];
+  for (const skill of skillsToLoad) {
+    try {
+      const filePath = join(skillsDir, `${skill}.md`);
+      const content = await readFile(filePath, "utf-8");
+      skillContents.push(`\n\n---\n## Skill: ${skill}\n${content}`);
+    } catch {
+      // skill file not found — skip silently
+    }
+  }
+
+  return skillContents.join("");
+}
+
+/** Exported for use in the stream path (ai-stream.ts). */
+export async function loadRelevantSkillsForPrompt(prompt: string): Promise<string> {
+  return loadSkillsForPrompt(prompt);
 }
 
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
@@ -1273,7 +1332,8 @@ export class PromptBuilder {
 
     const isEditMode =
       agentType === "frontend" &&
-      task.description.startsWith("EXISTING PROJECT FILES:");
+      task.description.startsWith("EXISTING PROJECT FILES:") &&
+      !task.projectMemory;
     const editModeInstruction = isEditMode
       ? "\n\nEDIT MODE — You are modifying an existing app:\n" +
         "- Preserve the existing design system, colors, and component patterns\n" +
@@ -1434,43 +1494,6 @@ export class PromptBuilder {
   }
 
   private async loadRelevantSkills(prompt: string): Promise<string> {
-    const skillsDir = join(process.cwd(), "src", "skills");
-    const toLoad = new Set(["react-production.md", "typescript-strict.md"]);
-
-    if (/\b(database|rls|row.?level.?security|supabase|postgres|table|schema|auth)\b/i.test(prompt)) {
-      toLoad.add("supabase-rls.md");
-    }
-    if (/\b(api|rest|endpoint|route|backend|server|hono)\b/i.test(prompt)) {
-      toLoad.add("api-design.md");
-    }
-    if (/\b(scrape|crawl|firecrawl|web.?data|extract.*web|website.*data|fetch.*page)\b/i.test(prompt)) {
-      toLoad.add("firecrawl.md");
-    }
-    if (/\b(research|competitor|analyze|analyse|similar|reference|like|inspiration|inspired)\b/i.test(prompt)) {
-      toLoad.add("exa.md");
-    }
-    if (/\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crew|research\s+and|find\s+and|analyz)\b/i.test(prompt)) {
-      toLoad.add("crewai.md");
-      toLoad.add("langgraph.md");
-      toLoad.add("agent-architecture.md");
-    }
-    if (/\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt)) {
-      toLoad.add("animation-expert.md");
-    }
-
-    const sections: string[] = [];
-    for (const filename of toLoad) {
-      try {
-        const content = await readFile(join(skillsDir, filename), "utf8");
-        const title = filename.replace(".md", "").replace(/-/g, " ");
-        sections.push(`## Skill: ${title}\n${content.trim()}`);
-      } catch {
-        // skill file missing — skip silently
-      }
-    }
-
-    return sections.length > 0
-      ? `# Engineering Skills\n\n${sections.join("\n\n")}`
-      : "";
+    return loadSkillsForPrompt(prompt);
   }
 }
