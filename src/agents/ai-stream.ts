@@ -9,6 +9,7 @@ import { db } from "../db/client.js";
 import { projects, buildSessions } from "../db/schema.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { getFrontendSystemPrompt, expandUserPrompt } from "./prompt-builder.js";
+import { generateProjectMemory } from "./memory-generator.js";
 import { ALLOWED_ORIGINS } from "../server/config.js";
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
@@ -187,6 +188,30 @@ export async function handleBuildStream(
           previewUrl: `/api/build/${sessionId}/preview`,
           totalFiles,
           summary,
+        });
+
+        // Async memory update — never blocks the build response
+        setImmediate(() => {
+          void (async () => {
+            try {
+              const allCode = Object.values(filesBuffer).join("\n");
+              const existingProject = await db.query.projects.findFirst({
+                where: eq(projects.id, projectId),
+                columns: { projectMemory: true },
+              });
+              const newMemory = await generateProjectMemory(
+                allCode,
+                existingProject?.projectMemory ?? null,
+                prompt,
+              );
+              await db.update(projects)
+                .set({ projectMemory: newMemory })
+                .where(eq(projects.id, projectId));
+              console.log(`[memory] saved for project ${projectId}`);
+            } catch (err) {
+              console.error("[memory] failed:", err);
+            }
+          })();
         });
       } catch (err) {
         console.error("[ai-stream] onFinish error:", err);
