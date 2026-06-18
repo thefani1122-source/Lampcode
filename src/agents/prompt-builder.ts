@@ -121,117 +121,69 @@ For each task:
 Output CONTRACT.md in clean Markdown. Use code blocks for SQL and TypeScript types.
 No fluff. No "this will be a great app!" — just the technical spec.`,
 
-  frontend: `You are an expert senior React developer at a top-tier product company. You build complete, production-quality applications that look professionally designed.
+  frontend: `You are a world-class product engineer. You build complete, polished, fully functional apps.
 
-QUALITY STANDARDS — NON-NEGOTIABLE
+THE ONE RULE
+Every app you build must feel like a real, shipped product — not a demo, not a prototype. Ask yourself before finishing: "Would a real user pay for this?"
 
-Code Quality
-* Complete implementations only — no placeholders, no "TODO", no fake data unless explicitly needed for demo
-* Every feature the user asked for must be implemented
-* TypeScript with proper types everywhere
-* Error handling on every async operation
-* Loading and empty states for every data display
+COMPLETENESS — NON-NEGOTIABLE
+* Every button must do something real
+* Every navigation link must show different, complete content
+* Every form must validate and respond
+* Every page must have real, realistic sample data
+* ZERO "coming soon", "TODO", or placeholder text
+* If a feature is mentioned in the prompt → build it
+* If a page is in the nav → it must have content
 
-Visual Quality
-- Analyze the user's request first — what is this app FOR?
-  A finance app → trust colors (blues, greens)
-  A food app → warm colors (oranges, reds, greens)
-  A creative tool → vibrant (purples, indigos)
-  A medical app → clean (whites, blues, greens)
-  A gaming app → dark + neon
-  If user specifies colors → use EXACTLY those colors
+VISUAL QUALITY — NON-NEGOTIABLE
+* Analyze what this app IS before choosing colors:
+  Food app → warm (reds, oranges, creams)
+  Finance → trust (navy, green, white)
+  Health → calm (teal, sage, white)
+  Creative → vibrant (purple, indigo, gradient)
+  Corporate → neutral + one accent
+  Gaming → dark + bright neon
+  User specified colors → use EXACTLY those
+* NEVER ship ugly defaults:
+  No raw #333333, #666666, #cccccc
+  No Bootstrap blue #007bff
+  No plain gray backgrounds
+* ALWAYS add visual depth:
+  Hover states on every interactive element
+  Subtle shadows on cards (0 2px 8px rgba(0,0,0,0.08))
+  Consistent border-radius (12px cards, 8px buttons)
+  Smooth transitions (all 0.2s ease)
+* Build as if a senior designer at Stripe, Linear, or Notion reviewed every screen
 
-- NEVER use raw default colors:
-  ✗ Pure #ffffff background with #000000 text only
-  ✗ Plain blue (#0000ff), plain red (#ff0000)
-  ✗ Bootstrap default gray (#6c757d)
+INTERACTIONS — NON-NEGOTIABLE
+* Hover on cards → subtle lift or highlight
+* Button clicks → visible state change
+* Form submission → success/error feedback
+* Loading states where data would load
+* Empty states with helpful messages
 
-- ALWAYS add depth and polish:
-  ✓ Subtle shadows on cards (box-shadow: 0 1px 3px rgba(0,0,0,0.1))
-  ✓ Proper border-radius (8px cards, 6px buttons)
-  ✓ Color with slight tint not flat: #6366f1 not #0000ff
-  ✓ Hover states on every interactive element
-  ✓ Consistent spacing (8px grid)
+SAMPLE DATA QUALITY
+* Use realistic, context-appropriate data
+* Food app → real dish names, prices, descriptions
+* Finance → realistic dollar amounts, dates, merchants
+* Task app → real-sounding task descriptions
+* People → diverse, realistic names
+* NEVER: "Item 1", "User 1", "Lorem ipsum"
 
-Completeness
-* Build EVERYTHING the user asked for — never skip features
-* If a feature needs data, create realistic sample data
-* Navigation must work — all routes/pages complete
-* Forms must be functional with validation
-* All buttons must do something
-
-FILE STRUCTURE (MANDATORY)
-Always output files in this exact format:
+OUTPUT FORMAT
+Output files in this exact format, no deviation:
 \`\`\`filename:src/App.tsx
-[complete file content]
+[complete file]
 \`\`\`
 \`\`\`filename:src/styles.css
-[complete file content]
+[complete file]
 \`\`\`
 \`\`\`filename:src/index.tsx
-[complete file content — always include this]
+[complete entry point — always include]
 \`\`\`
-
-Required files every build:
-* src/index.tsx (entry point — NEVER skip)
-* src/App.tsx (main component)
-* src/styles.css (global styles)
-* package.json (with all required dependencies)
-
-SANDBOX RULES (CRITICAL)
-This runs in a sandboxed Vite environment:
-* Import ONLY from: react, react-dom, and packages listed in package.json
-* NO fetch() to external URLs
-* NO localStorage, sessionStorage
-* NO window.location navigation
-* NO server-side code
-* External packages must be in package.json
-
-BUILD MODE DECISION (CRITICAL)
-Analyze the user's prompt carefully before deciding:
-
-Build FRONTEND ONLY when:
-- User says "frontend only", "no backend", "static"
-- Simple UI: landing page, portfolio, calculator,
-  todo (local state), dashboard with sample data
-- No mention of: users, accounts, login, database,
-  saving permanently, multiple users
-
-Build FULLSTACK when:
-- User mentions: login, auth, accounts, sign up
-- User mentions: save to database, real data,
-  multiple users, admin panel
-- User mentions: API, backend, server
-- App logically REQUIRES a backend to function
-  (e.g. "real-time chat", "user profiles")
-
-When UNSURE:
-- Default to FRONTEND ONLY with sample data
-- Tell user: "I built this with sample data.
-  Say 'add real backend with auth' to make it production-ready"
-- NEVER build fullstack unless clearly needed
-
-DEFAULT DESIGN SYSTEM
-Choose colors based on:
-1. User's explicit request (highest priority)
-2. App's purpose/industry (second priority)
-3. Modern, non-default palette (always)
-Never use specific hardcoded colors — decide based on context above.
-/* Spacing */
-border-radius: 8px cards, 6px buttons, 4px inputs
-padding: 24px sections, 16px cards, 12px/16px buttons
-gap: 16px between items, 24px between sections
-/* Typography */
-font: system-ui, -apple-system, sans-serif
-heading: 700 weight
-body: 400 weight, 1.6 line-height
-
-CSS RULES
-* Use CSS custom properties (variables) for all colors
-* Animations: simple transitions only (0.2s ease) unless user specifically requests animations
-* Responsive: mobile-first, min 320px support
-* No CSS framework conflicts — write clean vanilla CSS
-* Keep styles organized: reset → variables → layout → components → utilities`,
+\`\`\`filename:package.json
+[with all dependencies]
+\`\`\``,
 
   backend: `You are the BuildForge Backend Engineer. You write robust Node.js/TypeScript API code.
 Framework: Hono.js (preferred), Express.js, or Fastify — all are acceptable.
@@ -1208,7 +1160,10 @@ export function getReactFrameworkRules(): string {
 }
 
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
-async function loadSkillsForPrompt(prompt: string): Promise<string> {
+async function loadSkillsForPrompt(
+  prompt: string,
+  opts?: { buildType?: "frontend" | "fullstack" },
+): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
@@ -1216,9 +1171,17 @@ async function loadSkillsForPrompt(prompt: string): Promise<string> {
   skillsToLoad.add("react-production");
   skillsToLoad.add("typescript-strict");
 
-  // DATABASE/AUTH — only when explicitly about data storage or accounts
-  if (/\b(database|supabase|postgres|sql|rls|row.level|auth|login|signup|sign.up|register|user.account|password|session|jwt|oauth)\b/i.test(prompt)) {
-    skillsToLoad.add("supabase-rls");
+  // BUILD-TYPE skill — mutually exclusive (their sandbox rules conflict):
+  // frontend-sandbox forbids fetch(); fullstack-hono requires it in api.ts.
+  if (opts?.buildType === "fullstack") {
+    skillsToLoad.add("fullstack-hono");
+  } else if (opts?.buildType === "frontend") {
+    skillsToLoad.add("frontend-sandbox");
+  }
+
+  // DATABASE RLS — only when explicitly about data storage or accounts
+  if (/\b(database|supabase|postgres|sql|rls|row.level.security|auth|login|signup|sign.up|register|user.account|save.to.db|real.database|persist|store.data|password|session|jwt|oauth)\b/i.test(prompt)) {
+    skillsToLoad.add("database-rls");
   }
 
   // BACKEND/API — only when explicitly about server code
@@ -1262,9 +1225,16 @@ async function loadSkillsForPrompt(prompt: string): Promise<string> {
   return skillContents.join("");
 }
 
-/** Exported for use in the stream path (ai-stream.ts). */
-export async function loadRelevantSkillsForPrompt(prompt: string): Promise<string> {
-  return loadSkillsForPrompt(prompt);
+/**
+ * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
+ * because follow-up edits are almost always on frontend (Sandpack) apps —
+ * this ensures the frontend-sandbox skill is injected on the stream path.
+ */
+export async function loadRelevantSkillsForPrompt(
+  prompt: string,
+  buildType: "frontend" | "fullstack" = "frontend",
+): Promise<string> {
+  return loadSkillsForPrompt(prompt, { buildType });
 }
 
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
@@ -1283,9 +1253,19 @@ export class PromptBuilder {
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
+    // Detect build type from the task description prefix so the right
+    // build-type skill (frontend-sandbox vs fullstack-hono) gets injected.
+    const buildType: "frontend" | "fullstack" | undefined =
+      agentType === "frontend"
+        ? (task.description.startsWith("FULLSTACK BUILD:") ||
+           task.description.startsWith("FULLSTACK AUTH BUILD:")
+            ? "fullstack"
+            : "frontend")
+        : undefined;
+
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
-      this.loadRelevantSkills(context.prompt),
+      this.loadRelevantSkills(context.prompt, buildType),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
     const systemPrompt = skillsBlock
@@ -1525,7 +1505,10 @@ export class PromptBuilder {
       "\n\n[Context truncated to fit token budget]";
   }
 
-  private async loadRelevantSkills(prompt: string): Promise<string> {
-    return loadSkillsForPrompt(prompt);
+  private async loadRelevantSkills(
+    prompt: string,
+    buildType?: "frontend" | "fullstack",
+  ): Promise<string> {
+    return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
 }

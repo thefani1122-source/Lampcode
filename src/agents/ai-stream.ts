@@ -28,7 +28,7 @@ async function buildStreamSystemPrompt(prompt: string, projectMemory?: string | 
   const [base, frameworkRules, skills] = await Promise.all([
     Promise.resolve(getFrontendSystemPrompt()),
     Promise.resolve(getReactFrameworkRules()),
-    loadRelevantSkillsForPrompt(prompt),
+    loadRelevantSkillsForPrompt(prompt, "frontend"),
   ]);
 
   const toolInstructions = `
