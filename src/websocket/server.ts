@@ -232,6 +232,7 @@ export class WebSocketServer {
       backendFileCount: number;
       previewUrl: string;
       totalFiles: number;
+      summary?: string;
     },
   ): void {
     this.emitToRoom(sessionId, "build:complete", data);

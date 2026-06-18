@@ -3,11 +3,21 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
+type BusinessContext = {
+  appDescription?: string | undefined;
+  userType?: string | undefined;
+  isMultiTenant?: boolean | undefined;
+  hasPaidFeatures?: boolean | undefined;
+  industry?: string | undefined;
+};
+
 interface BuildContext {
   projectId: string;
   userId: string;
   mode: "fast" | "plan";
   prompt: string;
+  businessContext?: BusinessContext | undefined;
+  projectMemory?: string | null;
 }
 import { logger } from "../server/logger.js";
 
@@ -25,6 +35,10 @@ export const taskInputSchema = z.object({
   constraints: z.array(z.string()).optional(),
   outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
   targetFiles: z.array(z.string()).optional(),
+  hasReferenceImage: z.boolean().optional(),
+  isAgentBuild: z.boolean().optional(),
+  hasAnimationContext: z.boolean().optional(),
+  projectMemory: z.string().nullable().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -149,6 +163,13 @@ RULE 4 — Always close every JSX tag you open in the SAME file.
 RULE 5 — Every import at the top of a file MUST have a corresponding export/definition somewhere. No phantom imports.
 Always include a complete root component with all state and event handlers.
 If you are simplifying due to scope: add a comment at the top: // Simplified version
+
+RULE 6 — When editing existing code:
+- Read the existing App.tsx structure before making any changes
+- Add new components or sections WITHOUT removing existing ones
+- Keep all existing imports — never delete a working import
+- If App.tsx is already over 400 lines, create a NEW separate component file rather than extending App.tsx further
+- NEVER rename the app, change its primary purpose, or restructure working code unprompted
 
 PLANNING — REQUIRED BEFORE CODE:
 Before writing any code, explain your plan in 2-3 sentences. Describe what you will build and the key components. Only AFTER this explanation, begin writing files.
@@ -1034,6 +1055,93 @@ Use realistic task names relevant to the app's domain — generate fresh names e
   },
 ];
 
+// ── Screenshot / design-reference instruction ────────────────────────────────
+
+const SCREENSHOT_DESIGN_INSTRUCTION = `
+
+SCREENSHOT/DESIGN REFERENCE MODE — The user has provided a reference screenshot or design image.
+Before writing a single line of code, perform this analysis in order:
+
+1. EXTRACT EXACT VALUES (zero approximation):
+   - Every hex color visible: backgrounds, text, borders, accents, hover states, gradients
+   - Font sizes (exact px or rem), font weights (100–900), font families
+   - All spacing values: padding, margin, gap (px or rem)
+   - Border radius on every distinct element (px or %)
+   - Box-shadow definitions: x-offset, y-offset, blur, spread, color, opacity
+   - Any transition/animation hints (duration, easing curves)
+
+2. NAME THE DESIGN STYLE:
+   glassmorphism / neumorphism / flat / material / brutalist / skeuomorphic / other
+
+3. MAP THE LAYOUT:
+   - Exact grid columns/rows and breakpoints if visible
+   - Card patterns, groupings, and nesting levels
+   - Navigation type: top bar / sidebar / bottom nav / floating / none
+
+4. INVENTORY EVERY VISIBLE COMPONENT with approximate dimensions (width × height):
+   buttons, inputs, cards, modals, badges, avatars, charts, icons, tables — list all
+
+5. DOCUMENT ALL SPECIAL EFFECTS:
+   - Gradient definitions (direction, color stops, opacity)
+   - backdrop-filter / blur values (glassmorphism)
+   - Glass border color and opacity
+   - Particle effects, SVG decorations, background patterns
+   - Glow, neon, or inner-shadow effects
+
+Only after completing this analysis, generate pixel-accurate code using exclusively the extracted values.
+Do NOT approximate any value. Every hex color must match exactly.
+When the user says "same design" or "like the screenshot" — this means 100% visual fidelity to the reference.`;
+
+const AGENT_BUILD_INSTRUCTION = `
+
+AGENT BUILD MODE — The user wants an AI agent or automated workflow. Follow these rules:
+
+Choose framework based on complexity:
+- Simple single-step task → Anthropic SDK directly (no framework)
+- Multi-step pipeline (Research → Analyze → Write) → CrewAI (simplest, most readable)
+- Complex branching / retry / persistent memory / checkpointing → LangGraph
+
+Backend: Python + FastAPI (NOT Hono.js / Node.js)
+Always generate:
+- FastAPI endpoints: POST /run, GET /results, GET /status
+- APScheduler for time-based triggers (cron / recurring runs)
+- Supabase storage: store every run output with { id, output, created_at, status, run_duration }
+- React dashboard (frontend): show results table, manual "Run Now" button, status indicator
+- try/except on every LLM call with error logging to Supabase
+- Type hints on every Python function
+- Never hardcode API keys — read from os.environ`;
+
+const ANIMATION_DEFAULT_INSTRUCTION = `
+IMPORTANT: This is a visual website/UI build.
+Apply animation-expert skill fully:
+
+COLOR RULE: Choose a modern sophisticated palette
+appropriate to the content type and brand.
+Light or dark — decide based on context.
+Never use plain boring default colors.
+
+ANIMATION RULE:
+- Import AOS, initialize in App.tsx, add data-aos to
+  every section and card grid
+- Use Motion (Framer Motion) for component interactions
+- Use GSAP ScrollTrigger for complex scroll effects only
+- Every section MUST have an entrance animation
+
+UI QUALITY RULE:
+- Use shadcn/ui for all base components (never raw HTML)
+- Use Aceternity UI or Magic UI for hero/feature sections
+- Buttons: spring hover + tap (Motion whileHover/whileTap)
+- Cards: subtle lift on hover (translateY + shadow)
+- Think: would this win an Awwwards honorable mention?
+
+EDITING RULE (when modifying existing code):
+- Read existing App.tsx structure before writing anything
+- Add new components/sections WITHOUT removing existing ones
+- Keep all existing imports — never remove a working import
+- If App.tsx is over 400 lines, create a NEW separate component file
+- NEVER rename the app or change its primary purpose
+`;
+
 /**
  * Expand a short user prompt with completeness expectations for its app type.
  * Pure and additive — never replaces the user's intent, only appends guidance.
@@ -1046,6 +1154,11 @@ export function expandUserPrompt(prompt: string): string {
 
   const additions = matched.map((e) => `- ${e.expansion}`).join("\n");
   return `${trimmed}\n\nBuild the complete, fully-functional version:\n${additions}`;
+}
+
+/** Returns the base frontend agent system prompt for use in external streaming handlers. */
+export function getFrontendSystemPrompt(): string {
+  return SYSTEM_PROMPTS.frontend;
 }
 
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
@@ -1064,8 +1177,14 @@ export class PromptBuilder {
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
-    const systemPrompt = this.buildSystemPrompt(agentType, task);
-    const contextBlock = await this.buildContextBlock(agentType, workspaceDir, contextFiles);
+    const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
+      Promise.resolve(this.buildSystemPrompt(agentType, task)),
+      this.loadRelevantSkills(context.prompt),
+      this.buildContextBlock(agentType, workspaceDir, contextFiles),
+    ]);
+    const systemPrompt = skillsBlock
+      ? `${baseSystemPrompt}\n\n${skillsBlock}`
+      : baseSystemPrompt;
     const taskBlock = this.buildTaskBlock(task, context);
 
     const userMessage = this.truncate(
@@ -1165,7 +1284,15 @@ export class PromptBuilder {
     // the prompt mentions them.
     const providerRules = agentType === "frontend" ? matchProviderRules(task.description) : "";
 
-    return base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + jsonInstruction;
+    const screenshotInstruction = task.hasReferenceImage === true ? SCREENSHOT_DESIGN_INSTRUCTION : "";
+    const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
+    const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
+
+    const projectMemoryBlock = task.projectMemory
+      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}\n\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
+      : "";
+
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;
   }
 
   private async buildContextBlock(
@@ -1241,6 +1368,19 @@ export class PromptBuilder {
       `- User prompt: ${context.prompt}`,
     );
 
+    const bc = context.businessContext;
+    if (bc !== undefined) {
+      const lines: string[] = [];
+      if (bc.appDescription) lines.push(`- App: ${bc.appDescription}`);
+      if (bc.userType) lines.push(`- Target users: ${bc.userType}`);
+      if (bc.industry) lines.push(`- Industry: ${bc.industry}`);
+      if (bc.isMultiTenant !== undefined) lines.push(`- Multi-tenant: ${bc.isMultiTenant ? "yes" : "no"}`);
+      if (bc.hasPaidFeatures !== undefined) lines.push(`- Paid features: ${bc.hasPaidFeatures ? "yes" : "no"}`);
+      if (lines.length > 0) {
+        parts.push("## Business Context", lines.join("\n"));
+      }
+    }
+
     return parts.join("\n\n");
   }
 
@@ -1276,5 +1416,43 @@ export class PromptBuilder {
     const lastNewline = truncated.lastIndexOf("\n");
     return (lastNewline > maxChars * 0.8 ? truncated.slice(0, lastNewline) : truncated) +
       "\n\n[Context truncated to fit token budget]";
+  }
+
+  private async loadRelevantSkills(prompt: string): Promise<string> {
+    const skillsDir = join(process.cwd(), "src", "skills");
+    const toLoad = new Set(["react-production.md", "typescript-strict.md", "firecrawl.md"]);
+
+    if (/\b(database|rls|row.?level.?security|supabase|postgres|table|schema|auth)\b/i.test(prompt)) {
+      toLoad.add("supabase-rls.md");
+    }
+    if (/\b(api|rest|endpoint|route|backend|server|hono)\b/i.test(prompt)) {
+      toLoad.add("api-design.md");
+    }
+    if (/\b(research|competitor|analyze|analyse|similar|reference|like|inspiration|inspired)\b/i.test(prompt)) {
+      toLoad.add("exa.md");
+    }
+    if (/\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crew|research\s+and|find\s+and|analyz)\b/i.test(prompt)) {
+      toLoad.add("crewai.md");
+      toLoad.add("langgraph.md");
+      toLoad.add("agent-architecture.md");
+    }
+    if (/\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt)) {
+      toLoad.add("animation-expert.md");
+    }
+
+    const sections: string[] = [];
+    for (const filename of toLoad) {
+      try {
+        const content = await readFile(join(skillsDir, filename), "utf8");
+        const title = filename.replace(".md", "").replace(/-/g, " ");
+        sections.push(`## Skill: ${title}\n${content.trim()}`);
+      } catch {
+        // skill file missing — skip silently
+      }
+    }
+
+    return sections.length > 0
+      ? `# Engineering Skills\n\n${sections.join("\n\n")}`
+      : "";
   }
 }

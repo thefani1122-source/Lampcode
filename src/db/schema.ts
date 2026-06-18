@@ -117,6 +117,14 @@ export type ProjectBranding = {
   faviconUrl?: string | undefined;
 };
 
+export type BusinessContext = {
+  appDescription?: string | undefined;
+  userType?: string | undefined;
+  isMultiTenant?: boolean | undefined;
+  hasPaidFeatures?: boolean | undefined;
+  industry?: string | undefined;
+};
+
 // ── Enums ────────────────────────────────────────────────────────────────────
 
 export const projectModeEnum = pgEnum("project_mode", ["fast", "plan"]);
@@ -163,6 +171,8 @@ export const projects = pgTable("projects", {
   techStack: jsonb("tech_stack").$type<string[]>().notNull().default([]),
   settings: jsonb("settings").$type<ProjectSettings>().notNull().default({}),
   branding: jsonb("branding").$type<ProjectBranding>().notNull().default({}),
+  businessContext: jsonb("business_context").$type<BusinessContext>().notNull().default({}),
+  projectMemory: text("project_memory"),
   isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
@@ -546,6 +556,7 @@ export const userMcpConnections = pgTable("user_mcp_connections", {
   encryptedCredsIv: text("encrypted_creds_iv").notNull(),
   encryptedCredsTag: text("encrypted_creds_tag").notNull(),
   meta: jsonb("meta").$type<Record<string, string>>().default({}),
+  isCustom: boolean("is_custom").default(false),
   connectedAt: timestamp("connected_at", { mode: "date" }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("user_mcp_connections_user_provider_idx").on(t.userId, t.providerSlug),

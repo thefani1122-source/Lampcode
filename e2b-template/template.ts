@@ -37,7 +37,17 @@ const PKG_JSON = `{
     "zod": "^3.23.8",
     "mongoose": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "gsap": "^3.12.5",
+    "motion": "^11.11.0",
+    "lenis": "^1.1.14",
+    "@tsparticles/react": "^3.0.0",
+    "@tsparticles/slim": "^3.5.0",
+    "@splinetool/react-spline": "^4.0.0",
+    "@react-three/fiber": "^8.17.10",
+    "@react-three/drei": "^9.114.3",
+    "three": "^0.169.0",
+    "aos": "^2.3.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -46,7 +56,8 @@ const PKG_JSON = `{
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@types/jsonwebtoken": "^9.0.6",
-    "@types/bcryptjs": "^2.4.6"
+    "@types/bcryptjs": "^2.4.6",
+    "@types/three": "^0.169.0"
   }
 }`
 
@@ -141,7 +152,7 @@ const dockerfile = [
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
   'RUN npm install -g vite tsx typescript',
   // Python backends (FastAPI) run on the same :3001 the frontend proxies /api to.
-  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv',
+  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py',
   'WORKDIR /home/user/app',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),

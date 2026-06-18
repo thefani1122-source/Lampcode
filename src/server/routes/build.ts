@@ -36,8 +36,45 @@ import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpSer
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { generateProjectMemory } from "../../agents/memory-generator.js";
+import { handleBuildStream } from "../../agents/ai-stream.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const CLARIFY_SYSTEM = `You are a technical analyst. Analyze user prompts and determine if clarification is needed before building.
+
+Only ask questions when the prompt is for:
+- SaaS tools, platforms, marketplaces
+- Apps with multiple user types or roles
+- Apps that handle payments or subscriptions
+- Apps with complex data relationships
+
+DO NOT ask questions for:
+- Simple UI components or pages
+- Landing pages or portfolios
+- Design clones ("make it look like X")
+- Single-purpose utilities
+
+Return ONLY valid JSON, no markdown, no explanation:
+{
+  "needsClarification": boolean,
+  "questions": [
+    {
+      "id": "q1",
+      "heading": "Short heading (3-5 words)",
+      "reason": "One sentence: why you need this info and how it affects the build",
+      "question": "The actual question (concise)",
+      "options": ["Option 1", "Option 2", "Option 3"],
+      "allowMultiple": false,
+      "allowCustom": true
+    }
+  ]
+}
+
+Max 4 questions. Min 0 (needsClarification: false).
+Options must be exactly 3 per question.
+allowMultiple: true only for user-type questions.`;
 
 // Prompts that match these keywords in "action mode" execute real MCP tool
 // calls (create GitHub repo, build n8n workflow, etc.) instead of generating code.
@@ -69,6 +106,11 @@ function ws() {
 }
 
 // ── Input schemas ─────────────────────────────────────────────────────────────
+
+const clarifyBodySchema = z.object({
+  prompt: z.string().min(1).max(4_000),
+  projectId: z.string().min(1),
+});
 
 // Accept both camelCase and snake_case for projectId to handle frontend naming conventions
 const fastBuildBodySchema = z.preprocess(
@@ -293,6 +335,23 @@ function validateAppTsx(code: string): string | null {
   return null;
 }
 
+// ── Image attachment detection ────────────────────────────────────────────────
+
+function hasImageAttachment(attachments?: string[]): boolean {
+  if (!attachments || attachments.length === 0) return false;
+  return attachments.some((a) => typeof a === "string" && /^data:image\//i.test(a));
+}
+
+// ── Agent build detection ─────────────────────────────────────────────────────
+
+function isAgentBuild(prompt: string): boolean {
+  return /\b(agent|automat|workflow|daily|hourly|schedul|monitor|track|pipeline|recurring|cron|crewai|crew\s+ai|langgraph|research\s+and|find\s+and|analyz)\b/i.test(prompt);
+}
+
+function isAnimationBuild(prompt: string): boolean {
+  return /\b(animat|3d|interactive|landing[\s-]?page|portfolio|homepage|hero|scroll|parallax|modern|beautiful|stunning|creative|agency|ecomm|shopify)\b/i.test(prompt);
+}
+
 // ── Full-stack detection ──────────────────────────────────────────────────────
 
 /**
@@ -420,6 +479,10 @@ export async function runFastBuild(
   projectId: string,
   prompt: string,
   userId: string,
+  hasReferenceImage: boolean = false,
+  agentBuildFlag: boolean = false,
+  animationFlag: boolean = false,
+  projectMemory: string | null = null,
 ): Promise<void> {
   const server = ws();
 
@@ -682,12 +745,28 @@ export async function runFastBuild(
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();
+
+    // When a reference image is attached, prepend a pixel-fidelity requirement
+    // so it surfaces prominently in the user message alongside the system-prompt
+    // instruction injected by buildSystemPrompt().
+    const effectiveRequirements = hasReferenceImage
+      ? [
+          "A reference screenshot/design has been provided. Extract ALL exact hex colors, font sizes, spacing, border-radius, and shadow values from it before writing any code.",
+          "Every color and spacing value in your output must exactly match the reference — no approximations.",
+          ...requirements,
+        ]
+      : requirements;
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       task: {
         description: taskDescription,
-        requirements,
+        requirements: effectiveRequirements,
         outputFormat: "code",
+        hasReferenceImage,
+        isAgentBuild: agentBuildFlag,
+        hasAnimationContext: animationFlag,
+        projectMemory,
       },
       sessionId,
       userId,
@@ -1128,6 +1207,25 @@ export async function runFastBuild(
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
 
+    // ── Generate AI summary with Haiku (fast, non-blocking path) ─────────────
+    let buildSummary = ""
+    try {
+      const anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
+      const fileList = Object.keys(allFiles).slice(0, 20).join(", ")
+      const summaryResp = await anthropicClient.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 120,
+        messages: [{
+          role: "user",
+          content: `A web app was just built. Describe it in 1-2 enthusiastic sentences.\nPrompt: "${prompt.slice(0, 300)}"\nFiles: ${fileList}\n\nBe specific about what was built. No preamble, no "Here's" opener.`,
+        }],
+      })
+      const block = summaryResp.content[0]
+      if (block?.type === "text") buildSummary = block.text.trim()
+    } catch (err) {
+      logger.warn({ sessionId, err }, "AI summary generation failed — using fallback")
+    }
+
     server?.buildComplete(sessionId, {
       sessionId,
       files: frontendFiles,       // Sandpack-safe: no Node.js imports
@@ -1135,7 +1233,24 @@ export async function runFastBuild(
       backendFileCount,           // >0 signals fullstack build to the client
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
+      ...(buildSummary ? { summary: buildSummary } : {}),
     });
+
+    // ── Async project memory update — never blocks the build ───────────────
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const allCode = Object.values(allFiles).join("\n")
+          const newMemory = await generateProjectMemory(allCode, projectMemory, prompt)
+          await db.update(projects)
+            .set({ projectMemory: newMemory })
+            .where(eq(projects.id, projectId))
+          console.log(`[memory] saved for project ${projectId}`)
+        } catch (err) {
+          console.error("[memory] update failed:", err)
+        }
+      })()
+    })
 
     // ── E2B cloud sandbox preview ───────────────────────────────────────────
     // The instant Sandpack preview above only runs JS/TS in-browser and CANNOT
@@ -1329,6 +1444,57 @@ export async function runFastBuild(
 export const buildRouter = new Hono();
 buildRouter.use("/*", requireAuth);
 
+// POST /api/build/clarify
+buildRouter.post("/clarify", async (c) => {
+  const bodyRaw = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+
+  const parsed = clarifyBodySchema.safeParse(bodyRaw);
+  if (!parsed.success) {
+    throw new AppError(
+      400,
+      parsed.error.issues.map(i => i.message).join("; "),
+      "VALIDATION_ERROR",
+    );
+  }
+  const { prompt } = parsed.data;
+
+  if (!config.ANTHROPIC_API_KEY) {
+    return c.json({ needsClarification: false, questions: [] });
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: CLARIFY_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this prompt and generate clarification questions if needed:\n\n${prompt}`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map(b => b.text)
+      .join("");
+
+    try {
+      const result = JSON.parse(text) as unknown;
+      return c.json(result);
+    } catch {
+      return c.json({ needsClarification: false, questions: [] });
+    }
+  } catch (err) {
+    logger.warn({ err }, "Clarify endpoint error — skipping clarification");
+    return c.json({ needsClarification: false, questions: [] });
+  }
+});
+
 // POST /api/build/fast
 buildRouter.post("/fast", async (c) => {
   const t0 = Date.now();
@@ -1407,6 +1573,17 @@ buildRouter.post("/fast", async (c) => {
 
     // ── Fire-and-forget build ───────────────────────────────────────────────
     const userId = authUser.id;
+    const refImgFlag = hasImageAttachment(attachments);
+    const agentFlag = isAgentBuild(prompt);
+    const animationFlag = isAnimationBuild(prompt);
+
+    // Fetch project memory before kicking off the build (non-blocking read)
+    const projectRow = await db.query.projects.findFirst({
+      where: eq(projects.id, projectId),
+      columns: { projectMemory: true },
+    });
+    const memoryFlag = projectRow?.projectMemory ?? null;
+
     setImmediate(() => {
       void (async () => {
         // Action mode: route to the MCP action agent when the prompt looks like
@@ -1426,7 +1603,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });
@@ -1439,6 +1616,86 @@ buildRouter.post("/fast", async (c) => {
   }
 
   return c.json({ sessionId, status: "running", projectId });
+});
+
+// POST /api/build/stream
+const streamBuildBodySchema = z.object({
+  projectId: z.string().min(1),
+  sessionId: z.string().uuid("sessionId must be a valid UUID"),
+  prompt: z.string().min(1).max(4_000),
+});
+
+buildRouter.post("/stream", async (c) => {
+  const authUser = c.get("authUser");
+
+  const bodyRaw = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+
+  const parsed = streamBuildBodySchema.safeParse(bodyRaw);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map(i => i.message).join("; ");
+    throw new AppError(400, msg, "VALIDATION_ERROR");
+  }
+  const { projectId, sessionId, prompt } = parsed.data;
+
+  // Verify project ownership
+  const projectRows = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
+    .limit(1);
+  const project = projectRows[0];
+  if (!project) throw new AppError(404, "Project not found", "NOT_FOUND");
+
+  if (project.status === "building") {
+    throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
+  }
+
+  // Load existing files from last successful build for edit context
+  const lastSuccessRow = await db
+    .select({ outputDir: buildSessions.outputDir })
+    .from(buildSessions)
+    .where(and(
+      eq(buildSessions.projectId, projectId),
+      eq(buildSessions.userId, authUser.id),
+      eq(buildSessions.status, "success"),
+      isNotNull(buildSessions.outputDir),
+    ))
+    .orderBy(desc(buildSessions.createdAt))
+    .limit(1);
+
+  const existingFiles = lastSuccessRow[0]?.outputDir
+    ? await loadProjectFiles(lastSuccessRow[0].outputDir)
+    : {};
+
+  // Create build session with the frontend-provided sessionId
+  await db.insert(buildSessions).values({
+    id: sessionId,
+    projectId,
+    userId: authUser.id,
+    prompt,
+    mode: "fast",
+    status: "running",
+    phase: 0,
+  });
+
+  // Mark project as building
+  await db.update(projects)
+    .set({ status: "building" })
+    .where(eq(projects.id, projectId));
+
+  const origin = c.req.header("origin") ?? "";
+
+  return handleBuildStream({
+    prompt,
+    sessionId,
+    projectId,
+    userId: authUser.id,
+    projectMemory: project.projectMemory ?? null,
+    existingFiles,
+    origin,
+  });
 });
 
 // GET /api/build/:projectId/last-session

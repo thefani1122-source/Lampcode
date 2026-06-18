@@ -464,6 +464,83 @@ export async function getUserSupabaseMcpAuth(
   }
 }
 
+// ── Custom MCP routes (must be before /mcp/:slug to avoid route collision) ────
+
+const customConnectSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  slug: z.string().min(1),
+  description: z.string().default(""),
+  mcpServerUrl: z.string().min(1).refine(u => u.startsWith("https://"), "URL must start with https://"),
+  authType: z.enum(["bearer_token", "api_key", "none"]),
+  creds: z.object({ token: z.string().optional() }).default({}),
+});
+
+// POST /api/integrations/mcp/custom/connect
+integrationsRouter.post("/mcp/custom/connect", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const raw = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
+  const parsed = customConnectSchema.safeParse(raw);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues[0]?.message ?? "Validation failed", "VALIDATION_ERROR");
+
+  const { name, slug, description, mcpServerUrl, authType, creds } = parsed.data;
+
+  const credsBlob = { token: creds.token ?? "", mcpServerUrl, authType, name, description };
+  const enc = encrypt(JSON.stringify(credsBlob));
+
+  let urlHost = "";
+  try { urlHost = new URL(mcpServerUrl).host; } catch { urlHost = mcpServerUrl; }
+
+  const id = randomUUID();
+  const now = new Date();
+  await db.insert(userMcpConnections).values({
+    id,
+    userId,
+    providerSlug: slug,
+    encryptedCreds: enc.encrypted,
+    encryptedCredsIv: enc.iv,
+    encryptedCredsTag: enc.tag,
+    meta: { name, url: urlHost },
+    isCustom: true,
+    connectedAt: now,
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: {
+      encryptedCreds: enc.encrypted,
+      encryptedCredsIv: enc.iv,
+      encryptedCredsTag: enc.tag,
+      meta: { name, url: urlHost },
+      connectedAt: now,
+    },
+  });
+
+  logger.info({ userId, slug }, "Custom MCP connected");
+  return c.json({ slug, status: "connected" }, 201);
+});
+
+// GET /api/integrations/mcp/custom — list user's custom MCPs
+integrationsRouter.get("/mcp/custom", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const rows = await db
+    .select({
+      providerSlug: userMcpConnections.providerSlug,
+      meta: userMcpConnections.meta,
+      connectedAt: userMcpConnections.connectedAt,
+    })
+    .from(userMcpConnections)
+    .where(and(eq(userMcpConnections.userId, userId), eq(userMcpConnections.isCustom, true)));
+  return c.json({ custom: rows.map(r => ({ slug: r.providerSlug, meta: r.meta ?? {}, connectedAt: r.connectedAt })) });
+});
+
+// DELETE /api/integrations/mcp/custom/:slug
+integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  await db
+    .delete(userMcpConnections)
+    .where(and(eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, slug), eq(userMcpConnections.isCustom, true)));
+  return c.json({ success: true });
+});
+
 // ── MCP Provider routes ────────────────────────────────────────────────────────
 
 // POST /api/integrations/mcp/:slug/connect
@@ -582,9 +659,6 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
 
   for (const row of rows) {
     try {
-      const provider = getMcpProvider(row.providerSlug);
-      if (!provider?.supportsRealMCP) continue;
-
       const creds = JSON.parse(
         decrypt({
           encrypted: row.encryptedCreds,
@@ -592,6 +666,19 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
           tag: row.encryptedCredsTag,
         }),
       ) as Record<string, string>;
+
+      // Custom MCPs: metadata is stored in encrypted creds
+      if (row.isCustom) {
+        const url = creds["mcpServerUrl"];
+        if (!url) continue;
+        const authType = creds["authType"] ?? "bearer_token";
+        const authToken = authType !== "none" && creds["token"] ? creds["token"] : null;
+        servers.push({ slug: row.providerSlug, name: creds["name"] ?? row.providerSlug, url, authToken });
+        continue;
+      }
+
+      const provider = getMcpProvider(row.providerSlug);
+      if (!provider?.supportsRealMCP) continue;
 
       const url = resolveServerUrl(provider, creds);
       if (!url) continue;
