@@ -233,6 +233,7 @@ export class WebSocketServer {
       previewUrl: string;
       totalFiles: number;
       summary?: string;
+      hint?: string;
     },
   ): void {
     this.emitToRoom(sessionId, "build:complete", data);

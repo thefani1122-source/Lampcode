@@ -39,6 +39,7 @@ import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { handleBuildStream } from "../../agents/ai-stream.js";
+import { classifyBuild } from "../../agents/build-classifier.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -544,6 +545,12 @@ export async function runFastBuild(
     const hasExistingCode = Object.keys(existingFiles).length > 0;
     console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length}`);
 
+    // Start classifier concurrently with follow-up file selection below —
+    // only needed for fresh builds; edits keep their existing detection path.
+    const classificationPromise = !hasExistingCode
+      ? classifyBuild(prompt)
+      : Promise.resolve(null);
+
     // ── Smart follow-up context selection ────────────────────────────────
     // Short prompts (≤ 20 words) on an existing project only need 1–2 files.
     // We copy all existing files to the new outputDir first so unchanged files
@@ -582,9 +589,11 @@ export async function runFastBuild(
     // ── Full-stack detection (new builds only) ────────────────────────────
     // Edits and follow-ups keep their existing flows untouched; only a fresh
     // build with no prior code can be promoted to a full-stack generation.
-    const isFullstackBuild = !hasExistingCode && needsBackend(prompt);
-    const fullstackDb = isFullstackBuild ? detectDatabase(prompt) : "supabase";
-    const fullstackFramework = isFullstackBuild ? detectFullstackFramework(prompt) : "react";
+    // classifier was started concurrently above — await result here.
+    const classification = await classificationPromise;
+    const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
+    const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
+    const fullstackFramework = (isFullstackBuild ? classification?.framework : null) ?? "react";
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -1217,6 +1226,9 @@ export async function runFastBuild(
       previewUrl: `/api/build/${sessionId}/preview`,
       totalFiles: Object.keys(allFiles).length,
       ...(buildSummary ? { summary: buildSummary } : {}),
+      ...(!hasExistingCode && classification?.buildType === "frontend"
+        ? { hint: "Built with sample data. Say 'add user login and real database' to make it production-ready." }
+        : {}),
     });
 
     // ── Async project memory update — never blocks the build ───────────────
