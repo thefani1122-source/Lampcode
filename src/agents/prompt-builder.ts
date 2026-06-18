@@ -1156,6 +1156,11 @@ export function expandUserPrompt(prompt: string): string {
   return `${trimmed}\n\nBuild the complete, fully-functional version:\n${additions}`;
 }
 
+/** Returns the base frontend agent system prompt for use in external streaming handlers. */
+export function getFrontendSystemPrompt(): string {
+  return SYSTEM_PROMPTS.frontend;
+}
+
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
 
 export class PromptBuilder {
