@@ -87,11 +87,22 @@ export async function classifyBuild(
       .filter((b) => b.type === "text")
       .map((b) => b.text)
       .join("")
-      .trim()
-      .replace(/^```json?\n?/, "")
-      .replace(/\n?```$/, "");
+      .trim();
 
-    const parsed = JSON.parse(text) as BuildClassification;
+    const clean = text
+      .replace(/^```json?\n?/m, "")
+      .replace(/\n?```$/m, "")
+      .trim();
+
+    // Extract just the JSON object (skip any preamble)
+    const jsonStart = clean.indexOf("{");
+    const jsonEnd = clean.lastIndexOf("}") + 1;
+    if (jsonStart === -1 || jsonEnd === 0) {
+      throw new Error("No JSON object found in response");
+    }
+
+    const jsonStr = clean.slice(jsonStart, jsonEnd);
+    const parsed = JSON.parse(jsonStr) as BuildClassification;
 
     console.log(
       `[classifier] "${prompt.slice(0, 50)}..." →`,
