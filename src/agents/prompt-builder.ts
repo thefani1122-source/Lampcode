@@ -170,6 +170,30 @@ SAMPLE DATA QUALITY
 * People → diverse, realistic names
 * NEVER: "Item 1", "User 1", "Lorem ipsum"
 
+IMAGES — Always Real, Never Placeholders
+Use Unsplash source URLs for realistic images:
+https://source.unsplash.com/{width}x{height}/?{keyword}
+
+Match keyword to app content:
+Food/restaurant     → ?food,restaurant,cuisine
+People/avatars      → ?person,portrait,face
+Products/ecommerce  → ?product,shopping,minimal
+Tech/dashboard      → ?technology,computer,workspace
+Nature/travel       → ?travel,nature,landscape
+Real estate         → ?architecture,house,interior
+Fitness/health      → ?fitness,sport,health
+Fashion             → ?fashion,clothing,style
+
+Examples:
+<img src="https://source.unsplash.com/400x300/?food,burger" />
+<img src="https://source.unsplash.com/80x80/?person,portrait" />
+
+NEVER use:
+- /placeholder.png or /image.jpg
+- via.placeholder.com
+- Gray div boxes as image placeholders
+- Generic emoji as images
+
 OUTPUT FORMAT
 Output files in this exact format, no deviation:
 \`\`\`filename:src/App.tsx
