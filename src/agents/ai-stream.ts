@@ -8,9 +8,10 @@ import { config } from "../server/config.js";
 import { db } from "../db/client.js";
 import { projects, buildSessions } from "../db/schema.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { getFrontendSystemPrompt, getReactFrameworkRules, loadRelevantSkillsForPrompt, expandUserPrompt } from "./prompt-builder.js";
+import { getFrontendSystemPrompt, getReactFrameworkRules, loadRelevantSkillsForPrompt, expandUserPrompt, FULLSTACK_INSTRUCTION, FULLSTACK_AUTH_INSTRUCTION, DB_INSTRUCTIONS, needsAuth } from "./prompt-builder.js";
 import { generateProjectMemory } from "./memory-generator.js";
 import { ALLOWED_ORIGINS } from "../server/config.js";
+import { classifyBuild } from "./build-classifier.js";
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
@@ -24,12 +25,36 @@ export interface StreamBuildRequest {
   origin?: string;
 }
 
-async function buildStreamSystemPrompt(prompt: string, projectMemory?: string | null): Promise<string> {
+async function buildStreamSystemPrompt(
+  prompt: string,
+  projectMemory?: string | null,
+  classification?: {
+    buildType: string;
+    database: string;
+    needsAuth: boolean;
+  } | null,
+): Promise<string> {
+  const buildType = classification?.buildType === "fullstack"
+    ? "fullstack"
+    : "frontend";
+
   const [base, frameworkRules, skills] = await Promise.all([
     Promise.resolve(getFrontendSystemPrompt()),
     Promise.resolve(getReactFrameworkRules()),
-    loadRelevantSkillsForPrompt(prompt, "frontend"),
+    loadRelevantSkillsForPrompt(prompt, buildType),
   ]);
+
+  // Build fullstack instruction block
+  let fullstackBlock = "";
+  if (buildType === "fullstack") {
+    const db = classification?.database ?? "supabase";
+    fullstackBlock += "\n" + FULLSTACK_INSTRUCTION;
+    fullstackBlock += "\n" + (DB_INSTRUCTIONS[db as keyof typeof DB_INSTRUCTIONS]
+      ?? DB_INSTRUCTIONS["supabase"]);
+    if (classification?.needsAuth || needsAuth(prompt)) {
+      fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+    }
+  }
 
   const toolInstructions = `
 
@@ -44,12 +69,13 @@ Never output \`\`\`filename: fences — the tool handles file delivery.`;
       ? `\n\n🚨 CRITICAL: This is an EDIT to an existing app.\n${projectMemory}`
       : "";
 
-  return base + frameworkRules + skills + toolInstructions + memoryBlock;
+  return base + fullstackBlock + frameworkRules + skills + toolInstructions + memoryBlock;
 }
 
 function buildUserMessage(
   prompt: string,
   existingFiles: Record<string, string>,
+  isFullstack: boolean = false,
 ): string {
   const isEdit = Object.keys(existingFiles).length > 0;
 
@@ -65,7 +91,9 @@ function buildUserMessage(
     );
   }
 
-  return expandUserPrompt(prompt);
+  // For fullstack new builds: use raw prompt (system prompt carries all instructions)
+  // For frontend new builds: expand with app-type hints
+  return isFullstack ? prompt : expandUserPrompt(prompt);
 }
 
 export async function handleBuildStream(
@@ -92,9 +120,19 @@ export async function handleBuildStream(
     apiKey: config.ANTHROPIC_API_KEY,
   });
 
+  // Run classifier only for new builds (no existing files)
+  const isNewBuild = Object.keys(existingFiles).length === 0;
+  const classification = isNewBuild
+    ? await classifyBuild(prompt)
+    : null;
+
   const [systemPrompt, userMessage] = await Promise.all([
-    buildStreamSystemPrompt(prompt, projectMemory),
-    Promise.resolve(buildUserMessage(prompt, existingFiles)),
+    buildStreamSystemPrompt(prompt, projectMemory, classification),
+    Promise.resolve(buildUserMessage(
+      prompt,
+      existingFiles,
+      classification?.buildType === "fullstack",
+    )),
   ]);
 
   const result = streamText({
@@ -190,7 +228,12 @@ export async function handleBuildStream(
           sessionId,
           files: filesBuffer,
           backendFiles: filesBuffer,
-          backendFileCount: 0,
+          backendFileCount: classification?.buildType === "fullstack"
+            ? Object.keys(filesBuffer).filter(p =>
+                p.startsWith("src/server/") ||
+                p.startsWith("src/db/")
+              ).length
+            : 0,
           previewUrl: `/api/build/${sessionId}/preview`,
           totalFiles,
           summary,

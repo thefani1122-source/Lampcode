@@ -226,7 +226,7 @@ export function detectDatabase(prompt: string): Database {
   return "supabase";
 }
 
-const DB_INSTRUCTIONS: Record<Database, string> = {
+export const DB_INSTRUCTIONS: Record<Database, string> = {
   supabase: `
 DATABASE: Supabase (PostgreSQL) — the Hono BACKEND accesses it server-side via
 @supabase/supabase-js (NOT directly from the frontend; the frontend calls /api).
@@ -304,7 +304,7 @@ every route (idempotent) so the lazy connection is established.`,
 // DB-specific rules are injected separately via DB_INSTRUCTIONS[db].
 // Detected by the "FULLSTACK BUILD:" description prefix set in build.ts.
 
-const FULLSTACK_INSTRUCTION = `
+export const FULLSTACK_INSTRUCTION = `
 
 ## ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND
 
@@ -438,7 +438,7 @@ Do NOT write your own __main__ / uvicorn.run() block.`;
 // ── Auth sub-mode instruction ─────────────────────────────────────────────────
 // Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
 
-const FULLSTACK_AUTH_INSTRUCTION = `
+export const FULLSTACK_AUTH_INSTRUCTION = `
 
 AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
 
@@ -832,6 +832,13 @@ export function getFrontendSystemPrompt(): string {
 /** Returns the React framework rules block for use in external streaming handlers. */
 export function getReactFrameworkRules(): string {
   return FRAMEWORK_RULES.react ?? "";
+}
+
+/** True when the prompt implies user accounts, login, OAuth, or session handling. */
+export function needsAuth(prompt: string): boolean {
+  return /\b(auth|login|log[- ]in|signin|sign[- ]in|sign[- ]up|signup|register|logout|log[- ]out|oauth|jwt|session|password|credential|account|user account|user profile|admin panel|authentication|authorization)\b/i.test(
+    prompt,
+  );
 }
 
 /** Module-level skill loader — shared by PromptBuilder and stream path. */

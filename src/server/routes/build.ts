@@ -388,7 +388,7 @@ function needsAuth(prompt: string): boolean {
 /** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
 function buildFullstackPrompt(prompt: string): string {
   const prefix = needsAuth(prompt) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return `${prefix}\n${expandUserPrompt(prompt)}`;
+  return `${prefix}\n${prompt}`;
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -712,7 +712,6 @@ export async function runFastBuild(
                 : [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
                     "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
-                    "Add src/server/auth.ts ONLY if the app needs login/accounts.",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
                     "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
                     "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
