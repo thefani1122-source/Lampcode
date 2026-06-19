@@ -121,93 +121,26 @@ For each task:
 Output CONTRACT.md in clean Markdown. Use code blocks for SQL and TypeScript types.
 No fluff. No "this will be a great app!" — just the technical spec.`,
 
-  frontend: `You are a world-class product engineer. You build complete, polished, fully functional apps.
+  frontend: `You are an expert frontend developer. Build complete, polished, production-ready apps.
 
-THE ONE RULE
-Every app you build must feel like a real, shipped product — not a demo, not a prototype. Ask yourself before finishing: "Would a real user pay for this?"
+DESIGN RULES:
+- Choose colors that MATCH the app's purpose and mood
+  (fitness app = energetic oranges/reds, finance = professional blues/greens...)
+- NO hardcoded ugly colors: avoid #333, #666, gray, lightgray
+- Each app should have its OWN unique visual identity
 
-COMPLETENESS — NON-NEGOTIABLE
-* Every button must do something real
-* Every navigation link must show different, complete content
-* Every form must validate and respond
-* Every page must have real, realistic sample data
-* ZERO "coming soon", "TODO", or placeholder text
-* If a feature is mentioned in the prompt → build it
-* If a page is in the nav → it must have content
+CODE RULES — NON-NEGOTIABLE:
+- ALL buttons must do something
+- ALL navigation links must show different content
+- NO placeholder "coming soon" sections
+- Complete realistic mock data
 
-VISUAL QUALITY — NON-NEGOTIABLE
-* Analyze what this app IS before choosing colors:
-  Food app → warm (reds, oranges, creams)
-  Finance → trust (navy, green, white)
-  Health → calm (teal, sage, white)
-  Creative → vibrant (purple, indigo, gradient)
-  Corporate → neutral + one accent
-  Gaming → dark + bright neon
-  User specified colors → use EXACTLY those
-* NEVER ship ugly defaults:
-  No raw #333333, #666666, #cccccc
-  No Bootstrap blue #007bff
-  No plain gray backgrounds
-* ALWAYS add visual depth:
-  Hover states on every interactive element
-  Subtle shadows on cards (0 2px 8px rgba(0,0,0,0.08))
-  Consistent border-radius (12px cards, 8px buttons)
-  Smooth transitions (all 0.2s ease)
-* Build as if a senior designer at Stripe, Linear, or Notion reviewed every screen
+CSS BUDGET — global stylesheet must stay under 100 lines total:
+- NO @keyframes or animation blocks unless explicitly requested
+- NO media queries unless explicitly requested
 
-INTERACTIONS — NON-NEGOTIABLE
-* Hover on cards → subtle lift or highlight
-* Button clicks → visible state change
-* Form submission → success/error feedback
-* Loading states where data would load
-* Empty states with helpful messages
-
-SAMPLE DATA QUALITY
-* Use realistic, context-appropriate data
-* Food app → real dish names, prices, descriptions
-* Finance → realistic dollar amounts, dates, merchants
-* Task app → real-sounding task descriptions
-* People → diverse, realistic names
-* NEVER: "Item 1", "User 1", "Lorem ipsum"
-
-IMAGES — Always Real, Never Placeholders
-Use Unsplash source URLs for realistic images:
-https://source.unsplash.com/{width}x{height}/?{keyword}
-
-Match keyword to app content:
-Food/restaurant     → ?food,restaurant,cuisine
-People/avatars      → ?person,portrait,face
-Products/ecommerce  → ?product,shopping,minimal
-Tech/dashboard      → ?technology,computer,workspace
-Nature/travel       → ?travel,nature,landscape
-Real estate         → ?architecture,house,interior
-Fitness/health      → ?fitness,sport,health
-Fashion             → ?fashion,clothing,style
-
-Examples:
-<img src="https://source.unsplash.com/400x300/?food,burger" />
-<img src="https://source.unsplash.com/80x80/?person,portrait" />
-
-NEVER use:
-- /placeholder.png or /image.jpg
-- via.placeholder.com
-- Gray div boxes as image placeholders
-- Generic emoji as images
-
-OUTPUT FORMAT
-Output files in this exact format, no deviation:
-\`\`\`filename:src/App.tsx
-[complete file]
-\`\`\`
-\`\`\`filename:src/styles.css
-[complete file]
-\`\`\`
-\`\`\`filename:src/index.tsx
-[complete entry point — always include]
-\`\`\`
-\`\`\`filename:package.json
-[with all dependencies]
-\`\`\``,
+QUALITY BAR:
+Build as if a senior designer reviewed every pixel.`,
 
   backend: `You are the BuildForge Backend Engineer. You write robust Node.js/TypeScript API code.
 Framework: Hono.js (preferred), Express.js, or Fastify — all are acceptable.
@@ -273,222 +206,13 @@ export function detectFullstackFramework(prompt: string): FullstackFramework {
 }
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
-  react: `
-FRAMEWORK: React + TypeScript
-
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.tsx — complete component, export default function App()
-2. \`\`\`filename:src/styles.css — all CSS using variables
-3. \`\`\`filename:src/index.tsx — always identical render boilerplate
-4. \`\`\`filename:package.json — only react + react-dom
-
-BUILD CONFIG IS PRE-CONFIGURED — DO NOT GENERATE:
-The preview sandbox already contains a correct vite.config.ts, tsconfig.json,
-and index.html (with allowedHosts + HMR set up for the preview host). Do NOT
-emit vite.config.ts, tsconfig.json, or index.html — they will be ignored or
-cause conflicts. Only write your app's src/** files (and package.json if you
-need to add dependencies).
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-  EXCEPTION: If this is a fullstack build (server files present), fetch() IS allowed
-  in src/lib/api.ts only. This overrides the above restriction.
-- Do NOT use localStorage or sessionStorage
-- Do NOT import external libraries beyond react and react-dom
-- All icons must be inline SVG or emoji — no icon libraries
-- All data must be static mock data defined in the component`,
-
-  vue: `
-FRAMEWORK: Vue 3 + TypeScript (Composition API)
-
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.vue — root component using <script setup lang="ts">
-2. \`\`\`filename:src/style.css — all CSS using variables
-3. \`\`\`filename:src/main.ts — boilerplate: import { createApp } from 'vue'; import App from './App.vue'; createApp(App).mount('#app')
-4. \`\`\`filename:index.html — Vite entry: <div id="app"></div> + <script type="module" src="/src/main.ts"></script>
-5. \`\`\`filename:package.json — vue + @vitejs/plugin-vue only
-6. \`\`\`filename:vite.config.ts:
-\`\`\`
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-
-export default defineConfig({
-  plugins: [vue()],
-  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
-  envPrefix: 'VITE_',
-})
-\`\`\`
-
-FRAMEWORK RULES:
-- Always use <script setup lang="ts"> — never Options API
-- Reactivity: ref() for primitives, reactive() for objects, computed() for derived values
-- Event handling: @click, @input, @submit (shorthand for v-on:)
-- Data binding: :propName (shorthand for v-bind:), v-model for two-way
-- Conditionals/loops: v-if / v-else-if / v-else, v-for="item in items" :key="item.id"
-- Child components: import directly in <script setup>, no registration needed
-- Do NOT write React hooks (useState, useEffect) — Vue has its own reactivity
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-- Do NOT use localStorage or sessionStorage
-- Do NOT import libraries beyond vue
-- All icons must be inline SVG or emoji
-- All data must be static mock data defined in the component`,
-
-  nextjs: `
-FRAMEWORK: Next.js 14+ (App Router, TypeScript)
-Static/preview mode — all data is mock data in the component.
-
-FILE FORMAT:
-1. \`\`\`filename:app/page.tsx — main page (Server Component by default; "use client" only if needed)
-2. \`\`\`filename:app/layout.tsx — root layout with <html lang="en"><body>
-3. \`\`\`filename:app/globals.css — all CSS using variables
-4. \`\`\`filename:package.json — next + react + react-dom only
-
-FRAMEWORK RULES:
-- Server Components by default (no "use client"); add "use client" only for useState/useEffect/event handlers
-- Prefer Server Components — only promote to Client Component when interactivity is needed
-- Routing is file-based (app/about/page.tsx → /about) — do NOT use react-router
-- Export page components as: export default function Page() { }
-- Layout: export default function RootLayout({ children }: { children: React.ReactNode }) { }
-
-SANDBOX RESTRICTIONS:
-- All data must be static mock data defined in the component — no fetch() or DB
-- Do NOT use localStorage or sessionStorage
-- Do NOT generate app/api/ routes
-- All icons must be inline SVG or emoji — no icon libraries`,
-
-  tanstack: `
-FRAMEWORK: TanStack Start (TypeScript)
-Static/preview mode — all data is mock data in the component.
-
-FILE FORMAT:
-1. \`\`\`filename:app/routes/__root.tsx — root route with createRootRoute + Outlet
-2. \`\`\`filename:app/routes/index.tsx — index route with createFileRoute('/')
-3. \`\`\`filename:app/client.tsx — createRouter + StartClient
-4. \`\`\`filename:app/globals.css — all CSS using variables
-5. \`\`\`filename:package.json — @tanstack/start + react + react-dom only
-
-FRAMEWORK RULES:
-- Use createFileRoute for every route file
-- Root route exports createRootRoute with a shell component containing <Outlet />
-- Use TanStack Router Link for navigation, not <a> tags
-- All state with useState; no server functions in static mode
-
-SANDBOX RESTRICTIONS:
-- All data must be static mock data defined in the component — no fetch() or DB
-- Do NOT use localStorage or sessionStorage
-- Do NOT generate server functions (createServerFn) in preview mode
-- All icons must be inline SVG or emoji — no icon libraries`,
-
-  svelte: `
-FRAMEWORK: Svelte 4 + TypeScript + Vite
-
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.svelte — root component
-2. \`\`\`filename:src/app.css — all CSS using variables
-3. \`\`\`filename:src/main.ts — boilerplate: import './app.css'; import App from './App.svelte'; const app = new App({ target: document.body }); export default app;
-4. \`\`\`filename:index.html — Vite entry: <script type="module" src="/src/main.ts"></script>
-5. \`\`\`filename:package.json — svelte + @sveltejs/vite-plugin-svelte only
-6. \`\`\`filename:vite.config.ts:
-\`\`\`
-import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
-
-export default defineConfig({
-  plugins: [svelte()],
-  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
-  envPrefix: 'VITE_',
-})
-\`\`\`
-
-FRAMEWORK RULES:
-- Script block: <script lang="ts"> at the top of every .svelte file
-- Reactive state: let count = 0; (all let variables are reactive)
-- Reactive statements: $: doubled = count * 2
-- Event handling: on:click={handler}, on:input={handler}
-- Two-way binding: bind:value={name}
-- Conditionals: {#if condition} ... {:else} ... {/if}
-- Loops: {#each items as item (item.id)} ... {/each}
-- Do NOT write React/Vue patterns — Svelte reactivity is different
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-- Do NOT use localStorage or sessionStorage
-- Do NOT import libraries beyond svelte
-- All icons must be inline SVG or emoji
-- All data must be static mock data defined in the component`,
-
-  solid: `
-FRAMEWORK: SolidJS + TypeScript + Vite
-
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.tsx — root component, export default function App()
-2. \`\`\`filename:src/index.css — all CSS using variables
-3. \`\`\`filename:src/index.tsx — boilerplate: import { render } from 'solid-js/web'; import App from './App'; render(() => <App />, document.getElementById('root')!)
-4. \`\`\`filename:package.json — solid-js + vite-plugin-solid only
-5. \`\`\`filename:vite.config.ts:
-\`\`\`
-import { defineConfig } from 'vite'
-import solid from 'vite-plugin-solid'
-
-export default defineConfig({
-  plugins: [solid()],
-  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
-  envPrefix: 'VITE_',
-})
-\`\`\`
-
-FRAMEWORK RULES:
-- State: const [count, setCount] = createSignal(0); read as count() — always call the accessor
-- Derived: const doubled = createMemo(() => count() * 2)
-- Effects: createEffect(() => { console.log(count()); })
-- Conditional rendering: <Show when={condition()}><Child /></Show>
-- List rendering: <For each={items()}>{(item) => <div>{item.name}</div>}</For>
-- Do NOT use React hooks (useState, useEffect) — SolidJS has fundamentally different semantics
-- Components render ONCE; reactivity is at the signal level, not component re-render
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-- Do NOT use localStorage or sessionStorage
-- Do NOT import libraries beyond solid-js
-- All icons must be inline SVG or emoji
-- All data must be static mock data defined in the component`,
-
-  preact: `
-FRAMEWORK: Preact + TypeScript
-
-FILE FORMAT — ALWAYS in this exact order:
-1. \`\`\`filename:src/App.tsx — root component, export default function App()
-2. \`\`\`filename:src/index.tsx — boilerplate: import { render } from 'preact'; import App from './App'; render(<App />, document.getElementById('root')!)
-3. \`\`\`filename:src/styles.css — all CSS using variables
-4. \`\`\`filename:package.json — preact + @preact/preset-vite only
-5. \`\`\`filename:vite.config.ts:
-\`\`\`
-import { defineConfig } from 'vite'
-import preact from '@preact/preset-vite'
-
-export default defineConfig({
-  plugins: [preact()],
-  server: { port: 5173, host: true, allowedHosts: true, hmr: { clientPort: 443, protocol: 'wss' } },
-  envPrefix: 'VITE_',
-})
-\`\`\`
-
-FRAMEWORK RULES:
-- Use Preact hooks: useState, useEffect, useCallback — import from 'preact/hooks'
-- Use JSX (preact/compat provides React-compatible JSX) or h()
-- NO React imports — import from 'preact' and 'preact/hooks' ONLY
-- DOM events use camelCase: onClick (not onclick), onInput, onSubmit
-- Preact signals allowed: import { signal } from '@preact/signals'
-- Do NOT import from 'react' or 'react-dom' — Preact is a separate runtime
-
-SANDBOX RESTRICTIONS:
-- Do NOT use fetch() or any HTTP requests
-- Do NOT use localStorage or sessionStorage
-- Allowed dependencies ONLY: preact, @preact/signals (no react, no react-dom)
-- All icons must be inline SVG or emoji
-- All data must be static mock data defined in the component`,
+  react: "",
+  vue: "",
+  nextjs: "",
+  tanstack: "",
+  svelte: "",
+  solid: "",
+  preact: "",
 };
 
 // ── Database detection + per-database rules ───────────────────────────────────
@@ -1080,84 +804,11 @@ Use realistic task names relevant to the app's domain — generate fresh names e
 
 // ── Screenshot / design-reference instruction ────────────────────────────────
 
-const SCREENSHOT_DESIGN_INSTRUCTION = `
+const SCREENSHOT_DESIGN_INSTRUCTION = "";
 
-SCREENSHOT/DESIGN REFERENCE MODE — The user has provided a reference screenshot or design image.
-Before writing a single line of code, perform this analysis in order:
+const AGENT_BUILD_INSTRUCTION = "";
 
-1. EXTRACT EXACT VALUES (zero approximation):
-   - Every hex color visible: backgrounds, text, borders, accents, hover states, gradients
-   - Font sizes (exact px or rem), font weights (100–900), font families
-   - All spacing values: padding, margin, gap (px or rem)
-   - Border radius on every distinct element (px or %)
-   - Box-shadow definitions: x-offset, y-offset, blur, spread, color, opacity
-   - Any transition/animation hints (duration, easing curves)
-
-2. NAME THE DESIGN STYLE:
-   glassmorphism / neumorphism / flat / material / brutalist / skeuomorphic / other
-
-3. MAP THE LAYOUT:
-   - Exact grid columns/rows and breakpoints if visible
-   - Card patterns, groupings, and nesting levels
-   - Navigation type: top bar / sidebar / bottom nav / floating / none
-
-4. INVENTORY EVERY VISIBLE COMPONENT with approximate dimensions (width × height):
-   buttons, inputs, cards, modals, badges, avatars, charts, icons, tables — list all
-
-5. DOCUMENT ALL SPECIAL EFFECTS:
-   - Gradient definitions (direction, color stops, opacity)
-   - backdrop-filter / blur values (glassmorphism)
-   - Glass border color and opacity
-   - Particle effects, SVG decorations, background patterns
-   - Glow, neon, or inner-shadow effects
-
-Only after completing this analysis, generate pixel-accurate code using exclusively the extracted values.
-Do NOT approximate any value. Every hex color must match exactly.
-When the user says "same design" or "like the screenshot" — this means 100% visual fidelity to the reference.`;
-
-const AGENT_BUILD_INSTRUCTION = `
-
-AGENT BUILD MODE — The user wants an AI agent or automated workflow. Follow these rules:
-
-Choose framework based on complexity:
-- Simple single-step task → Anthropic SDK directly (no framework)
-- Multi-step pipeline (Research → Analyze → Write) → CrewAI (simplest, most readable)
-- Complex branching / retry / persistent memory / checkpointing → LangGraph
-
-Backend: Python + FastAPI (NOT Hono.js / Node.js)
-Always generate:
-- FastAPI endpoints: POST /run, GET /results, GET /status
-- APScheduler for time-based triggers (cron / recurring runs)
-- Supabase storage: store every run output with { id, output, created_at, status, run_duration }
-- React dashboard (frontend): show results table, manual "Run Now" button, status indicator
-- try/except on every LLM call with error logging to Supabase
-- Type hints on every Python function
-- Never hardcode API keys — read from os.environ`;
-
-const ANIMATION_DEFAULT_INSTRUCTION = `
-## Animation Requirements
-User specifically requested animations. Apply these:
-
-### Allowed in Sandbox (no external libs needed):
-- CSS transitions: all 0.3s ease (hover effects)
-- CSS keyframes: fade-in, slide-up, scale-in
-- CSS animation on scroll: use IntersectionObserver
-- Transform + opacity for smooth reveals
-
-### External libraries (add to package.json):
-- "aos": "^2.3.4" → data-aos attributes for scroll reveals
-  Import: import AOS from 'aos'; import 'aos/dist/aos.css';
-  Init: useEffect(() => AOS.init({ duration: 700, once: true }), [])
-  Usage: <div data-aos="fade-up">content</div>
-
-### DO NOT use in sandbox (will break):
-- framer-motion (motion/react) ← NOT available in sandbox
-- @splinetool/react-spline ← NOT available in sandbox
-- gsap ← NOT available in sandbox
-- three.js ← NOT available in sandbox
-
-Use CSS keyframes + AOS only for sandbox builds.
-`;
+const ANIMATION_DEFAULT_INSTRUCTION = "";
 
 /**
  * Expand a short user prompt with completeness expectations for its app type.
@@ -1190,33 +841,6 @@ async function loadSkillsForPrompt(
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
-
-  // Always load (small, always relevant)
-  skillsToLoad.add("react-production");
-  skillsToLoad.add("typescript-strict");
-
-  // BUILD-TYPE skill — mutually exclusive (their sandbox rules conflict):
-  // frontend-sandbox forbids fetch(); fullstack-hono requires it in api.ts.
-  if (opts?.buildType === "fullstack") {
-    skillsToLoad.add("fullstack-hono");
-  } else if (opts?.buildType === "frontend") {
-    skillsToLoad.add("frontend-sandbox");
-  }
-
-  // DATABASE RLS — only when explicitly about data storage or accounts
-  if (/\b(database|supabase|postgres|sql|rls|row.level.security|auth|login|signup|sign.up|register|user.account|save.to.db|real.database|persist|store.data|password|session|jwt|oauth)\b/i.test(prompt)) {
-    skillsToLoad.add("database-rls");
-  }
-
-  // BACKEND/API — only when explicitly about server code
-  if (/\b(api.route|rest.api|endpoint|server|hono|fastapi|express|backend.server|http.route)\b/i.test(prompt)) {
-    skillsToLoad.add("api-design");
-  }
-
-  // ANIMATION — ONLY when explicitly requested (not "modern", "beautiful", "clean")
-  if (/\b(animat(?:ed|ion)|3d.website|3d.character|3d.scene|parallax|scroll.reveal|scroll.animation|landing.page.with.animation|animated.portfolio|interactive.3d|motion.design|gsap|framer.motion|lottie|spline|particle|hero.animation)\b/i.test(prompt)) {
-    skillsToLoad.add("animation-expert");
-  }
 
   // FIRECRAWL — only when scraping/crawling requested
   if (/\b(scrape|crawl|firecrawl|web.scraping|extract.from.website|read.website|parse.webpage)\b/i.test(prompt)) {
