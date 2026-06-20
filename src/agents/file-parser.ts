@@ -242,13 +242,8 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
   // NOTE: We deliberately do NOT inject a placeholder src/App.tsx when parsing
   // fails to find one — doing so let broken builds silently report "success"
   // with a fake "could not be extracted" component. The caller (runFastBuild)
-  // is responsible for detecting a missing src/App.tsx on new builds, emitting
-  // a build:warning, and failing the build with a real error instead.
-  if (!fileMap.has("src/App.tsx") && content.length > 500) {
-    console.error('[parser] CRITICAL: App.tsx missing from output of', content.length, 'chars')
-    console.log('[parser] Files found:', Array.from(fileMap.keys()))
-    console.log('[parser] First 1000 chars:', content.slice(0, 1000))
-  }
+  // is responsible for detecting a missing entry point on new builds via
+  // findMissingFullstackFiles() (framework-aware) and failing with a real error.
 
   // Generate src/index.tsx if absent
   if (!fileMap.has("src/index.tsx")) {
