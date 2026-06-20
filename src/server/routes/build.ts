@@ -360,7 +360,7 @@ function isAnimationBuild(prompt: string): boolean {
 function needsBackend(prompt: string): boolean {
   // Only trigger fullstack mode when user explicitly mentions auth/database/backend.
   // Simple "todo app", "dashboard", "task manager" should stay frontend-only (Sandpack).
-  return /\b(user.auth|login.system|sign.up.flow|real.database|save.to.db|store.in.database|backend.api|server.api|rest.api|multi.user|different.users|user.accounts|real.time.with.websocket|live.updates.from.server|stripe.payment|payment.processing|admin.panel.with.real.data|deploy.with.backend|production.backend|fullstack|full.stack|full-stack|backend|server.side|postgres(?:ql)?|sqlite|mysql|graphql|crud|cloud.sync|signin|signup|oauth|authentication|user.account|user.profile|save.data|store.data|data.storage|nextjs|next\.js|tanstack)\b/i.test(prompt);
+  return /\b(user.auth|login.system|sign.up.flow|real.database|save.to.db|store.in.database|backend.api|server.api|rest.api|multi.user|different.users|user.accounts|real.time.with.websocket|live.updates.from.server|stripe.payment|payment.processing|admin.panel.with.real.data|deploy.with.backend|production.backend|fullstack|full.stack|full-stack|backend|server.side|postgres(?:ql)?|sqlite|mysql|graphql|crud|cloud.sync|signin|signup|oauth|authentication|user.account|user.profile|save.data|store.data|data.storage|nextjs|next\.js|tanstack|fastapi)\b/i.test(prompt);
 }
 
 /**
