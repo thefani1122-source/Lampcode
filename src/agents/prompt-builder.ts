@@ -991,9 +991,9 @@ export class PromptBuilder {
     const isFullstackAuthMode =
       agentType === "frontend" &&
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // Auth instructions: react fullstack only (nextjs/tanstack embed auth in their own instruction).
-    // For react+mongodb: custom JWT. For react+supabase: Supabase auth.
-    const authInstruction = isFullstackAuthMode && fullstackFramework === "react"
+    // TanStack uses Vite/import.meta.env, compatible with FULLSTACK_AUTH_INSTRUCTION. Next.js needs separate NEXT_PUBLIC_* pattern — not yet implemented.
+    // For react+mongodb: custom JWT. For react/tanstack+supabase: Supabase auth.
+    const authInstruction = isFullstackAuthMode && (fullstackFramework === "react" || fullstackFramework === "tanstack")
       ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
       : "";
 
