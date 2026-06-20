@@ -91,8 +91,12 @@ const dockerfile = [
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Pre-warm Next.js's JIT compilation cache so first request is fast
+  // Pre-warm Next.js production build cache (shared SWC artifacts)
   'RUN npx next build || true',
+  // Warm next dev\'s on-demand SWC compilation cache so sandbox first-start is fast.
+  // Starts next dev in the background, waits 20 s for initial compilation, then kills it.
+  // The resulting .next/cache entries are baked into the template snapshot.
+  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 20; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)

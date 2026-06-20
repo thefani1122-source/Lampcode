@@ -104,6 +104,9 @@ const dockerfile = [
   writeFile('/home/user/app/app/router.tsx', ROUTER_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
+  // Warm vinxi dev\'s initial build cache so sandbox first-start is fast.
+  // Starts vinxi dev in the background, waits 20 s for initial compilation, then kills it.
+  'RUN npx vinxi dev --port 3000 & PID=$!; sleep 20; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
