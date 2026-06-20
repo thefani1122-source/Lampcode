@@ -26,6 +26,7 @@ const PKG_JSON = `{
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.10",
     "vinxi": "0.4.3",
     "typescript": "^5.5.4",
