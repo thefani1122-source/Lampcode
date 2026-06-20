@@ -34,9 +34,9 @@ const PKG_JSON = `{
   }
 }`
 
-const NEXT_CONFIG = `import type { NextConfig } from 'next'
-const config: NextConfig = {}
-export default config`
+const NEXT_CONFIG = `/** @type {import('next').NextConfig} */
+const nextConfig = {}
+module.exports = nextConfig`
 
 const TSCONFIG = `{
   "compilerOptions": {
@@ -85,7 +85,7 @@ const dockerfile = [
   'RUN npm install -g typescript',
   'WORKDIR /home/user/app',
   writeFile('/home/user/app/package.json', PKG_JSON),
-  writeFile('/home/user/app/next.config.ts', NEXT_CONFIG),
+  writeFile('/home/user/app/next.config.js', NEXT_CONFIG),
   writeFile('/home/user/app/tsconfig.json', TSCONFIG),
   writeFile('/home/user/app/app/layout.tsx', LAYOUT_TSX),
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
