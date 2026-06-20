@@ -58,8 +58,12 @@ export function selectTemplate(framework: FullstackFramework): string {
 // sandboxId whose underlying snapshot has already been garbage-collected.
 const SANDBOX_REDIS_TTL_SECONDS = 25 * 24 * 60 * 60;
 
-const READY_POLL_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 2_000;
+
+/** Next.js/TanStack `next dev`/`vinxi dev` cold-compiles on first start (45–90 s). React/Vite is much faster (< 30 s). */
+function readyPollTimeoutMs(framework: FullstackFramework): number {
+  return framework === "nextjs" || framework === "tanstack" ? 90_000 : 30_000;
+}
 
 const redis = createRedis();
 
@@ -123,8 +127,8 @@ const warmingSandboxes = new Map<string, Promise<Sandbox>>();
  * this we'd hand the user a URL that may still be 404ing/connection-refused.
  * Any HTTP response (even an error status) means the server is up and routing.
  */
-async function waitForServerReady(url: string): Promise<boolean> {
-  const deadline = Date.now() + READY_POLL_TIMEOUT_MS;
+async function waitForServerReady(url: string, framework: FullstackFramework): Promise<boolean> {
+  const deadline = Date.now() + readyPollTimeoutMs(framework);
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { method: "GET" });
@@ -417,9 +421,9 @@ async function ensureDevServer(
     const killPat = devKillPattern(framework);
     await sandbox.commands.run(`pkill -f ${killPat} || true`, { timeoutMs: 10_000 }).catch(() => {});
     await startDevServer(sandbox, log, framework);
-    const ready = await waitForServerReady(url);
+    const ready = await waitForServerReady(url, framework);
     if (!ready) {
-      throw new Error(`Dev server did not respond at ${url} within ${READY_POLL_TIMEOUT_MS / 1000}s`);
+      throw new Error(`Dev server did not respond at ${url} within ${readyPollTimeoutMs(framework) / 1000}s`);
     }
     log("Dev server is up");
   }
@@ -612,9 +616,9 @@ async function acquireRunningSandbox(
     await writePreviewEnv(sandbox, projectId, log);
     // Baked scaffold already has node_modules — this is just dev-server startup.
     await startDevServer(sandbox, log, framework);
-    const ready = await waitForServerReady(previewUrlFor(sandbox, framework));
+    const ready = await waitForServerReady(previewUrlFor(sandbox, framework), framework);
     if (!ready) {
-      throw new Error("Prewarmed sandbox dev server did not become ready");
+      throw new Error(`Prewarmed sandbox dev server did not become ready within ${readyPollTimeoutMs(framework) / 1000}s`);
     }
     return sandbox;
   } catch (err) {
