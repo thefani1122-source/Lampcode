@@ -96,7 +96,8 @@ const dockerfile = [
   // Warm next dev\'s on-demand SWC compilation cache so sandbox first-start is fast.
   // Starts next dev in the background, waits 20 s for initial compilation, then kills it.
   // The resulting .next/cache entries are baked into the template snapshot.
-  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 20; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
+  // Warm next dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
+  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)

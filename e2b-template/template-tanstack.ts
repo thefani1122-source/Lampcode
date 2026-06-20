@@ -2,7 +2,7 @@ import { Template } from 'e2b'
 
 // ── Lampcode preview sandbox — TanStack Start template ────────────────────────
 // Bakes TanStack Start + vinxi baseline into the image, pre-installs deps.
-// Dev server: `npx vinxi dev --port 3000` (or via npm run dev)
+// Dev server: `vinxi dev --port 3000 --host 0.0.0.0` (via npm run dev)
 // The backend starts this command; NO CMD is set here to avoid race conditions.
 
 const PKG_JSON = `{
@@ -10,7 +10,7 @@ const PKG_JSON = `{
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vinxi dev --port 3000",
+    "dev": "vinxi dev --port 3000 --host 0.0.0.0",
     "build": "vinxi build",
     "start": "vinxi start"
   },
@@ -106,7 +106,8 @@ const dockerfile = [
   'RUN npm install',
   // Warm vinxi dev\'s initial build cache so sandbox first-start is fast.
   // Starts vinxi dev in the background, waits 20 s for initial compilation, then kills it.
-  'RUN npx vinxi dev --port 3000 & PID=$!; sleep 20; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
+  // Warm vinxi dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
+  'RUN npx vinxi dev --port 3000 --host 0.0.0.0 & PID=$!; sleep 8; curl -sf http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
