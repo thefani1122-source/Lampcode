@@ -33,11 +33,7 @@ const PKG_JSON = `{
     "@types/react-dom": "^18.3.0",
     "@types/node": "^22.5.4",
     "@types/jsonwebtoken": "^9.0.6",
-    "@types/bcryptjs": "^2.4.6",
-    "@tanstack/router-generator": "1.81.5"
-  },
-  "overrides": {
-    "@tanstack/router-generator": "1.81.5"
+    "@types/bcryptjs": "^2.4.6"
   }
 }`
 
