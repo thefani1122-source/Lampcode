@@ -479,7 +479,7 @@ export function detectDatabase(prompt: string): Database {
   return "supabase";
 }
 
-const DB_INSTRUCTIONS: Record<Database, string> = {
+export const DB_INSTRUCTIONS: Record<Database, string> = {
   supabase: `
 DATABASE: Supabase (PostgreSQL) — the Hono BACKEND accesses it server-side via
 @supabase/supabase-js (NOT directly from the frontend; the frontend calls /api).
@@ -557,7 +557,7 @@ every route (idempotent) so the lazy connection is established.`,
 // DB-specific rules are injected separately via DB_INSTRUCTIONS[db].
 // Detected by the "FULLSTACK BUILD:" description prefix set in build.ts.
 
-const FULLSTACK_INSTRUCTION = `
+export const FULLSTACK_INSTRUCTION = `
 
 ## ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND
 
@@ -641,7 +641,7 @@ pre-installed. Do not import other libraries.`;
 // Python-only ecosystem: ML/data work).
 const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
 
-const FASTAPI_OVERRIDE = `
+export const FASTAPI_OVERRIDE = `
 
 ## PYTHON BACKEND OVERRIDE — use FastAPI instead of Hono/Node
 
@@ -691,7 +691,7 @@ Do NOT write your own __main__ / uvicorn.run() block.`;
 // ── Auth sub-mode instruction ─────────────────────────────────────────────────
 // Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
 
-const FULLSTACK_AUTH_INSTRUCTION = `
+export const FULLSTACK_AUTH_INSTRUCTION = `
 
 AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
 
@@ -867,7 +867,7 @@ custom JWT auth in the Hono backend. Generate:
    No social/OAuth (custom auth is email/password).`;
 
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
-const NEXTJS_INSTRUCTION = `
+export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + API ROUTES (no separate server process)
 
@@ -924,7 +924,7 @@ ALLOWED IMPORTS: react, react-dom, next, plus EXACTLY the DB/auth libraries name
 in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
 
 // ── TanStack Start fullstack instruction ──────────────────────────────────────
-const TANSTACK_INSTRUCTION = `
+export const TANSTACK_INSTRUCTION = `
 
 ## ARCHITECTURE — TANSTACK START (full-stack server functions, no separate server)
 

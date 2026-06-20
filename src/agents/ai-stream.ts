@@ -2,13 +2,23 @@ import { streamText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { writeFile, mkdir } from "node:fs/promises";
-import { join, dirname, resolve, relative, sep } from "node:path";
+import { join, dirname, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../server/config.js";
 import { db } from "../db/client.js";
 import { projects, buildSessions } from "../db/schema.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { getFrontendSystemPrompt, expandUserPrompt } from "./prompt-builder.js";
+import {
+  getFrontendSystemPrompt,
+  expandUserPrompt,
+  detectFullstackFramework,
+  detectDatabase,
+  FULLSTACK_INSTRUCTION,
+  FULLSTACK_AUTH_INSTRUCTION,
+  NEXTJS_INSTRUCTION,
+  TANSTACK_INSTRUCTION,
+  DB_INSTRUCTIONS,
+} from "./prompt-builder.js";
 import { generateProjectMemory } from "./memory-generator.js";
 import { ALLOWED_ORIGINS } from "../server/config.js";
 
@@ -24,8 +34,38 @@ export interface StreamBuildRequest {
   origin?: string;
 }
 
-function buildStreamSystemPrompt(projectMemory?: string | null): string {
+function buildStreamSystemPrompt(
+  prompt: string,
+  projectMemory?: string | null,
+): string {
   const base = getFrontendSystemPrompt();
+
+  const isFullstackMode =
+    prompt.startsWith("FULLSTACK BUILD:") ||
+    prompt.startsWith("FULLSTACK AUTH BUILD:");
+  const isFullstackAuthMode = prompt.startsWith("FULLSTACK AUTH BUILD:");
+
+  let fullstackBlock = "";
+  if (isFullstackMode) {
+    const framework = detectFullstackFramework(prompt);
+    const dbKey = detectDatabase(prompt);
+    if (framework === "nextjs") {
+      fullstackBlock += "\n" + NEXTJS_INSTRUCTION;
+      fullstackBlock += "\n" + DB_INSTRUCTIONS[dbKey];
+    } else if (framework === "tanstack") {
+      fullstackBlock += "\n" + TANSTACK_INSTRUCTION;
+      fullstackBlock += "\n" + DB_INSTRUCTIONS[dbKey];
+      if (isFullstackAuthMode) {
+        fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+      }
+    } else {
+      fullstackBlock += "\n" + FULLSTACK_INSTRUCTION;
+      fullstackBlock += "\n" + DB_INSTRUCTIONS[dbKey];
+      if (isFullstackAuthMode) {
+        fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+      }
+    }
+  }
 
   const toolInstructions = `
 
@@ -40,7 +80,7 @@ Never output \`\`\`filename: fences — the tool handles file delivery.`;
       ? `\n\n🚨 CRITICAL: This is an EDIT to an existing app.\n${projectMemory}`
       : "";
 
-  return base + toolInstructions + memoryBlock;
+  return base + fullstackBlock + toolInstructions + memoryBlock;
 }
 
 function buildUserMessage(
@@ -51,7 +91,7 @@ function buildUserMessage(
 
   if (isEdit) {
     const fileBlocks = Object.entries(existingFiles)
-      .slice(0, 20) // cap at 20 files to stay within context
+      .slice(0, 20)
       .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
       .join("\n\n");
     return (
@@ -88,7 +128,7 @@ export async function handleBuildStream(
     apiKey: config.ANTHROPIC_API_KEY,
   });
 
-  const systemPrompt = buildStreamSystemPrompt(projectMemory);
+  const systemPrompt = buildStreamSystemPrompt(prompt, projectMemory);
   const userMessage = buildUserMessage(prompt, existingFiles);
 
   const result = streamText({
