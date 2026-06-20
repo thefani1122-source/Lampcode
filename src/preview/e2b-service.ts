@@ -364,6 +364,51 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
 // into the template (skill rule: template owns package.json/node_modules).
 // Runtime installs were a root cause of dev-server crashes mid-session.
 
+/**
+ * Wraps a PreviewLogCallback so each line is also captured in a rolling
+ * in-memory buffer (last `maxLines` lines). Used to collect dev-server output
+ * for diagnostics when waitForServerReady times out.
+ */
+function makeDevLog(
+  log: PreviewLogCallback,
+  maxLines = 80,
+): { log: PreviewLogCallback; last: () => string[] } {
+  const buf: string[] = [];
+  return {
+    log: (line: string) => {
+      log(line);
+      buf.push(line);
+      if (buf.length > maxLines) buf.shift();
+    },
+    last: () => buf.slice(),
+  };
+}
+
+/**
+ * Runs a quick liveness probe (pgrep) and returns a diagnostic string
+ * containing process status + the buffered last lines of dev-server output.
+ * Never throws — if the probe itself fails we still return a useful partial
+ * message so the original timeout error is enriched, not lost.
+ */
+async function fetchDevServerDiag(
+  sandbox: Sandbox,
+  framework: FullstackFramework,
+  lastLines: string[],
+): Promise<string> {
+  let processStatus = "UNKNOWN";
+  try {
+    const killPat = devKillPattern(framework);
+    const probe = await sandbox.commands.run(`pgrep -f '${killPat}' && echo ALIVE || echo DEAD`, {
+      timeoutMs: 10_000,
+    });
+    processStatus = probe.stdout.trim().includes("ALIVE") ? "ALIVE" : "DEAD";
+  } catch {
+    // probe command failed (sandbox may already be dead) — leave as UNKNOWN
+  }
+  const output = lastLines.join("\n").trim();
+  return `Process: ${processStatus}. Last output:\n${output || "(no output captured)"}`;
+}
+
 async function startDevServer(
   sandbox: Sandbox,
   log: PreviewLogCallback,
@@ -420,10 +465,12 @@ async function ensureDevServer(
     // Kill any half-dead process first so the restart won't lose a port conflict.
     const killPat = devKillPattern(framework);
     await sandbox.commands.run(`pkill -f ${killPat} || true`, { timeoutMs: 10_000 }).catch(() => {});
-    await startDevServer(sandbox, log, framework);
+    const devLog = makeDevLog(log);
+    await startDevServer(sandbox, devLog.log, framework);
     const ready = await waitForServerReady(url, framework);
     if (!ready) {
-      throw new Error(`Dev server did not respond at ${url} within ${readyPollTimeoutMs(framework) / 1000}s`);
+      const diag = await fetchDevServerDiag(sandbox, framework, devLog.last());
+      throw new Error(`Dev server did not respond at ${url} within ${readyPollTimeoutMs(framework) / 1000}s. ${diag}`);
     }
     log("Dev server is up");
   }
@@ -615,10 +662,12 @@ async function acquireRunningSandbox(
     // Inject preview env BEFORE the dev server boots (env is only read at startup).
     await writePreviewEnv(sandbox, projectId, log);
     // Baked scaffold already has node_modules — this is just dev-server startup.
-    await startDevServer(sandbox, log, framework);
+    const devLog = makeDevLog(log);
+    await startDevServer(sandbox, devLog.log, framework);
     const ready = await waitForServerReady(previewUrlFor(sandbox, framework), framework);
     if (!ready) {
-      throw new Error(`Prewarmed sandbox dev server did not become ready within ${readyPollTimeoutMs(framework) / 1000}s`);
+      const diag = await fetchDevServerDiag(sandbox, framework, devLog.last());
+      throw new Error(`Prewarmed sandbox dev server did not become ready within ${readyPollTimeoutMs(framework) / 1000}s. ${diag}`);
     }
     return sandbox;
   } catch (err) {
