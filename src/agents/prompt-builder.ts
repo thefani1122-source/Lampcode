@@ -388,7 +388,7 @@ pre-installed. Do not import other libraries.`;
 // Python-only ecosystem: ML/data work).
 const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
 
-const FASTAPI_OVERRIDE = `
+export const FASTAPI_OVERRIDE = `
 
 ## PYTHON BACKEND OVERRIDE — use FastAPI instead of Hono/Node
 
@@ -614,7 +614,7 @@ custom JWT auth in the Hono backend. Generate:
    No social/OAuth (custom auth is email/password).`;
 
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
-const NEXTJS_INSTRUCTION = `
+export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + API ROUTES (no separate server process)
 
@@ -671,7 +671,7 @@ ALLOWED IMPORTS: react, react-dom, next, plus EXACTLY the DB/auth libraries name
 in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
 
 // ── TanStack Start fullstack instruction ──────────────────────────────────────
-const TANSTACK_INSTRUCTION = `
+export const TANSTACK_INSTRUCTION = `
 
 ## ARCHITECTURE — TANSTACK START (full-stack server functions, no separate server)
 

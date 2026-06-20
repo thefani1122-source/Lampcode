@@ -2,13 +2,24 @@ import { streamText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { writeFile, mkdir } from "node:fs/promises";
-import { join, dirname, resolve, relative, sep } from "node:path";
+import { join, dirname, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../server/config.js";
 import { db } from "../db/client.js";
 import { projects, buildSessions } from "../db/schema.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { getFrontendSystemPrompt, getReactFrameworkRules, loadRelevantSkillsForPrompt, expandUserPrompt, FULLSTACK_INSTRUCTION, FULLSTACK_AUTH_INSTRUCTION, DB_INSTRUCTIONS, needsAuth } from "./prompt-builder.js";
+import {
+  getFrontendSystemPrompt,
+  getReactFrameworkRules,
+  loadRelevantSkillsForPrompt,
+  expandUserPrompt,
+  FULLSTACK_INSTRUCTION,
+  FULLSTACK_AUTH_INSTRUCTION,
+  NEXTJS_INSTRUCTION,
+  TANSTACK_INSTRUCTION,
+  DB_INSTRUCTIONS,
+  needsAuth,
+} from "./prompt-builder.js";
 import { generateProjectMemory } from "./memory-generator.js";
 import { ALLOWED_ORIGINS } from "../server/config.js";
 import { classifyBuild } from "./build-classifier.js";
@@ -30,6 +41,7 @@ async function buildStreamSystemPrompt(
   projectMemory?: string | null,
   classification?: {
     buildType: string;
+    framework?: string;
     database: string;
     needsAuth: boolean;
   } | null,
@@ -44,15 +56,28 @@ async function buildStreamSystemPrompt(
     loadRelevantSkillsForPrompt(prompt, buildType),
   ]);
 
-  // Build fullstack instruction block
   let fullstackBlock = "";
   if (buildType === "fullstack") {
-    const db = classification?.database ?? "supabase";
-    fullstackBlock += "\n" + FULLSTACK_INSTRUCTION;
-    fullstackBlock += "\n" + (DB_INSTRUCTIONS[db as keyof typeof DB_INSTRUCTIONS]
-      ?? DB_INSTRUCTIONS["supabase"]);
-    if (classification?.needsAuth || needsAuth(prompt)) {
-      fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+    const dbKey = classification?.database ?? "supabase";
+    const framework = classification?.framework ?? "react";
+    if (framework === "nextjs") {
+      fullstackBlock += "\n" + NEXTJS_INSTRUCTION;
+      fullstackBlock += "\n" + (DB_INSTRUCTIONS[dbKey as keyof typeof DB_INSTRUCTIONS]
+        ?? DB_INSTRUCTIONS["supabase"]);
+    } else if (framework === "tanstack") {
+      fullstackBlock += "\n" + TANSTACK_INSTRUCTION;
+      fullstackBlock += "\n" + (DB_INSTRUCTIONS[dbKey as keyof typeof DB_INSTRUCTIONS]
+        ?? DB_INSTRUCTIONS["supabase"]);
+      if (classification?.needsAuth || needsAuth(prompt)) {
+        fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+      }
+    } else {
+      fullstackBlock += "\n" + FULLSTACK_INSTRUCTION;
+      fullstackBlock += "\n" + (DB_INSTRUCTIONS[dbKey as keyof typeof DB_INSTRUCTIONS]
+        ?? DB_INSTRUCTIONS["supabase"]);
+      if (classification?.needsAuth || needsAuth(prompt)) {
+        fullstackBlock += "\n" + FULLSTACK_AUTH_INSTRUCTION;
+      }
     }
   }
 
@@ -81,7 +106,7 @@ function buildUserMessage(
 
   if (isEdit) {
     const fileBlocks = Object.entries(existingFiles)
-      .slice(0, 20) // cap at 20 files to stay within context
+      .slice(0, 20)
       .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
       .join("\n\n");
     return (
@@ -228,12 +253,7 @@ export async function handleBuildStream(
           sessionId,
           files: filesBuffer,
           backendFiles: filesBuffer,
-          backendFileCount: classification?.buildType === "fullstack"
-            ? Object.keys(filesBuffer).filter(p =>
-                p.startsWith("src/server/") ||
-                p.startsWith("src/db/")
-              ).length
-            : 0,
+          backendFileCount: 0,
           previewUrl: `/api/build/${sessionId}/preview`,
           totalFiles,
           summary,
