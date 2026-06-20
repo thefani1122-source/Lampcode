@@ -104,8 +104,6 @@ const dockerfile = [
   writeFile('/home/user/app/app/router.tsx', ROUTER_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Warm vinxi dev\'s initial build cache so sandbox first-start is fast.
-  // Starts vinxi dev in the background, waits 20 s for initial compilation, then kills it.
   // Warm vinxi dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
   'RUN npx vinxi dev --port 3000 --host 0.0.0.0 & PID=$!; sleep 8; curl -sf http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')

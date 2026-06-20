@@ -91,11 +91,8 @@ const dockerfile = [
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Pre-warm Next.js production build cache (shared SWC artifacts)
+  // Pre-warm production build cache (SWC artifacts shared with dev mode)
   'RUN npx next build || true',
-  // Warm next dev\'s on-demand SWC compilation cache so sandbox first-start is fast.
-  // Starts next dev in the background, waits 20 s for initial compilation, then kills it.
-  // The resulting .next/cache entries are baked into the template snapshot.
   // Warm next dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
   'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
