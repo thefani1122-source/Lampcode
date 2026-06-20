@@ -15,8 +15,8 @@ const PKG_JSON = `{
     "start": "vinxi start"
   },
   "dependencies": {
-    "@tanstack/start": "^1.81.5",
-    "@tanstack/react-router": "^1.81.5",
+    "@tanstack/start": "1.81.5",
+    "@tanstack/react-router": "1.81.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "@supabase/supabase-js": "^2.45.0",
@@ -27,13 +27,17 @@ const PKG_JSON = `{
   },
   "devDependencies": {
     "vite": "^5.4.10",
-    "vinxi": "^0.4.3",
+    "vinxi": "0.4.3",
     "typescript": "^5.5.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@types/node": "^22.5.4",
     "@types/jsonwebtoken": "^9.0.6",
-    "@types/bcryptjs": "^2.4.6"
+    "@types/bcryptjs": "^2.4.6",
+    "@tanstack/router-generator": "1.81.5"
+  },
+  "overrides": {
+    "@tanstack/router-generator": "1.81.5"
   }
 }`
 
