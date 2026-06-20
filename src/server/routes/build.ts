@@ -38,7 +38,6 @@ import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
-import { handleBuildStream } from "../../agents/ai-stream.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1612,85 +1611,6 @@ buildRouter.post("/fast", async (c) => {
   return c.json({ sessionId, status: "running", projectId });
 });
 
-// POST /api/build/stream
-const streamBuildBodySchema = z.object({
-  projectId: z.string().min(1),
-  sessionId: z.string().uuid("sessionId must be a valid UUID"),
-  prompt: z.string().min(1).max(4_000),
-});
-
-buildRouter.post("/stream", async (c) => {
-  const authUser = c.get("authUser");
-
-  const bodyRaw = await c.req.json().catch(() => {
-    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
-  });
-
-  const parsed = streamBuildBodySchema.safeParse(bodyRaw);
-  if (!parsed.success) {
-    const msg = parsed.error.issues.map(i => i.message).join("; ");
-    throw new AppError(400, msg, "VALIDATION_ERROR");
-  }
-  const { projectId, sessionId, prompt } = parsed.data;
-
-  // Verify project ownership
-  const projectRows = await db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
-    .limit(1);
-  const project = projectRows[0];
-  if (!project) throw new AppError(404, "Project not found", "NOT_FOUND");
-
-  if (project.status === "building") {
-    throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
-  }
-
-  // Load existing files from last successful build for edit context
-  const lastSuccessRow = await db
-    .select({ outputDir: buildSessions.outputDir })
-    .from(buildSessions)
-    .where(and(
-      eq(buildSessions.projectId, projectId),
-      eq(buildSessions.userId, authUser.id),
-      eq(buildSessions.status, "success"),
-      isNotNull(buildSessions.outputDir),
-    ))
-    .orderBy(desc(buildSessions.createdAt))
-    .limit(1);
-
-  const existingFiles = lastSuccessRow[0]?.outputDir
-    ? await loadProjectFiles(lastSuccessRow[0].outputDir)
-    : {};
-
-  // Create build session with the frontend-provided sessionId
-  await db.insert(buildSessions).values({
-    id: sessionId,
-    projectId,
-    userId: authUser.id,
-    prompt,
-    mode: "fast",
-    status: "running",
-    phase: 0,
-  });
-
-  // Mark project as building
-  await db.update(projects)
-    .set({ status: "building" })
-    .where(eq(projects.id, projectId));
-
-  const origin = c.req.header("origin") ?? "";
-
-  return handleBuildStream({
-    prompt,
-    sessionId,
-    projectId,
-    userId: authUser.id,
-    projectMemory: project.projectMemory ?? null,
-    existingFiles,
-    origin,
-  });
-});
 
 // GET /api/build/:projectId/last-session
 buildRouter.get("/:projectId/last-session", async (c) => {
