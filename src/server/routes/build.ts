@@ -14,7 +14,7 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { detectDatabase, detectFullstackFramework, expandUserPrompt } from "../../agents/prompt-builder.js";
+import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -593,6 +593,7 @@ export async function runFastBuild(
     const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
     const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
     const fullstackFramework = (isFullstackBuild ? classification?.framework : null) ?? "react";
+    const wantsPython = isFullstackBuild && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(prompt);
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -707,6 +708,15 @@ export async function runFastBuild(
                     "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
                     "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
                     "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
+                  ]
+                : wantsPython
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
+                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
                   ]
                 : [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",

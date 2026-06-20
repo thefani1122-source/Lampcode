@@ -386,7 +386,7 @@ pre-installed. Do not import other libraries.`;
 
 // Use a Python/FastAPI backend when the prompt asks for it (or implies a
 // Python-only ecosystem: ML/data work).
-const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
+export const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
 
 export const FASTAPI_OVERRIDE = `
 
