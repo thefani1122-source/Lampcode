@@ -1355,10 +1355,25 @@ export async function runFastBuild(
             return finishPreview(url);
           })
           .catch((err) => {
-            const message = err instanceof Error ? err.message : "Failed to update preview sandbox";
-            console.error(`[E2B] Sandbox file write FAILED for project=${projectId}:`, message);
-            logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed");
-            server?.emitPreviewError(sessionId, { sessionId, message });
+            // Race condition: prewarm sandbox was deleted (dev server timed out) between
+            // hasSandbox() returning true and writeFilesToSandbox completing.
+            // Fall back to a full cold-start rather than surfacing an error to the user.
+            console.warn(`[E2B] Sandbox file write FAILED for project=${projectId} — falling back to full sandbox creation:`, err instanceof Error ? err.message : err);
+            logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed — falling back to createPreviewSandbox");
+            server?.emitPreviewLoading(sessionId, { sessionId });
+            void createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
+              server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+            })
+              .then((url) => {
+                console.log(`[E2B] Fallback sandbox ready for session=${sessionId} url=${url}`);
+                return finishPreview(url);
+              })
+              .catch((fallbackErr) => {
+                const message = fallbackErr instanceof Error ? fallbackErr.message : "Failed to start preview sandbox";
+                console.error(`[E2B] Fallback sandbox FAILED for session=${sessionId}:`, message);
+                logger.warn({ sessionId, fallbackErr }, "E2B fallback sandbox failed to start");
+                server?.emitPreviewError(sessionId, { sessionId, message });
+              });
           });
       } else {
         // Not live in-process — createPreviewSandbox resumes the paused
