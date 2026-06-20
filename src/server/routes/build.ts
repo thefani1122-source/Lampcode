@@ -814,19 +814,23 @@ export async function runFastBuild(
       }
     }
 
-    // ── Fail loudly on missing App.tsx for NEW builds ───────────────────────
+    // ── Fail loudly on missing entry point for NEW builds ───────────────────
     // parseFilesFromContent no longer injects a placeholder component when it
-    // can't find src/App.tsx — that used to let broken generations silently
+    // can't find the entry point — that used to let broken generations silently
     // report "success" with a fake "could not be extracted" component. For a
-    // brand-new build (no existing code to fall back on), a missing App.tsx
+    // brand-new build (no existing code to fall back on), a missing entry point
     // means the generation genuinely failed: warn the client and abort.
-    if (!hasExistingCode && !parsedFiles.some((f) => f.path === "src/App.tsx")) {
-      const msg = "The AI did not produce a valid src/App.tsx — generation failed.";
-      logger.error({ sessionId, projectId }, "Parse failure: src/App.tsx missing from new build output");
+    const expectedEntryPoint =
+      fullstackFramework === "nextjs"   ? "app/page.tsx" :
+      fullstackFramework === "tanstack" ? "app/routes/index.tsx" :
+      "src/App.tsx";
+    if (!hasExistingCode && !parsedFiles.some((f) => f.path === expectedEntryPoint)) {
+      const msg = `The AI did not produce a valid ${expectedEntryPoint} — generation failed.`;
+      logger.error({ sessionId, projectId }, `Parse failure: ${expectedEntryPoint} missing from new build output`);
       server?.emitToRoom(sessionId, "build:warning", {
         sessionId,
         message: msg,
-        missingFiles: ["src/App.tsx"],
+        missingFiles: [expectedEntryPoint],
       });
       throw new Error(msg);
     }
@@ -843,7 +847,7 @@ export async function runFastBuild(
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
-      const missing = findMissingFullstackFiles(fileRecord);
+      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework);
       if (missing.length > 0) {
         logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
         server?.thinking(sessionId, {
@@ -888,6 +892,7 @@ export async function runFastBuild(
 
           const stillMissing = findMissingFullstackFiles(
             Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
+            fullstackFramework,
           );
           if (stillMissing.length > 0) {
             logger.warn({ sessionId, stillMissing }, "Fullstack retry: files still missing after retry");
@@ -981,10 +986,11 @@ export async function runFastBuild(
       }
     }
 
-    // ── Validate the parsed file set before writing ─────────────────────────
+    // ── Validate the parsed file set before writing (Sandpack builds only) ───
     // Catches missing entry points, missing default exports, and server-side
     // imports leaking into browser-bundled files (which would crash Sandpack).
-    {
+    // Fullstack builds run in E2B (not Sandpack) — skip these checks for them.
+    if (!isFullstackBuild) {
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );

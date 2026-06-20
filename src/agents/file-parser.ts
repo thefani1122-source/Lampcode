@@ -491,12 +491,17 @@ function isEffectivelyEmpty(code: string | undefined): boolean {
  */
 export function findMissingFullstackFiles(
   files: Record<string, string>,
+  framework: string = "react",
 ): string[] {
   // Python/FastAPI apps ship src/server/main.py instead of the .ts backend —
   // don't demand the Node files (or we'd trigger a wrong retry).
   const required = !isEffectivelyEmpty(files["src/server/main.py"])
     ? ["src/db/types.ts", "src/server/main.py"]
-    : REQUIRED_FULLSTACK_FILES;
+    : framework === "nextjs"
+      ? ["src/db/types.ts", "app/page.tsx"]
+      : framework === "tanstack"
+        ? ["src/db/types.ts", "app/routes/index.tsx"]
+        : REQUIRED_FULLSTACK_FILES; // react: src/server/index.ts + src/server/routes/api.ts
   return required.filter((path) => isEffectivelyEmpty(files[path]));
 }
 
