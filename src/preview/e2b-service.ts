@@ -71,6 +71,10 @@ function redisKey(projectId: string): string {
   return `e2b:sandbox:${projectId}`;
 }
 
+function frameworkRedisKey(projectId: string): string {
+  return `e2b:framework:${projectId}`;
+}
+
 // Live Sandbox object references for the current process lifetime — needed so
 // follow-up builds in the same process can write files directly without a
 // network round-trip to resume. Lost on restart; Redis is the durable record.
@@ -308,12 +312,22 @@ async function writeFiles(
   }
 }
 
-async function saveSandboxId(projectId: string, sandboxId: string): Promise<void> {
+async function saveSandboxId(projectId: string, sandboxId: string, framework: FullstackFramework): Promise<void> {
   try {
     await redis.set(redisKey(projectId), sandboxId, "EX", SANDBOX_REDIS_TTL_SECONDS);
+    await redis.set(frameworkRedisKey(projectId), framework, "EX", SANDBOX_REDIS_TTL_SECONDS);
   } catch (err) {
     logger.error({ projectId, err }, "[e2b] Failed to save sandboxId to Redis");
     throw err;
+  }
+}
+
+async function loadFramework(projectId: string): Promise<FullstackFramework | null> {
+  try {
+    const f = await redis.get(frameworkRedisKey(projectId));
+    return (f as FullstackFramework) ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -329,6 +343,7 @@ async function loadSandboxId(projectId: string): Promise<string | null> {
 async function deleteSandboxId(projectId: string): Promise<void> {
   try {
     await redis.del(redisKey(projectId));
+    await redis.del(frameworkRedisKey(projectId));
   } catch (err) {
     logger.error({ projectId, err }, "[e2b] Failed to delete sandboxId from Redis");
     throw err;
@@ -656,7 +671,7 @@ async function acquireRunningSandbox(
   console.log("[E2B] Sandbox created (prewarm):", sandbox.sandboxId);
   sandboxes.set(projectId, sandbox);
   sandboxFrameworks.set(projectId, framework);
-  await saveSandboxId(projectId, sandbox.sandboxId);
+  await saveSandboxId(projectId, sandbox.sandboxId, framework);
 
   try {
     // Inject preview env BEFORE the dev server boots (env is only read at startup).
@@ -800,15 +815,18 @@ export async function ensurePreviewForProject(
   const savedId = await loadSandboxId(projectId);
   if (!savedId) return null; // never built / snapshot gone — nothing to resume.
 
+  // Load the framework from Redis so the correct port (3000 vs 5173) is used
+  // after a server restart when the in-memory sandboxFrameworks map is empty.
+  const persistedFramework = await loadFramework(projectId);
+
   let warm = warmingSandboxes.get(projectId);
   if (!warm) {
     warm = (async () => {
       const resumed = await tryResumeSandbox(projectId, savedId);
       if (!resumed) throw new Error("resume-on-open: snapshot unavailable");
       sandboxes.set(projectId, resumed);
-      // Framework unknown on resume-on-open: default react (port 5173).
-      // The sandbox already has the right template — only the port matters.
-      const framework = sandboxFrameworks.get(projectId) ?? "react";
+      const framework = sandboxFrameworks.get(projectId) ?? persistedFramework ?? "react";
+      sandboxFrameworks.set(projectId, framework);
       await ensureDevServer(resumed, log, framework);
       return resumed;
     })().finally(() => warmingSandboxes.delete(projectId));

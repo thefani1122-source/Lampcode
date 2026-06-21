@@ -1251,9 +1251,16 @@ export async function runFastBuild(
     // Filter out backend/server/db files and non-source artifacts before sending
     // to Sandpack. Server-side files import Node.js-only packages that the
     // browser bundler can't resolve. README.md and .env.* are deployment-only.
+    // For Next.js/TanStack builds, also exclude package.json: it lists `next`/
+    // `vinxi` as dependencies, which Sandpack tries to install from npm and then
+    // hangs forever showing "Installing packages…" — the E2B iframe is the real
+    // preview for these builds; Sandpack's bundle is irrelevant.
     const frontendFiles = Object.fromEntries(
       Object.entries(allFiles).filter(
-        ([p]) => !isBackendFile(p) && !isSandpackExcluded(p),
+        ([p]) =>
+          !isBackendFile(p) &&
+          !isSandpackExcluded(p) &&
+          !(fullstackFramework !== "react" && p === "package.json"),
       ),
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;

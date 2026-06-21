@@ -45,6 +45,9 @@ export function isBackendFile(path: string): boolean {
     BACKEND_FILES.has(path) ||
     path.startsWith("src/server/") ||
     path.startsWith("src/db/") ||
+    // Next.js Route Handlers live under app/api/ — they import next/server and
+    // run only on the server. Sandpack can't bundle them and errors on them.
+    path.startsWith("app/api/") ||
     // Non-Node backends (e.g. FastAPI) requested by the user for fullstack
     // builds — these run in the E2B sandbox, never in the browser bundler.
     path.endsWith(".py") ||
