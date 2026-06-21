@@ -859,6 +859,14 @@ export async function runFastBuild(
       }
     }
 
+    // For Next.js/TanStack builds, strip the React boilerplate that
+    // parseFilesFromContent auto-injects for Sandpack. These files are
+    // meaningless in a Next.js/TanStack project and would be written to the
+    // E2B sandbox unnecessarily (src/index.tsx confuses the project structure).
+    if (fullstackFramework !== "react") {
+      parsedFiles = parsedFiles.filter((f) => f.path !== "src/index.tsx");
+    }
+
     // ── Fail loudly on missing entry point for NEW builds ───────────────────
     // parseFilesFromContent no longer injects a placeholder component when it
     // can't find the entry point — that used to let broken generations silently

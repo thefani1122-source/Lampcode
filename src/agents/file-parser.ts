@@ -68,6 +68,12 @@ const ROOT_FILES = new Set([
   ".env", ".env.local", ".gitignore", ".eslintrc", ".eslintrc.json",
   "README.md", "tailwind.config.ts", "tailwind.config.js",
   "postcss.config.js", "postcss.config.ts",
+  // Next.js config — must stay at root so BAKED_FILES correctly blocks AI writes.
+  // Without this, normalizePath would promote "next.config.ts" to "src/next.config.ts"
+  // which bypasses the BAKED_FILES check entirely.
+  "next.config.ts", "next.config.js", "next.config.mjs",
+  // TanStack Start / Vinxi config — same reason
+  "app.config.ts",
 ]);
 
 // ── Default generated file contents ──────────────────────────────────────────
