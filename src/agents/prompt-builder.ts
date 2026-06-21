@@ -653,10 +653,7 @@ GENERATE THESE FILES (generate API routes FIRST so they're never dropped):
 
 4. \`\`\`filename:app/globals.css — app styles (CSS variables, global resets).
 
-5. \`\`\`filename:next.config.ts — minimal config:
-     import type { NextConfig } from 'next'
-     const config: NextConfig = {}
-     export default config
+5. next.config.js is provided by the sandbox environment — do NOT generate next.config.js or next.config.ts.
 
 HARD RULES:
 - NO separate Hono/Node server — Next.js Route Handlers ARE the backend.
@@ -665,6 +662,7 @@ HARD RULES:
 - The DB client (per DATABASE section) is server-only — only import in Server Components
   or Route Handlers, never in "use client" components.
 - Do NOT emit package.json or .env — the environment provides them.
+- Do NOT generate src/index.tsx, src/App.tsx, or src/styles.css — this is Next.js App Router, not React/Vite.
 - Port is 3000 (next dev default) — do NOT hardcode another port.
 
 ALLOWED IMPORTS: react, react-dom, next, plus EXACTLY the DB/auth libraries named

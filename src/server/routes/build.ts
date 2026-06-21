@@ -706,7 +706,8 @@ export async function runFastBuild(
             ? fullstackDb === "mongodb"
               ? [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, next.config.ts, src/db/schema.ts, src/lib/db.ts.",
+                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/schema.ts, src/lib/db.ts.",
+                  "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                   "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
                   "app/api/*/route.ts: call connectDB() then use Mongoose models — server-side only.",
                   "app/page.tsx is a Server Component — it can call connectDB() + Mongoose directly. Mark sub-components 'use client' only when they need useState/useEffect.",
@@ -715,7 +716,8 @@ export async function runFastBuild(
                 ]
               : [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, next.config.ts, src/db/types.ts, src/db/schema.sql.",
+                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/types.ts, src/db/schema.sql.",
+                  "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                   "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
                   "app/api/*/route.ts: use the Supabase service key (server-side only, process.env.SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY) — NEVER import supabase-js in 'use client' components.",
                   "app/page.tsx is a Server Component — it can query Supabase directly (import supabase-js with the service key). Mark sub-components 'use client' only when they need useState/useEffect.",
@@ -1319,10 +1321,12 @@ export async function runFastBuild(
         allFiles["src/db/schema.sql"] ||
         allFiles["app/api"] ||
         allFiles["app/routes/__root.tsx"] ||
+        allFiles["app/layout.tsx"] ||
         existingFiles["src/server/index.ts"] ||
         existingFiles["src/server/main.py"] ||
         existingFiles["src/lib/supabase.ts"] ||
-        existingFiles["app/routes/__root.tsx"],
+        existingFiles["app/routes/__root.tsx"] ||
+        existingFiles["app/layout.tsx"],
     );
     const wantsE2BPreview =
       isFullstackBuild || hasFullstackFiles || (await hasSandboxRecord(projectId));
