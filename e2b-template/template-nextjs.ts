@@ -94,7 +94,7 @@ const dockerfile = [
   // Pre-warm production build cache (SWC artifacts shared with dev mode)
   'RUN npx next build || true',
   // Warm next dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
-  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
+  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)

@@ -14,7 +14,7 @@ import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE } from "../../agents/prompt-builder.js";
+import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -455,6 +455,36 @@ function buildEditPrompt(files: Record<string, string>, userRequest: string): st
   );
 }
 
+/** Detect framework from files already on disk (edit path only). */
+function detectFrameworkFromFiles(files: Record<string, string>): FullstackFramework {
+  if ("app/routes/__root.tsx" in files) return "tanstack";
+  if ("app/layout.tsx" in files || "next.config.js" in files) return "nextjs";
+  return "react";
+}
+
+/**
+ * Like buildEditPrompt but prefixed with FULLSTACK BUILD:/FULLSTACK AUTH BUILD:
+ * so PromptBuilder injects the correct NEXTJS_INSTRUCTION / TANSTACK_INSTRUCTION.
+ * The framework keyword on line 2 lets detectFullstackFramework() pick it up.
+ */
+function buildFullstackEditPrompt(
+  files: Record<string, string>,
+  userRequest: string,
+  framework: FullstackFramework,
+): string {
+  const prefix = needsAuth(userRequest) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
+  const fileBlocks = Object.entries(files)
+    .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
+    .join("\n\n");
+  return (
+    `${prefix}\n${framework}\n\n` +
+    `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
+    `USER REQUEST: ${userRequest}\n\n` +
+    `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
+    `Keep everything that does not need to change. Output the complete updated files.`
+  );
+}
+
 // ── Background build runner ───────────────────────────────────────────────────
 
 export async function runFastBuild(
@@ -592,7 +622,11 @@ export async function runFastBuild(
     const classification = await classificationPromise;
     const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
     const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
-    const fullstackFramework = (isFullstackBuild ? classification?.framework : null) ?? "react";
+    // On the edit path, detect framework from existing files so E2B gets the right
+    // template and the AI gets the right instruction (NEXTJS_INSTRUCTION etc.).
+    // Falls back to "react" for new builds (hasExistingCode = false).
+    const editDetectedFramework: FullstackFramework = hasExistingCode ? detectFrameworkFromFiles(existingFiles) : "react";
+    const fullstackFramework: FullstackFramework = ((isFullstackBuild ? classification?.framework : null) as FullstackFramework | null) ?? editDetectedFramework;
     const wantsPython = isFullstackBuild && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(prompt);
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
@@ -621,7 +655,9 @@ export async function runFastBuild(
       : isFeatureAddition
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
-          ? buildEditPrompt(contextFiles, prompt)
+          ? editDetectedFramework !== "react"
+            ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)
+            : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
             ? buildFullstackPrompt(prompt)
             : expandUserPrompt(prompt);
@@ -651,13 +687,20 @@ export async function runFastBuild(
               "For large changes (>50% of file): output the complete file.",
               "Preserve all existing logic and structure that was not mentioned in the request.",
             ]
-          : [
-              "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-              "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
-              "Keep ALL existing functionality that the user did NOT ask to change.",
-              "Preserve the existing design system, color palette, and component structure.",
-              "Use inline styles or plain src/styles.css — never Tailwind.",
-            ]
+          : editDetectedFramework !== "react"
+            ? [
+                "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
+                "Keep ALL existing functionality that the user did NOT ask to change.",
+                "Preserve the existing design system, color palette, and component structure.",
+                "Do NOT output package.json or .env — the environment provides them.",
+              ]
+            : [
+                "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+                "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+                "Keep ALL existing functionality that the user did NOT ask to change.",
+                "Preserve the existing design system, color palette, and component structure.",
+                "Use inline styles or plain src/styles.css — never Tailwind.",
+              ]
         : isFullstackBuild
           ? fullstackFramework === "nextjs"
             ? fullstackDb === "mongodb"
