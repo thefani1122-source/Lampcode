@@ -14,23 +14,23 @@ const PKG_JSON = `{
     "start": "next start --port 3000 --hostname 0.0.0.0"
   },
   "dependencies": {
-    "next": "^14.2.10",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@supabase/supabase-js": "^2.45.0",
-    "@supabase/ssr": "^0.5.1",
-    "mongoose": "^8.7.0",
-    "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3",
-    "zod": "^3.23.8"
+    "next": "14.2.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@supabase/supabase-js": "2.45.0",
+    "@supabase/ssr": "0.5.1",
+    "mongoose": "8.7.0",
+    "jsonwebtoken": "9.0.2",
+    "bcryptjs": "2.4.3",
+    "zod": "3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
-    "@types/node": "^22.5.4",
-    "@types/jsonwebtoken": "^9.0.6",
-    "@types/bcryptjs": "^2.4.6"
+    "typescript": "5.5.4",
+    "@types/react": "18.3.5",
+    "@types/react-dom": "18.3.0",
+    "@types/node": "22.5.4",
+    "@types/jsonwebtoken": "9.0.6",
+    "@types/bcryptjs": "2.4.6"
   }
 }`
 
@@ -97,9 +97,13 @@ const dockerfile = [
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
   // Warm next dev cache: start server, wait for boot, hit / to trigger route
-  // compilation, then kill. The .next/ cache this produces is shared with dev
-  // mode — no separate `next build` step needed (and that step was hanging).
-  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
+  // compilation, then kill ALL next/node children — not just the npx wrapper.
+  // Bug: `kill $PID` killed the `npx` parent but left the `node` child (the real
+  // Next.js process) running and still writing to .next/. `wait $PID` returned
+  // immediately (npx dead), so the RUN exited before those writes completed,
+  // leaving .next/ in an incomplete state. Fix: after wait, pkill any survivors
+  // and sleep 1s to let their final fs writes flush before the layer is committed.
+  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true; pkill -f "next" 2>/dev/null || true; sleep 1',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
