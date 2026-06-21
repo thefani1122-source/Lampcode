@@ -84,6 +84,11 @@ const dockerfile = [
   'RUN apt-get update && apt-get install -y git curl ca-certificates && rm -rf /var/lib/apt/lists/*',
   'RUN npm install -g typescript',
   'WORKDIR /home/user/app',
+  // Disable Next.js telemetry + Google Fonts network calls during build/dev.
+  // Without this, Next.js tries to phone home during `next build` and `next dev`
+  // inside the E2B build environment where those calls never resolve, causing
+  // the build to hang for exactly 1 hour (the E2B default build timeout).
+  'ENV NEXT_TELEMETRY_DISABLED=1',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/next.config.js', NEXT_CONFIG),
   writeFile('/home/user/app/tsconfig.json', TSCONFIG),
@@ -91,9 +96,9 @@ const dockerfile = [
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Pre-warm production build cache (SWC artifacts shared with dev mode)
-  'RUN npx next build || true',
-  // Warm next dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
+  // Warm next dev cache: start server, wait for boot, hit / to trigger route
+  // compilation, then kill. The .next/ cache this produces is shared with dev
+  // mode — no separate `next build` step needed (and that step was hanging).
   'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
 ].join('\n')
 
