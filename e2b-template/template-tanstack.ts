@@ -1,9 +1,15 @@
 import { Template } from 'e2b'
 
 // ── Lampcode preview sandbox — TanStack Start template ────────────────────────
-// Bakes TanStack Start + vinxi baseline into the image, pre-installs deps.
-// Dev server: `vinxi dev --port 3000 --host 0.0.0.0` (via npm run dev)
-// The backend starts this command; NO CMD is set here to avoid race conditions.
+// Architecture:
+//   setStartCmd  → E2B runs `npm run dev` (vinxi) when the sandbox boots.
+//   setReadyCmd  → E2B waits for this to exit 0, then snapshots the running
+//                  sandbox (with route compilation done). Every resume starts
+//                  from that warm snapshot — no cold-compile on user request.
+//
+// Previously used a RUN-step warm-cache hack (start vinxi, curl, kill).
+// That caused "signal: killed" because kill/pkill matched the Docker builder
+// shell process itself. The setStartCmd/setReadyCmd approach is E2B-native.
 
 const PKG_JSON = `{
   "name": "lampcode-tanstack-app",
@@ -105,8 +111,13 @@ const dockerfile = [
   writeFile('/home/user/app/app/router.tsx', ROUTER_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Warm vinxi dev cache: start server, wait for boot, hit / to trigger route compilation, then kill.
-  'RUN npx vinxi dev --port 3000 --host 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true',
+  // NO warm-cache step — setStartCmd/setReadyCmd handles it natively.
 ].join('\n')
 
-export const template = Template().fromDockerfile(dockerfile)
+export const template = Template()
+  .fromDockerfile(dockerfile)
+  // E2B runs this when the sandbox starts. Foreground process — no & or PID tricks.
+  .setStartCmd('npm run dev')
+  // E2B polls this until exit 0, then snapshots the running sandbox.
+  // The curl hits / which triggers vinxi route compilation before snapshot.
+  .setReadyCmd('until curl -sf http://localhost:3000/ > /dev/null; do sleep 1; done')
