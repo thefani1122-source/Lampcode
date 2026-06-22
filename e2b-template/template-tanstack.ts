@@ -45,10 +45,7 @@ const PKG_JSON = `{
 }`
 
 const APP_CONFIG = `import { defineConfig } from '@tanstack/start/config'
-export default defineConfig({
-  react: {},
-  server: { port: 3000 },
-})`
+export default defineConfig({})`
 
 const TSCONFIG = `{
   "compilerOptions": {
