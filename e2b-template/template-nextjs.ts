@@ -97,13 +97,11 @@ const dockerfile = [
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
   // Warm next dev cache: start server, wait for boot, hit / to trigger route
-  // compilation, then kill ALL next/node children — not just the npx wrapper.
-  // Bug: `kill $PID` killed the `npx` parent but left the `node` child (the real
-  // Next.js process) running and still writing to .next/. `wait $PID` returned
-  // immediately (npx dead), so the RUN exited before those writes completed,
-  // leaving .next/ in an incomplete state. Fix: after wait, pkill any survivors
-  // and sleep 1s to let their final fs writes flush before the layer is committed.
-  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 8; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill $PID 2>/dev/null; wait $PID 2>/dev/null || true; pkill -f "next" 2>/dev/null || true; sleep 1',
+  // compilation, then SIGKILL all next/node children immediately.
+  // `wait $PID` was hanging for 30-60 seconds (Next.js graceful shutdown),
+  // causing E2B builder to terminate the entire RUN step at its 60s timeout.
+  // Fix: use kill -9 (SIGKILL) — no cleanup needed, no waiting.
+  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 10; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill -9 $PID 2>/dev/null || true; pkill -9 -f "next" 2>/dev/null || true; sleep 2',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
