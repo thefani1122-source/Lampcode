@@ -32,9 +32,9 @@ const PKG_JSON = `{
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.10",
-    "vinxi": "0.x",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.1.0",
+    "vinxi": "0.5.3",
     "typescript": "^5.5.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
@@ -44,8 +44,10 @@ const PKG_JSON = `{
   }
 }`
 
+// vinxi 0.5.3 = exact version that @tanstack/start-config 1.120.x ships with.
+// vinxi 0.5.x requires vite ^6.1.0 — using vite 5.x caused the citty crash.
 const APP_CONFIG = `import { defineConfig } from '@tanstack/start/config'
-export default defineConfig({})`
+export default defineConfig({ react: {} })`
 
 const TSCONFIG = `{
   "compilerOptions": {
