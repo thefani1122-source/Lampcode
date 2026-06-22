@@ -1,9 +1,16 @@
 import { Template } from 'e2b'
 
 // ── Lampcode preview sandbox — Next.js template ───────────────────────────────
-// Bakes Next.js + App Router baseline into the image, pre-installs deps.
-// Dev server: `next dev --port 3000 --hostname 0.0.0.0`
-// The backend starts this command; NO CMD is set here to avoid race conditions.
+// Architecture:
+//   setStartCmd  → E2B runs `npm run dev` when the sandbox boots.
+//   setReadyCmd  → E2B waits for this to exit 0, then snapshots the running
+//                  sandbox (with .next/ already compiled). Every resume starts
+//                  from that warm snapshot — no cold-compile on user request.
+//
+// Previously we used a RUN-step warm-cache hack (start dev, curl, kill -9).
+// That caused "signal: killed" build failures because pkill -f "next" matched
+// the Docker builder shell itself (its cmdline contained "next").
+// The setStartCmd/setReadyCmd approach is the correct E2B-native pattern.
 
 const PKG_JSON = `{
   "name": "lampcode-nextjs-app",
@@ -81,14 +88,12 @@ const writeFile = (path: string, body: string): string => {
 
 const dockerfile = [
   'FROM node:20-slim',
+  // Disable Next.js telemetry + Google Fonts network calls during build/dev.
+  // Without this, Next.js tries to phone home and hangs in E2B's build env.
+  'ENV NEXT_TELEMETRY_DISABLED=1',
   'RUN apt-get update && apt-get install -y git curl ca-certificates && rm -rf /var/lib/apt/lists/*',
   'RUN npm install -g typescript',
   'WORKDIR /home/user/app',
-  // Disable Next.js telemetry + Google Fonts network calls during build/dev.
-  // Without this, Next.js tries to phone home during `next build` and `next dev`
-  // inside the E2B build environment where those calls never resolve, causing
-  // the build to hang for exactly 1 hour (the E2B default build timeout).
-  'ENV NEXT_TELEMETRY_DISABLED=1',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/next.config.js', NEXT_CONFIG),
   writeFile('/home/user/app/tsconfig.json', TSCONFIG),
@@ -96,12 +101,12 @@ const dockerfile = [
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
   'RUN npm install',
-  // Warm next dev cache: start server, wait for boot, hit / to trigger route
-  // compilation, then SIGKILL all next/node children immediately.
-  // `wait $PID` was hanging for 30-60 seconds (Next.js graceful shutdown),
-  // causing E2B builder to terminate the entire RUN step at its 60s timeout.
-  // Fix: use kill -9 (SIGKILL) — no cleanup needed, no waiting.
-  'RUN npx next dev --port 3000 --hostname 0.0.0.0 & PID=$!; sleep 10; curl -sf --max-time 30 http://localhost:3000/ > /dev/null || true; sleep 5; kill -9 $PID 2>/dev/null || true; pkill -9 -f "next" 2>/dev/null || true; sleep 2',
 ].join('\n')
 
-export const template = Template().fromDockerfile(dockerfile)
+export const template = Template()
+  .fromDockerfile(dockerfile)
+  // E2B runs this when the sandbox starts. Foreground process — no & or PID tricks.
+  .setStartCmd('npm run dev')
+  // E2B polls this until exit 0, then snapshots the running sandbox.
+  // The curl hits / which triggers Next.js route compilation before snapshot.
+  .setReadyCmd('until curl -sf http://localhost:3000/ > /dev/null; do sleep 1; done')
