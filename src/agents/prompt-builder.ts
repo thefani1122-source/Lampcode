@@ -705,8 +705,9 @@ HARD RULES:
 - Do NOT generate src/index.tsx, src/App.tsx, or src/styles.css — this is Next.js App Router, not React/Vite.
 - Port is 3000 (next dev default) — do NOT hardcode another port.
 
-ALLOWED IMPORTS: react, react-dom, next, plus EXACTLY the DB/auth libraries named
-in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
+ALLOWED IMPORTS: react, react-dom, next, lucide-react, @tanstack/react-query, plus
+EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.
+All pre-installed. Do not import other libraries.`;
 
 // ── TanStack Start fullstack instruction ──────────────────────────────────────
 export const TANSTACK_INSTRUCTION = `

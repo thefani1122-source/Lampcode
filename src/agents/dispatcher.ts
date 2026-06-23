@@ -219,9 +219,16 @@ export class AgentDispatcher {
       task.description.startsWith("FULLSTACK AUTH BUILD:");
     const maxTokens = isFullstackBuild ? 32_000 : 16_000;
 
-    // Thinking budget: fullstack new builds get 8k (many files, complex arch),
-    // frontend agent gets 4k (single-framework app), all others get 1.5k.
-    const thinkingBudget = isFullstackBuild ? 8_000 : agentType === "frontend" ? 4_000 : 1_500;
+    // Thinking budget per agent type and task nature.
+    // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
+    // Edit-mode tasks (prefix "EXISTING PROJECT FILES:") are targeted — less planning needed.
+    const isEditMode = task.description.startsWith("EXISTING PROJECT FILES:");
+    const thinkingBudget =
+      isEditMode                                               ? 1_500  // targeted edit
+      : (isFullstackBuild || agentType === "frontend")        ? 8_000  // full new-build
+      : agentType === "fix" || agentType === "backend"        ? 6_000  // crash/API analysis
+      : agentType === "db"                                    ? 5_000  // schema design
+      : 4_000;                                                         // security, planning, others
 
     const stream = this.gateway.stream({ model, messages, maxTokens, thinkingBudget }, streamTimeoutMs);
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);

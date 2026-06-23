@@ -21,9 +21,11 @@ const PKG_JSON = `{
     "start": "next start --port 3000 --hostname 0.0.0.0"
   },
   "dependencies": {
-    "next": "14.2.10",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "next": "^15.0.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "lucide-react": "^0.460.0",
+    "@tanstack/react-query": "^5.62.0",
     "@supabase/supabase-js": "2.45.0",
     "@supabase/ssr": "0.5.1",
     "mongoose": "8.7.0",
@@ -33,8 +35,8 @@ const PKG_JSON = `{
   },
   "devDependencies": {
     "typescript": "5.5.4",
-    "@types/react": "18.3.5",
-    "@types/react-dom": "18.3.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
     "@types/node": "22.5.4",
     "@types/jsonwebtoken": "9.0.6",
     "@types/bcryptjs": "2.4.6"
