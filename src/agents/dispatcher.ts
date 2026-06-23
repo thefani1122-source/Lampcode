@@ -219,7 +219,11 @@ export class AgentDispatcher {
       task.description.startsWith("FULLSTACK AUTH BUILD:");
     const maxTokens = isFullstackBuild ? 32_000 : 16_000;
 
-    const stream = this.gateway.stream({ model, messages, maxTokens }, streamTimeoutMs);
+    // Thinking budget: fullstack new builds get 8k (many files, complex arch),
+    // frontend agent gets 4k (single-framework app), all others get 1.5k.
+    const thinkingBudget = isFullstackBuild ? 8_000 : agentType === "frontend" ? 4_000 : 1_500;
+
+    const stream = this.gateway.stream({ model, messages, maxTokens, thinkingBudget }, streamTimeoutMs);
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
     const startMs = Date.now();
 

@@ -1322,29 +1322,10 @@ export async function runFastBuild(
     })
 
     // ── E2B cloud sandbox preview ───────────────────────────────────────────
-    // The instant Sandpack preview above only runs JS/TS in-browser and CANNOT
-    // run a Supabase-direct app. So any fullstack/Supabase project — including
-    // EDITS to one — must use the real E2B sandbox. Falling back to Sandpack on
-    // a follow-up edit was why "change the design" showed a broken Sandpack
-    // preview. Detect a fullstack project three ways: a fresh fullstack build,
-    // the generated files contain the Supabase client, or we still hold a
-    // sandbox record (live or paused) for the project.
-    const hasFullstackFiles = Boolean(
-      allFiles["src/server/index.ts"] ||
-        allFiles["src/server/main.py"] ||
-        allFiles["src/lib/supabase.ts"] ||
-        allFiles["src/db/schema.sql"] ||
-        allFiles["app/api"] ||
-        allFiles["app/routes/__root.tsx"] ||
-        allFiles["app/layout.tsx"] ||
-        existingFiles["src/server/index.ts"] ||
-        existingFiles["src/server/main.py"] ||
-        existingFiles["src/lib/supabase.ts"] ||
-        existingFiles["app/routes/__root.tsx"] ||
-        existingFiles["app/layout.tsx"],
-    );
-    const wantsE2BPreview =
-      isFullstackBuild || hasFullstackFiles || (await hasSandboxRecord(projectId));
+    // All builds use E2B — React/Vite via lampcode-vite template, fullstack via
+    // nextjs/tanstack templates. isFullstackBuild still controls code generation
+    // (Hono backend + DB vs pure React), but preview always goes to E2B.
+    const wantsE2BPreview = true;
 
     // Agentic verify-and-fix: after the preview is live, check the real backend
     // actually started. If it crashed, capture the error, re-prompt the model to

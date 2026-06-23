@@ -38,6 +38,7 @@ export interface GatewayRequest {
   messages: ChatMessage[];
   temperature?: number | undefined;
   maxTokens?: number | undefined;
+  thinkingBudget?: number | undefined;
 }
 
 // Parsed chunk yielded to callers — same shape as before, stream-handler unchanged.
@@ -84,13 +85,15 @@ function supportsThinking(model: string): boolean {
 
 /** Convert our internal ChatMessage[] to Anthropic's messages + system param. */
 function splitMessages(messages: ChatMessage[]): {
-  system: string | undefined;
+  systemBlocks: Anthropic.TextBlockParam[] | undefined;
   anthropicMessages: Anthropic.MessageParam[];
 } {
   const systemMsg = messages.find((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
   return {
-    system: systemMsg?.content,
+    systemBlocks: systemMsg
+      ? [{ type: "text", text: systemMsg.content, cache_control: { type: "ephemeral" } }]
+      : undefined,
     anthropicMessages: rest.map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
@@ -136,7 +139,7 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    const { system, anthropicMessages } = splitMessages(req.messages);
+    const { systemBlocks, anthropicMessages } = splitMessages(req.messages);
     const model = req.model;
     const maxTokens = req.maxTokens ?? 16_000;
     const effectiveTimeout = overrideTimeoutMs ?? this.timeoutMs;
@@ -145,7 +148,7 @@ export class ModelGateway {
 
     // Extended thinking — enabled for models that support it.
     const thinkingParam: Anthropic.ThinkingConfigParam | undefined = supportsThinking(model)
-      ? { type: "enabled", budget_tokens: 4_000 }
+      ? { type: "enabled", budget_tokens: req.thinkingBudget ?? 4_000 }
       : undefined;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -161,7 +164,7 @@ export class ModelGateway {
         max_tokens: maxTokens,
         messages: anthropicMessages,
         stream: true,
-        ...(system !== undefined ? { system } : {}),
+        ...(systemBlocks ? { system: systemBlocks } : {}),
         ...(thinkingParam ? { thinking: thinkingParam } : {}),
       });
     } catch (err) {
