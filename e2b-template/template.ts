@@ -29,8 +29,26 @@ const PKG_JSON = `{
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "@tanstack/react-query": "^5.62.0",
+    "lucide-react": "^0.460.0",
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-dropdown-menu": "^2.1.2",
+    "@radix-ui/react-label": "^2.1.0",
+    "@radix-ui/react-select": "^2.1.2",
+    "@radix-ui/react-separator": "^1.1.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "@radix-ui/react-toast": "^1.2.2",
+    "@radix-ui/react-tooltip": "^1.1.3",
+    "@radix-ui/react-avatar": "^1.1.1",
+    "@radix-ui/react-checkbox": "^1.1.2",
+    "@radix-ui/react-switch": "^1.1.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.4",
+    "tailwindcss-animate": "^1.0.7",
     "@supabase/supabase-js": "^2.45.0",
     "hono": "^4.6.3",
     "@hono/node-server": "^1.13.1",
@@ -51,10 +69,12 @@ const PKG_JSON = `{
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.10",
+    "vite": "^6.0.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/vite": "^4.0.0",
     "typescript": "^5.5.4",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/bcryptjs": "^2.4.6",
     "@types/three": "^0.169.0"
@@ -63,6 +83,8 @@ const PKG_JSON = `{
 
 const VITE_CONFIG = `import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath, URL } from 'node:url'
 
 // Pre-baked. Do not edit from generated apps.
 //  - allowedHosts: E2B serves the preview from a dynamic *.e2b.app host.
@@ -76,8 +98,12 @@ import react from '@vitejs/plugin-react'
 //  - proxy /api -> :3001: when the app ships a real backend (Hono/Node), the
 //    backend listens on 3001 and the frontend calls same-origin /api/*; Vite
 //    forwards those to it. No CORS, one public URL.
+//  - resolve.alias @: maps to ./src so shadcn/ui @/components/ui/* imports work.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   envPrefix: 'VITE_',
   server: {
     host: true,
@@ -105,7 +131,9 @@ const TSCONFIG = `{
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "strict": true
+    "strict": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
 }`
@@ -134,12 +162,78 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>,
 )`
 
-const APP_TSX = `export default function App() {
-  return <div style={{ padding: 24, fontFamily: 'system-ui' }}>Loading…</div>
+const APP_TSX = `import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClient } from '@/lib/queryClient'
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Loading…</p>
+      </div>
+    </QueryClientProvider>
+  )
 }`
 
-const STYLES_CSS = `* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }`
+const STYLES_CSS = `@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --radius: 0.625rem;
+  }
+  .dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+  }
+}
+
+@layer base {
+  * { @apply border-border; box-sizing: border-box; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+  }
+}`
+
+const UTILS_TS = `import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}`
+
+const QUERY_CLIENT_TS = `import { QueryClient } from "@tanstack/react-query"
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { staleTime: 60 * 1000, retry: 1 },
+  },
+})`
 
 // Writes `body` to `path` inside the image via a single-line base64 decode.
 const writeFile = (path: string, body: string): string => {
@@ -161,6 +255,8 @@ const dockerfile = [
   writeFile('/home/user/app/src/index.tsx', INDEX_TSX),
   writeFile('/home/user/app/src/App.tsx', APP_TSX),
   writeFile('/home/user/app/src/styles.css', STYLES_CSS),
+  writeFile('/home/user/app/src/lib/utils.ts', UTILS_TS),
+  writeFile('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
   // Install once at build time so per-project cold start is just a fast
   // `npm install` of whatever extra deps the generated app declares.
   'RUN npm install',

@@ -226,6 +226,9 @@ const BAKED_FILES = new Set([
   // Supabase creds) ourselves, before the dev server starts, in writePreviewEnv().
   ".env",
   ".env.example",
+  // Foundation utility files — the LLM imports these but must not overwrite them.
+  "src/lib/utils.ts",
+  "src/lib/queryClient.ts",
 ]);
 
 /**
