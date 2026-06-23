@@ -338,6 +338,14 @@ every route (idempotent) so the lazy connection is established.`,
 
 export const FULLSTACK_INSTRUCTION = `
 
+⚠️ CRITICAL — BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY):
+  • src/server/index.ts   → Hono server entry (import + app + cors + serve)
+  • src/server/routes/api.ts → ALL route handlers for this app (NEVER empty)
+  • src/db/types.ts       → TypeScript interfaces for every DB entity
+  • src/db/schema.sql     → Full SQL schema (all tables, columns, constraints)
+An empty or missing backend file = the frontend has no API = blank screen.
+Generate the BACKEND FILES FIRST, complete, before writing any frontend code.
+
 ## ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND
 
 This app ships a REAL backend server with real API routes — not just direct

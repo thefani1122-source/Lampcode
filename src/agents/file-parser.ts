@@ -88,26 +88,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 );`;
 
-const DEFAULT_PACKAGE_JSON = JSON.stringify(
-  {
-    name: "sandpack-app",
-    private: true,
-    version: "0.0.0",
-    type: "module",
-    dependencies: {
-      react: "^18.2.0",
-      "react-dom": "^18.2.0",
-    },
-    devDependencies: {
-      "@types/react": "^18.2.0",
-      "@types/react-dom": "^18.2.0",
-      typescript: "^5.0.0",
-    },
-  },
-  null,
-  2,
-);
-
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
 /**
@@ -254,15 +234,15 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
   // is responsible for detecting a missing entry point on new builds via
   // findMissingFullstackFiles() (framework-aware) and failing with a real error.
 
-  // Generate src/index.tsx if absent
+  // Generate src/index.tsx if absent (React entry point — always needed)
   if (!fileMap.has("src/index.tsx")) {
     fileMap.set("src/index.tsx", DEFAULT_INDEX_TSX);
   }
 
-  // Generate package.json if absent
-  if (!fileMap.has("package.json")) {
-    fileMap.set("package.json", DEFAULT_PACKAGE_JSON);
-  }
+  // NOTE: package.json is NOT auto-injected. E2B bakes the correct package.json
+  // (React 19, Tailwind v4, shadcn) into the template image; BAKED_FILES blocks
+  // any LLM-generated override. Injecting "sandpack-app"/React-18 here would
+  // show the wrong package.json in the file tree.
 
   const result = Array.from(fileMap.entries()).map(([path, code]) => ({ path, code }));
   console.log('[parser] extracted:', result.map((f) => f.path))
