@@ -229,6 +229,12 @@ const BAKED_FILES = new Set([
   // Foundation utility files — the LLM imports these but must not overwrite them.
   "src/lib/utils.ts",
   "src/lib/queryClient.ts",
+  // Tailwind v4 design token stylesheet — the LLM generates v3 syntax (@tailwind base)
+  // which breaks the @tailwindcss/vite v4 plugin. Baked file has correct v4 CSS.
+  "src/styles.css",
+  // Next.js equivalent (root-level lib, no src/ prefix)
+  "lib/utils.ts",
+  "lib/queryClient.ts",
 ]);
 
 /**

@@ -138,11 +138,13 @@ CODE RULES — NON-NEGOTIABLE:
 STYLING RULES — NON-NEGOTIABLE:
 - ALWAYS use Tailwind CSS utility classes — no inline styles, no CSS modules
 - Use shadcn/ui Radix-based components for all UI primitives (Button, Input, Dialog, etc.) — import from "@/components/ui/X"
-- Use cn() from "@/lib/utils" for conditional/merged class names
+- Use cn() from "@/lib/utils" for conditional/merged class names — @/lib/utils IS PRE-BAKED, import it directly
 - Color tokens: bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border
 - Icons: lucide-react only — import { X, Plus, Settings } from "lucide-react"
 - Data fetching: TanStack Query (useQuery, useMutation) — never raw useState+useEffect for server data
   Wrap root with <QueryClientProvider client={queryClient}> importing queryClient from "@/lib/queryClient"
+- DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token set.
+  Generating it overwrites the design system and breaks all CSS variables. Never output this file.
 
 QUALITY BAR:
 Build as if a senior designer reviewed every pixel. Use the design tokens above — consistent spacing, shadows, rounded corners.`,
@@ -399,8 +401,10 @@ never dropped when output is long):
    and renders the app (loading + error + empty states). Show the MAIN UI first
    (not a login wall). Polished, complete, realistic.
 
-5. \`\`\`filename:src/index.tsx — standard React 18 createRoot rendering <App/> + './styles.css'.
-6. \`\`\`filename:src/styles.css — app styles.
+5. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
+6. Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design tokens and CSS
+   variables. Overwriting it breaks the design system. All color customisation must be done
+   via Tailwind utility classes (bg-primary, text-muted-foreground, etc.).
 
 HARD RULES:
 - The frontend talks to the backend ONLY through src/lib/api.ts (fetch '/api/...').
@@ -705,9 +709,12 @@ HARD RULES:
 - Do NOT generate src/index.tsx, src/App.tsx, or src/styles.css — this is Next.js App Router, not React/Vite.
 - Port is 3000 (next dev default) — do NOT hardcode another port.
 
-ALLOWED IMPORTS: react, react-dom, next, lucide-react, @tanstack/react-query, plus
-EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.
-All pre-installed. Do not import other libraries.`;
+Do NOT generate lib/utils.ts — it is pre-baked. Import cn from "@/lib/utils" directly.
+Do NOT generate app/globals.css with @tailwind directives — use plain CSS only if needed.
+
+ALLOWED IMPORTS: react, react-dom, next, lucide-react, @tanstack/react-query, clsx,
+tailwind-merge, class-variance-authority, plus EXACTLY the DB/auth libraries named
+in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
 
 // ── TanStack Start fullstack instruction ──────────────────────────────────────
 export const TANSTACK_INSTRUCTION = `

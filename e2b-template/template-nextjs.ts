@@ -26,6 +26,9 @@ const PKG_JSON = `{
     "react-dom": "19.0.0",
     "lucide-react": "^0.460.0",
     "@tanstack/react-query": "^5.62.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.4",
+    "class-variance-authority": "^0.7.1",
     "@supabase/supabase-js": "2.45.0",
     "@supabase/ssr": "0.5.1",
     "mongoose": "8.7.0",
@@ -83,6 +86,12 @@ const PAGE_TSX = `export default function Page() {
 const GLOBALS_CSS = `* { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }`
 
+const LIB_UTILS_TS = `import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}`
+
 const writeFile = (path: string, body: string): string => {
   const b64 = Buffer.from(body, 'utf8').toString('base64')
   return `RUN mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
@@ -102,6 +111,7 @@ const dockerfile = [
   writeFile('/home/user/app/app/layout.tsx', LAYOUT_TSX),
   writeFile('/home/user/app/app/page.tsx', PAGE_TSX),
   writeFile('/home/user/app/app/globals.css', GLOBALS_CSS),
+  writeFile('/home/user/app/lib/utils.ts', LIB_UTILS_TS),
   'RUN npm install',
 ].join('\n')
 
