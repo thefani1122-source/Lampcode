@@ -259,7 +259,9 @@ const dockerfile = [
   writeFile('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
   // Install once at build time so per-project cold start is just a fast
   // `npm install` of whatever extra deps the generated app declares.
-  'RUN npm install',
+  // --legacy-peer-deps: React 19 conflicts with peer deps on some packages
+  // (three.js ecosystem, particles, spline) that still declare react ^18.
+  'RUN npm install --legacy-peer-deps',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
