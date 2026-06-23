@@ -699,7 +699,6 @@ export async function runFastBuild(
                 "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
                 "Keep ALL existing functionality that the user did NOT ask to change.",
                 "Preserve the existing design system, color palette, and component structure.",
-                "Use inline styles or plain src/styles.css — never Tailwind.",
               ]
         : isFullstackBuild
           ? fullstackFramework === "nextjs"
@@ -775,7 +774,6 @@ export async function runFastBuild(
               "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
               "Always include src/App.tsx, src/index.tsx, and package.json.",
               "src/App.tsx must have `export default function App()`.",
-              "Use React with TypeScript. Style with inline styles or a plain src/styles.css — never Tailwind.",
             ];
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──

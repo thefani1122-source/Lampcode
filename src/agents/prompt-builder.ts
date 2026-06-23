@@ -135,12 +135,17 @@ CODE RULES — NON-NEGOTIABLE:
 - NO placeholder "coming soon" sections
 - Complete realistic mock data
 
-CSS BUDGET — global stylesheet must stay under 100 lines total:
-- NO @keyframes or animation blocks unless explicitly requested
-- NO media queries unless explicitly requested
+STYLING RULES — NON-NEGOTIABLE:
+- ALWAYS use Tailwind CSS utility classes — no inline styles, no CSS modules
+- Use shadcn/ui Radix-based components for all UI primitives (Button, Input, Dialog, etc.) — import from "@/components/ui/X"
+- Use cn() from "@/lib/utils" for conditional/merged class names
+- Color tokens: bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border
+- Icons: lucide-react only — import { X, Plus, Settings } from "lucide-react"
+- Data fetching: TanStack Query (useQuery, useMutation) — never raw useState+useEffect for server data
+  Wrap root with <QueryClientProvider client={queryClient}> importing queryClient from "@/lib/queryClient"
 
 QUALITY BAR:
-Build as if a senior designer reviewed every pixel.`,
+Build as if a senior designer reviewed every pixel. Use the design tokens above — consistent spacing, shadows, rounded corners.`,
 
   backend: `You are the BuildForge Backend Engineer. You write robust Node.js/TypeScript API code.
 Framework: Hono.js (preferred), Express.js, or Fastify — all are acceptable.
@@ -206,7 +211,32 @@ export function detectFullstackFramework(prompt: string): FullstackFramework {
 }
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
-  react: "",
+  react: `
+
+DESIGN SYSTEM — follow every rule below:
+
+STYLING:
+- ALWAYS use Tailwind CSS utility classes for ALL styling — no inline styles, no CSS modules, no styled-components
+- Use shadcn/ui components for buttons, forms, dialogs, dropdowns, tabs, cards, badges, avatars, toasts, tooltips — import from "@/components/ui/X"
+- Always use cn() from "@/lib/utils" for conditional classes
+- Color system: use CSS variables via Tailwind (bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border, etc.)
+- Dark mode: use dark: prefix — system is pre-configured
+- Icons: ALWAYS use lucide-react — import only what you need: import { X, Plus, Settings } from "lucide-react"
+- Data fetching: use TanStack Query (useQuery, useMutation) — never raw useState+useEffect for async data
+  import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+  Wrap the root (or App.tsx) with <QueryClientProvider client={queryClient}> — import queryClient from "@/lib/queryClient"
+- Typography: text-sm, text-base, text-lg, text-xl, text-2xl, text-3xl, font-medium, font-semibold, font-bold
+- Spacing: p-4, p-6, gap-4, gap-6, space-y-4 — consistent 4px grid
+- Rounded: rounded-md (default), rounded-lg (cards), rounded-full (avatars/pills)
+- Shadows: shadow-sm (subtle), shadow-md (cards), shadow-lg (modals)
+
+COMPONENT PATTERNS:
+- Page wrapper: <div className="min-h-screen bg-background"><div className="container mx-auto px-4 py-8">
+- Card: <div className="rounded-lg border bg-card p-6 shadow-sm">
+- Primary button: <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">
+- Input: use shadcn Input component or <input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+- Loading state: <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
+- Empty state: <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items yet</p></div>`,
   vue: "",
   nextjs: "",
   tanstack: "",
@@ -380,9 +410,19 @@ HARD RULES:
 - Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html, or .env —
   the environment provides them and injects the DB env per the DATABASE section.
 
-ALLOWED IMPORTS: react, react-dom, hono, @hono/node-server, zod, plus EXACTLY
-the DB/auth libraries named in the DATABASE/AUTH sections below. All
-pre-installed. Do not import other libraries.`;
+DESIGN SYSTEM — same rules apply here as in the React template:
+- ALWAYS use Tailwind CSS — no inline styles
+- Use shadcn/ui components (import from "@/components/ui/X") for all UI primitives
+- Use cn() from "@/lib/utils" for conditional classes
+- Icons: lucide-react only
+- Data fetching: TanStack Query (useQuery, useMutation) — import queryClient from "@/lib/queryClient" and wrap with QueryClientProvider
+- Color tokens: bg-background, text-foreground, bg-primary, bg-muted, bg-card, border-border
+
+ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,
+@radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the
+DB/auth libraries named below. All pre-installed. Do not import other libraries.
+ALLOWED IMPORTS (backend/server): hono, @hono/node-server, zod, plus EXACTLY the
+DB/auth libraries named in the DATABASE/AUTH sections below.`;
 
 // Use a Python/FastAPI backend when the prompt asks for it (or implies a
 // Python-only ecosystem: ML/data work).
