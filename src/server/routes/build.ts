@@ -641,8 +641,10 @@ export async function runFastBuild(
       prewarmSandbox(projectId, fullstackFramework, (line) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       );
-      server?.emitPreviewLoading(sessionId, { sessionId });
     }
+    // All builds use E2B — emit loading immediately so the frontend switches to
+    // E2BPreview and shows a spinner during code generation instead of blank screen.
+    server?.emitPreviewLoading(sessionId, { sessionId });
 
     // ── Build task description ────────────────────────────────────────────
     // Priority: token-only > feature-addition > edit-existing > new build.

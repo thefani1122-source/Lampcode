@@ -452,6 +452,7 @@ export function stripEditMarkers(code: string): string {
 // load-bearing files are the server entry, its routes, and the shared types.
 const REQUIRED_FULLSTACK_FILES = [
   "src/db/types.ts",
+  "src/db/schema.sql",
   "src/server/index.ts",
   "src/server/routes/api.ts",
 ] as const;

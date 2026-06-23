@@ -134,20 +134,11 @@ CODE RULES — NON-NEGOTIABLE:
 - ALL navigation links must show different content
 - NO placeholder "coming soon" sections
 - Complete realistic mock data
-
-STYLING RULES — NON-NEGOTIABLE:
-- ALWAYS use Tailwind CSS utility classes — no inline styles, no CSS modules
-- Use shadcn/ui Radix-based components for all UI primitives (Button, Input, Dialog, etc.) — import from "@/components/ui/X"
-- Use cn() from "@/lib/utils" for conditional/merged class names — @/lib/utils IS PRE-BAKED, import it directly
-- Color tokens: bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border
-- Icons: lucide-react only — import { X, Plus, Settings } from "lucide-react"
-- Data fetching: TanStack Query (useQuery, useMutation) — never raw useState+useEffect for server data
-  Wrap root with <QueryClientProvider client={queryClient}> importing queryClient from "@/lib/queryClient"
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token set.
   Generating it overwrites the design system and breaks all CSS variables. Never output this file.
 
 QUALITY BAR:
-Build as if a senior designer reviewed every pixel. Use the design tokens above — consistent spacing, shadows, rounded corners.`,
+Build as if a senior designer reviewed every pixel. Consistent spacing, shadows, rounded corners.`,
 
   backend: `You are the BuildForge Backend Engineer. You write robust Node.js/TypeScript API code.
 Framework: Hono.js (preferred), Express.js, or Fastify — all are acceptable.
@@ -422,13 +413,7 @@ HARD RULES:
 - Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html, or .env —
   the environment provides them and injects the DB env per the DATABASE section.
 
-DESIGN SYSTEM — same rules apply here as in the React template:
-- ALWAYS use Tailwind CSS — no inline styles
-- Use shadcn/ui components (import from "@/components/ui/X") for all UI primitives
-- Use cn() from "@/lib/utils" for conditional classes
-- Icons: lucide-react only
-- Data fetching: TanStack Query (useQuery, useMutation) — import queryClient from "@/lib/queryClient" and wrap with QueryClientProvider
-- Color tokens: bg-background, text-foreground, bg-primary, bg-muted, bg-card, border-border
+DESIGN SYSTEM — Follow the FRAMEWORK_RULES design system exactly: Tailwind CSS utility classes, shadcn/ui components from "@/components/ui/X", cn() from "@/lib/utils", lucide-react icons, TanStack Query with QueryClientProvider from "@/lib/queryClient".
 
 ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,
 @radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the
@@ -520,7 +505,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
 13. \`\`\`filename:src/components/AuthProvider.tsx
     - Create AuthContext with { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
     - AuthProvider component: uses useAuth() internally, provides context to children
-    - While loading is true, render a centered loading spinner (inline CSS, no libraries)
+    - While loading is true, render a centered loading spinner using Tailwind: <div className="flex items-center justify-center min-h-screen"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>
     - Export useAuthContext() hook: returns useContext(AuthContext)
     - Export default AuthProvider
 
@@ -836,9 +821,9 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
 Use ONLY component state for moving cards between columns — no external DnD libs.
 Clicking a card shows a move button: [→ Move to Next Column]
 Three columns: Todo, In Progress, Done
-Each column has: header with title, task count badge, and list of cards
+Each column has: header with task count badge and list of cards
 Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
-Use inline styles only, no CSS frameworks.
+Use Tailwind CSS utility classes — same design system as the rest of the app.
 Pre-load 6 sample tasks distributed across the three columns.
 Use realistic task names relevant to the app's domain — generate fresh names every time.`,
   },
