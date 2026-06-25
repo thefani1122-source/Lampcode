@@ -136,6 +136,11 @@ CODE RULES — NON-NEGOTIABLE:
 - Complete realistic mock data
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token set.
   Generating it overwrites the design system and breaks all CSS variables. Never output this file.
+- INLINE STYLE RULE (critical):
+  Use style={{ }} ONLY for values computed at runtime that cannot be expressed in Tailwind:
+  ALLOWED: style={{ height: \`\${itemCount * 40}px\` }}, style={{ left: \`\${position}%\` }}, style={{ '--progress': ratio }}
+  NOT ALLOWED: style={{ color: 'blue' }}, style={{ padding: '16px' }}, style={{ display: 'flex' }}, style={{ fontSize: '14px' }}
+  When in doubt: always Tailwind first. If Tailwind cannot express it → only then use style={{ }}
 
 QUALITY BAR:
 Build as if a senior designer reviewed every pixel. Consistent spacing, shadows, rounded corners.`,
@@ -329,11 +334,15 @@ every route (idempotent) so the lazy connection is established.`,
 
 export const FULLSTACK_INSTRUCTION = `
 
-⚠️ CRITICAL — BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY):
+⚠️ CRITICAL — REACT + HONO BUILDS ONLY (Next.js → NEXTJS_INSTRUCTION; TanStack → TANSTACK_INSTRUCTION)
+BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY):
   • src/server/index.ts   → Hono server entry (import + app + cors + serve)
   • src/server/routes/api.ts → ALL route handlers for this app (NEVER empty)
   • src/db/types.ts       → TypeScript interfaces for every DB entity
   • src/db/schema.sql     → Full SQL schema (all tables, columns, constraints)
+REACT FRONTEND FILES (required — these are React/Vite; NOT app/page.tsx or app/layout.tsx):
+  • src/App.tsx           → React UI component
+  • src/index.tsx         → createRoot entry point
 An empty or missing backend file = the frontend has no API = blank screen.
 Generate the BACKEND FILES FIRST, complete, before writing any frontend code.
 
@@ -505,7 +514,10 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
 13. \`\`\`filename:src/components/AuthProvider.tsx
     - Create AuthContext with { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
     - AuthProvider component: uses useAuth() internally, provides context to children
-    - While loading is true, render a centered loading spinner using Tailwind: <div className="flex items-center justify-center min-h-screen"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>
+    - AuthProvider loading state — pure Tailwind, NO inline styles:
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
     - Export useAuthContext() hook: returns useContext(AuthContext)
     - Export default AuthProvider
 
@@ -823,7 +835,17 @@ Clicking a card shows a move button: [→ Move to Next Column]
 Three columns: Todo, In Progress, Done
 Each column has: header with task count badge and list of cards
 Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
-Use Tailwind CSS utility classes — same design system as the rest of the app.
+For drag-and-drop card states use Tailwind cn() — NEVER inline styles:
+className={cn(
+  "rounded-lg border bg-card p-3 shadow-sm cursor-grab active:cursor-grabbing select-none",
+  isDragging && "opacity-50 scale-95 rotate-1 shadow-xl ring-2 ring-primary/50",
+  isOver && "border-primary border-2 border-dashed bg-primary/5"
+)}
+Column states:
+className={cn(
+  "rounded-xl bg-muted/50 p-3 min-h-[200px] transition-colors",
+  isDragOver && "bg-primary/10 ring-1 ring-primary"
+)}
 Pre-load 6 sample tasks distributed across the three columns.
 Use realistic task names relevant to the app's domain — generate fresh names every time.`,
   },
@@ -847,7 +869,107 @@ const SCREENSHOT_DESIGN_INSTRUCTION = "";
 
 const AGENT_BUILD_INSTRUCTION = "";
 
-const ANIMATION_DEFAULT_INSTRUCTION = "";
+const ANIMATION_DEFAULT_INSTRUCTION = `
+
+ANIMATION SYSTEM — Lampcode E2B template has these pre-installed: Framer Motion, GSAP, Lenis, tsParticles, AOS, Three.js, @react-three/fiber, @splinetool/react-spline. Use them correctly:
+
+━━ SIMPLE TRANSITIONS (Tailwind — always prefer these first) ━━
+- Hover scale: className="transition-transform duration-200 hover:scale-105"
+- Hover lift: className="transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
+- Fade in: className="transition-opacity duration-300 opacity-0 animate-in fade-in"
+- Color transition: className="transition-colors duration-150"
+- Slide up entrance: className="animate-in slide-in-from-bottom-4 duration-500"
+- Ping indicator: className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
+- Pulse skeleton: className="animate-pulse bg-muted rounded"
+- Spin loader: className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"
+
+━━ FRAMER MOTION (for interactive + complex animations) ━━
+import { motion, AnimatePresence } from "framer-motion"
+
+Entrance:
+<motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}>
+
+Stagger children:
+<motion.div variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} initial="hidden" animate="show">
+  <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}>
+
+Hover + tap:
+<motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+
+Scroll reveal:
+<motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }}>
+
+List items (AnimatePresence for add/remove):
+<AnimatePresence>
+  {items.map(item => (
+    <motion.div key={item.id} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+  ))}
+</AnimatePresence>
+
+Modal/drawer:
+<motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
+
+━━ GSAP (for scroll timelines + complex sequences) ━━
+import { useRef } from "react"
+import { useGSAP } from "@gsap/react"
+import gsap from "gsap"
+import { ScrollTrigger } from "gsap/ScrollTrigger"
+gsap.registerPlugin(ScrollTrigger)
+
+Scroll-triggered entrance:
+const ref = useRef(null)
+useGSAP(() => {
+  gsap.from(ref.current, {
+    opacity: 0, y: 40, duration: 0.7, ease: "power3.out",
+    scrollTrigger: { trigger: ref.current, start: "top 80%" }
+  })
+}, [])
+
+Stagger on scroll:
+useGSAP(() => {
+  gsap.from(".card-item", {
+    opacity: 0, y: 30, stagger: 0.1, duration: 0.5,
+    scrollTrigger: { trigger: ".cards-container", start: "top 75%" }
+  })
+}, [])
+
+━━ LENIS (smooth scrolling — add to root component) ━━
+import Lenis from "lenis"
+import { useEffect } from "react"
+useEffect(() => {
+  const lenis = new Lenis()
+  function raf(time: number) { lenis.raf(time); requestAnimationFrame(raf) }
+  requestAnimationFrame(raf)
+  return () => lenis.destroy()
+}, [])
+
+━━ PARTICLES (for hero backgrounds) ━━
+import Particles from "tsparticles"
+// Use preset: "links" | "stars" | "snow" | "confetti"
+
+━━ AOS (simple scroll animations via CSS classes) ━━
+import AOS from "aos"
+import "aos/dist/aos.css"
+useEffect(() => { AOS.init({ duration: 600, once: true }) }, [])
+// On elements: data-aos="fade-up" data-aos-delay="100"
+
+━━ THREE.JS / R3F (for 3D scenes) ━━
+import { Canvas } from "@react-three/fiber"
+import { OrbitControls, Sphere, MeshDistortMaterial } from "@react-three/drei"
+<Canvas><Sphere /><OrbitControls /></Canvas>
+
+━━ SPLINE (for pre-made 3D scenes) ━━
+import Spline from "@splinetool/react-spline"
+<Spline scene="https://prod.spline.design/[scene-id]/scene.splinecode" />
+
+━━ ABSOLUTE RULES ━━
+- NEVER: style={{ animation: "..." }} — use Tailwind animate-* or Framer Motion
+- NEVER: style={{ transform: "translateX(20px)" }} for static values — use Tailwind translate-*
+- NEVER: style={{ transition: "all 0.3s" }} — use Tailwind transition-* duration-*
+- DO: style={{ transform: \`translateX(\${dynamicValue}px)\` }} — dynamic runtime values only
+- Prefer Tailwind → Framer Motion → GSAP (in that order of complexity)
+- All animations must feel smooth, modern, purposeful — not distracting
+`;
 
 /**
  * Expand a short user prompt with completeness expectations for its app type.
