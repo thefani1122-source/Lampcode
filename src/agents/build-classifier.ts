@@ -14,9 +14,10 @@ export function classifyBuild(prompt: string): Promise<BuildClassification> {
   else if (/tanstack/i.test(prompt)) framework = "tanstack";
 
   // Fullstack detection: explicit backend/auth/data keywords OR non-React framework
+  // 3D/animation/WebGL keywords also route to E2B (where Three.js, Spline, tsParticles are pre-installed)
   const isFullstack =
     framework !== "react" ||
-    /\b(login|signin|sign[- ]in|sign[- ]up|signup|auth(?:entication|orization)?|user[- ]account|user[- ]profile|register(?:ation)?|logout|sign[- ]out|oauth|jwt|session|password|credential|admin[- ]panel|dashboard.with.real.data|save.to.database|persist(?:ence|ent)?|real.database|supabase|mongodb|postgresql|postgres|sqlite|mysql|graphql|backend|hono|fastapi|api.routes?|rest.api|multiple.users?|multi[- ]user|real[- ]time|payments?|stripe|file.uploads?|crud|cloud.sync)\b/i.test(prompt);
+    /\b(login|signin|sign[- ]in|sign[- ]up|signup|auth(?:entication|orization)?|user[- ]account|user[- ]profile|register(?:ation)?|logout|sign[- ]out|oauth|jwt|session|password|credential|admin[- ]panel|dashboard.with.real.data|save.to.database|persist(?:ence|ent)?|real.database|supabase|mongodb|postgresql|postgres|sqlite|mysql|graphql|backend|hono|fastapi|api.routes?|rest.api|multiple.users?|multi[- ]user|real[- ]time|payments?|stripe|file.uploads?|crud|cloud.sync|three\.?js|threejs|webgl|react[- ]three|r3f|@react-three|spline|splinecode|tsparticles|gsap.scroll|scrolltrigger|parallax|canvas.animation|3d.scene|3d.model|3d.website|immersive|webgl.shader)\b/i.test(prompt);
 
   // Database detection
   const database: BuildClassification["database"] = isFullstack
