@@ -748,7 +748,7 @@ export async function runFastBuild(
               : fullstackDb === "mongodb"
                 ? [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
                     "Add src/server/routes/auth.ts ONLY if the app needs login/accounts (see AUTH MODE).",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
                     "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
@@ -758,7 +758,7 @@ export async function runFastBuild(
                 : wantsPython
                 ? [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
                     "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
                     "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
@@ -766,7 +766,7 @@ export async function runFastBuild(
                   ]
                 : [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx, src/styles.css.",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
                     "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
                     "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
@@ -1297,7 +1297,7 @@ export async function runFastBuild(
       files: frontendFiles,       // Sandpack-safe: no Node.js imports
       backendFiles: allFiles,
       backendFileCount,           // >0 signals fullstack build to the client
-      previewUrl: `/api/build/${sessionId}/preview`,
+      previewUrl: null,
       totalFiles: Object.keys(allFiles).length,
       ...(buildSummary ? { summary: buildSummary } : {}),
       ...(!hasExistingCode && classification?.buildType === "frontend"

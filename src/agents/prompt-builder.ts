@@ -411,11 +411,14 @@ client described in the DATABASE section below (Supabase OR MongoDB — never
 both). Generate the DB schema file(s) from that section FIRST so they're never
 dropped when output is long.
 
-GENERATE THESE FILES (this exact set is the backbone, IN ADDITION to the DB
-schema file(s) from the DATABASE section — generate the backend FIRST so it's
-never dropped when output is long):
+GENERATE THESE FILES IN THIS EXACT ORDER (DB + backend first — App.tsx is large;
+if token limit hits mid-generation, DB and server files must already be complete):
 
-1. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
+1. \`\`\`filename:src/db/types.ts — TypeScript interfaces for every DB table (schema per DATABASE section below).
+
+2. \`\`\`filename:src/db/schema.sql — Full SQL schema + RLS policies (full content per DATABASE section below).
+
+3. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
      import { serve } from '@hono/node-server'
      import { Hono } from 'hono'
      import { cors } from 'hono/cors'
@@ -426,7 +429,7 @@ never dropped when output is long):
      serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
      console.log('API on :' + (process.env.PORT || 3001))
 
-2. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
+4. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
    Read/write data with the DB CLIENT defined in the DATABASE section below
    (Supabase OR MongoDB — exactly the one specified there; never mix two DBs).
    ALWAYS handle errors so the server never crashes (return [] / an error json,
@@ -447,7 +450,7 @@ never dropped when output is long):
    For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
    reads the raw body — keep it defensive (try/catch, 200 by default).
 
-3. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
+5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
      import type { Rider } from '../db/types' // or wherever the DATABASE section defines row types
      export async function getRiders(): Promise<Rider[]> {
        const r = await fetch('/api/riders'); if (!r.ok) return []; return r.json()
@@ -457,12 +460,12 @@ never dropped when output is long):
        return r.ok ? r.json() : null
      }
 
-4. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
+6. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
    and renders the app (loading + error + empty states). Show the MAIN UI first
    (not a login wall). Polished, complete, realistic.
 
-5. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
-6. Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design tokens and CSS
+7. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
+Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design tokens and CSS
    variables. Overwriting it breaks the design system. All color customisation must be done
    via Tailwind utility classes (bg-primary, text-muted-foreground, etc.).
 
