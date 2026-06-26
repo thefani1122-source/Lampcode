@@ -1266,7 +1266,7 @@ export async function runFastBuild(
         await uploadProjectFiles(projectId, syncMap);
         console.log(`[storage] synced ${Object.keys(syncMap).length} files project=${projectId}`);
       } catch (err) {
-        console.error("[storage] upload failed (non-fatal):", err);
+        logger.error({ projectId, sessionId, err }, "[storage] upload failed — next redeploy may lose edit context");
       }
     })();
 
