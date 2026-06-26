@@ -38,6 +38,7 @@ export const dispatchOptionsSchema = z.object({
     isAgentBuild: z.boolean().optional(),
     hasAnimationContext: z.boolean().optional(),
     projectMemory: z.string().nullable().optional(),
+    projectManifest: z.string().nullable().optional(),
   }),
   sessionId: z.string().uuid(),
   userId: z.string().optional(),

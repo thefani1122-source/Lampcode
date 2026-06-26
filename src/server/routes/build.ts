@@ -430,18 +430,96 @@ function buildFullstackPrompt(prompt: string): string {
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
 
+// True when the prompt is about backend/API/server-side concerns.
+const BACKEND_INTENT_RE =
+  /\b(route|endpoint|api|backend|server|database|db|schema|table|query|migration|webhook|middleware|GET|POST|PUT|DELETE|PATCH)\b|\/[a-z]/i;
+
+// Heuristic: a file is "backend" if its path puts it in server/API/db territory.
+function isBackendPath(p: string): boolean {
+  return /\b(server|routes?|api|db|database|schema|migrations?|middleware|webhook)\b/i.test(p);
+}
+
+/**
+ * When backend intent is detected AND a manifest is available, score each
+ * manifest line against the prompt's keywords and return the best-matching
+ * backend files (up to 3) from existingFiles.
+ *
+ * Manifest line format:
+ *   src/server/routes/todos.ts — Route definitions | exports: api | routes: GET /todos, GET /todos/:id
+ *
+ * Returns null if the manifest is missing, unparseable, or no backend files match.
+ */
+function selectBackendFiles(
+  files: Record<string, string>,
+  prompt: string,
+  manifest: string,
+): Record<string, string> | null {
+  // Extract meaningful keywords from the prompt (3+ chars, not stop words)
+  const STOPS = new Set(["the", "a", "an", "for", "to", "in", "of", "and", "or", "with", "add", "make", "create", "update", "fix", "change", "new"]);
+  const keywords = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9/\s_-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOPS.has(w));
+
+  if (keywords.length === 0) return null;
+
+  // Parse manifest lines into scoreable entries (skip header)
+  const scores: Array<{ path: string; score: number }> = [];
+  for (const line of manifest.split("\n").slice(1)) {
+    const dashIdx = line.indexOf(" — ");
+    if (dashIdx === -1) continue;
+    const filePath = line.slice(0, dashIdx).trim();
+    if (!filePath || !(filePath in files)) continue;
+    if (!isBackendPath(filePath)) continue;
+
+    // Score this file: path match + route/export match
+    const lineText = line.toLowerCase();
+    let score = 0;
+    for (const kw of keywords) {
+      if (filePath.toLowerCase().includes(kw)) score += 10;
+      if (lineText.includes(kw)) score += 3;
+    }
+    if (score > 0) scores.push({ path: filePath, score });
+  }
+
+  if (scores.length === 0) return null;
+
+  scores.sort((a, b) => b.score - a.score);
+  const selected: Record<string, string> = {};
+  for (const { path } of scores.slice(0, 3)) {
+    const content = files[path];
+    if (content !== undefined) selected[path] = content;
+  }
+  return Object.keys(selected).length > 0 ? selected : null;
+}
+
 /**
  * For short follow-up prompts, select only the 1–2 files likely to change.
  * Also flags theme/color prompts as token-only edits so the caller can send
  * just the :root block instead of the full styles.css.
+ *
+ * When backend intent is detected and a manifest exists, uses manifest-based
+ * scoring to return relevant backend files instead of defaulting to App.tsx.
  */
 function selectFollowUpFiles(
   files: Record<string, string>,
   prompt: string,
+  manifest: string | null,
 ): { selected: Record<string, string>; isSmartSelection: boolean; isTokenOnlyEdit: boolean } {
   const p = prompt.toLowerCase();
   const isThemePrompt = /\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/.test(p);
 
+  // ── Backend intent: try manifest-based selection before frontend defaults ──
+  if (!isThemePrompt && BACKEND_INTENT_RE.test(prompt) && manifest) {
+    const backendSelected = selectBackendFiles(files, prompt, manifest);
+    if (backendSelected !== null) {
+      return { selected: backendSelected, isSmartSelection: true, isTokenOnlyEdit: false };
+    }
+    // No manifest matches — fall through to frontend logic (sends App.tsx as best guess)
+  }
+
+  // ── Frontend keyword routing ──────────────────────────────────────────────
   let targetPaths: string[];
   if (isThemePrompt) {
     targetPaths = ["src/styles.css"];
@@ -644,7 +722,7 @@ export async function runFastBuild(
           ` renders=[${structure.returnChildren.join(", ")}]`,
         );
       } else {
-        const { selected, isSmartSelection, isTokenOnlyEdit: tokenOnly } = selectFollowUpFiles(existingFiles, prompt);
+        const { selected, isSmartSelection, isTokenOnlyEdit: tokenOnly } = selectFollowUpFiles(existingFiles, prompt, projectManifest);
         if (isSmartSelection) {
           contextFiles = selected;
           smartSelectionUsed = true;
