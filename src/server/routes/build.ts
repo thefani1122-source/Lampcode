@@ -1449,10 +1449,18 @@ export async function runFastBuild(
             generateProjectMemory(allCode, projectMemory, prompt),
             Promise.resolve(generateFileManifest(allFiles)),
           ])
-          await db.update(projects)
-            .set({ projectMemory: newMemory, projectManifest: newManifest })
-            .where(eq(projects.id, projectId))
-          console.log(`[memory] saved memory+manifest for project ${projectId}`)
+          try {
+            await db.update(projects)
+              .set({ projectMemory: newMemory, projectManifest: newManifest })
+              .where(eq(projects.id, projectId))
+            console.log(`[memory] saved memory+manifest for project ${projectId}`)
+          } catch {
+            // project_manifest column missing — save memory only until migration runs
+            await db.update(projects)
+              .set({ projectMemory: newMemory })
+              .where(eq(projects.id, projectId))
+            console.warn("[memory] saved memory only (project_manifest column missing — run migration 0007)")
+          }
         } catch (err) {
           console.error("[memory] update failed:", err)
         }
@@ -1782,13 +1790,28 @@ buildRouter.post("/fast", async (c) => {
     const agentFlag = isAgentBuild(prompt);
     const animationFlag = isAnimationBuild(prompt);
 
-    // Fetch project memory before kicking off the build (non-blocking read)
-    const projectRow = await db.query.projects.findFirst({
-      where: eq(projects.id, projectId),
-      columns: { projectMemory: true, projectManifest: true },
-    });
-    const memoryFlag = projectRow?.projectMemory ?? null;
-    const manifestFlag = projectRow?.projectManifest ?? null;
+    // Fetch project memory + manifest before kicking off the build.
+    // Defensive: if project_manifest column doesn't exist yet (migration pending),
+    // catch the DB error and fall back to querying projectMemory only so the build
+    // still completes. Manifest will be null until the migration runs.
+    let memoryFlag: string | null = null;
+    let manifestFlag: string | null = null;
+    try {
+      const projectRow = await db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+        columns: { projectMemory: true, projectManifest: true },
+      });
+      memoryFlag = projectRow?.projectMemory ?? null;
+      manifestFlag = projectRow?.projectManifest ?? null;
+    } catch {
+      // Column project_manifest doesn't exist yet — run: drizzle-kit migrate
+      const memRow = await db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+        columns: { projectMemory: true },
+      });
+      memoryFlag = memRow?.projectMemory ?? null;
+      console.warn("[build] project_manifest column missing — run migration 0007_project_manifest.sql");
+    }
 
     setImmediate(() => {
       void (async () => {
