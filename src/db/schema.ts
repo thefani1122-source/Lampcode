@@ -173,6 +173,7 @@ export const projects = pgTable("projects", {
   branding: jsonb("branding").$type<ProjectBranding>().notNull().default({}),
   businessContext: jsonb("business_context").$type<BusinessContext>().notNull().default({}),
   projectMemory: text("project_memory"),
+  projectManifest: text("project_manifest"),
   isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),

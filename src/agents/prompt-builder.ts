@@ -39,6 +39,7 @@ export const taskInputSchema = z.object({
   isAgentBuild: z.boolean().optional(),
   hasAnimationContext: z.boolean().optional(),
   projectMemory: z.string().nullable().optional(),
+  projectManifest: z.string().nullable().optional(),
 });
 export type TaskInput = z.infer<typeof taskInputSchema>;
 
@@ -1252,8 +1253,12 @@ export class PromptBuilder {
     const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
     const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
 
+    const manifestBlock = task.projectManifest
+      ? `\n## Current File Structure\n${task.projectManifest}\n`
+      : "";
+
     const projectMemoryBlock = task.projectMemory
-      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}\n\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
+      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}${manifestBlock}\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
       : "";
 
     return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;

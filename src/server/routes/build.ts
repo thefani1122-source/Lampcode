@@ -38,6 +38,7 @@ import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
+import { generateFileManifest } from "../../agents/manifest-generator.js";
 import { uploadProjectFiles, downloadProjectFiles } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
@@ -533,6 +534,7 @@ export async function runFastBuild(
   agentBuildFlag: boolean = false,
   animationFlag: boolean = false,
   projectMemory: string | null = null,
+  projectManifest: string | null = null,
 ): Promise<void> {
   const server = ws();
 
@@ -849,6 +851,7 @@ export async function runFastBuild(
         isAgentBuild: agentBuildFlag,
         hasAnimationContext: animationFlag,
         projectMemory,
+        projectManifest,
       },
       sessionId,
       userId,
@@ -1359,16 +1362,19 @@ export async function runFastBuild(
         : {}),
     });
 
-    // ── Async project memory update — never blocks the build ───────────────
+    // ── Async project memory + manifest update — never blocks the build ────
     setImmediate(() => {
       void (async () => {
         try {
           const allCode = Object.values(allFiles).join("\n")
-          const newMemory = await generateProjectMemory(allCode, projectMemory, prompt)
+          const [newMemory, newManifest] = await Promise.all([
+            generateProjectMemory(allCode, projectMemory, prompt),
+            Promise.resolve(generateFileManifest(allFiles)),
+          ])
           await db.update(projects)
-            .set({ projectMemory: newMemory })
+            .set({ projectMemory: newMemory, projectManifest: newManifest })
             .where(eq(projects.id, projectId))
-          console.log(`[memory] saved for project ${projectId}`)
+          console.log(`[memory] saved memory+manifest for project ${projectId}`)
         } catch (err) {
           console.error("[memory] update failed:", err)
         }
@@ -1701,9 +1707,10 @@ buildRouter.post("/fast", async (c) => {
     // Fetch project memory before kicking off the build (non-blocking read)
     const projectRow = await db.query.projects.findFirst({
       where: eq(projects.id, projectId),
-      columns: { projectMemory: true },
+      columns: { projectMemory: true, projectManifest: true },
     });
     const memoryFlag = projectRow?.projectMemory ?? null;
+    const manifestFlag = projectRow?.projectManifest ?? null;
 
     setImmediate(() => {
       void (async () => {
@@ -1724,7 +1731,7 @@ buildRouter.post("/fast", async (c) => {
           }
         }
         // Default: normal code-generation build
-        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag, manifestFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
         });
