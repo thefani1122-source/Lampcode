@@ -38,6 +38,7 @@ import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
+import { uploadProjectFiles, downloadProjectFiles } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -186,8 +187,44 @@ async function loadProjectFiles(outputDir: string): Promise<Record<string, strin
       totalChars += f.content.length;
     }
   } catch {
-    // filesystem miss (container restart or first build) — fall through as new build
+    // filesystem miss (container restart or first build) — fall through
   }
+
+  if (Object.keys(files).length > 0) return files;
+
+  // ── Supabase Storage fallback (Railway redeploy wiped the disk) ───────────
+  // outputDir shape: {WORKSPACE_BASE}/{projectId}/{sessionId}/frontend
+  // Extract projectId as the first path segment after WORKSPACE_BASE.
+  const relToWorkspace = relative(WORKSPACE_BASE, outputDir);
+  const projectId = relToWorkspace.split(sep)[0];
+  if (!projectId) return files;
+
+  try {
+    console.log(`[storage] disk miss — fetching project=${projectId} from Supabase Storage`);
+    const downloaded = await downloadProjectFiles(projectId);
+    if (Object.keys(downloaded).length === 0) return files;
+
+    // Restore to local disk so subsequent reads (copyExistingFiles, etc.) work.
+    await mkdir(outputDir, { recursive: true });
+    let totalChars = 0;
+    const priority = (p: string) =>
+      p === "src/App.tsx" ? 0 : p === "src/styles.css" ? 1 : p === "src/index.tsx" ? 2 : 3;
+    const sorted = Object.entries(downloaded).sort(([a], [b]) => priority(a) - priority(b));
+    for (const [relPath, content] of sorted) {
+      const fullPath = join(outputDir, relPath);
+      await mkdir(dirname(fullPath), { recursive: true });
+      await writeFile(fullPath, content, "utf8");
+      // Apply same 60KB cap as the normal path so callers get consistent context
+      if (totalChars + content.length <= MAX_EDIT_CONTEXT_CHARS) {
+        files[relPath] = content;
+        totalChars += content.length;
+      }
+    }
+    console.log(`[storage] restored ${Object.keys(files).length} files from Supabase Storage`);
+  } catch (err) {
+    console.error("[storage] download failed (non-fatal):", err);
+  }
+
   return files;
 }
 
@@ -1215,6 +1252,23 @@ export async function runFastBuild(
         allFiles[f.path] = f.code;
       }
     }
+
+    // ── Sync project files to Supabase Storage (survives Railway redeploys) ──
+    // For edits: merge existingFiles (pre-build state) with allFiles (LLM output)
+    // so unchanged files that the LLM didn't re-emit are not lost in Storage.
+    // For fresh builds: existingFiles is {}, so syncMap === allFiles.
+    // Fire-and-forget — never blocks the build or preview.
+    void (async () => {
+      try {
+        const syncMap: Record<string, string> = hasExistingCode
+          ? { ...existingFiles, ...allFiles }
+          : { ...allFiles };
+        await uploadProjectFiles(projectId, syncMap);
+        console.log(`[storage] synced ${Object.keys(syncMap).length} files project=${projectId}`);
+      } catch (err) {
+        console.error("[storage] upload failed (non-fatal):", err);
+      }
+    })();
 
     // ── Signal backend code is ready with full file contents (fullstack builds) ──
     // NOTE: We generate backend + DB files as code artifacts; we deliberately do
