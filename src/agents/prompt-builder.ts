@@ -248,7 +248,37 @@ COMPONENT PATTERNS:
 - Primary button: <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">
 - Input: use shadcn Input component or <input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
 - Loading state: <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
-- Empty state: <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items yet</p></div>`,
+- Empty state: <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items yet</p></div>
+
+MOBILE-FIRST RESPONSIVE — NON-NEGOTIABLE:
+Every app must work perfectly on mobile (375px) and desktop (1280px+).
+
+LAYOUT:
+- Always use responsive Tailwind prefixes: sm: md: lg: xl:
+- Grids: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 (never fixed columns without breakpoints)
+- Page wrapper: px-4 sm:px-6 lg:px-8 (horizontal padding scales with screen)
+- Hide/show: hidden md:flex (desktop nav), flex md:hidden (mobile hamburger)
+
+NAVIGATION:
+- Desktop: horizontal nav bar with links
+- Mobile: hamburger menu (☰) that opens a slide-down or drawer menu
+- Always implement both — never leave mobile with a broken overflow navbar
+
+TYPOGRAPHY:
+- Headings: text-2xl sm:text-3xl lg:text-5xl (scale up on larger screens)
+- Body: text-sm sm:text-base (readable on all sizes)
+
+CARDS & GRIDS:
+- Card grids: always single column on mobile, multi-column on tablet/desktop
+- Flex rows on desktop → flex-col on mobile: flex-col sm:flex-row
+
+FORMS & INPUTS:
+- Full width on mobile: w-full
+- Modals: w-full mx-4 on mobile, max-w-md on desktop
+
+TOUCH TARGETS:
+- All buttons/links minimum h-10 (40px) — tap-friendly
+- Adequate spacing between interactive elements: gap-3 minimum`,
   vue: "",
   nextjs: "",
   tanstack: "",
@@ -283,9 +313,8 @@ DB CLIENT — at the top of src/server/routes/api.ts:
   // read:  const { data, error } = await db.from('riders').select('*')
   // write: const { data, error } = await db.from('riders').insert(body).select().single()
 
-DB SCHEMA FILES (also generate):
-1. \`\`\`filename:src/db/types.ts   — TypeScript interface per table row (shared)
-2. \`\`\`filename:src/db/schema.sql — CREATE TABLE statements (+ RLS) to run in Supabase
+DB SCHEMA FILES: Already listed in FULLSTACK_INSTRUCTION as items 1 and 2.
+Generate types.ts interfaces and schema.sql CREATE TABLE + RLS there.
 
 The env (SUPABASE_URL + keys) is injected by the preview — do NOT generate .env
 or package.json. Read everything from process.env in the backend.
@@ -412,34 +441,20 @@ client described in the DATABASE section below (Supabase OR MongoDB — never
 both). Generate the DB schema file(s) from that section FIRST so they're never
 dropped when output is long.
 
-⚠️ CRITICAL OUTPUT FORMAT — EVERY FILE MUST USE THIS EXACT FENCE:
-
-\`\`\`filename:src/db/types.ts
-[file content here]
-\`\`\`
-
-NEVER use language-only fences — the file will be lost and the app will break:
-❌ \`\`\`typescript  ← WRONG (ignored by parser)
-❌ \`\`\`sql         ← WRONG (ignored by parser)
-❌ \`\`\`tsx         ← WRONG (ignored by parser)
-❌ \`\`\`ts          ← WRONG (ignored by parser)
-
-ALWAYS use the filename: prefix:
-✅ \`\`\`filename:src/db/types.ts
-✅ \`\`\`filename:src/db/schema.sql
-✅ \`\`\`filename:src/server/index.ts
-✅ \`\`\`filename:src/server/routes/api.ts
-✅ \`\`\`filename:src/lib/api.ts
-✅ \`\`\`filename:src/App.tsx
+⚠️ FILE FORMAT — ZERO EXCEPTIONS:
+Output EVERY file as:  \`\`\`filename:src/db/types.ts  (then content, then \`\`\`)
+NEVER:  \`\`\`typescript  \`\`\`sql  \`\`\`tsx  \`\`\`ts  — parser ignores these, app breaks.
 
 GENERATE THESE FILES IN THIS EXACT ORDER (DB + backend first — App.tsx is large;
 if token limit hits mid-generation, DB and server files must already be complete):
 
-1. \`\`\`filename:src/db/types.ts — TypeScript interfaces for every DB table (schema per DATABASE section below).
+1. \`\`\`filename:src/db/types.ts
+   TypeScript interfaces for every DB entity (per DATABASE section below).
 
-2. \`\`\`filename:src/db/schema.sql — Full SQL schema + RLS policies (full content per DATABASE section below).
+2. \`\`\`filename:src/db/schema.sql
+   Full SQL schema + RLS policies (per DATABASE section below).
 
-3. \`\`\`filename:src/server/index.ts — the Hono server. EXACT shape:
+3. \`\`\`filename:src/server/index.ts — Hono server. EXACT shape:
      import { serve } from '@hono/node-server'
      import { Hono } from 'hono'
      import { cors } from 'hono/cors'
@@ -573,8 +588,8 @@ export const FULLSTACK_AUTH_INSTRUCTION = `
 
 AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
 
-ADDITIONAL FILES — generate these AFTER the base files (numbered continuing from 10):
-11. \`\`\`filename:src/lib/supabase.ts
+ADDITIONAL FILES — generate these AFTER the base files:
+8. \`\`\`filename:src/lib/supabase.ts
     Use this EXACT content:
     \`\`\`
     import { createClient } from '@supabase/supabase-js'
@@ -584,7 +599,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     )
     \`\`\`
 
-12. \`\`\`filename:src/hooks/useAuth.ts
+9. \`\`\`filename:src/hooks/useAuth.ts
     - Import supabase from '../lib/supabase'
     - Export default function useAuth()
     - Returns: { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
@@ -596,7 +611,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     - signInWithGoogle(): return supabase.auth.signInWithOAuth({ provider: 'google' })
     - signInWithGithub(): return supabase.auth.signInWithOAuth({ provider: 'github' })
 
-13. \`\`\`filename:src/components/AuthProvider.tsx
+10. \`\`\`filename:src/components/AuthProvider.tsx
     - Create AuthContext with { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
     - AuthProvider component: uses useAuth() internally, provides context to children
     - AuthProvider loading state — pure Tailwind, NO inline styles:
@@ -606,7 +621,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     - Export useAuthContext() hook: returns useContext(AuthContext)
     - Export default AuthProvider
 
-14. \`\`\`filename:src/components/Login.tsx
+11. \`\`\`filename:src/components/Login.tsx
     - Rendered as a MODAL/OVERLAY (dimmed full-screen backdrop + centered card),
       NOT a full-page route. Props: { onClose?: () => void }.
     - A close (×) button in the card corner calls onClose; clicking the backdrop
@@ -623,14 +638,7 @@ ADDITIONAL FILES — generate these AFTER the base files (numbered continuing fr
     - Loading state: disable buttons and show "Loading..." during async calls
     - Export default Login (accepting the optional onClose prop)
 
-15. \`\`\`filename:README.md may document these env vars (the preview already
-    provides them; the user sets their own when they deploy):
-    \`\`\`
-    VITE_SUPABASE_URL=your_supabase_url
-    VITE_SUPABASE_ANON_KEY=your_anon_key
-    \`\`\`
-
-16. \`\`\`filename:README.md
+12. \`\`\`filename:README.md
     Use this EXACT content (fill in the app name at the top):
     \`\`\`
     # [App Name]
