@@ -230,7 +230,7 @@ export class WebSocketServer {
       files: Record<string, string>;
       backendFiles: Record<string, string>;
       backendFileCount: number;
-      previewUrl: string;
+      previewUrl: string | null;
       totalFiles: number;
       summary?: string;
       hint?: string;

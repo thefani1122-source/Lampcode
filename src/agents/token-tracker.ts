@@ -25,6 +25,13 @@ const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> =
   // OpenAI
   "openai/gpt-4o":               { inputPerM: 5.00,  outputPerM: 15.00 },
   "openai/gpt-4o-mini":          { inputPerM: 0.15,  outputPerM: 0.60  },
+  // Bare format (no anthropic/ prefix) — matches model-gateway.ts dispatch
+  "claude-opus-4-8":             { inputPerM: 15.00, outputPerM: 75.00 },
+  "claude-opus-4-7":             { inputPerM: 15.00, outputPerM: 75.00 },
+  "claude-opus-4-6":             { inputPerM: 15.00, outputPerM: 75.00 },
+  "claude-sonnet-4-6":           { inputPerM: 3.00,  outputPerM: 15.00 },
+  "claude-haiku-4-5":            { inputPerM: 0.25,  outputPerM: 1.25  },
+  "claude-haiku-4-5-20251001":   { inputPerM: 0.25,  outputPerM: 1.25  },
 };
 
 const DEFAULT_PRICING = { inputPerM: 1.00, outputPerM: 4.00 };
