@@ -2,8 +2,36 @@ import { GoogleGenerativeAI, GoogleGenerativeAIFetchError } from "@google/genera
 import { type GatewayRequest, type StreamChunk, GatewayError } from "./model-gateway.js";
 import { logger } from "../server/logger.js";
 
-// Free-tier Gemini model — no thinking budget support, silently ignored.
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
+// Gemini model — no thinking budget support, silently ignored.
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
+
+function isRateLimit(err: unknown): boolean {
+  if (err instanceof GoogleGenerativeAIFetchError) {
+    return err.status === 429 || /quota|rate|limit/i.test(err.message ?? "");
+  }
+  if (err instanceof Error) {
+    return /quota|rate|limit/i.test(err.message);
+  }
+  return false;
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isRateLimit(err) || attempt === RETRY_DELAYS_MS.length) break;
+      const delayMs = RETRY_DELAYS_MS[attempt] ?? 5_000;
+      logger.warn({ attempt: attempt + 1, delayMs }, "Gemini rate limit — retrying");
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
 
 function mapGeminiError(err: unknown): GatewayError {
   if (err instanceof GoogleGenerativeAIFetchError) {
@@ -59,13 +87,15 @@ export async function* geminiStream(req: GatewayRequest): AsyncGenerator<StreamC
 
   let streamResult: Awaited<ReturnType<typeof model.generateContentStream>>;
   try {
-    streamResult = await model.generateContentStream({
-      contents,
-      generationConfig: {
-        maxOutputTokens: req.maxTokens ?? 16_000,
-        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-      },
-    });
+    streamResult = await withRetry(() =>
+      model.generateContentStream({
+        contents,
+        generationConfig: {
+          maxOutputTokens: req.maxTokens ?? 16_000,
+          ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        },
+      }),
+    );
   } catch (err) {
     throw mapGeminiError(err);
   }
