@@ -470,7 +470,7 @@ function isEffectivelyEmpty(code: string | undefined): boolean {
   const stripped = code
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("//") && !l.startsWith("#"))
+    .filter((l) => l.length > 0 && !l.startsWith("//") && !l.startsWith("#") && !l.startsWith("/*") && !l.startsWith("*"))
     .join("");
   return stripped.length === 0;
 }
