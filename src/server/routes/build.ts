@@ -1027,19 +1027,31 @@ export async function runFastBuild(
         });
 
         try {
+          const dbLabel = fullstackDb === "mongodb"
+            ? "MongoDB (Mongoose — use mongoose models, connectDB() from src/lib/db.ts)"
+            : "Supabase PostgreSQL (@supabase/supabase-js — use createClient with env vars)";
+
           const retryDescription =
-            `The following required files were empty or missing: ${missing.join(", ")}.\n` +
-            `Generate ONLY these files with complete, production-ready content.\n` +
-            `Original build context: ${prompt}`;
+            `The following backend/db files were empty or missing from the first build pass and must be generated now:\n` +
+            missing.map((f) => `- ${f}`).join("\n") + "\n\n" +
+            `App description: ${prompt}\n` +
+            `Backend framework: Hono.js on Node.js, port 3001\n` +
+            `Database: ${dbLabel}\n\n` +
+            `Per-file requirements:\n` +
+            (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\n" : "") +
+            (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\n" : "") +
+            (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\n" : "") +
+            (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\n" : "");
 
           const retryResult = await dispatcher.dispatch({
-            agentType: "frontend",
+            agentType: "backend",
             task: {
               description: retryDescription,
               requirements: [
-                `Output ONLY the files listed: ${missing.join(", ")} — nothing else.`,
-                "Each file must have complete, non-empty, production-ready content.",
+                `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
+                "Each file must be complete, non-empty, and production-ready.",
                 "Use the exact format: \`\`\`filename:<path> for each file.",
+                "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
               ],
               outputFormat: "code",
             },
