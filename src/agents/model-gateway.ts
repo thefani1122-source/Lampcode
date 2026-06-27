@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
+import { geminiStream } from "./gemini-gateway.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
@@ -139,6 +140,13 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
+    // Gemini fallback: delegate entirely when GEMINI_API_KEY is set.
+    // Remove this env var to revert to Anthropic automatically.
+    if (process.env.GEMINI_API_KEY) {
+      yield* geminiStream(req);
+      return;
+    }
+
     const { systemBlocks, anthropicMessages } = splitMessages(req.messages);
     const model = req.model;
     const maxTokens = req.maxTokens ?? 16_000;
