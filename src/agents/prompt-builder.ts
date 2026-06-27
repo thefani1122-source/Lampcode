@@ -412,6 +412,26 @@ client described in the DATABASE section below (Supabase OR MongoDB — never
 both). Generate the DB schema file(s) from that section FIRST so they're never
 dropped when output is long.
 
+⚠️ CRITICAL OUTPUT FORMAT — EVERY FILE MUST USE THIS EXACT FENCE:
+
+\`\`\`filename:src/db/types.ts
+[file content here]
+\`\`\`
+
+NEVER use language-only fences — the file will be lost and the app will break:
+❌ \`\`\`typescript  ← WRONG (ignored by parser)
+❌ \`\`\`sql         ← WRONG (ignored by parser)
+❌ \`\`\`tsx         ← WRONG (ignored by parser)
+❌ \`\`\`ts          ← WRONG (ignored by parser)
+
+ALWAYS use the filename: prefix:
+✅ \`\`\`filename:src/db/types.ts
+✅ \`\`\`filename:src/db/schema.sql
+✅ \`\`\`filename:src/server/index.ts
+✅ \`\`\`filename:src/server/routes/api.ts
+✅ \`\`\`filename:src/lib/api.ts
+✅ \`\`\`filename:src/App.tsx
+
 GENERATE THESE FILES IN THIS EXACT ORDER (DB + backend first — App.tsx is large;
 if token limit hits mid-generation, DB and server files must already be complete):
 

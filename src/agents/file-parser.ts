@@ -180,12 +180,18 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
       const code = codeLines.join("\n").trim();
       if (code.length === 0) continue;
 
-      // 3. Fallback: first line of code block as a comment path
+      // 3. Fallback: first line of code block as a comment path.
+      // Handles trailing descriptions: "// src/db/types.ts — TypeScript interfaces"
+      // Also handles block-comment style: "/* src/db/types.ts */"
       if (filePath === null) {
         const firstCodeLine = codeLines[0] ?? "";
         const commentMatch =
-          firstCodeLine.match(/^\/\/\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/) ??
-          firstCodeLine.match(/^#\s*([^\s]+\.[a-zA-Z0-9]{1,10})\s*$/);
+          // Priority: explicit src/ prefix (catches trailing description text)
+          firstCodeLine.match(/^(?:\/\/|\/\*)\s*(src\/[\w./\-]+\.\w+)/) ??
+          // General single-line comment — allow trailing content after path
+          firstCodeLine.match(/^\/\/\s*([^\s]+\.[a-zA-Z0-9]{1,10})(?:\s|$)/) ??
+          // Shell / Python comment style
+          firstCodeLine.match(/^#\s*([^\s]+\.[a-zA-Z0-9]{1,10})(?:\s|$)/);
         if (commentMatch?.[1]) {
           filePath = commentMatch[1];
           const trimmedCode = codeLines.slice(1).join("\n").trim();
