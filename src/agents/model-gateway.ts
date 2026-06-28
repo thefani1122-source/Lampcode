@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
+import { deepseekStream } from "./deepseek-gateway.js";
 import { geminiStream } from "./gemini-gateway.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
@@ -140,8 +141,10 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    // Gemini fallback: delegate entirely when GEMINI_API_KEY is set.
-    // Remove this env var to revert to Anthropic automatically.
+    if (process.env.DEEPSEEK_API_KEY) {
+      yield* deepseekStream(req);
+      return;
+    }
     if (process.env.GEMINI_API_KEY) {
       yield* geminiStream(req);
       return;
