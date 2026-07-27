@@ -1,8 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
-import { deepseekStream } from "./deepseek-gateway.js";
-import { geminiStream } from "./gemini-gateway.js";
+import { bedrockStream } from "./bedrock-gateway.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
@@ -141,12 +140,9 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    if (process.env.DEEPSEEK_API_KEY) {
-      yield* deepseekStream(req);
-      return;
-    }
-    if (process.env.GEMINI_API_KEY) {
-      yield* geminiStream(req);
+    // AWS Bedrock gateway — uses AWS_ACCESS_KEY_ID to activate
+    if (process.env.AWS_ACCESS_KEY_ID) {
+      yield* bedrockStream(req);
       return;
     }
 
