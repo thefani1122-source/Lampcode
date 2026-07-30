@@ -1103,6 +1103,29 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
+  // BUILD-TYPE SKILLS — wire opts.buildType (previously dropped silently)
+  if (opts?.buildType === "fullstack") {
+    skillsToLoad.add("fullstack-hono");
+  } else if (opts?.buildType === "frontend") {
+    skillsToLoad.add("frontend-sandbox");
+  }
+
+  // Core quality skills — always for any frontend/fullstack build
+  if (opts?.buildType) {
+    skillsToLoad.add("react-production");
+    skillsToLoad.add("typescript-strict");
+  }
+
+  // DB/RLS skills — only when the prompt implies a database or auth
+  if (
+    opts?.buildType &&
+    (needsAuth(prompt) ||
+      /\b(database|supabase|postgres|postgresql|sql|sqlite|mysql|mongodb|table|schema|crud|persist|persistence)\b/i.test(prompt))
+  ) {
+    skillsToLoad.add("database-rls");
+    skillsToLoad.add("supabase-rls");
+  }
+
   // FIRECRAWL — only when scraping/crawling requested
   if (/\b(scrape|crawl|firecrawl|web.scraping|extract.from.website|read.website|parse.webpage)\b/i.test(prompt)) {
     skillsToLoad.add("firecrawl");
