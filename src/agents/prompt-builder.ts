@@ -23,9 +23,16 @@ import { logger } from "../server/logger.js";
 
 // ── Token budget ──────────────────────────────────────────────────────────────
 
-const MAX_INPUT_TOKENS = 20_000;
+const MAX_INPUT_TOKENS = Number(process.env.MAX_INPUT_TOKENS) || 150_000;
+const MAX_SYSTEM_PROMPT_TOKENS = Number(process.env.MAX_SYSTEM_PROMPT_TOKENS) || 30_000;
 const CHARS_PER_TOKEN = 4; // approximation
 const MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
+const MAX_SYSTEM_PROMPT_CHARS = MAX_SYSTEM_PROMPT_TOKENS * CHARS_PER_TOKEN;
+/** Floor for the user message so a large system prompt can never starve it. */
+const MIN_USER_MESSAGE_CHARS = 4_000;
+
+const TAIL_TRUNCATION_MARKER = "\n\n[Context truncated to fit token budget]";
+const HEAD_TRUNCATION_MARKER = "[Earlier context truncated to fit token budget]\n\n";
 
 // ── Task input schema ─────────────────────────────────────────────────────────
 
@@ -1200,14 +1207,37 @@ export class PromptBuilder {
       this.loadRelevantSkills(context.prompt, buildType),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
-    const systemPrompt = skillsBlock
+    const rawSystemPrompt = skillsBlock
       ? `${baseSystemPrompt}\n\n${skillsBlock}`
       : baseSystemPrompt;
+
+    // The system prompt gets its own ceiling: projectMemory/projectManifest make
+    // it grow with project size, and without a cap it silently eats the user
+    // message budget (and can drive it negative).
+    let systemPrompt = rawSystemPrompt;
+    if (rawSystemPrompt.length > MAX_SYSTEM_PROMPT_CHARS) {
+      logger.warn(
+        {
+          agentType,
+          systemPromptChars: rawSystemPrompt.length,
+          ceilingChars: MAX_SYSTEM_PROMPT_CHARS,
+        },
+        "System prompt exceeds ceiling — truncating",
+      );
+      systemPrompt = this.truncate(rawSystemPrompt, MAX_SYSTEM_PROMPT_CHARS);
+    }
+
     const taskBlock = this.buildTaskBlock(task, context);
 
-    const userMessage = this.truncate(
-      [contextBlock, taskBlock].filter((s) => s.length > 0).join("\n\n"),
+    const userBudget = Math.max(
       MAX_INPUT_CHARS - systemPrompt.length,
+      MIN_USER_MESSAGE_CHARS,
+    );
+    const userMessage = this.composeUserMessage(
+      contextBlock,
+      taskBlock,
+      userBudget,
+      agentType,
     );
 
     const estimatedInputTokens =
@@ -1432,13 +1462,89 @@ export class PromptBuilder {
     }
   }
 
+  /**
+   * Join the context block and the task block within `budget`, protecting the
+   * task block. The task block ends with the USER REQUEST and INSTRUCTION lines,
+   * so the context block absorbs truncation first; if the task block alone
+   * overflows we keep its TAIL, never its head.
+   */
+  private composeUserMessage(
+    contextBlock: string,
+    taskBlock: string,
+    budget: number,
+    agentType: AgentTaskType,
+  ): string {
+    const separator = "\n\n";
+
+    if (taskBlock.length + separator.length >= budget) {
+      logger.warn(
+        {
+          agentType,
+          taskBlockChars: taskBlock.length,
+          contextBlockChars: contextBlock.length,
+          budgetChars: budget,
+        },
+        "Task block exceeds user-message budget — dropping context block, keeping task tail",
+      );
+      return this.truncateKeepingTail(taskBlock, budget);
+    }
+
+    if (contextBlock.length === 0) return taskBlock;
+
+    const contextBudget = budget - taskBlock.length - separator.length;
+    if (contextBudget <= 0) return taskBlock;
+
+    if (contextBlock.length > contextBudget) {
+      logger.warn(
+        {
+          agentType,
+          contextBlockChars: contextBlock.length,
+          contextBudgetChars: contextBudget,
+          taskBlockChars: taskBlock.length,
+          budgetChars: budget,
+        },
+        "Context block truncated to fit user-message budget",
+      );
+    }
+
+    return `${this.truncate(contextBlock, contextBudget)}${separator}${taskBlock}`;
+  }
+
+  /** Truncate keeping the HEAD. Never returns more than `maxChars`. */
   private truncate(text: string, maxChars: number): string {
+    // A zero or negative budget must never reach String.slice: slice(0, -n)
+    // returns everything except the LAST n chars — an oversized string with its
+    // tail silently deleted.
+    if (maxChars <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
     if (text.length <= maxChars) return text;
-    const truncated = text.slice(0, maxChars);
+
+    const room = maxChars - TAIL_TRUNCATION_MARKER.length;
+    if (room <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
+
+    const truncated = text.slice(0, room);
     // Trim to the last complete line to avoid mid-sentence cuts
     const lastNewline = truncated.lastIndexOf("\n");
-    return (lastNewline > maxChars * 0.8 ? truncated.slice(0, lastNewline) : truncated) +
-      "\n\n[Context truncated to fit token budget]";
+    return (lastNewline > room * 0.8 ? truncated.slice(0, lastNewline) : truncated) +
+      TAIL_TRUNCATION_MARKER;
+  }
+
+  /**
+   * Truncate keeping the TAIL. Used when the end of the text is load-bearing —
+   * the task block's USER REQUEST and INSTRUCTION lines must survive.
+   */
+  private truncateKeepingTail(text: string, maxChars: number): string {
+    if (maxChars <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
+    if (text.length <= maxChars) return text;
+
+    const room = maxChars - HEAD_TRUNCATION_MARKER.length;
+    if (room <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
+
+    const kept = text.slice(text.length - room);
+    // Start at the next complete line so the text doesn't begin mid-token
+    const firstNewline = kept.indexOf("\n");
+    const aligned =
+      firstNewline >= 0 && firstNewline < room * 0.2 ? kept.slice(firstNewline + 1) : kept;
+    return HEAD_TRUNCATION_MARKER + aligned;
   }
 
   private async loadRelevantSkills(
