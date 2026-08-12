@@ -5,23 +5,24 @@ import { bedrockStream } from "./bedrock-gateway.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
-// Tier arrays: [tier1, tier2, tier3]
-// All Anthropic native model IDs — no OpenRouter prefix needed.
+// Tier arrays: [primary, fallback]
+// Bare first-party model IDs. The Bedrock gateway maps these to Bedrock IDs;
+// token-tracker.ts keys its pricing table on these same bare names.
 export const MODEL_TIERS = {
-  planning:   ["claude-opus-4-8",              "claude-sonnet-4-6",           "claude-sonnet-4-6"]   as const,
-  frontend:   ["claude-sonnet-4-6",            "claude-sonnet-4-6",           "claude-haiku-4-5-20251001"] as const,
-  backend:    ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  db:         ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  security:   ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  connection: ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  fix:        ["claude-sonnet-4-6",            "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  deploy:     ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-  monitor:    ["claude-haiku-4-5-20251001",    "claude-haiku-4-5-20251001",   "claude-haiku-4-5-20251001"] as const,
-} as const satisfies Record<string, readonly [string, string, string]>;
+  planning:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  frontend:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  backend:    ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  db:         ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  security:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  connection: ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  fix:        ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  deploy:     ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  monitor:    ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+} as const satisfies Record<string, readonly [string, string]>;
 
 export type AgentTaskType = keyof typeof MODEL_TIERS;
 
-export function tierModel(agentType: AgentTaskType, tier: 1 | 2 | 3): string {
+export function tierModel(agentType: AgentTaskType, tier: 1 | 2): string {
   return MODEL_TIERS[agentType][tier - 1] as string;
 }
 
@@ -84,6 +85,26 @@ function supportsThinking(model: string): boolean {
   return !model.includes("haiku");
 }
 
+/**
+ * Marker that begins the variable skills block appended by prompt-builder
+ * (`\n\n---\n## Skill: <name>\n<content>`). Splitting here separates the stable
+ * base prompt from the per-build skills so each can get its own cache
+ * breakpoint — without it, one breakpoint spans base+skills and any change to
+ * the skill set misses the base too.
+ */
+const SKILLS_BLOCK_MARKER = "\n\n---\n## Skill: ";
+
+/**
+ * Split an assembled system prompt into [stable base] and [variable skills].
+ * Returns a single segment when no skills block is present, so callers can map
+ * segments to cache points uniformly.
+ */
+export function splitSystemPrompt(systemPrompt: string): string[] {
+  const idx = systemPrompt.indexOf(SKILLS_BLOCK_MARKER);
+  if (idx <= 0) return [systemPrompt];
+  return [systemPrompt.slice(0, idx), systemPrompt.slice(idx)];
+}
+
 /** Convert our internal ChatMessage[] to Anthropic's messages + system param. */
 function splitMessages(messages: ChatMessage[]): {
   systemBlocks: Anthropic.TextBlockParam[] | undefined;
@@ -93,7 +114,11 @@ function splitMessages(messages: ChatMessage[]): {
   const rest = messages.filter((m) => m.role !== "system");
   return {
     systemBlocks: systemMsg
-      ? [{ type: "text", text: systemMsg.content, cache_control: { type: "ephemeral" } }]
+      ? splitSystemPrompt(systemMsg.content).map((text) => ({
+          type: "text" as const,
+          text,
+          cache_control: { type: "ephemeral" as const },
+        }))
       : undefined,
     anthropicMessages: rest.map((m) => ({
       role: m.role as "user" | "assistant",

@@ -2,21 +2,43 @@ import {
   BedrockRuntimeClient,
   ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { type GatewayRequest, type StreamChunk, GatewayError } from "./model-gateway.js";
+import { type GatewayRequest, type StreamChunk, GatewayError, splitSystemPrompt } from "./model-gateway.js";
 import { logger } from "../server/logger.js";
 
 const DEFAULT_MODEL_ID = "anthropic.claude-sonnet-5";
 const REGION = process.env.AWS_REGION || "us-east-1";
+
+// Inference-profile / region prefixes Bedrock model IDs may already carry.
+// If req.model is a bare first-party ID (e.g. "claude-sonnet-5") it needs the
+// "anthropic." prefix; if it already has one of these, leave it as-is.
+const BEDROCK_ID_PREFIXES = ["anthropic.", "us.", "eu.", "apac."];
+
+/**
+ * Resolve which model ID actually goes on the wire.
+ * BEDROCK_MODEL_ID is an explicit operator override (highest priority — lets
+ * the exact Bedrock ID be corrected via env var without a code change).
+ * Otherwise req.model (the tier the dispatcher picked) is mapped to its
+ * Bedrock form. Falls back to DEFAULT_MODEL_ID only if req.model is empty.
+ */
+function resolveModelId(requestedModel: string | undefined): string {
+  const override = process.env.BEDROCK_MODEL_ID;
+  if (override) return override;
+  if (!requestedModel) return DEFAULT_MODEL_ID;
+  if (BEDROCK_ID_PREFIXES.some((p) => requestedModel.startsWith(p))) return requestedModel;
+  return `anthropic.${requestedModel}`;
+}
 
 function mapBedrockError(err: unknown): GatewayError {
   if (err instanceof Error) {
     const msg = err.message ?? String(err);
     const name = err.name ?? "";
 
-    // Invalid model ID
+    // Invalid model ID — mapped to UNKNOWN (not INVALID_KEY) so the dispatcher's
+    // tier-fallback treats a bad ID like a down model and tries the next tier,
+    // instead of aborting the build outright.
     if (name === "ValidationException" || msg.includes("Could not validate model")) {
       return new GatewayError(
-        "INVALID_KEY",
+        "UNKNOWN",
         `Invalid Bedrock model ID. Check BEDROCK_MODEL_ID env var — verify exact model ID in AWS Console. Error: ${msg.slice(0, 150)}`,
       );
     }
@@ -64,7 +86,7 @@ function supportsThinking(model: string): boolean {
  * Active when AWS_ACCESS_KEY_ID is set.
  */
 export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<StreamChunk> {
-  const modelId = process.env.BEDROCK_MODEL_ID || DEFAULT_MODEL_ID;
+  const modelId = resolveModelId(req.model);
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID ?? "";
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY ?? "";
 
@@ -75,7 +97,7 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
     );
   }
 
-  logger.debug({ modelId, region: REGION }, "ModelGateway: Bedrock stream");
+  logger.debug({ modelId, requestedModel: req.model, region: REGION }, "ModelGateway: Bedrock stream");
 
   const client = new BedrockRuntimeClient({
     region: REGION,
@@ -88,10 +110,24 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
   const systemMsg = req.messages.find((m) => m.role === "system");
   const chatMessages = req.messages.filter((m) => m.role !== "system");
 
+  // Converse requires content as a ContentBlock[], not a raw string.
   const messages = chatMessages.map((m) => ({
     role: m.role === "system" ? "user" : (m.role as "user" | "assistant"),
-    content: m.content,
+    content: [{ text: m.content }],
   }));
+
+  // Cache the stable base system prompt separately from the variable skills
+  // block, mirroring the split used on the direct-Anthropic path — a build
+  // whose skill set differs still hits cache on the shared base. Each text
+  // segment is followed by its own cache point (Bedrock allows up to 4 per
+  // request; splitSystemPrompt yields at most 2 segments today).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const systemBlocks: any[] | undefined = systemMsg
+    ? splitSystemPrompt(systemMsg.content).flatMap((text) => [
+        { text },
+        { cachePoint: { type: "default" } },
+      ])
+    : undefined;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const converseParams: any = {
@@ -101,13 +137,15 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
       maxTokens: req.maxTokens ?? 16_000,
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     },
-    ...(systemMsg ? { system: [{ text: systemMsg.content }] } : {}),
+    ...(systemBlocks ? { system: systemBlocks } : {}),
   };
 
+  // Converse has no top-level thinkingConfig field — model-specific params go
+  // in additionalModelRequestFields. Claude Sonnet 5 removed manual
+  // budget_tokens; adaptive thinking is the current shape.
   if (supportsThinking(modelId) && req.thinkingBudget) {
-    converseParams.thinkingConfig = {
-      type: "enabled",
-      budgetTokens: req.thinkingBudget,
+    converseParams.additionalModelRequestFields = {
+      thinking: { type: "adaptive" },
     };
   }
 
@@ -127,13 +165,15 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
     for await (const event of response.stream as any) {
       if (!event) continue;
 
-      // ContentBlockDelta — text or thinking chunks
+      // ContentBlockDelta — Converse's delta is a property-keyed union
+      // ({ text } | { reasoningContent } | { toolUse } | ...), not the
+      // discriminated-by-`type` shape used by Anthropic's raw SSE format.
       if (event.contentBlockDelta) {
         const delta = event.contentBlockDelta.delta;
-        if (delta.type === "text_delta" && delta.text) {
+        if (delta?.text) {
           yield { type: "content", content: delta.text };
-        } else if (delta.type === "thinking_delta" && delta.thinking) {
-          yield { type: "reasoning", reasoning: delta.thinking };
+        } else if (delta?.reasoningContent?.text) {
+          yield { type: "reasoning", reasoning: delta.reasoningContent.text };
         }
       }
 

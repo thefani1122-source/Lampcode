@@ -26,6 +26,10 @@ const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> =
   "openai/gpt-4o":               { inputPerM: 5.00,  outputPerM: 15.00 },
   "openai/gpt-4o-mini":          { inputPerM: 0.15,  outputPerM: 0.60  },
   // Bare format (no anthropic/ prefix) — matches model-gateway.ts dispatch
+  // claude-sonnet-5 pricing: same per-token rate as claude-sonnet-4-6 (Anthropic
+  // confirms per-token pricing is unchanged between the two; only the tokenizer
+  // changed, producing ~30% more tokens for the same text).
+  "claude-sonnet-5":              { inputPerM: 3.00,  outputPerM: 15.00 },
   "claude-opus-4-8":             { inputPerM: 15.00, outputPerM: 75.00 },
   "claude-opus-4-7":             { inputPerM: 15.00, outputPerM: 75.00 },
   "claude-opus-4-6":             { inputPerM: 15.00, outputPerM: 75.00 },

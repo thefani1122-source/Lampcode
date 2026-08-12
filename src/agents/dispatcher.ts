@@ -98,10 +98,10 @@ export class AgentDispatcher {
     let lastError: Error | null = null;
 
     for (let tier = 1; tier <= tiers.length; tier++) {
-      const model = tierModel(parsed.agentType, tier as 1 | 2 | 3);
+      const model = tierModel(parsed.agentType, tier as 1 | 2);
 
       try {
-        return await this.callModelWithRetry({ ...parsed, contextFiles }, task, model, tier as 1 | 2 | 3);
+        return await this.callModelWithRetry({ ...parsed, contextFiles }, task, model, tier as 1 | 2);
       } catch (err) {
         if (
           err instanceof GatewayError &&
@@ -152,7 +152,7 @@ export class AgentDispatcher {
     options: DispatchOptions,
     task: TaskInput,
     model: string,
-    tier: 1 | 2 | 3,
+    tier: 1 | 2,
   ): Promise<DispatchResult> {
     let lastErr: Error | null = null;
     for (let attempt = 0; attempt <= RETRIES_PER_TIER; attempt++) {
@@ -176,7 +176,7 @@ export class AgentDispatcher {
     options: DispatchOptions,
     task: TaskInput,
     model: string,
-    tier: 1 | 2 | 3,
+    tier: 1 | 2,
   ): Promise<DispatchResult> {
     const { agentType, sessionId, userId, projectId, contextFiles } = options;
 
