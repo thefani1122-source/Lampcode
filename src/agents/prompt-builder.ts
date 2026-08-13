@@ -25,7 +25,10 @@ import { logger } from "../server/logger.js";
 
 const MAX_INPUT_TOKENS = Number(process.env.MAX_INPUT_TOKENS) || 150_000;
 const MAX_SYSTEM_PROMPT_TOKENS = Number(process.env.MAX_SYSTEM_PROMPT_TOKENS) || 30_000;
-const CHARS_PER_TOKEN = 4; // approximation
+// ~30% more tokens on Sonnet 5's tokenizer vs the old 4.0 approximation
+// (Anthropic: "approximately 30% more tokens for the same text" vs Sonnet 4.6).
+// Still an approximation — count_tokens() is the exact source, not available here.
+const CHARS_PER_TOKEN = 3.1;
 const MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
 const MAX_SYSTEM_PROMPT_CHARS = MAX_SYSTEM_PROMPT_TOKENS * CHARS_PER_TOKEN;
 /** Floor for the user message so a large system prompt can never starve it. */

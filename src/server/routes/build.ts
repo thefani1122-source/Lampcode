@@ -91,6 +91,14 @@ const FAST_BUILD_CREDIT_COST = process.env["FAST_BUILD_CREDIT_COST"]
   ? parseInt(process.env["FAST_BUILD_CREDIT_COST"], 10)
   : 20;
 
+// Hard ceiling on cumulative model spend within one build (main dispatch +
+// missing-files retry + fix loops). Checked BETWEEN dispatches, never mid-stream —
+// a single dispatch already in flight always completes. Protects against the
+// retry/fix loops compounding spend beyond what the flat credit charge represents.
+const MAX_BUILD_COST_USD = process.env["MAX_BUILD_COST_USD"]
+  ? parseFloat(process.env["MAX_BUILD_COST_USD"])
+  : 1.0;
+
 // ── In-memory cancel registry ─────────────────────────────────────────────────
 
 const cancelledSessions = new Set<string>();
@@ -936,6 +944,10 @@ export async function runFastBuild(
       projectId,
     });
 
+    // Running spend across this build's dispatches. The main dispatch above
+    // always fires regardless of cost — there is nothing to check it against yet.
+    let cumulativeCostUsd = result.costUsd;
+
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {
       cancelledSessions.delete(sessionId);
@@ -1043,6 +1055,30 @@ export async function runFastBuild(
             (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\n" : "") +
             (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\n" : "");
 
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before missing-files retry — aborting build",
+            );
+            const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+            server?.buildFailed(sessionId, {
+              sessionId,
+              phase: "BUILD",
+              reason,
+              logs: "",
+              timestamp: new Date().toISOString(),
+            });
+            await Promise.all([
+              db.update(buildSessions)
+                .set({ status: "failed", error: reason, completedAt: new Date() })
+                .where(eq(buildSessions.id, sessionId)),
+              db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+              refundCredits(userId, FAST_BUILD_CREDIT_COST),
+            ]);
+            console.log(`[build] cost ceiling reached before missing-files retry, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+            return;
+          }
+
           const retryResult = await dispatcher.dispatch({
             agentType: "backend",
             task: {
@@ -1059,6 +1095,7 @@ export async function runFastBuild(
             userId,
             projectId,
           });
+          cumulativeCostUsd += retryResult.costUsd;
 
           const retryParsed = parseFilesFromContent(retryResult.content);
           const missingSet = new Set(missing);
@@ -1141,6 +1178,30 @@ export async function runFastBuild(
             })
             .join("\n\n");
 
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before syntax-fix dispatch — aborting build",
+          );
+          const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+            refundCredits(userId, FAST_BUILD_CREDIT_COST),
+          ]);
+          console.log(`[build] cost ceiling reached before syntax-fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
         try {
           const fixResult = await dispatcher.dispatch({
             agentType: "frontend",
@@ -1157,6 +1218,7 @@ export async function runFastBuild(
             userId,
             projectId,
           });
+          cumulativeCostUsd += fixResult.costUsd;
           const fixedParsed = parseFilesFromContent(fixResult.content);
           const fixedMap = new Map(fixedParsed.filter((f) => broken.has(f.path)).map((f) => [f.path, f.code]));
           if (fixedMap.size > 0) {
@@ -1509,6 +1571,22 @@ export async function runFastBuild(
           `Current backend files:\n` +
           serverFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
 
+        // This loop runs fire-and-forget AFTER the build session is already marked
+        // "success" (writeFilesToSandbox/createPreviewSandbox above are not awaited
+        // before that update). The cost ceiling here can only stop further spend —
+        // it cannot fail or refund a build already recorded and delivered as complete.
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before preview-crash fix dispatch — skipping further auto-repair",
+          );
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: "Backend crashed and the automatic fix budget for this build was reached. Try a follow-up prompt to fix it.",
+          });
+          break;
+        }
+
         let fixedCount = 0;
         try {
           const fix = await dispatcher.dispatch({
@@ -1527,6 +1605,7 @@ export async function runFastBuild(
             userId,
             projectId,
           });
+          cumulativeCostUsd += fix.costUsd;
           for (const f of parseFilesFromContent(fix.content)) {
             if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; }
           }
