@@ -39,6 +39,7 @@ import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
+import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTree } from "../../verify/security.js";
 import { uploadProjectFiles, downloadProjectFiles } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
@@ -424,6 +425,19 @@ function isUnsupportedBackendRuntime(prompt: string): boolean {
  * True when the prompt implies user accounts, login, OAuth, or session handling.
  * Used to activate the AUTH sub-mode of a fullstack build.
  */
+/**
+ * Security findings that must never be auto-fixed: a leaked secret can't be
+ * "fixed" by rewriting the line that exposed it (the credential is already
+ * compromised), and declaring an undeclared/possibly-hallucinated package as
+ * a real dependency risks entrenching a slopsquatted package rather than
+ * removing it. Everything else (missing auth/RLS/CORS/CSRF/XSS/SQLi guard,
+ * missing Stripe webhook verification) is a well-defined code pattern an
+ * auto-fix dispatch can safely attempt.
+ */
+function isHardBlockSecurityCheck(c: SecurityCheck): boolean {
+  return c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-");
+}
+
 function needsAuth(prompt: string): boolean {
   return /\b(auth|login|log[- ]in|signin|sign[- ]in|sign[- ]up|signup|register|logout|log[- ]out|oauth|jwt|session|password|credential|account|user account|user profile|admin panel|authentication|authorization)\b/i.test(
     prompt,
@@ -1456,6 +1470,127 @@ export async function runFastBuild(
     } else {
       for (const f of filesToWrite) {
         allFiles[f.path] = f.code;
+      }
+    }
+
+    // ── Security validation + auto-fix / hard-block loop ────────────────────
+    // Runs in-memory against the current allFiles snapshot — none of the seven
+    // checks need real dependencies or a live sandbox (all pure regex/string
+    // scans), so unlike the tsc loop this has no reason to run sandbox-side.
+    // Positioned here deliberately: before backendReady/Sandpack emission below
+    // (so those never see pre-fix content) and before the E2B write further down
+    // (so a hard-blocked deploy never produces a live preview URL at all).
+    {
+      const MAX_SECURITY_FIX_ATTEMPTS = 2;
+      let lastSecurityFingerprint = "";
+      for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
+        const fileTree: FileTree = new Map(Object.entries(allFiles));
+        const report: SecurityReport = await runSecurityChecks(projectId, async () => fileTree).catch(
+          (): SecurityReport => ({ passed: true, checks: [] }),
+        );
+        const failing = report.checks.filter((c) => c.status === "fail");
+        if (failing.length === 0) break;
+
+        const hardBlocked = failing.filter(isHardBlockSecurityCheck);
+        if (hardBlocked.length > 0) {
+          // Never attempt an automated fix on a live credential or a possibly
+          // hallucinated package — abort the whole build instead. This runs
+          // before buildSessions is marked "success", so refund + fail is correct.
+          logger.warn({ sessionId, projectId, hardBlocked }, "Security hard-block finding — aborting build, no auto-fix attempted");
+          const reason = `Build blocked by security check: ${hardBlocked.map((c) => c.message).join("; ")}`;
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+            refundCredits(userId, FAST_BUILD_CREDIT_COST),
+          ]);
+          console.log(`[build] security hard-block, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        // Everything remaining in `failing` is auto-fixable at this point.
+        const fingerprint = failing.map((c) => `${c.id}:${c.file ?? ""}:${c.message}`).sort().join("|");
+        if (attempt === MAX_SECURITY_FIX_ATTEMPTS || fingerprint === lastSecurityFingerprint) {
+          logger.warn({ sessionId, projectId, failing }, "Security findings remain after fix attempts");
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Some security issues remain: ${failing.map((c) => c.message).join("; ")}. Try a follow-up prompt to fix them.`,
+            validationErrors: failing.map((c) => `${c.file ?? "project"}: ${c.message}`),
+          });
+          break;
+        }
+        lastSecurityFingerprint = fingerprint;
+
+        logger.warn({ sessionId, projectId, failing, attempt }, "Security findings — dispatching fix");
+        server?.thinking(sessionId, {
+          text: `Fixing ${failing.length} security issue(s)…`,
+          sessionId,
+        });
+
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before security-fix dispatch — aborting build",
+          );
+          const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+            refundCredits(userId, FAST_BUILD_CREDIT_COST),
+          ]);
+          console.log(`[build] cost ceiling reached before security-fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        const fixDescription =
+          `These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation):\n\n` +
+          failing
+            .map((c) => `- [${c.id}]${c.file ? ` ${c.file}${c.line ? `:${c.line}` : ""} —` : ""} ${c.message}`)
+            .join("\n");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "backend",
+            task: {
+              description: fixDescription,
+              requirements: [
+                "Fix ONLY the reported security issues — do not change unrelated logic.",
+                "Return the COMPLETE corrected file for each file you touch.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fixResult.costUsd;
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          const knownPaths = new Set(Object.keys(allFiles));
+          for (const f of fixedParsed) {
+            if (knownPaths.has(f.path)) allFiles[f.path] = f.code;
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Security fix dispatch failed");
+          break;
+        }
       }
     }
 
