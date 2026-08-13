@@ -1,4 +1,4 @@
-import { Sandbox } from "e2b";
+import { Sandbox, CommandExitError } from "e2b";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
@@ -625,6 +625,57 @@ export async function verifyPreview(projectId: string): Promise<{ ok: boolean; i
   if (up) return { ok: true, issues: [] };
   const message = extractBackendError(backendLogs.get(sandbox.sandboxId) ?? []) || "backend did not start on port 3001";
   return { ok: false, issues: [{ source: "src/server/index.ts", message }] };
+}
+
+// tsc --pretty false emits one line per diagnostic:
+//   src/components/Header.tsx(12,5): error TS2339: Property 'foo' does not exist on type 'Bar'.
+const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
+
+/**
+ * Type-check the generated project inside its own sandbox, where the real
+ * dependency graph (react, hono, supabase, etc — the template's baked
+ * node_modules) and the real tsconfig.json already live. Checking in-memory
+ * in the Lampcode process instead would need a duplicate copy of every
+ * package the template installs just to resolve types, and would report
+ * "cannot find module" on all of them — not real errors, just noise.
+ * typescript is globally installed in the template (no install step, no
+ * network dependency), so this runs immediately after files are written.
+ * No-op (ok:true) if no live in-process sandbox exists for this project —
+ * same silent-skip behavior as verifyPreview.
+ */
+export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return { ok: true, issues: [] };
+
+  let stdout = "";
+  try {
+    const r = await sandbox.commands.run("tsc --noEmit --pretty false", {
+      cwd: PROJECT_DIR,
+      timeoutMs: 60_000,
+    });
+    stdout = r.stdout;
+  } catch (err) {
+    if (err instanceof CommandExitError) {
+      // Non-zero exit is the EXPECTED path when there are type errors —
+      // the diagnostics are on stdout regardless of exit code.
+      stdout = err.stdout;
+    } else {
+      // Sandbox unreachable, timed out, or tsc itself missing — don't block
+      // the build on infrastructure trouble unrelated to the generated code.
+      return { ok: true, issues: [] };
+    }
+  }
+
+  const issues: PreviewIssue[] = [];
+  TSC_DIAGNOSTIC_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TSC_DIAGNOSTIC_RE.exec(stdout)) !== null) {
+    const [, file, line, , code, text] = m;
+    if (!file || !code || !text) continue;
+    issues.push({ source: file, message: `${code}: ${text.trim()} (line ${line})` });
+  }
+
+  return { ok: issues.length === 0, issues };
 }
 
 /** Whether a live, in-process sandbox is currently held for this project. */

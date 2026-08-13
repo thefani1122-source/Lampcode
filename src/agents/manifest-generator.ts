@@ -18,6 +18,10 @@ const NEXTJS_HANDLER_RE = /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|
 // FastAPI: @app.get('/path')
 const FASTAPI_ROUTE_RE = /@app\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]/g;
 
+// import { A, B as C } from "./x"  |  import X from "./x"  — relative specifiers only
+// (bare-package imports like "react" are irrelevant to intra-project wiring).
+const IMPORT_RE = /import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"](\.[^'"]+)['"]/g;
+
 // ── Path → purpose inference ──────────────────────────────────────────────────
 
 function inferPurpose(relPath: string): string {
@@ -81,6 +85,117 @@ function extractRoutes(content: string): string[] {
   }
 
   return routes.slice(0, 4);
+}
+
+// ── Orphan-export detection ─────────────────────────────────────────────────────
+// "Component added but never wired in": a UI component file exports a name
+// that no other file in the project ever imports. Deterministic, regex-based —
+// no AST, consistent with the rest of this module.
+
+interface ImportedNames {
+  names: string[];
+  specifier: string;
+}
+
+/** Every `import ... from "./relative/specifier"` in a file, with the imported names. */
+function extractImportedNames(content: string): ImportedNames[] {
+  const results: ImportedNames[] = [];
+  let m: RegExpExecArray | null;
+  IMPORT_RE.lastIndex = 0;
+  while ((m = IMPORT_RE.exec(content)) !== null) {
+    const named = m[1];
+    const defaultName = m[2];
+    const specifier = m[3];
+    if (!specifier) continue;
+
+    const names: string[] = [];
+    if (named) {
+      // "Foo, Bar as Baz" -> use the ORIGINAL exported name (Foo, Bar), not the local alias.
+      for (const part of named.split(",")) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const original = trimmed.split(/\s+as\s+/)[0]?.trim();
+        if (original) names.push(original);
+      }
+    }
+    if (defaultName) names.push(defaultName);
+    if (names.length > 0) results.push({ names, specifier });
+  }
+  return results;
+}
+
+/**
+ * Resolve a relative import specifier to a known project file path.
+ * "src/App.tsx" importing "./components/Header" -> tries
+ * "src/components/Header", "src/components/Header.tsx", ".../Header/index.tsx", etc.
+ */
+function resolveImportSpecifier(
+  fromPath: string,
+  specifier: string,
+  knownPaths: Set<string>,
+): string | null {
+  const fromDir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
+  const stack = fromDir ? fromDir.split("/") : [];
+  for (const part of specifier.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") stack.pop();
+    else stack.push(part);
+  }
+  const base = stack.join("/");
+
+  const candidates = [
+    base,
+    `${base}.tsx`,
+    `${base}.ts`,
+    `${base}.jsx`,
+    `${base}.js`,
+    `${base}/index.tsx`,
+    `${base}/index.ts`,
+  ];
+  for (const c of candidates) {
+    if (knownPaths.has(c)) return c;
+  }
+  return null;
+}
+
+export interface OrphanExport {
+  path: string;
+  name: string;
+}
+
+/**
+ * Exported names from UI-component files that no other file in the project
+ * imports. Scoped to files inferPurpose() classifies as "UI component —" —
+ * entry points (App.tsx/main.tsx), backend handlers (registered via routes,
+ * not imports), and utility/type files (legitimately different consumption
+ * patterns) are excluded to keep false positives cheap.
+ */
+export function findOrphanExports(files: Record<string, string>): OrphanExport[] {
+  const paths = Object.keys(files);
+  const knownPaths = new Set(paths);
+
+  // Every imported name, keyed by the file it resolves to.
+  const importedByFile = new Map<string, Set<string>>();
+  for (const p of paths) {
+    for (const { names, specifier } of extractImportedNames(files[p] ?? "")) {
+      const resolved = resolveImportSpecifier(p, specifier, knownPaths);
+      if (!resolved) continue;
+      let set = importedByFile.get(resolved);
+      if (!set) importedByFile.set(resolved, (set = new Set()));
+      for (const n of names) set.add(n);
+    }
+  }
+
+  const orphans: OrphanExport[] = [];
+  for (const p of paths) {
+    if (!inferPurpose(p).startsWith("UI component")) continue;
+    const exported = extractExports(files[p] ?? "");
+    const imported = importedByFile.get(p) ?? new Set<string>();
+    for (const name of exported) {
+      if (!imported.has(name)) orphans.push({ path: p, name });
+    }
+  }
+  return orphans;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

@@ -31,14 +31,14 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
-import { generateFileManifest } from "../../agents/manifest-generator.js";
+import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
 import { uploadProjectFiles, downloadProjectFiles } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
@@ -1133,55 +1133,90 @@ export async function runFastBuild(
       }
     }
 
-    // ── Syntax validation + auto-fix loop ───────────────────────────────────
+    // ── Syntax validation + orphan-export detection + auto-fix loop ─────────
     // The #1 cause of "Preview failed to load: syntax error" is the model
     // emitting a truncated/broken source file. Parse every generated source
     // file with esbuild (the same parser the preview uses); if any fail, ask
-    // the model to return the COMPLETE corrected file, then re-validate. Bounded
-    // retries + an error fingerprint prevent loops. Broken code never reaches
-    // the preview unless we genuinely can't repair it.
+    // the model to return the COMPLETE corrected file, then re-validate.
+    // Alongside that, catch the "component added but never wired in" failure:
+    // a UI component that exports something no other file imports. Both
+    // checks are cheap, deterministic, and run in-memory (no sandbox needed),
+    // so they share one bounded loop, one fingerprint, and one fix budget.
+    // Broken/orphaned code never reaches the preview unless we genuinely can't repair it.
     {
       const MAX_FIX_ATTEMPTS = 2;
       let lastFingerprint = "";
       for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
         const errors = await validateSyntax(filesToWrite).catch(() => []);
-        if (errors.length === 0) break;
+        let orphans: OrphanExport[] = [];
+        try {
+          orphans = findOrphanExports(Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])));
+        } catch {
+          orphans = [];
+        }
+        if (errors.length === 0 && orphans.length === 0) break;
 
-        const fingerprint = errors.map((e) => `${e.path}:${e.message}`).sort().join("|");
+        const fingerprint =
+          errors.map((e) => `${e.path}:${e.message}`).sort().join("|") +
+          "||" +
+          orphans.map((o) => `${o.path}:${o.name}`).sort().join("|");
         if (attempt === MAX_FIX_ATTEMPTS || fingerprint === lastFingerprint) {
-          // Out of attempts or the same errors keep coming back — surface it
-          // instead of shipping broken code as if it succeeded.
-          logger.warn({ sessionId, errors }, "Syntax errors remain after fix attempts");
+          // Out of attempts or the same issues keep coming back — surface it
+          // instead of shipping broken/unwired code as if it succeeded.
+          logger.warn({ sessionId, errors, orphans }, "Syntax errors or orphan exports remain after fix attempts");
+          const summary: string[] = [];
+          if (errors.length > 0) summary.push(`syntax errors: ${errors.map((e) => e.path).join(", ")}`);
+          if (orphans.length > 0) summary.push(`unwired components: ${orphans.map((o) => `${o.name} (${o.path})`).join(", ")}`);
           server?.emitToRoom(sessionId, "build:warning", {
             sessionId,
-            message: `Some generated files still have syntax errors: ${errors.map((e) => e.path).join(", ")}. Try a follow-up prompt to fix them.`,
-            validationErrors: errors.map((e) => `${e.path}: ${e.message}`),
+            message: `Some issues remain: ${summary.join("; ")}. Try a follow-up prompt to fix them.`,
+            validationErrors: [
+              ...errors.map((e) => `${e.path}: ${e.message}`),
+              ...orphans.map((o) => `${o.path}: exports '${o.name}' but it's never imported anywhere`),
+            ],
           });
           break;
         }
         lastFingerprint = fingerprint;
 
-        logger.warn({ sessionId, errors, attempt }, "Syntax errors — dispatching fix");
+        logger.warn({ sessionId, errors, orphans, attempt }, "Syntax errors or orphan exports — dispatching fix");
         server?.thinking(sessionId, {
-          text: `Fixing a syntax error in ${errors.map((e) => e.path).join(", ")}…`,
+          text:
+            errors.length > 0 && orphans.length > 0
+              ? `Fixing syntax errors and wiring in ${orphans.length} unused component(s)…`
+              : errors.length > 0
+                ? `Fixing a syntax error in ${errors.map((e) => e.path).join(", ")}…`
+                : `Wiring in ${orphans.length} component(s) that aren't used anywhere…`,
           sessionId,
         });
 
         const broken = new Set(errors.map((e) => e.path));
         const brokenFiles = filesToWrite.filter((f) => broken.has(f.path));
-        const fixDescription =
-          `These files have syntax errors that break the preview. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
-          brokenFiles
-            .map((f) => {
-              const errMsg = errors.find((e) => e.path === f.path)?.message ?? "syntax error";
-              return `### ${f.path} — error: ${errMsg}\n\`\`\`filename:${f.path}\n${f.code}\n\`\`\``;
-            })
-            .join("\n\n");
+        const descriptionParts: string[] = [];
+        if (brokenFiles.length > 0) {
+          descriptionParts.push(
+            `These files have syntax errors that break the preview. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
+              brokenFiles
+                .map((f) => {
+                  const errMsg = errors.find((e) => e.path === f.path)?.message ?? "syntax error";
+                  return `### ${f.path} — error: ${errMsg}\n\`\`\`filename:${f.path}\n${f.code}\n\`\`\``;
+                })
+                .join("\n\n"),
+          );
+        }
+        if (orphans.length > 0) {
+          descriptionParts.push(
+            `These components are exported but never imported or rendered anywhere in the project — they exist but are not wired into the app:\n\n` +
+              orphans.map((o) => `- ${o.name} (exported from ${o.path})`).join("\n") +
+              `\n\nWire each one in: edit the appropriate existing file (commonly App.tsx or a parent page/layout) to import and render it. Return the COMPLETE corrected file for whichever file(s) you change.`,
+          );
+        }
+        const fixDescription = descriptionParts.join("\n\n---\n\n");
 
         if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
           logger.warn(
             { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
-            "Build cost ceiling reached before syntax-fix dispatch — aborting build",
+            "Build cost ceiling reached before syntax/orphan fix dispatch — aborting build",
           );
           const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
           server?.buildFailed(sessionId, {
@@ -1198,20 +1233,30 @@ export async function runFastBuild(
             db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
             refundCredits(userId, FAST_BUILD_CREDIT_COST),
           ]);
-          console.log(`[build] cost ceiling reached before syntax-fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          console.log(`[build] cost ceiling reached before syntax/orphan fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
           return;
         }
+
+        const requirements: string[] = [];
+        if (brokenFiles.length > 0) {
+          requirements.push(
+            `Output the COMPLETE corrected file for each of: ${[...broken].join(", ")}.`,
+            "Return each file COMPLETE — never truncate, close every JSX tag and brace.",
+          );
+        }
+        if (orphans.length > 0) {
+          requirements.push(
+            "For the unwired components, only touch the file(s) that need to import and render them — do not rewrite unrelated files.",
+          );
+        }
+        requirements.push("Use the exact format: ```filename:<path> for each file.");
 
         try {
           const fixResult = await dispatcher.dispatch({
             agentType: "frontend",
             task: {
               description: fixDescription,
-              requirements: [
-                `Output ONLY these files: ${[...broken].join(", ")}.`,
-                "Return each file COMPLETE — never truncate, close every JSX tag and brace.",
-                "Use the exact format: ```filename:<path> for each file.",
-              ],
+              requirements,
               outputFormat: "code",
             },
             sessionId,
@@ -1220,12 +1265,18 @@ export async function runFastBuild(
           });
           cumulativeCostUsd += fixResult.costUsd;
           const fixedParsed = parseFilesFromContent(fixResult.content);
-          const fixedMap = new Map(fixedParsed.filter((f) => broken.has(f.path)).map((f) => [f.path, f.code]));
+          // Orphan fixes legitimately land in a DIFFERENT file than the one that
+          // declared the export (e.g. App.tsx gains the import), so once orphans
+          // are in play, accept any returned file that's already part of this
+          // project rather than restricting to the syntax-error set.
+          const knownPaths = new Set(filesToWrite.map((f) => f.path));
+          const acceptablePaths = orphans.length > 0 ? knownPaths : broken;
+          const fixedMap = new Map(fixedParsed.filter((f) => acceptablePaths.has(f.path)).map((f) => [f.path, f.code]));
           if (fixedMap.size > 0) {
             filesToWrite = filesToWrite.map((f) => (fixedMap.has(f.path) ? { ...f, code: fixedMap.get(f.path)! } : f));
           }
         } catch (fixErr) {
-          logger.error({ sessionId, fixErr }, "Syntax fix dispatch failed");
+          logger.error({ sessionId, fixErr }, "Syntax/orphan fix dispatch failed");
           break;
         }
       }
@@ -1619,6 +1670,95 @@ export async function runFastBuild(
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
         ).catch(() => {});
       }
+
+      // Type-check the generated project against its real dependency graph and
+      // tsconfig — both only exist inside the sandbox (see runTypeCheck() for
+      // why this can't run in-memory in this process). Same shape as the
+      // backend-crash loop above: bounded, fingerprinted, fire-and-forget
+      // after the build is already marked "success" — a ceiling hit here can
+      // only stop further spend, never fail/refund a build already delivered.
+      {
+        const MAX_TYPECHECK_ATTEMPTS = 2;
+        let lastTypeFingerprint = "";
+        for (let attempt = 0; attempt <= MAX_TYPECHECK_ATTEMPTS; attempt++) {
+          const { ok, issues } = await runTypeCheck(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+          if (ok || issues.length === 0) break;
+
+          const fingerprint = issues.map((i) => `${i.source}:${i.message}`).sort().join("|");
+          if (attempt === MAX_TYPECHECK_ATTEMPTS || fingerprint === lastTypeFingerprint) {
+            logger.warn({ sessionId, projectId, issues }, "Type errors remain after fix attempts");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `Some generated files still have type errors: ${[...new Set(issues.map((i) => i.source))].join(", ")}. Try a follow-up prompt to fix them.`,
+              validationErrors: issues.map((i) => `${i.source}: ${i.message}`),
+            });
+            break;
+          }
+          lastTypeFingerprint = fingerprint;
+
+          logger.warn({ sessionId, projectId, issues, attempt }, "Type errors — dispatching fix");
+          server?.thinking(sessionId, {
+            text: `Fixing a type error in ${[...new Set(issues.map((i) => i.source))].join(", ")}…`,
+            sessionId,
+          });
+
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before type-fix dispatch — skipping further auto-repair",
+            );
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: "Type errors found and the automatic fix budget for this build was reached. Try a follow-up prompt to fix them.",
+            });
+            break;
+          }
+
+          const affected = new Set(issues.map((i) => i.source));
+          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
+          if (affectedFiles.length === 0) break;
+
+          const fixDesc =
+            `These files have TypeScript type errors. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
+            affectedFiles
+              .map(([p, code]) => {
+                const fileIssues = issues.filter((i) => i.source === p).map((i) => i.message).join("; ");
+                return `### ${p} — error: ${fileIssues}\n\`\`\`filename:${p}\n${code}\n\`\`\``;
+              })
+              .join("\n\n");
+
+          let fixedCount = 0;
+          try {
+            const fix = await dispatcher.dispatch({
+              agentType: "frontend",
+              task: {
+                description: fixDesc,
+                requirements: [
+                  `Output the COMPLETE corrected file for each of: ${[...affected].join(", ")}.`,
+                  "Fix ONLY the reported type errors — do not change unrelated logic.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+            });
+            cumulativeCostUsd += fix.costUsd;
+            for (const f of parseFilesFromContent(fix.content)) {
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; }
+            }
+          } catch (fixErr) {
+            logger.error({ sessionId, fixErr }, "Type-check fix dispatch failed");
+            break;
+          }
+          if (fixedCount === 0) break;
+          await writeFilesToSandbox(projectId, allFiles, (line) =>
+            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+          ).catch(() => {});
+        }
+      }
+
       server?.emitPreviewUrl(sessionId, { sessionId, url });
     };
 
