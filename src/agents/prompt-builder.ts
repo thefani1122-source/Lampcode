@@ -534,15 +534,15 @@ PRODUCTION CODE STANDARDS:
 
 DESIGN SYSTEM — Follow the FRAMEWORK_RULES design system exactly: Tailwind CSS utility classes, shadcn/ui components from "@/components/ui/X", cn() from "@/lib/utils", lucide-react icons, TanStack Query with QueryClientProvider from "@/lib/queryClient".
 
-ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,
-@radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the
-DB/auth libraries named below. All pre-installed. Do not import other libraries.
-ALLOWED IMPORTS (backend/server): hono, @hono/node-server, zod, plus EXACTLY the
-DB/auth libraries named in the DATABASE/AUTH sections below.`;
+{{NPM_MANIFEST}}`;
 
 // Use a Python/FastAPI backend when the prompt asks for it (or implies a
 // Python-only ecosystem: ML/data work).
-export const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|pytorch|tensorflow|data\s*science|machine\s*learning)\b/i;
+// pytorch/tensorflow deliberately excluded: CPU wheels alone run hundreds of MB
+// (GPU wheels multi-GB), and deep-learning workloads assume GPU or long training
+// runs — mismatched to an ephemeral preview sandbox that shares one cold-start
+// image across every build, not just Python ones. Not installed in template.ts.
+export const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|data\s*science|machine\s*learning)\b/i;
 
 export const FASTAPI_OVERRIDE = `
 
@@ -552,6 +552,8 @@ The user wants a Python backend. REPLACE the Node/Hono backend with FastAPI.
 Do NOT generate src/server/index.ts, src/server/routes/api.ts, or any .ts
 backend file. Everything else (the React frontend + src/lib/api.ts calling
 '/api/...') stays exactly the same — Vite proxies /api to this server on :3001.
+
+{{PIP_MANIFEST}}
 
 Generate INSTEAD:
 
@@ -1180,6 +1182,73 @@ async function buildSkillIndex(): Promise<string> {
   return skillIndexCache;
 }
 
+// ── Sandbox capability manifest ──────────────────────────────────────────────
+// e2b-template/template.ts is the single source of truth for what's actually
+// installed in the preview sandbox. Read and parsed at runtime — same sibling-
+// directory, same process.cwd()-relative pattern already proven by the skill
+// loader above. No second hand-maintained package list anywhere in this file.
+
+const TEMPLATE_TS_PATH = join(process.cwd(), "e2b-template", "template.ts");
+
+// DB/auth libraries already named explicitly throughout the DATABASE/AUTH
+// instruction blocks below — excluded here so they aren't listed twice under
+// two different framings ("available" vs "use exactly this one").
+const DB_AUTH_LIBS = new Set(["@supabase/supabase-js", "mongoose", "jsonwebtoken", "bcryptjs"]);
+
+let npmManifestCache: string | null = null;
+let pipManifestCache: string | null = null;
+
+/**
+ * Parses the PKG_JSON template-literal out of template.ts and JSON.parse()s
+ * it directly — its content is valid JSON, so this is more robust than a
+ * name-matching regex over the dependencies block.
+ */
+async function buildNpmManifest(): Promise<string> {
+  if (npmManifestCache !== null) return npmManifestCache;
+
+  try {
+    const raw = await readFile(TEMPLATE_TS_PATH, "utf-8");
+    const m = /const PKG_JSON = `([\s\S]*?)`\n/.exec(raw);
+    if (!m) throw new Error("PKG_JSON block not found in template.ts");
+    const pkg = JSON.parse(m[1] ?? "{}") as { dependencies?: Record<string, string> };
+    const names = Object.keys(pkg.dependencies ?? {}).filter((n) => !DB_AUTH_LIBS.has(n));
+
+    npmManifestCache =
+      `AVAILABLE IN THIS SANDBOX (pre-installed — use freely, no install step needed):\n` +
+      `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.`;
+  } catch {
+    // template.ts unreadable — fail safe to the old static list rather than
+    // emitting an empty/broken instruction block.
+    npmManifestCache =
+      `ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,\n` +
+      `@radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the\n` +
+      `DB/auth libraries named below. All pre-installed. Do not import other libraries.\n` +
+      `ALLOWED IMPORTS (backend/server): hono, @hono/node-server, zod, plus EXACTLY the\n` +
+      `DB/auth libraries named in the DATABASE/AUTH sections below.`;
+  }
+  return npmManifestCache;
+}
+
+/** Extracts the pip3 install line's package tokens from template.ts's Dockerfile array. */
+async function buildPipManifest(): Promise<string> {
+  if (pipManifestCache !== null) return pipManifestCache;
+
+  try {
+    const raw = await readFile(TEMPLATE_TS_PATH, "utf-8");
+    const m = /pip3 install --no-cache-dir --break-system-packages ([^']+)'/.exec(raw);
+    if (!m) throw new Error("pip3 install line not found in template.ts");
+    const tokens = (m[1] ?? "")
+      .split(/\s+/)
+      .map((t) => t.replace(/^"|"$/g, "").trim())
+      .filter(Boolean);
+
+    pipManifestCache = `Available Python packages in this sandbox (pre-installed — use freely): ${tokens.join(", ")}.`;
+  } catch {
+    pipManifestCache = "";
+  }
+  return pipManifestCache;
+}
+
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
@@ -1350,13 +1419,22 @@ export class PromptBuilder {
     // Next.js and TanStack have their own backend model (API routes / server functions).
     const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
 
-    const fullstackInstruction = isFullstackMode
+    let fullstackInstruction = isFullstackMode
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
             ? TANSTACK_INSTRUCTION
             : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
       : "";
+
+    // Only the react/hono path maps to e2b-template/template.ts — Next.js and
+    // TanStack route to their own separate templates (out of scope this session).
+    if (isFullstackMode && fullstackFramework === "react") {
+      fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNpmManifest());
+      if (wantsPython) {
+        fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
+      }
+    }
 
     // framework detection for frameworkInstruction (Sandpack rules):
     // - For fullstack nextjs/tanstack: skip FRAMEWORK_RULES (their instruction covers everything).
