@@ -1,3 +1,8 @@
+---
+name: supabase-rls
+description: Supabase RLS policy templates — user-owned-rows, public-read/authenticated-write, and team/org-membership patterns, plus policy testing and indexing rules.
+---
+
 # Supabase Row Level Security Patterns
 
 ## Always Enable RLS

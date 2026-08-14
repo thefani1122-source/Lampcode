@@ -1,3 +1,8 @@
+---
+name: langgraph
+description: LangGraph stateful Python agent workflows — use over CrewAI when an agent needs looping/retry, branching, persistent memory, or checkpointing.
+---
+
 # LangGraph — Stateful Agent Workflows (Python)
 
 ## Install

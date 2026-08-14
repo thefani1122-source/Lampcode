@@ -1,3 +1,8 @@
+---
+name: typescript-strict
+description: TypeScript strict-mode conventions — no `any`, discriminated unions, `satisfies`, Zod-derived types, and strict null-check patterns.
+---
+
 # TypeScript Strict Mode Patterns
 
 ## Never Use `any`

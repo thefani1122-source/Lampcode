@@ -1,3 +1,8 @@
+---
+name: database-rls
+description: Supabase RLS pattern — CREATE TABLE + ENABLE ROW LEVEL SECURITY + GRANT + CREATE POLICY, the separate user_roles table convention, and common RLS mistakes to avoid.
+---
+
 # Database & RLS Rules — Supabase
 
 ## RLS (Row Level Security) — Always Required

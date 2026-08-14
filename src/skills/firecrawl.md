@@ -1,10 +1,6 @@
-[name: firecrawl
-description: |
-  Firecrawl gives AI agents and apps fast, reliable web context with
-  strong search, scraping, and interaction tools. One install command
-  sets up three skill segments: live CLI tools, app-integration build
-  skills, and outcome-focused workflow skills. Route the reader to the
-  right usage path after install.
+---
+name: firecrawl
+description: Web scraping, crawling, and page interaction for agents — search first, scrape clean content, interact with live pages, and produce deliverables from web data.
 ---
 
 # Firecrawl

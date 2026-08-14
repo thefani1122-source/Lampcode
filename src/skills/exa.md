@@ -1,3 +1,8 @@
+---
+name: exa
+description: Exa semantic/keyword web search for competitor research, unfamiliar API docs, or design references — use neural search by default and always set contents:true.
+---
+
 # Exa Search Skill
 
 **Canonical reference:** https://docs.exa.ai/reference/search-api-guide-for-coding-agents

@@ -1,3 +1,8 @@
+---
+name: crewai
+description: CrewAI multi-agent Python framework — install, Agent/Task/Crew pattern, custom tools, APScheduler scheduling, and required FastAPI/Supabase files for agent builds.
+---
+
 # CrewAI — Multi-Agent Framework (Python)
 
 ## Install

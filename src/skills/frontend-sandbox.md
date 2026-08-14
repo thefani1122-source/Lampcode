@@ -1,3 +1,8 @@
+---
+name: frontend-sandbox
+description: Vite + React Sandpack sandbox constraints — no fetch/localStorage/Node APIs, exact file structure, and the required package.json baseline.
+---
+
 # Frontend Sandbox Rules
 
 You are building for a Vite + React sandboxed environment.

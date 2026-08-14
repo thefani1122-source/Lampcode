@@ -1,3 +1,8 @@
+---
+name: react-production
+description: React production conventions — component composition, memoization, effect cleanup, error boundaries, and controlled-input form patterns.
+---
+
 # React Production Best Practices
 
 ## Component Design

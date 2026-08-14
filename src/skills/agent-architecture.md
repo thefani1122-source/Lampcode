@@ -1,3 +1,8 @@
+---
+name: agent-architecture
+description: Decision tree for choosing CrewAI, LangGraph, plain Anthropic SDK, or n8n for an AI agent build, plus code-quality rules for agent builds.
+---
+
 # When to Use Which Framework
 
 ## Decision Tree:

@@ -1,3 +1,8 @@
+---
+name: fullstack-hono
+description: Hono + Supabase fullstack architecture — required file layout, CORS setup, the API-client fetch pattern, and the RLS+GRANT SQL convention for every table.
+---
+
 # Fullstack Build — Hono + Supabase
 
 ## Architecture

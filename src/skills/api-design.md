@@ -1,3 +1,8 @@
+---
+name: api-design
+description: REST API conventions — HTTP verb/status codes, consistent error shape, input validation, pagination, idempotency, and resource naming for Hono backend routes.
+---
+
 # REST API Design Patterns
 
 ## HTTP Verbs and Status Codes

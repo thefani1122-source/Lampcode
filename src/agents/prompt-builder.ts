@@ -1105,6 +1105,81 @@ export function needsAuth(prompt: string): boolean {
   );
 }
 
+// Skill files may open with `---\nname: x\ndescription: y\n---\n` frontmatter.
+// Anchored at the absolute start of the string (no `m` flag) so it can never
+// match a `---` divider used mid-body (animation-expert.md has one).
+const SKILL_FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+interface ParsedSkillFile {
+  name: string;
+  description: string;
+  /** Body with frontmatter stripped — this is what gets injected into the prompt. */
+  body: string;
+}
+
+/** Parse a skill file's leading frontmatter, if present. Falls back gracefully. */
+function parseSkillFrontmatter(raw: string, fallbackName: string): ParsedSkillFile {
+  const m = SKILL_FRONTMATTER_RE.exec(raw);
+  if (!m) return { name: fallbackName, description: "", body: raw };
+
+  const block = m[1] ?? "";
+  const nameMatch = /^name:\s*(.+)$/m.exec(block);
+  const descMatch = /^description:\s*(.+)$/m.exec(block);
+  return {
+    name: nameMatch?.[1]?.trim() || fallbackName,
+    description: descMatch?.[1]?.trim() ?? "",
+    body: raw.slice(m[0].length),
+  };
+}
+
+// All skill filenames (without .md) — used to build the always-visible index.
+// Kept as an explicit list rather than a directory scan so the index has a
+// stable, reviewable order.
+const ALL_SKILL_NAMES = [
+  "agent-architecture", "animation-expert", "api-design", "crewai",
+  "database-rls", "exa", "firecrawl", "frontend-sandbox", "fullstack-hono",
+  "langgraph", "react-production", "supabase-rls", "typescript-strict",
+] as const;
+
+// Computed once and cached — skill files don't change at runtime, and this is
+// a handful of tiny local reads, not remotely comparable to a model dispatch.
+let skillIndexCache: string | null = null;
+
+/**
+ * Always-visible, one-line-per-skill index appended to the base (cacheable)
+ * system prompt — never the variable skills block. Keyword gates can't
+ * anticipate every real phrasing a user might use ("luxury agency landing
+ * page" doesn't contain "animation"), so this gives the model ambient
+ * awareness that these conventions exist even when a skill's full body isn't
+ * gate-loaded this build. It doesn't depend on matching the user's exact
+ * words the way the gates do — the model applies what's relevant from its
+ * own knowledge of the tools/patterns named in each one-line description.
+ */
+async function buildSkillIndex(): Promise<string> {
+  if (skillIndexCache !== null) return skillIndexCache;
+
+  const skillsDir = join(process.cwd(), "src", "skills");
+  const lines: string[] = [];
+  for (const skill of ALL_SKILL_NAMES) {
+    try {
+      const raw = await readFile(join(skillsDir, `${skill}.md`), "utf-8");
+      const { name, description } = parseSkillFrontmatter(raw, skill);
+      if (description) lines.push(`- ${name}: ${description}`);
+    } catch {
+      // skill file not found — skip silently, same as loadSkillsForPrompt below
+    }
+  }
+
+  skillIndexCache = lines.length > 0
+    ? "\n\n## House-style references\n" +
+      "These conventions exist in this codebase. Apply what's relevant from your " +
+      "own knowledge of the tools/patterns named — the full reference text loads " +
+      "automatically when your task matches it:\n" +
+      lines.join("\n")
+    : "";
+  return skillIndexCache;
+}
+
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
@@ -1157,8 +1232,9 @@ async function loadSkillsForPrompt(
   for (const skill of skillsToLoad) {
     try {
       const filePath = join(skillsDir, `${skill}.md`);
-      const content = await readFile(filePath, "utf-8");
-      skillContents.push(`\n\n---\n## Skill: ${skill}\n${content}`);
+      const raw = await readFile(filePath, "utf-8");
+      const { body } = parseSkillFrontmatter(raw, skill);
+      skillContents.push(`\n\n---\n## Skill: ${skill}\n${body}`);
     } catch {
       // skill file not found — skip silently
     }
@@ -1257,7 +1333,7 @@ export class PromptBuilder {
 
   // ── Private ──────────────────────────────────────────────────────────────────
 
-  private buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): string {
+  private async buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): Promise<string> {
     const base = SYSTEM_PROMPTS[agentType];
 
     const isFullstackMode =
@@ -1348,7 +1424,15 @@ export class PromptBuilder {
       ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}${manifestBlock}\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
       : "";
 
-    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction;
+    // Scoped to the frontend agent — that's where nearly every skill's content
+    // is actually consumed (the fast-build dispatch path uses agentType
+    // "frontend" for the main build and every fix loop except the fullstack
+    // missing-files retry). Appended last, inside baseSystemPrompt, so it never
+    // touches skillContents/SKILLS_BLOCK_MARKER — it's part of the cache-split's
+    // base segment, not the variable skills segment.
+    const skillIndex = agentType === "frontend" ? await buildSkillIndex() : "";
+
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + skillIndex;
   }
 
   private async buildContextBlock(
