@@ -2,11 +2,23 @@ import {
   BedrockRuntimeClient,
   ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { type GatewayRequest, type StreamChunk, GatewayError, splitSystemPrompt } from "./model-gateway.js";
+import { type GatewayRequest, type StreamChunk, type ChatMessage, GatewayError, splitSystemPrompt } from "./model-gateway.js";
 import { logger } from "../server/logger.js";
 
 const DEFAULT_MODEL_ID = "anthropic.claude-sonnet-5";
 const REGION = process.env.AWS_REGION || "us-east-1";
+
+// Bedrock tool-calling isn't implemented here yet (see the req.tools check
+// below) — a tool loop's assistant/tool_result turns arrive as content
+// blocks, not plain strings. Best-effort degrade to their text portion
+// rather than fail the whole stream on a shape Converse can't consume today.
+function contentToText(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
 
 // Inference-profile / region prefixes Bedrock model IDs may already carry.
 // If req.model is a bare first-party ID (e.g. "claude-sonnet-5") it needs the
@@ -99,6 +111,20 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
 
   logger.debug({ modelId, requestedModel: req.model, region: REGION }, "ModelGateway: Bedrock stream");
 
+  // Tool-calling (load_skill/read_project_file) is only wired up for the
+  // direct-Anthropic path today. Converse's toolConfig/toolUse handling was
+  // never built here and is unverified against a live Bedrock endpoint.
+  // Matching this codebase's other fail-open choices (rate-limiter, npm
+  // manifest fallback): degrade instead of failing the whole build — the
+  // model just won't be offered tools this call, same as a regex miss would
+  // have meant before this feature existed. Loud in the logs, not fatal.
+  if (req.tools && req.tools.length > 0) {
+    logger.warn(
+      { modelId },
+      "[bedrock-gateway] tool-calling requested but not implemented for Bedrock — proceeding without tools (unverified path, degraded not failed)",
+    );
+  }
+
   const client = new BedrockRuntimeClient({
     region: REGION,
     credentials: {
@@ -113,7 +139,7 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
   // Converse requires content as a ContentBlock[], not a raw string.
   const messages = chatMessages.map((m) => ({
     role: m.role === "system" ? "user" : (m.role as "user" | "assistant"),
-    content: [{ text: m.content }],
+    content: [{ text: contentToText(m.content) }],
   }));
 
   // Cache the stable base system prompt separately from the variable skills
@@ -123,7 +149,7 @@ export async function* bedrockStream(req: GatewayRequest): AsyncGenerator<Stream
   // request; splitSystemPrompt yields at most 2 segments today).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const systemBlocks: any[] | undefined = systemMsg
-    ? splitSystemPrompt(systemMsg.content).flatMap((text) => [
+    ? splitSystemPrompt(contentToText(systemMsg.content)).flatMap((text) => [
         { text },
         { cachePoint: { type: "default" } },
       ])

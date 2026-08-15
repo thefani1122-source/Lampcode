@@ -956,6 +956,12 @@ export async function runFastBuild(
       sessionId,
       userId,
       projectId,
+      // Tool-calling (load_skill/read_project_file) is scoped to this, the
+      // original generation dispatch — the fix loops below already give the
+      // model precise, targeted context directly, so they don't opt in.
+      // cumulativeUsd is 0 here: this is the first dispatch of the build.
+      enableTools: true,
+      costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
     });
 
     // Running spend across this build's dispatches. The main dispatch above

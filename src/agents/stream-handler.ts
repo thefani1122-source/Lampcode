@@ -12,6 +12,8 @@ export interface StreamResult {
   content: string
   inputTokens: number
   outputTokens: number
+  stopReason?: string | undefined
+  toolCalls: Array<{ id: string; name: string; arguments: string }>
 }
 
 export async function handleAgentStream(
@@ -33,6 +35,11 @@ export async function handleAgentStream(
   // Accumulates every file emitted via build:file_write so build:complete
   // can hand the full Record<string, string> to the frontend in one shot.
   const filesMap = new Map<string, string>()
+
+  // Accumulates every tool_use block the model requested this turn, so the
+  // caller (dispatcher.ts's tool loop) can execute them and continue the
+  // conversation. Empty when tools weren't offered or none were called.
+  const toolCalls: Array<{ id: string; name: string; arguments: string }> = []
 
   // All build: events go to the BARE sessionId room so the frontend receives
   // them after: socket.emit('join', sessionId)  →  socket.join(sessionId)
@@ -105,6 +112,7 @@ export async function handleAgentStream(
         // Tool-call announced by the model (before execution)
         case "tool_call":
           if (chunk.toolCall) {
+            toolCalls.push(chunk.toolCall)
             emit("build:tool_call", {
               tool: chunk.toolCall.name,
               args: chunk.toolCall.arguments,
@@ -187,5 +195,5 @@ export async function handleAgentStream(
     // Emitting here too caused a duplicate event reaching the frontend.
   }
 
-  return { content: fullContent, inputTokens, outputTokens }
+  return { content: fullContent, inputTokens, outputTokens, stopReason, toolCalls }
 }

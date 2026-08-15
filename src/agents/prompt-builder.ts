@@ -48,6 +48,7 @@ export const taskInputSchema = z.object({
   hasReferenceImage: z.boolean().optional(),
   isAgentBuild: z.boolean().optional(),
   hasAnimationContext: z.boolean().optional(),
+  toolsEnabled: z.boolean().optional(),
   projectMemory: z.string().nullable().optional(),
   projectManifest: z.string().nullable().optional(),
 });
@@ -1112,15 +1113,19 @@ export function needsAuth(prompt: string): boolean {
 // match a `---` divider used mid-body (animation-expert.md has one).
 const SKILL_FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
-interface ParsedSkillFile {
+export interface ParsedSkillFile {
   name: string;
   description: string;
   /** Body with frontmatter stripped — this is what gets injected into the prompt. */
   body: string;
 }
 
-/** Parse a skill file's leading frontmatter, if present. Falls back gracefully. */
-function parseSkillFrontmatter(raw: string, fallbackName: string): ParsedSkillFile {
+/**
+ * Parse a skill file's leading frontmatter, if present. Falls back gracefully.
+ * Exported for tools.ts's load_skill tool executor — same skill-file format,
+ * same parsing rules, one implementation.
+ */
+export function parseSkillFrontmatter(raw: string, fallbackName: string): ParsedSkillFile {
   const m = SKILL_FRONTMATTER_RE.exec(raw);
   if (!m) return { name: fallbackName, description: "", body: raw };
 
@@ -1136,8 +1141,9 @@ function parseSkillFrontmatter(raw: string, fallbackName: string): ParsedSkillFi
 
 // All skill filenames (without .md) — used to build the always-visible index.
 // Kept as an explicit list rather than a directory scan so the index has a
-// stable, reviewable order.
-const ALL_SKILL_NAMES = [
+// stable, reviewable order. Exported so tools.ts's load_skill executor can
+// allowlist-check a model-supplied name before touching the filesystem.
+export const ALL_SKILL_NAMES = [
   "agent-architecture", "animation-expert", "api-design", "crewai",
   "database-rls", "exa", "firecrawl", "frontend-sandbox", "fullstack-hono",
   "langgraph", "react-production", "supabase-rls", "typescript-strict",
@@ -1498,6 +1504,23 @@ export class PromptBuilder {
     const agentBuildInstruction = task.isAgentBuild === true ? AGENT_BUILD_INSTRUCTION : "";
     const animationInstruction = task.hasAnimationContext === true ? ANIMATION_DEFAULT_INSTRUCTION : "";
 
+    // Only true for dispatches the caller actually sent `tools` for (today:
+    // the main frontend build dispatch — see dispatcher.ts). Telling the model
+    // about a tool it can't actually call this turn would be a real bug, not
+    // just noise, so this must stay conditional rather than always-on like the
+    // skill index below it.
+    const toolsInstruction = task.toolsEnabled === true
+      ? "\n\nTOOLS AVAILABLE:\n" +
+        "You have two tools this turn:\n" +
+        "- load_skill(name): fetches the full reference document for a house-style convention " +
+        "listed in the House-style references index below (e.g. \"animation-expert\"). Call it " +
+        "when a build clearly needs that convention in depth — you don't need to wait for exact " +
+        "keyword matches, judge relevance yourself. You may call it more than once in one turn.\n" +
+        "- read_project_file(path): re-reads the current content of a file already provided in " +
+        "your context, if you want to double-check it before editing.\n" +
+        "Use these proactively when relevant — don't wait to be asked."
+      : "";
+
     const manifestBlock = task.projectManifest
       ? `\n## Current File Structure\n${task.projectManifest}\n`
       : "";
@@ -1514,7 +1537,7 @@ export class PromptBuilder {
     // base segment, not the variable skills segment.
     const skillIndex = agentType === "frontend" ? await buildSkillIndex() : "";
 
-    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + skillIndex;
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex;
   }
 
   private async buildContextBlock(

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { join } from "path";
 import { z } from "zod";
 import {
@@ -8,10 +9,12 @@ import {
   MODEL_TIERS,
   type AgentTaskType,
   type ChatMessage,
+  type MessageContentBlock,
 } from "./model-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
+import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 
@@ -20,6 +23,14 @@ const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
 // Max retries per tier before falling back to the next tier
 const RETRIES_PER_TIER = 2;
+
+// Max tool round-trips within a single dispatch's tool loop, one more than
+// this codebase's usual bounded-retry convention of 2 (MAX_FIX_ATTEMPTS,
+// MAX_TYPECHECK_ATTEMPTS, MAX_SECURITY_FIX_ATTEMPTS, RETRIES_PER_TIER above)
+// because Anthropic allows multiple tool_use blocks in one turn — a build
+// that wants several skills can batch them in one round trip, so this bounds
+// round trips, not total tool calls.
+const MAX_TOOL_ROUNDTRIPS = 3;
 
 // ── AgentTaskType re-exported for external consumers ─────────────────────────
 export { type AgentTaskType } from "./model-gateway.js";
@@ -45,9 +56,17 @@ export const dispatchOptionsSchema = z.object({
   projectId: z.string().optional(),
 });
 
-// contextFiles is injected internally after ContextManager.select() — not user-facing
+// contextFiles is injected internally after ContextManager.select() — not user-facing.
+// enableTools/costGuard are opt-in per call site (today: only the main frontend
+// build dispatch in build.ts) — omitting them keeps a dispatch byte-for-byte
+// identical to pre-tool-calling behavior, which is how the 5 existing fix loops
+// stay untouched despite sharing this same dispatch() method.
 export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   contextFiles?: Array<{ path: string; content: string }> | undefined;
+  enableTools?: boolean | undefined;
+  /** Required when enableTools is true — lets the in-loop cost check see the
+   *  build's spend so far, not just this dispatch's own turns. */
+  costGuard?: { cumulativeUsd: number; maxUsd: number } | undefined;
 };
 
 export interface DispatchResult {
@@ -92,8 +111,10 @@ export class AgentDispatcher {
     const parsed = dispatchOptionsSchema.parse(options);
     const tiers = MODEL_TIERS[parsed.agentType];
     const task = parsed.task as TaskInput;
-    // contextFiles is not in the Zod schema so read from original options
+    // contextFiles/enableTools/costGuard are not in the Zod schema so read from original options
     const contextFiles = options.contextFiles;
+    const enableTools = options.enableTools;
+    const costGuard = options.costGuard;
 
     let lastError: Error | null = null;
 
@@ -101,7 +122,7 @@ export class AgentDispatcher {
       const model = tierModel(parsed.agentType, tier as 1 | 2);
 
       try {
-        return await this.callModelWithRetry({ ...parsed, contextFiles }, task, model, tier as 1 | 2);
+        return await this.callModelWithRetry({ ...parsed, contextFiles, enableTools, costGuard }, task, model, tier as 1 | 2);
       } catch (err) {
         if (
           err instanceof GatewayError &&
@@ -178,18 +199,35 @@ export class AgentDispatcher {
     model: string,
     tier: 1 | 2,
   ): Promise<DispatchResult> {
-    const { agentType, sessionId, userId, projectId, contextFiles } = options;
+    const { agentType, sessionId, userId, projectId, contextFiles, costGuard } = options;
 
-    logger.info({ agentType, model, tier, sessionId }, "Dispatching agent");
+    // Tools require a costGuard so the in-loop check has something to check
+    // against — a call site that forgets to pass one gets tools silently
+    // disabled (safe default) rather than an unbounded loop.
+    let enableTools = options.enableTools === true;
+    if (enableTools && !costGuard) {
+      logger.warn(
+        { agentType, sessionId },
+        "enableTools was set without a costGuard — disabling tools for this dispatch rather than looping unbounded",
+      );
+      enableTools = false;
+    }
+
+    logger.info({ agentType, model, tier, sessionId, enableTools }, "Dispatching agent");
 
     // Resolve workspace directory for project-specific brain files
     const workspaceDir = projectId !== undefined
       ? join(WORKSPACE_BASE, projectId)
       : undefined;
 
+    // task.toolsEnabled drives prompt-builder.ts's TOOLS AVAILABLE instruction —
+    // must match `enableTools` exactly, or the model gets told about a
+    // capability it doesn't actually have this call (or vice versa).
+    const effectiveTask: TaskInput = enableTools ? { ...task, toolsEnabled: true } : task;
+
     // Build prompt
     const { systemPrompt, userMessage, estimatedInputTokens } =
-      await this.promptBuilder.build(agentType, task, {
+      await this.promptBuilder.build(agentType, effectiveTask, {
         projectId: projectId ?? "unknown",
         userId: userId ?? "anonymous",
         mode: "fast",
@@ -210,7 +248,8 @@ export class AgentDispatcher {
     ];
 
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.
-    // All other agents use the gateway default (3 minutes).
+    // All other agents use the gateway default (3 minutes). Per-turn today —
+    // a tool loop's turns each get this budget individually, not the whole loop.
     const streamTimeoutMs = agentType === "frontend" ? 300_000 : undefined;
 
     // Fullstack builds emit ~10 files (frontend + backend + db) — double the
@@ -231,23 +270,108 @@ export class AgentDispatcher {
       : agentType === "db"                                    ? 5_000  // schema design
       : 4_000;                                                         // security, planning, others
 
-    const stream = this.gateway.stream({ model, messages, maxTokens, thinkingBudget }, streamTimeoutMs);
     const outputPath = join(WORKSPACE_BASE, ".sessions", sessionId, "agents", agentType, `${taskId}.md`);
     const startMs = Date.now();
 
-    let streamResult: StreamResult;
-    try {
-      streamResult = await handleAgentStream(
-        stream as unknown as AsyncGenerator<HandlerStreamChunk>,
-        { sessionId, agentType, taskId, outputPath, wsServer: getWebSocketServer() },
+    // ── Tool round-trip loop ────────────────────────────────────────────────
+    // Without tools enabled, `wantsTools` below is always false (the model was
+    // never offered any to request), so this executes exactly once — byte-for-
+    // byte the same single dispatch behavior every existing call site had
+    // before this loop existed.
+    let fullContent = "";
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    let loopCostUsd = 0;
+
+    for (let round = 1; round <= MAX_TOOL_ROUNDTRIPS; round++) {
+      const stream = this.gateway.stream(
+        { model, messages, maxTokens, thinkingBudget, tools: enableTools ? TOOL_DEFINITIONS : undefined },
+        streamTimeoutMs,
       );
-    } catch (err) {
-      await this.tracker.fail(taskId, String(err)).catch(() => undefined);
-      throw err;
+
+      let streamResult: StreamResult;
+      try {
+        streamResult = await handleAgentStream(
+          stream as unknown as AsyncGenerator<HandlerStreamChunk>,
+          { sessionId, agentType, taskId, outputPath, wsServer: getWebSocketServer() },
+        );
+      } catch (err) {
+        await this.tracker.fail(taskId, String(err)).catch(() => undefined);
+        throw err;
+      }
+
+      fullContent += streamResult.content;
+      totalInputTokens += streamResult.inputTokens;
+      totalOutputTokens += streamResult.outputTokens;
+      allToolCalls.push(...streamResult.toolCalls);
+
+      // In-loop cost check — the outer cumulativeCostUsd checks in build.ts
+      // only run BETWEEN dispatch() calls, so without this a runaway loop
+      // inside one dispatch could spend past MAX_BUILD_COST_USD before any
+      // outer checkpoint gets a chance to see it. This makes the round-trip
+      // cap the primary spend bound during the loop, not just an anti-hang guard.
+      if (costGuard) {
+        loopCostUsd += this.tracker.computeUsage(model, streamResult.inputTokens, streamResult.outputTokens).costUsd;
+        if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
+          logger.warn(
+            { sessionId, agentType, round, loopCostUsd, cumulativeUsd: costGuard.cumulativeUsd, maxUsd: costGuard.maxUsd },
+            "Tool loop: cost ceiling reached mid-loop — stopping, proceeding with whatever context was gathered",
+          );
+          break;
+        }
+      }
+
+      const wantsTools = streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
+      if (!wantsTools) break; // model is done — this round's content is final
+
+      if (round === MAX_TOOL_ROUNDTRIPS) {
+        // Used the last allowed round and still wants more — stop instead of
+        // executing/continuing, same "surface it, don't loop forever" pattern
+        // every other bounded fix loop in this codebase already uses.
+        logger.warn({ sessionId, agentType, round }, "Tool loop: max round-trips reached — proceeding with partial context");
+        break;
+      }
+
+      // Replay the assistant's turn (text + the tool_use block(s) it made),
+      // execute each tool, then supply the results as the next user turn.
+      const assistantBlocks: MessageContentBlock[] = [];
+      if (streamResult.content) assistantBlocks.push({ type: "text", text: streamResult.content });
+      for (const tc of streamResult.toolCalls) {
+        let input: unknown = {};
+        try { input = JSON.parse(tc.arguments || "{}"); } catch { /* executeTool re-parses and reports the same error */ }
+        assistantBlocks.push({ type: "tool_use", id: tc.id, name: tc.name, input });
+      }
+      messages.push({ role: "assistant", content: assistantBlocks });
+
+      const resultBlocks: MessageContentBlock[] = [];
+      for (const tc of streamResult.toolCalls) {
+        const result = await executeTool(tc.name, tc.arguments, { contextFiles }).catch(
+          (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        resultBlocks.push({ type: "tool_result", tool_use_id: tc.id, content: result });
+        try {
+          getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+            tool: tc.name,
+            result: result.startsWith("Error:") ? "error" : "success",
+            sessionId,
+          });
+        } catch {
+          // WS server unavailable — non-fatal, matches the ws() helper's fallback in build.ts
+        }
+      }
+      messages.push({ role: "user", content: resultBlocks });
     }
 
-    const { content, inputTokens, outputTokens } = streamResult;
-    const usage = this.tracker.computeUsage(model, inputTokens, outputTokens);
+    // Persist the full multi-round transcript at this dispatch's canonical
+    // path. handleAgentStream() already wrote each round's own text there
+    // (each round overwrites the last), so without this the file on disk
+    // would only reflect the final round instead of the full loop.
+    await writeFile(outputPath, fullContent, "utf-8").catch((err) => {
+      console.error("[dispatcher] Failed to persist full tool-loop transcript:", err);
+    });
+
+    const usage = this.tracker.computeUsage(model, totalInputTokens, totalOutputTokens);
     await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
@@ -256,13 +380,13 @@ export class AgentDispatcher {
       taskId,
       modelUsed: model,
       tierUsed: tier,
-      content,
+      content: fullContent,
       reasoning: "",
-      toolCalls: [],
+      toolCalls: allToolCalls,
       outputPath,
       durationMs: Date.now() - startMs,
-      inputTokens,
-      outputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       costUsd: usage.costUsd,
     };
   }

@@ -30,9 +30,32 @@ export function tierModel(agentType: AgentTaskType, tier: 1 | 2): string {
 
 export type ChatRole = "system" | "user" | "assistant";
 
+// A tool round-trip needs richer message content than plain text: the
+// assistant turn that requested a tool must be replayed back with its
+// tool_use block(s) intact, and the following turn carries the tool's result.
+// Anthropic's Messages API accepts a bare string as shorthand for a single
+// text block — MessageContentBlock covers the two additional shapes needed
+// for tool-calling without pulling the full Anthropic SDK type in here.
+export interface TextContentBlock { type: "text"; text: string }
+export interface ToolUseContentBlock { type: "tool_use"; id: string; name: string; input: unknown }
+export interface ToolResultContentBlock { type: "tool_result"; tool_use_id: string; content: string }
+export type MessageContentBlock = TextContentBlock | ToolUseContentBlock | ToolResultContentBlock;
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string;
+  content: string | MessageContentBlock[];
+}
+
+// Anthropic tool-definition shape (also what Bedrock Converse's toolSpec
+// wraps) — kept minimal since only load_skill/read_project_file exist today.
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
 }
 
 export interface GatewayRequest {
@@ -41,6 +64,7 @@ export interface GatewayRequest {
   temperature?: number | undefined;
   maxTokens?: number | undefined;
   thinkingBudget?: number | undefined;
+  tools?: ToolDefinition[] | undefined;
 }
 
 // Parsed chunk yielded to callers — same shape as before, stream-handler unchanged.
@@ -112,17 +136,22 @@ function splitMessages(messages: ChatMessage[]): {
 } {
   const systemMsg = messages.find((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
+  // The system message is always assembled as plain text (prompt-builder.ts
+  // never produces tool_use/tool_result blocks for it) — narrow defensively
+  // rather than assume, since ChatMessage.content is now a union.
+  const systemText = typeof systemMsg?.content === "string" ? systemMsg.content : "";
   return {
     systemBlocks: systemMsg
-      ? splitSystemPrompt(systemMsg.content).map((text) => ({
+      ? splitSystemPrompt(systemText).map((text) => ({
           type: "text" as const,
           text,
           cache_control: { type: "ephemeral" as const },
         }))
       : undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     anthropicMessages: rest.map((m) => ({
       role: m.role as "user" | "assistant",
-      content: m.content,
+      content: m.content as any,
     })),
   };
 }
@@ -198,6 +227,7 @@ export class ModelGateway {
         stream: true,
         ...(systemBlocks ? { system: systemBlocks } : {}),
         ...(thinkingParam ? { thinking: thinkingParam } : {}),
+        ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
       });
     } catch (err) {
       throw mapAnthropicError(err);
