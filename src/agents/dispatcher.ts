@@ -10,13 +10,16 @@ import {
   type AgentTaskType,
   type ChatMessage,
   type MessageContentBlock,
+  type McpServerDefinition,
 } from "./model-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
+import { classifyMcpServers, type McpToolsetConfig } from "./mcp-tool-classifier.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
+import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
 
 // Workspace root: one directory per project
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
@@ -67,6 +70,11 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   /** Required when enableTools is true — lets the in-loop cost check see the
    *  build's spend so far, not just this dispatch's own turns. */
   costGuard?: { cumulativeUsd: number; maxUsd: number } | undefined;
+  /** User's connected MCP/REST services — only meaningful when enableTools is
+   *  true. Read-only tools get discovered+denylist-classified per dispatch;
+   *  write/destructive tools are never enabled (see mcp-tool-classifier.ts). */
+  mcpServers?: ActiveMcpServer[] | undefined;
+  restProviders?: ConnectedRestProvider[] | undefined;
 };
 
 export interface DispatchResult {
@@ -76,6 +84,12 @@ export interface DispatchResult {
   content: string;
   reasoning: string;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  /** MCP tool calls actually executed (server-side, already resolved) this dispatch. */
+  mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>;
+  /** True if the model called request_write_action — a write/destructive
+   *  action was needed but isn't available yet. Lets the caller distinguish
+   *  "declined a write action" from "generation genuinely produced nothing". */
+  requestedWriteAction: boolean;
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -111,10 +125,13 @@ export class AgentDispatcher {
     const parsed = dispatchOptionsSchema.parse(options);
     const tiers = MODEL_TIERS[parsed.agentType];
     const task = parsed.task as TaskInput;
-    // contextFiles/enableTools/costGuard are not in the Zod schema so read from original options
+    // contextFiles/enableTools/costGuard/mcpServers/restProviders are not in
+    // the Zod schema so read from original options
     const contextFiles = options.contextFiles;
     const enableTools = options.enableTools;
     const costGuard = options.costGuard;
+    const mcpServers = options.mcpServers;
+    const restProviders = options.restProviders;
 
     let lastError: Error | null = null;
 
@@ -122,7 +139,10 @@ export class AgentDispatcher {
       const model = tierModel(parsed.agentType, tier as 1 | 2);
 
       try {
-        return await this.callModelWithRetry({ ...parsed, contextFiles, enableTools, costGuard }, task, model, tier as 1 | 2);
+        return await this.callModelWithRetry(
+          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders },
+          task, model, tier as 1 | 2,
+        );
       } catch (err) {
         if (
           err instanceof GatewayError &&
@@ -199,7 +219,7 @@ export class AgentDispatcher {
     model: string,
     tier: 1 | 2,
   ): Promise<DispatchResult> {
-    const { agentType, sessionId, userId, projectId, contextFiles, costGuard } = options;
+    const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers, restProviders } = options;
 
     // Tools require a costGuard so the in-loop check has something to check
     // against — a call site that forgets to pass one gets tools silently
@@ -213,7 +233,40 @@ export class AgentDispatcher {
       enableTools = false;
     }
 
-    logger.info({ agentType, model, tier, sessionId, enableTools }, "Dispatching agent");
+    // Discover + classify each connected server's real tools once per dispatch
+    // (not per round — the classification doesn't change mid-loop). Read-only
+    // tools (by MCP annotation or name convention) get enabled; everything
+    // else — including anything discovery couldn't classify — stays denylisted.
+    // The Anthropic MCP connector has no mid-call approval mechanism (confirmed
+    // against its docs), so this denylist IS the safety boundary, not a hint.
+    const mcpDefs: McpServerDefinition[] = [];
+    let mcpToolsets: McpToolsetConfig[] = [];
+    if (enableTools && mcpServers && mcpServers.length > 0) {
+      for (const s of mcpServers) {
+        mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
+      }
+      const { toolsets, report } = await classifyMcpServers(mcpServers);
+      mcpToolsets = toolsets;
+      logger.info(
+        { sessionId, agentType, classification: report.map((r) => `${r.serverSlug}.${r.toolName}=${r.allowed ? "allow" : "deny"}(${r.reason})`) },
+        "MCP tool classification for this dispatch",
+      );
+    }
+
+    // REST-only providers have no callable tool — their hint text goes into
+    // the user message (never the cached system-prompt base, since it's
+    // per-user credential-bearing content that shouldn't ride on a shared
+    // cache segment). Mirrors mcp-action-agent.ts's existing interpolation.
+    let restContext = "";
+    if (enableTools && restProviders && restProviders.length > 0) {
+      const entries = restProviders.map((rp) => {
+        const hint = rp.restApiHint.replace(/\{(\w+)\}/g, (_m, key: string) => rp.creds[key] ?? `{${key}}`);
+        return `### ${rp.name}\n${hint}`;
+      });
+      restContext = `\n\nAvailable REST APIs for connected services (call these directly, read-only lookups only — for write/destructive actions call request_write_action instead):\n${entries.join("\n\n")}`;
+    }
+
+    logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpDefs.length }, "Dispatching agent");
 
     // Resolve workspace directory for project-specific brain files
     const workspaceDir = projectId !== undefined
@@ -244,7 +297,7 @@ export class AgentDispatcher {
 
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
+      { role: "user", content: userMessage + restContext },
     ];
 
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.
@@ -282,11 +335,17 @@ export class AgentDispatcher {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
+    let requestedWriteAction = false;
     let loopCostUsd = 0;
 
     for (let round = 1; round <= MAX_TOOL_ROUNDTRIPS; round++) {
       const stream = this.gateway.stream(
-        { model, messages, maxTokens, thinkingBudget, tools: enableTools ? TOOL_DEFINITIONS : undefined },
+        {
+          model, messages, maxTokens, thinkingBudget,
+          tools: enableTools ? TOOL_DEFINITIONS : undefined,
+          ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
+        },
         streamTimeoutMs,
       );
 
@@ -305,6 +364,10 @@ export class AgentDispatcher {
       totalInputTokens += streamResult.inputTokens;
       totalOutputTokens += streamResult.outputTokens;
       allToolCalls.push(...streamResult.toolCalls);
+      allMcpToolCalls.push(...streamResult.mcpToolCalls);
+      if (streamResult.toolCalls.some((tc) => tc.name === "request_write_action")) {
+        requestedWriteAction = true;
+      }
 
       // In-loop cost check — the outer cumulativeCostUsd checks in build.ts
       // only run BETWEEN dispatch() calls, so without this a runaway loop
@@ -356,6 +419,15 @@ export class AgentDispatcher {
             result: result.startsWith("Error:") ? "error" : "success",
             sessionId,
           });
+          // Dedicated, distinctly-named signal for the "not yet supported"
+          // case — a generic tool_result event buried in the stream isn't a
+          // reliable way for the frontend to surface this clearly to the user.
+          if (tc.name === "request_write_action") {
+            getWebSocketServer().emitToRoom(sessionId, "build:write_action_declined", {
+              message: result,
+              sessionId,
+            });
+          }
         } catch {
           // WS server unavailable — non-fatal, matches the ws() helper's fallback in build.ts
         }
@@ -383,6 +455,8 @@ export class AgentDispatcher {
       content: fullContent,
       reasoning: "",
       toolCalls: allToolCalls,
+      mcpToolCalls: allMcpToolCalls,
+      requestedWriteAction,
       outputPath,
       durationMs: Date.now() - startMs,
       inputTokens: totalInputTokens,

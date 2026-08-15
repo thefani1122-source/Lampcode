@@ -34,7 +34,6 @@ import { isAdmin } from "../../auth/admin.js";
 import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
-import { runMcpAction } from "../../agents/mcp-action-agent.js";
 import { config } from "../config.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
@@ -78,13 +77,6 @@ Return ONLY valid JSON, no markdown, no explanation:
 Max 4 questions. Min 0 (needsClarification: false).
 Options must be exactly 3 per question.
 allowMultiple: true only for user-type questions.`;
-
-// Only match explicit external-service commands — NOT general app-building language.
-const ACTION_MODE_RE = /\b(push (?:to|commit to) github|create (?:github repo|repository|issue|pull request|pr)|send (?:email via|slack message|webhook to|notification to)|trigger (?:webhook|zapier|n8n workflow)|deploy to (?:vercel|cloudflare|railway|netlify)|post to (?:slack|twitter|discord|notion)|sync (?:to|with) (?:github|notion|linear|jira)|create (?:n8n workflow|linear issue|jira ticket|notion page)|push (?:code|files) to|commit and push)\b/i;
-
-// Detects a reference URL in the prompt — when present, Firecrawl is used to
-// scrape the page before the agent executes the rest of the request.
-const URL_REGEX = /https?:\/\/[^\s]+/;
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
 
@@ -941,6 +933,29 @@ export async function runFastBuild(
         ]
       : requirements;
 
+    // Fetched unconditionally now — there's no upfront keyword gate deciding
+    // whether this build might need a connected service; the model decides
+    // that itself once these are attached to the dispatch. Cheap (single DB
+    // query + decrypt per row, no network calls) even when empty.
+    const [userMcpServers, restProviders] = await Promise.all([
+      getConnectedMcpServers(userId).catch(() => []),
+      getConnectedRestProviders(userId).catch(() => []),
+    ]);
+    // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
+    // mcp-action-agent.ts always included them for the same reason: a reference
+    // URL in the prompt shouldn't require a user to have connected anything.
+    // They still go through the same read-only classification as everything
+    // else below, not special-cased as trusted.
+    const internalMcpServers = [
+      ...(config.FIRECRAWL_API_KEY
+        ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev", authToken: config.FIRECRAWL_API_KEY }]
+        : []),
+      ...(config.EXA_API_KEY
+        ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
+        : []),
+    ];
+    const mcpServers = [...userMcpServers, ...internalMcpServers];
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       task: {
@@ -956,12 +971,15 @@ export async function runFastBuild(
       sessionId,
       userId,
       projectId,
-      // Tool-calling (load_skill/read_project_file) is scoped to this, the
+      // Tool-calling (load_skill/read_project_file/request_write_action, plus
+      // any connected services' read-only MCP tools) is scoped to this, the
       // original generation dispatch — the fix loops below already give the
       // model precise, targeted context directly, so they don't opt in.
       // cumulativeUsd is 0 here: this is the first dispatch of the build.
       enableTools: true,
       costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
+      mcpServers,
+      restProviders,
     });
 
     // Running spend across this build's dispatches. The main dispatch above
@@ -993,6 +1011,34 @@ export async function runFastBuild(
     }
 
     let parsedFiles: ParsedFile[] = parseFilesFromContent(result.content);
+
+    // ── Pure action-only response ────────────────────────────────────────────
+    // The model used a connected service's MCP tool, or declined a write
+    // action via request_write_action, and produced no file fences — this was
+    // never trying to build an app. Deliver it as a completion here, before
+    // the fix-agent retry and entry-point checks below (both of which assume
+    // "no files" means a failed generation, which would be wrong here) and
+    // before the sandbox/fix-loop pipeline this function runs afterward.
+    if (parsedFiles.length === 0 && (result.mcpToolCalls.length > 0 || result.requestedWriteAction)) {
+      logger.info(
+        {
+          sessionId,
+          mcpToolCalls: result.mcpToolCalls.map((t) => `${t.serverName}.${t.name}`),
+          requestedWriteAction: result.requestedWriteAction,
+        },
+        "Action-only response — no files produced, delivering as a completion instead of a build",
+      );
+      server?.buildComplete(sessionId, {
+        sessionId,
+        files: {},
+        backendFiles: {},
+        backendFileCount: 0,
+        previewUrl: null,
+        totalFiles: 0,
+        summary: result.content || "Done.",
+      });
+      return;
+    }
 
     // Auto-trigger fix agent if frontend produced no structured file output
     if (parsedFiles.length === 0 && result.content.trim().length < 200) {
@@ -2187,23 +2233,12 @@ buildRouter.post("/fast", async (c) => {
 
     setImmediate(() => {
       void (async () => {
-        // Action mode: route to the MCP action agent when the prompt looks like
-        // a direct action OR contains a reference URL (Firecrawl is always available).
-        const hasReferenceUrl = URL_REGEX.test(prompt);
-        if (ACTION_MODE_RE.test(prompt) || hasReferenceUrl) {
-          const [mcpServers, restProviders] = await Promise.all([
-            getConnectedMcpServers(userId).catch(() => []),
-            getConnectedRestProviders(userId).catch(() => []),
-          ]);
-          // Route if user has connected MCPs OR if a URL is present (firecrawl handles it)
-          if (mcpServers.length > 0 || restProviders.length > 0 || hasReferenceUrl) {
-            return runMcpAction({ sessionId, userId, prompt, mcpServers, restProviders, hasReferenceUrl }).catch((err) => {
-              console.error("[mcp-action] error:", err);
-              if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
-            });
-          }
-        }
-        // Default: normal code-generation build
+        // No more upfront action-vs-build routing here — the main dispatch
+        // inside runFastBuild() now decides for itself (via the MCP connector
+        // + request_write_action tool) whether this is a build, an action on
+        // a connected service, or both. See runFastBuild()'s post-dispatch
+        // "zero files produced" branch for how a pure-action response is
+        // handled without running the sandbox/fix-loop machinery.
         return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag, manifestFlag).catch((err) => {
           console.error(err);
           if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);

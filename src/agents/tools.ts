@@ -40,6 +40,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["path"],
     },
   },
+  {
+    name: "request_write_action",
+    description:
+      "Call this when the user's request needs a WRITE or destructive action on one of their " +
+      "connected services (e.g. creating a GitHub repo/issue/PR, pushing commits, deploying, " +
+      "sending a message, deleting/modifying data) — not a read/lookup. Write actions on " +
+      "connected services aren't available yet; calling this tells the user clearly instead of " +
+      "silently building something unrelated or pretending the action happened.",
+    input_schema: {
+      type: "object",
+      properties: {
+        service: {
+          type: "string",
+          description: "The connected service involved, e.g. \"github\", \"vercel\", \"slack\".",
+        },
+        description: {
+          type: "string",
+          description: "One sentence describing the write action the user asked for.",
+        },
+      },
+      required: ["service", "description"],
+    },
+  },
 ];
 
 const SKILLS_DIR = join(process.cwd(), "src", "skills");
@@ -86,6 +109,16 @@ export async function executeTool(
     const path = typeof args["path"] === "string" ? args["path"] : "";
     const file = ctx.contextFiles?.find((f) => f.path === path);
     return file ? file.content : `Error: "${path}" is not part of this project's current context.`;
+  }
+
+  if (name === "request_write_action") {
+    const service = typeof args["service"] === "string" ? args["service"] : "that service";
+    const description = typeof args["description"] === "string" ? args["description"] : "the requested action";
+    return (
+      `Write/destructive actions on connected services aren't available yet. ` +
+      `I can't ${description} on ${service} — only read-only actions (lookups, searches) are ` +
+      `supported right now. Continuing with the rest of your request if there's a buildable part.`
+    );
   }
 
   return `Error: unknown tool "${name}".`;

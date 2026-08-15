@@ -1511,13 +1511,21 @@ export class PromptBuilder {
     // skill index below it.
     const toolsInstruction = task.toolsEnabled === true
       ? "\n\nTOOLS AVAILABLE:\n" +
-        "You have two tools this turn:\n" +
+        "You have these tools this turn:\n" +
         "- load_skill(name): fetches the full reference document for a house-style convention " +
         "listed in the House-style references index below (e.g. \"animation-expert\"). Call it " +
         "when a build clearly needs that convention in depth — you don't need to wait for exact " +
         "keyword matches, judge relevance yourself. You may call it more than once in one turn.\n" +
         "- read_project_file(path): re-reads the current content of a file already provided in " +
         "your context, if you want to double-check it before editing.\n" +
+        "- request_write_action(service, description): call this if the user's request needs a " +
+        "WRITE or destructive action on a connected service (creating/deleting/pushing/deploying/" +
+        "sending) — that capability isn't available yet. Do NOT silently skip the request or " +
+        "pretend you did it; call this so the user is told clearly, then continue with any part " +
+        "of the request that IS buildable.\n" +
+        "- If any external services are connected, you may also see their own read-only tools " +
+        "(lookups/searches) offered directly — use them freely for reads. Only writes need " +
+        "request_write_action.\n" +
         "Use these proactively when relevant — don't wait to be asked."
       : "";
 

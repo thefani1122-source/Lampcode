@@ -16,23 +16,24 @@ Default to animations. Always.
 
 ## Library Decision Tree
 
-User wants animated website / 3D / interactive?
+User wants animated website / 3D / interactive? All of these are already
+pre-installed in this sandbox — import directly, no install step:
 ├── Component animations (buttons, cards, modals)
-│   → Motion (Framer Motion): `npm install motion`
+│   → Motion: `import { motion } from "motion/react"`
 │
 ├── Scroll-based storytelling (reveal on scroll, parallax)
-│   → GSAP + ScrollTrigger: `npm install gsap`
+│   → GSAP + ScrollTrigger: `import gsap from "gsap"`
 │
 ├── 3D scene (hero character, floating objects, product)
 │   → Option A: Spline embed (fastest — use spline.design URL)
-│   → Option B: React Three Fiber (custom code)
-│       `npm install three @react-three/fiber @react-three/drei`
+│   → Option B: React Three Fiber (custom code) —
+│       `three`, `@react-three/fiber`, `@react-three/drei`
 │
 ├── Smooth scrolling (premium feel)
-│   → Lenis: `npm install lenis`
+│   → Lenis: `import Lenis from "lenis"`
 │
 └── Particle backgrounds/effects
-    → TSParticles: `npm install @tsparticles/react @tsparticles/slim`
+    → TSParticles: `@tsparticles/react`, `@tsparticles/slim`
 
 ---
 
@@ -239,10 +240,10 @@ function AnimatedBlob() {
 
 Lighter than ScrollTrigger — perfect for most websites.
 
-```bash
-npm install aos
-npm install --save-dev @types/aos
-```
+`aos` is pre-installed — import directly, no install step. Its TypeScript
+types are not bundled in this sandbox; if a strict-mode type error appears on
+the import, add a local `declare module "aos"` rather than trying to install
+`@types/aos` (no install step is available to the generated app).
 
 ### Setup
 
@@ -302,9 +303,11 @@ NEVER use raw HTML buttons or inputs when shadcn exists.
 
 ### Aceternity UI (impressive hero/feature components)
 
-```bash
-npm install tailwindcss-animate clsx tailwind-merge framer-motion
-```
+Aceternity-style components use `clsx`, `tailwind-merge`, and Motion — all
+pre-installed (import Motion from `"motion/react"`, not `framer-motion`; only
+`motion` is in this sandbox). `tailwindcss-animate` is not pre-installed —
+build these components with Tailwind's own animation utilities or Motion
+directly instead of that plugin's classes.
 
 Key components:
 - CardSpotlight → glowing spotlight on hover

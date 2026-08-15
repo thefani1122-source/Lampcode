@@ -14,6 +14,7 @@ export interface StreamResult {
   outputTokens: number
   stopReason?: string | undefined
   toolCalls: Array<{ id: string; name: string; arguments: string }>
+  mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>
 }
 
 export async function handleAgentStream(
@@ -40,6 +41,10 @@ export async function handleAgentStream(
   // caller (dispatcher.ts's tool loop) can execute them and continue the
   // conversation. Empty when tools weren't offered or none were called.
   const toolCalls: Array<{ id: string; name: string; arguments: string }> = []
+
+  // MCP tool calls are already fully resolved (request + result) by the time
+  // they reach us — nothing for the caller to execute, just observe.
+  const mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = []
 
   // All build: events go to the BARE sessionId room so the frontend receives
   // them after: socket.emit('join', sessionId)  →  socket.join(sessionId)
@@ -121,6 +126,26 @@ export async function handleAgentStream(
           }
           break
 
+        // MCP tool call — unlike tool_call above, this already ran server-side
+        // (Anthropic's MCP connector has no interception point) — request and
+        // result both arrive together, nothing left for us to execute.
+        case "mcp_tool_call":
+          if (chunk.mcpToolCall) {
+            mcpToolCalls.push({
+              id: chunk.mcpToolCall.id,
+              name: chunk.mcpToolCall.name,
+              serverName: chunk.mcpToolCall.serverName,
+              isError: chunk.mcpToolCall.isError,
+            })
+            emit("build:mcp_tool_call", {
+              tool: chunk.mcpToolCall.name,
+              server: chunk.mcpToolCall.serverName,
+              result: chunk.mcpToolCall.isError ? "error" : "success",
+              sessionId,
+            })
+          }
+          break
+
         case "usage":
           if (chunk.usage) {
             inputTokens = chunk.usage.promptTokens ?? 0
@@ -195,5 +220,5 @@ export async function handleAgentStream(
     // Emitting here too caused a duplicate event reaching the frontend.
   }
 
-  return { content: fullContent, inputTokens, outputTokens, stopReason, toolCalls }
+  return { content: fullContent, inputTokens, outputTokens, stopReason, toolCalls, mcpToolCalls }
 }
