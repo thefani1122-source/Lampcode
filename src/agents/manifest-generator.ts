@@ -9,6 +9,16 @@
 // export function/const/class/type/interface Foo
 const EXPORT_RE = /export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/g;
 
+// export { Foo, Bar as Baz } — named export lists, including re-exports
+// (`export { Foo } from "./other"`). The name importers see is what's after
+// `as` when present, otherwise the bare name.
+const EXPORT_LIST_RE = /export\s+(?:type\s+)?\{([^}]+)\}/g;
+
+// export default Foo; — bare identifier re-export (requires the trailing
+// semicolon so `export default function Foo`/`export default class Foo` —
+// already caught by EXPORT_RE — don't double-match here).
+const EXPORT_DEFAULT_BARE_RE = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;/g;
+
 // Hono: app.get('/path', ...) or api.post('/path', ...)
 const HONO_ROUTE_RE = /(?:app|api|router)\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]/g;
 
@@ -56,12 +66,27 @@ function inferPurpose(relPath: string): string {
 
 function extractExports(content: string): string[] {
   const names: string[] = [];
+  const add = (name: string | undefined) => {
+    if (name && !names.includes(name)) names.push(name);
+  };
+
   let m: RegExpExecArray | null;
   EXPORT_RE.lastIndex = 0;
-  while ((m = EXPORT_RE.exec(content)) !== null) {
-    const name = m[1];
-    if (name && !names.includes(name)) names.push(name);
+  while ((m = EXPORT_RE.exec(content)) !== null) add(m[1]);
+
+  EXPORT_LIST_RE.lastIndex = 0;
+  while ((m = EXPORT_LIST_RE.exec(content)) !== null) {
+    for (const part of (m[1] as string).split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const segments = trimmed.split(/\s+as\s+/);
+      add(segments[segments.length - 1]?.trim());
+    }
   }
+
+  EXPORT_DEFAULT_BARE_RE.lastIndex = 0;
+  while ((m = EXPORT_DEFAULT_BARE_RE.exec(content)) !== null) add(m[1]);
+
   return names.slice(0, 6); // cap per-file to keep manifest compact
 }
 

@@ -1216,9 +1216,13 @@ async function buildNpmManifest(): Promise<string> {
     npmManifestCache =
       `AVAILABLE IN THIS SANDBOX (pre-installed — use freely, no install step needed):\n` +
       `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.`;
-  } catch {
+  } catch (err) {
     // template.ts unreadable — fail safe to the old static list rather than
     // emitting an empty/broken instruction block.
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[prompt-builder] buildNpmManifest: template.ts unreadable, falling back to static allowed-imports list",
+    );
     npmManifestCache =
       `ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,\n` +
       `@radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the\n` +
