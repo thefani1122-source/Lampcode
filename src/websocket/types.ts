@@ -162,6 +162,7 @@ export interface BuildClientEvents {
   join: (payload: string | { sessionId: string }) => void;
   join_session: (sessionId: string, ack: (joined: boolean) => void) => void;
   leave_session: (sessionId: string) => void;
+  "build:write_action_decision": (payload: { toolCallId: string; sessionId: string; approved: boolean }) => void;
 }
 
 // ── Project namespace events ──────────────────────────────────────────────────

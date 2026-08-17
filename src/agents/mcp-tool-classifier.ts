@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
+import type { ToolDefinition } from "./model-gateway.js";
 
 // ── Read-only classification ──────────────────────────────────────────────────
 // The Anthropic MCP connector (mcp_servers + mcp_toolset) has no mid-call
@@ -25,7 +26,23 @@ export interface ClassifiedTool {
   toolName: string;
   allowed: boolean;
   reason: "annotation-read-only" | "annotation-destructive" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
+  /** Raw inputSchema from MCP listTools — stored for write-proxy ToolDefinition generation. */
+  inputSchema?: Record<string, unknown> | undefined;
 }
+
+// ── Write-proxy types ─────────────────────────────────────────────────────────
+
+export interface WriteMcpMeta {
+  serverSlug: string;
+  serverUrl: string;
+  /** null when the token is embedded in the URL (mcp_url authType). */
+  authToken: string | null;
+  /** Original tool name on the MCP server (without the serverSlug__ prefix). */
+  mcpToolName: string;
+}
+
+/** Maps proxy tool name (e.g. "github__create_issue") → execution metadata. */
+export type WriteProxyRegistry = Map<string, WriteMcpMeta>;
 
 export interface McpToolsetConfig {
   type: "mcp_toolset";
@@ -63,11 +80,12 @@ async function discoverServerTools(server: ActiveMcpServer): Promise<ClassifiedT
 
     return tools.map((tool): ClassifiedTool => {
       const annotations = tool.annotations as { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined;
+      const inputSchema = tool.inputSchema as Record<string, unknown> | undefined;
       if (annotations?.readOnlyHint === true) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only" };
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only", inputSchema };
       }
       if (annotations?.destructiveHint === true || annotations?.readOnlyHint === false) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: false, reason: "annotation-destructive" };
+        return { serverSlug: server.slug, toolName: tool.name, allowed: false, reason: "annotation-destructive", inputSchema };
       }
       const matchesReadVerb = READ_VERB_RE.test(tool.name);
       return {
@@ -75,6 +93,7 @@ async function discoverServerTools(server: ActiveMcpServer): Promise<ClassifiedT
         toolName: tool.name,
         allowed: matchesReadVerb,
         reason: matchesReadVerb ? "name-pattern-match" : "name-pattern-no-match",
+        inputSchema,
       };
     });
   } catch (err) {
@@ -113,4 +132,46 @@ export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<Mc
   });
 
   return { toolsets, report };
+}
+
+/**
+ * From classifier results, build Anthropic ToolDefinitions and a registry for
+ * every explicitly-annotated write tool (reason "annotation-destructive").
+ * Ambiguous tools (name-pattern-no-match, discovery-failed) are NOT included —
+ * they stay fully blocked regardless of approval-gate availability.
+ */
+export function buildWriteProxyDefinitions(
+  report: ClassifiedTool[],
+  servers: ActiveMcpServer[],
+): { toolDefs: ToolDefinition[]; registry: WriteProxyRegistry } {
+  const serversBySlug = new Map(servers.map((s) => [s.slug, s]));
+  const toolDefs: ToolDefinition[] = [];
+  const registry: WriteProxyRegistry = new Map();
+
+  for (const t of report) {
+    if (t.reason !== "annotation-destructive") continue;
+    const server = serversBySlug.get(t.serverSlug);
+    if (!server) continue;
+
+    // Prefix with serverSlug to prevent name collisions across servers.
+    const proxyName = `${t.serverSlug}__${t.toolName}`;
+    registry.set(proxyName, {
+      serverSlug: t.serverSlug,
+      serverUrl: server.url,
+      authToken: server.authToken,
+      mcpToolName: t.toolName,
+    });
+    toolDefs.push({
+      name: proxyName,
+      description:
+        `[Requires user approval] Execute ${t.toolName} on the ${t.serverSlug} connected service. ` +
+        `You will be paused until the user approves or denies this action.`,
+      input_schema: {
+        type: "object",
+        ...(t.inputSchema ?? {}),
+      },
+    });
+  }
+
+  return { toolDefs, registry };
 }

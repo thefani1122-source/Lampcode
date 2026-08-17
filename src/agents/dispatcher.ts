@@ -16,7 +16,12 @@ import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
-import { classifyMcpServers, type McpToolsetConfig } from "./mcp-tool-classifier.js";
+import {
+  classifyMcpServers,
+  buildWriteProxyDefinitions,
+  type McpToolsetConfig,
+  type WriteProxyRegistry,
+} from "./mcp-tool-classifier.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
@@ -71,8 +76,9 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  build's spend so far, not just this dispatch's own turns. */
   costGuard?: { cumulativeUsd: number; maxUsd: number } | undefined;
   /** User's connected MCP/REST services — only meaningful when enableTools is
-   *  true. Read-only tools get discovered+denylist-classified per dispatch;
-   *  write/destructive tools are never enabled (see mcp-tool-classifier.ts). */
+   *  true. Read-only tools go to the Anthropic remote connector (denylist-
+   *  classified). Explicitly-annotated write/destructive tools become local
+   *  proxy tools with a user-approval gate. Ambiguous tools stay fully blocked. */
   mcpServers?: ActiveMcpServer[] | undefined;
   restProviders?: ConnectedRestProvider[] | undefined;
 };
@@ -241,14 +247,24 @@ export class AgentDispatcher {
     // against its docs), so this denylist IS the safety boundary, not a hint.
     const mcpDefs: McpServerDefinition[] = [];
     let mcpToolsets: McpToolsetConfig[] = [];
+    let writeProxyDefs: typeof TOOL_DEFINITIONS = [];
+    let writeProxyRegistry: WriteProxyRegistry = new Map();
     if (enableTools && mcpServers && mcpServers.length > 0) {
       for (const s of mcpServers) {
         mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
       }
       const { toolsets, report } = await classifyMcpServers(mcpServers);
       mcpToolsets = toolsets;
+      const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
+      writeProxyDefs = writeProxies.toolDefs;
+      writeProxyRegistry = writeProxies.registry;
       logger.info(
-        { sessionId, agentType, classification: report.map((r) => `${r.serverSlug}.${r.toolName}=${r.allowed ? "allow" : "deny"}(${r.reason})`) },
+        {
+          sessionId,
+          agentType,
+          classification: report.map((r) => `${r.serverSlug}.${r.toolName}=${r.allowed ? "allow" : "deny"}(${r.reason})`),
+          writeProxyCount: writeProxyDefs.length,
+        },
         "MCP tool classification for this dispatch",
       );
     }
@@ -343,7 +359,7 @@ export class AgentDispatcher {
       const stream = this.gateway.stream(
         {
           model, messages, maxTokens, thinkingBudget,
-          tools: enableTools ? TOOL_DEFINITIONS : undefined,
+          tools: enableTools ? [...TOOL_DEFINITIONS, ...writeProxyDefs] : undefined,
           ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
         },
         streamTimeoutMs,
@@ -408,8 +424,18 @@ export class AgentDispatcher {
       messages.push({ role: "assistant", content: assistantBlocks });
 
       const resultBlocks: MessageContentBlock[] = [];
+      // Reset per-round: the fail-all-on-first-deny rule applies within a single
+      // model response's tool list, not across rounds. A new round is a new model
+      // turn that can issue fresh write requests if earlier ones were approved.
+      const writeDenied = { value: false };
       for (const tc of streamResult.toolCalls) {
-        const result = await executeTool(tc.name, tc.arguments, { contextFiles }).catch(
+        const result = await executeTool(tc.name, tc.arguments, {
+          contextFiles,
+          sessionId,
+          writeMcpRegistry: writeProxyRegistry,
+          writeDenied,
+          toolCallId: tc.id,
+        }).catch(
           (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         resultBlocks.push({ type: "tool_result", tool_use_id: tc.id, content: result });
@@ -419,9 +445,7 @@ export class AgentDispatcher {
             result: result.startsWith("Error:") ? "error" : "success",
             sessionId,
           });
-          // Dedicated, distinctly-named signal for the "not yet supported"
-          // case — a generic tool_result event buried in the stream isn't a
-          // reliable way for the frontend to surface this clearly to the user.
+          // Dedicated signal for the generic "no proxy available" case.
           if (tc.name === "request_write_action") {
             getWebSocketServer().emitToRoom(sessionId, "build:write_action_declined", {
               message: result,
