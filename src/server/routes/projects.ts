@@ -33,7 +33,7 @@ const projectBrandingSchema = z.object({
 const createProjectSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
-  mode: z.enum(["fast", "plan"]),
+  mode: z.literal("fast"),
   techStack: z.array(z.string().max(50)).max(20).optional(),
 });
 
