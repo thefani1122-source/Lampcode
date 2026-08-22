@@ -1146,7 +1146,8 @@ export function parseSkillFrontmatter(raw: string, fallbackName: string): Parsed
 export const ALL_SKILL_NAMES = [
   "agent-architecture", "animation-expert", "api-design", "crewai",
   "database-rls", "exa", "firecrawl", "frontend-sandbox", "fullstack-hono",
-  "langgraph", "react-production", "supabase-rls", "typescript-strict",
+  "langgraph", "react-production", "supabase-rls", "surgical-editing",
+  "typescript-strict",
 ] as const;
 
 // Computed once and cached — skill files don't change at runtime, and this is

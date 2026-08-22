@@ -15,6 +15,7 @@ import {
   type CreditBurnEvent,
   type SocketData,
 } from "../types.js";
+import { resolveApproval, sweepBySession } from "../../agents/pending-approvals.js";
 
 type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
 type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, SocketData>;
@@ -191,14 +192,42 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       logger.debug({ socketId: socket.id, sessionId }, "Left build session room");
     });
 
+    // User approves or denies a pending write-MCP tool call.
+    // Ownership proof: the socket must be in the session's room — sockets only
+    // join a room after verifySessionOwner() passes during the join/join_session
+    // flow. resolveApproval() also checks the stored sessionId against the
+    // payload's sessionId as a second layer, so a forged toolCallId with a
+    // mismatched session is silently rejected at both levels.
+    socket.on("build:write_action_decision", (payload) => {
+      const { toolCallId, sessionId: sid, approved } = payload;
+      if (!socket.rooms.has(sid)) {
+        logger.warn(
+          { socketId: socket.id, userId, toolCallId, sid },
+          "Write action decision rejected — socket not in session room",
+        );
+        return;
+      }
+      const resolved = resolveApproval(toolCallId, sid, approved);
+      if (!resolved) {
+        logger.warn(
+          { socketId: socket.id, userId, toolCallId, sid },
+          "Write action decision: unknown or already-expired toolCallId",
+        );
+      }
+    });
+
     socket.on("disconnect", (reason) => {
       logger.info({ socketId: socket.id, userId, reason }, "Build WS disconnected");
 
-      // Pause this project's preview sandbox after a grace period — gives a
-      // quick reconnect (page refresh, brief network blip) time to cancel it
-      // via trackSession() before we pay to spin the sandbox back up.
       const sessionId = activeSessionId;
       if (!sessionId) return;
+
+      // Deny all pending write-action approvals for this session immediately —
+      // the user is gone and can't respond; waiting would leave executeTool()
+      // blocked until the 120 s timeout fires naturally.
+      sweepBySession(sessionId);
+
+      // Pause this project's preview sandbox after a grace period.
       void resolveProjectId(sessionId).then((projectId) => {
         if (projectId) schedulePause(projectId, sessionId);
       });
