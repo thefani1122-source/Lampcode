@@ -51,19 +51,76 @@ Response — each item in `photos[]`:
   that matches where you're placing the image; don't always reach for
   `original`.
 
-Example client code:
-
-```tsx
-const res = await fetch(
-  `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${perPage}`,
-  { headers: { Authorization: import.meta.env.VITE_PEXELS_API_KEY } },
-);
-const { photos } = await res.json();
-```
-
 Read the key from `import.meta.env.VITE_PEXELS_API_KEY` — the `VITE_` prefix
 is required for Vite to expose it to client code, same convention as
 `VITE_SUPABASE_URL`.
+
+## Errors, rate limits, and caching
+
+`@tanstack/react-query` is already installed and wired up in this sandbox
+(`App.tsx` wraps everything in `QueryClientProvider`, `@/lib/queryClient`
+exports the client) — use `useQuery` for Pexels searches rather than a bare
+`fetch` in a `useEffect`. Keying the query on the search string means an
+identical search anywhere in the session is served from cache instead of
+burning another request against the free-tier limit.
+
+Set `retry: false` on the query. The client's default `queryClient` already
+retries failed queries once, but a Pexels 429 or an invalid key won't
+resolve itself on a second attempt — it just spends another request for the
+same failure. One clean failed state is correct here; don't add
+retry-with-backoff on top of it, that only makes a rate-limit situation
+worse.
+
+Never leave a failed or pending request as a broken `<img>` — show a
+skeleton while loading and a plain placeholder block (not a broken-image
+icon) on error, empty results, 429, or a missing/invalid key. All of those
+render the same way to the user: no photo available right now, not "this
+app is broken."
+
+```tsx
+import { useQuery } from '@tanstack/react-query'
+
+function usePexelsSearch(query: string, perPage = 15) {
+  return useQuery({
+    queryKey: ['pexels-search', query, perPage],
+    queryFn: async () => {
+      const res = await fetch(
+        `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${perPage}`,
+        { headers: { Authorization: import.meta.env.VITE_PEXELS_API_KEY } },
+      )
+      if (res.status === 429) throw new Error('Pexels rate limit reached')
+      if (!res.ok) throw new Error(`Pexels request failed (${res.status})`)
+      const { photos } = await res.json()
+      return photos
+    },
+    retry: false,
+    enabled: query.trim().length > 0,
+  })
+}
+
+function PexelsPhoto({ query }: { query: string }) {
+  const { data: photos, isLoading, isError } = usePexelsSearch(query)
+
+  if (isLoading) {
+    return <div className="aspect-video w-full animate-pulse rounded-lg bg-muted" />
+  }
+  if (isError || !photos?.length) {
+    return <div className="aspect-video w-full rounded-lg bg-muted" />
+  }
+
+  const photo = photos[0]
+  return (
+    <figure>
+      <img src={photo.src.large} alt={photo.alt || query} className="w-full rounded-lg" />
+      <figcaption className="mt-1 text-xs text-muted-foreground">
+        <a href={photo.url} target="_blank" rel="noopener noreferrer">
+          Photo by {photo.photographer} on Pexels
+        </a>
+      </figcaption>
+    </figure>
+  )
+}
+```
 
 ## Attribution — required, not optional
 
