@@ -29,7 +29,7 @@ import {
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
-import { deductCredits, refundCredits, ensureStartingCredits } from "../../build/credits.js";
+import { assertHasBudget } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
@@ -79,10 +79,6 @@ Options must be exactly 3 per question.
 allowMultiple: true only for user-type questions.`;
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
-
-const FAST_BUILD_CREDIT_COST = process.env["FAST_BUILD_CREDIT_COST"]
-  ? parseInt(process.env["FAST_BUILD_CREDIT_COST"], 10)
-  : 20;
 
 // Hard ceiling on cumulative model spend within one build (main dispatch +
 // missing-files retry + fix loops). Checked BETWEEN dispatches, never mid-stream —
@@ -675,9 +671,10 @@ export async function runFastBuild(
         .set({ status: "failed", error: reason, completedAt: new Date() })
         .where(eq(buildSessions.id, sessionId)),
       db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-      refundCredits(userId, FAST_BUILD_CREDIT_COST),
     ]);
-    console.log(`[build] unsupported runtime request rejected, credits refunded: ${prompt.slice(0, 80)}`);
+    // Nothing to refund — no dispatch ran before this rejection, so no real
+    // usage was incurred (usage is deducted per-dispatch, not pre-charged).
+    console.log(`[build] unsupported runtime request rejected, no usage incurred: ${prompt.slice(0, 80)}`);
     return;
   }
 
@@ -958,6 +955,7 @@ export async function runFastBuild(
 
     const result = await dispatcher.dispatch({
       agentType: "frontend",
+      usageCategory: "build",
       task: {
         description: taskDescription,
         requirements: effectiveRequirements,
@@ -1126,7 +1124,7 @@ export async function runFastBuild(
               { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
               "Build cost ceiling reached before missing-files retry — aborting build",
             );
-            const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+            const reason = "Build aborted: cost ceiling reached.";
             server?.buildFailed(sessionId, {
               sessionId,
               phase: "BUILD",
@@ -1139,14 +1137,14 @@ export async function runFastBuild(
                 .set({ status: "failed", error: reason, completedAt: new Date() })
                 .where(eq(buildSessions.id, sessionId)),
               db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-              refundCredits(userId, FAST_BUILD_CREDIT_COST),
             ]);
-            console.log(`[build] cost ceiling reached before missing-files retry, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+            console.log(`[build] cost ceiling reached before missing-files retry, build aborted: ${prompt.slice(0, 80)}`);
             return;
           }
 
           const retryResult = await dispatcher.dispatch({
             agentType: "backend",
+            usageCategory: "missing_files_retry",
             task: {
               description: retryDescription,
               requirements: [
@@ -1284,7 +1282,7 @@ export async function runFastBuild(
             { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
             "Build cost ceiling reached before syntax/orphan fix dispatch — aborting build",
           );
-          const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+          const reason = "Build aborted: cost ceiling reached.";
           server?.buildFailed(sessionId, {
             sessionId,
             phase: "BUILD",
@@ -1297,9 +1295,8 @@ export async function runFastBuild(
               .set({ status: "failed", error: reason, completedAt: new Date() })
               .where(eq(buildSessions.id, sessionId)),
             db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-            refundCredits(userId, FAST_BUILD_CREDIT_COST),
           ]);
-          console.log(`[build] cost ceiling reached before syntax/orphan fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          console.log(`[build] cost ceiling reached before syntax/orphan fix dispatch, build aborted: ${prompt.slice(0, 80)}`);
           return;
         }
 
@@ -1320,6 +1317,7 @@ export async function runFastBuild(
         try {
           const fixResult = await dispatcher.dispatch({
             agentType: "frontend",
+            usageCategory: "syntax_fix",
             task: {
               description: fixDescription,
               requirements,
@@ -1546,8 +1544,9 @@ export async function runFastBuild(
         const hardBlocked = failing.filter(isHardBlockSecurityCheck);
         if (hardBlocked.length > 0) {
           // Never attempt an automated fix on a live credential or a possibly
-          // hallucinated package — abort the whole build instead. This runs
-          // before buildSessions is marked "success", so refund + fail is correct.
+          // hallucinated package — abort the whole build instead. Real usage
+          // already incurred for dispatches that ran stays charged; nothing
+          // to refund since usage is deducted per-dispatch, not pre-charged.
           logger.warn({ sessionId, projectId, hardBlocked }, "Security hard-block finding — aborting build, no auto-fix attempted");
           const reason = `Build blocked by security check: ${hardBlocked.map((c) => c.message).join("; ")}`;
           server?.buildFailed(sessionId, {
@@ -1562,9 +1561,8 @@ export async function runFastBuild(
               .set({ status: "failed", error: reason, completedAt: new Date() })
               .where(eq(buildSessions.id, sessionId)),
             db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-            refundCredits(userId, FAST_BUILD_CREDIT_COST),
           ]);
-          console.log(`[build] security hard-block, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          console.log(`[build] security hard-block, build aborted: ${prompt.slice(0, 80)}`);
           return;
         }
 
@@ -1592,7 +1590,7 @@ export async function runFastBuild(
             { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
             "Build cost ceiling reached before security-fix dispatch — aborting build",
           );
-          const reason = "Build aborted: cost ceiling reached. Your credits have been refunded.";
+          const reason = "Build aborted: cost ceiling reached.";
           server?.buildFailed(sessionId, {
             sessionId,
             phase: "BUILD",
@@ -1605,9 +1603,8 @@ export async function runFastBuild(
               .set({ status: "failed", error: reason, completedAt: new Date() })
               .where(eq(buildSessions.id, sessionId)),
             db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-            refundCredits(userId, FAST_BUILD_CREDIT_COST),
           ]);
-          console.log(`[build] cost ceiling reached before security-fix dispatch, build aborted, credits refunded: ${prompt.slice(0, 80)}`);
+          console.log(`[build] cost ceiling reached before security-fix dispatch, build aborted: ${prompt.slice(0, 80)}`);
           return;
         }
 
@@ -1620,6 +1617,7 @@ export async function runFastBuild(
         try {
           const fixResult = await dispatcher.dispatch({
             agentType: "backend",
+            usageCategory: "security_fix",
             task: {
               description: fixDescription,
               requirements: [
@@ -1829,6 +1827,7 @@ export async function runFastBuild(
         try {
           const fix = await dispatcher.dispatch({
             agentType: "frontend",
+            usageCategory: "backend_crash_fix",
             task: {
               description: fixDesc,
               requirements: [
@@ -1918,6 +1917,7 @@ export async function runFastBuild(
           try {
             const fix = await dispatcher.dispatch({
               agentType: "frontend",
+              usageCategory: "typecheck_fix",
               task: {
                 description: fixDesc,
                 requirements: [
@@ -2007,7 +2007,12 @@ export async function runFastBuild(
     }
 
     // ── Update build session ────────────────────────────────────────────────
+    // creditsUsed is deprecated (see schema.ts) and kept only additively,
+    // still computed from just the main dispatch as it always was. usageUsd
+    // is the new, accurate field — the real margined cost of the whole
+    // build, main dispatch + every fix loop that ran.
     const creditsUsed = Math.ceil(result.costUsd * 1_000);
+    const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
     await db
       .update(buildSessions)
       .set({
@@ -2015,6 +2020,7 @@ export async function runFastBuild(
         phase: 2,
         outputDir,
         creditsUsed,
+        usageUsd,
         completedAt: new Date(),
       })
       .where(eq(buildSessions.id, sessionId));
@@ -2176,16 +2182,17 @@ buildRouter.post("/fast", async (c) => {
     throw new AppError(409, "A build is already running for this project", "BUILD_IN_PROGRESS");
   }
 
-  // ── Credit handling (admins bypass entirely) ──────────────────────────────
+  // ── Budget check (admins bypass entirely) ─────────────────────────────────
+  // No flat pre-charge anymore — real usage is deducted per-dispatch as it's
+  // actually incurred (see dispatcher.ts's deductUsage hook). This just
+  // refuses to START a build with zero balance left.
   const adminBypass = isAdmin(authUser.email);
   if (adminBypass) {
     console.log("[CREDITS] Admin bypass for:", authUser.email);
   } else {
-    // Ensure billing row exists with the 500-credit starter limit, then deduct.
-    await ensureStartingCredits(authUser.id);
-    await deductCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+    await assertHasBudget(authUser.id);
   }
-  console.log(`[FAST t+${Date.now()-t0}ms] credits ${adminBypass ? "bypassed" : "deducted"}`);
+  console.log(`[FAST t+${Date.now()-t0}ms] budget ${adminBypass ? "bypassed" : "checked"}`);
 
   const sessionId = randomUUID();
   try {
@@ -2241,13 +2248,16 @@ buildRouter.post("/fast", async (c) => {
         // handled without running the sandbox/fix-loop machinery.
         return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag, manifestFlag).catch((err) => {
           console.error(err);
-          if (!adminBypass) refundCredits(userId, FAST_BUILD_CREDIT_COST).catch(console.error);
+          // Nothing to refund — whatever dispatches actually ran before this
+          // failure already deducted their real usage via dispatcher.ts's
+          // per-dispatch hook, and that stays charged regardless of whether
+          // the overall build ultimately succeeded.
         });
       })();
     });
   } catch (err) {
-    // Refund credits if session creation failed (DB insert or project update)
-    if (!adminBypass) await refundCredits(authUser.id, FAST_BUILD_CREDIT_COST);
+    // Session creation itself failed (DB insert or project update) — no
+    // dispatch could have run yet, so no usage was incurred either.
     throw err;
   }
 

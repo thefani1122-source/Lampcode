@@ -270,7 +270,13 @@ export const buildSessions = pgTable("build_sessions", {
   attachments: jsonb("attachments").$type<string[]>(),
   outputDir: text("output_dir"),
   previewUrl: text("preview_url"),
+  // Deprecated: computed from only the main dispatch's cost, undercounts
+  // fix-loop spend. Kept in place (additive change) but no longer the
+  // source of truth for display — see usageUsd below.
   creditsUsed: integer("credits_used").notNull().default(0),
+  // Real margined dollar cost for the whole build (main dispatch + every fix
+  // loop that ran), matching the new usage_usd billing unit.
+  usageUsd: doublePrecision("usage_usd").notNull().default(0),
   error: text("error"),
   // Plan-mode columns
   planStatus: text("plan_status"),
@@ -291,6 +297,21 @@ export const agentTaskStatusEnum = pgEnum("task_status", [
   "skipped",
 ]);
 
+// Billing/analytics category — separate from agentType, which drives model-tier
+// routing and prompt-builder behavior and must keep its existing meaning.
+// agentType answers "which side of the stack" (frontend/backend/db/...);
+// usageCategory answers "which kind of dispatch, for the usage breakdown UI."
+// Nullable: older rows predate this column and have no category.
+export const usageCategoryEnum = pgEnum("usage_category", [
+  "build",
+  "empty_output_fix",
+  "missing_files_retry",
+  "syntax_fix",
+  "security_fix",
+  "backend_crash_fix",
+  "typecheck_fix",
+]);
+
 export const agentTasks = pgTable("agent_tasks", {
   // ── Core columns (from DB) ────────────────────────────────────────────────
   id: text("id").primaryKey(),
@@ -298,6 +319,7 @@ export const agentTasks = pgTable("agent_tasks", {
   userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   agentType: text("agent_type").notNull(),
+  usageCategory: usageCategoryEnum("usage_category"),
   taskName: text("task_name").notNull().default("agent-task"),
   status: agentTaskStatusEnum("status").notNull().default("running"),
   inputTokens: integer("input_tokens").notNull().default(0),
@@ -594,12 +616,32 @@ export const projectEnvVars = pgTable(
 
 // ── User billing ──────────────────────────────────────────────────────────────
 
-export const billingPlanEnum = pgEnum("billing_plan", ["free", "pro", "enterprise"]);
+export const billingPlanEnum = pgEnum("billing_plan", ["free", "pro", "max", "power", "enterprise"]);
 
-export const PLAN_CREDITS: Record<"free" | "pro" | "enterprise", number> = {
-  free:       100,
-  pro:        2_000,
-  enterprise: 50_000,
+// Monthly usage_usd allotment per self-serve tier ($19/$49/$99 price points
+// for pro/max/power respectively; free is $0). "enterprise" is not a
+// self-serve dollar tier — it's custom/negotiated, represented here as a very
+// large practical ceiling so the same remaining-balance arithmetic works
+// without special-casing it; real enterprise limits are set via the admin
+// grant endpoint, same as today.
+export const PLAN_USAGE_USD: Record<"free" | "pro" | "max" | "power" | "enterprise", number> = {
+  free:       3,
+  pro:        15,
+  max:        45,
+  power:      100,
+  enterprise: 1_000_000,
+};
+
+// Power is the only tier with rollover today: unused balance carries into the
+// next period, capped at one extra month's allotment (2x monthly = $200 max
+// banked). Free/Pro/Max reset to 0 every period. Keyed by plan so a future
+// tier's policy is a one-line addition, not a new conditional somewhere else.
+export const PLAN_ROLLOVER_CAP_USD: Record<"free" | "pro" | "max" | "power" | "enterprise", number> = {
+  free:       0,
+  pro:        0,
+  max:        0,
+  power:      PLAN_USAGE_USD.power,
+  enterprise: 0,
 };
 
 export const userBilling = pgTable("user_billing", {
@@ -607,8 +649,14 @@ export const userBilling = pgTable("user_billing", {
   plan: billingPlanEnum("plan").notNull().default("free"),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
-  creditsLimit: integer("credits_limit").notNull().default(100),
-  creditsUsed: integer("credits_used").notNull().default(0),
+  // Real dollar-denominated usage metering — replaces the old flat integer
+  // credits system. monthlyLimitUsd is the tier's base allotment;
+  // rolloverUsd is banked unused balance from a prior period (Power only,
+  // see PLAN_ROLLOVER_CAP_USD); usageUsd is what's been spent this period.
+  // Available balance = monthlyLimitUsd + rolloverUsd - usageUsd.
+  monthlyLimitUsd: doublePrecision("monthly_limit_usd").notNull().default(3),
+  usageUsd: doublePrecision("usage_usd").notNull().default(0),
+  rolloverUsd: doublePrecision("rollover_usd").notNull().default(0),
   currentPeriodStart: timestamp("current_period_start", { mode: "date" }),
   currentPeriodEnd: timestamp("current_period_end", { mode: "date" }),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
@@ -666,4 +714,5 @@ export type ProjectEnvVar = typeof projectEnvVars.$inferSelect;
 export type NewProjectEnvVar = typeof projectEnvVars.$inferInsert;
 export type UserBilling = typeof userBilling.$inferSelect;
 export type BillingPlan = (typeof billingPlanEnum.enumValues)[number];
+export type UsageCategory = (typeof usageCategoryEnum.enumValues)[number];
 export type EnvEnvironment = (typeof envEnvironmentEnum.enumValues)[number];

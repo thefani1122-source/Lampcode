@@ -14,12 +14,15 @@ import {
   userBilling,
   agentTasks,
   buildSessions,
-  PLAN_CREDITS,
+  PLAN_USAGE_USD,
   type BillingPlan,
+  type UsageCategory,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { logger } from "../logger.js";
+import { ensureCurrentPeriod } from "../../build/credits.js";
+import { config } from "../config.js";
 
 // ── Stripe helpers (direct REST — no npm package required) ────────────────────
 
@@ -62,14 +65,18 @@ async function stripePost<T>(path: string, data: Record<string, string | number 
 
 // ── Plan prices (Stripe price IDs from env, with dev fallbacks) ───────────────
 
-function planPriceId(plan: "pro" | "enterprise"): string {
-  const key = plan === "pro" ? "STRIPE_PRICE_PRO" : "STRIPE_PRICE_ENTERPRISE";
+function planPriceId(plan: "pro" | "max" | "power" | "enterprise"): string {
+  const key = `STRIPE_PRICE_${plan.toUpperCase()}`;
   return process.env[key] ?? `price_${plan}_placeholder`;
 }
 
 // ── Billing record upsert ─────────────────────────────────────────────────────
 
 async function getOrCreateBilling(userId: string) {
+  // Applies the lazy monthly reset/rollover first (see credits.ts) so every
+  // caller of this helper always sees a fresh, current-period balance.
+  await ensureCurrentPeriod(userId);
+
   const rows = await db
     .select()
     .from(userBilling)
@@ -87,8 +94,9 @@ async function getOrCreateBilling(userId: string) {
     .values({
       userId,
       plan:                "free",
-      creditsLimit:        PLAN_CREDITS.free,
-      creditsUsed:         0,
+      monthlyLimitUsd:     PLAN_USAGE_USD.free,
+      usageUsd:            0,
+      rolloverUsd:         0,
       currentPeriodStart:  now,
       currentPeriodEnd:    end,
       cancelAtPeriodEnd:   false,
@@ -112,7 +120,7 @@ function parseBody<T>(schema: z.ZodType<T>, raw: unknown): T {
 }
 
 const upgradeSchema = z.object({
-  plan:        z.enum(["pro", "enterprise"]),
+  plan:        z.enum(["pro", "max", "power", "enterprise"]),
   successUrl:  z.string().url("successUrl must be a valid URL"),
   cancelUrl:   z.string().url("cancelUrl must be a valid URL"),
 });
@@ -127,12 +135,14 @@ billingRouter.get("/", async (c) => {
   const authUser = c.get("authUser");
   const billing  = await getOrCreateBilling(authUser.id);
 
+  const availableUsd = billing.monthlyLimitUsd + billing.rolloverUsd;
   return c.json({
     billing: {
       plan:               billing.plan,
-      creditsLimit:       billing.creditsLimit,
-      creditsUsed:        billing.creditsUsed,
-      creditsRemaining:   Math.max(0, billing.creditsLimit - billing.creditsUsed),
+      monthlyLimitUsd:    billing.monthlyLimitUsd,
+      rolloverUsd:        billing.rolloverUsd,
+      usageUsd:           billing.usageUsd,
+      remainingUsd:       Math.max(0, availableUsd - billing.usageUsd),
       currentPeriodStart: billing.currentPeriodStart?.toISOString(),
       currentPeriodEnd:   billing.currentPeriodEnd?.toISOString(),
       cancelAtPeriodEnd:  billing.cancelAtPeriodEnd,
@@ -146,7 +156,6 @@ billingRouter.get("/usage", async (c) => {
   const authUser = c.get("authUser");
   const billing  = await getOrCreateBilling(authUser.id);
 
-  // Credits consumed = sum of costUsd * 100 across agent tasks (1 credit = $0.01)
   const [tokenSums] = await db
     .select({
       totalInputTokens:  sum(agentTasks.inputTokens),
@@ -159,25 +168,46 @@ billingRouter.get("/usage", async (c) => {
 
   const [sessionSums] = await db
     .select({
-      totalCreditsUsed: sum(buildSessions.creditsUsed),
-      sessionCount:     count(buildSessions.id),
+      totalUsageUsd: sum(buildSessions.usageUsd),
+      sessionCount:  count(buildSessions.id),
     })
     .from(buildSessions)
     .where(eq(buildSessions.userId, authUser.id));
 
+  // Category breakdown — real margined usage_usd per category, derived from
+  // costUsd × margin at read time (costUsd itself stays pure real cost).
+  const categoryRows = await db
+    .select({
+      category: agentTasks.usageCategory,
+      totalCostUsd: sum(agentTasks.costUsd),
+      taskCount: count(agentTasks.id),
+    })
+    .from(agentTasks)
+    .where(eq(agentTasks.userId, authUser.id))
+    .groupBy(agentTasks.usageCategory);
+
+  const categoryBreakdown = categoryRows.map((r) => ({
+    category: (r.category ?? "build") as UsageCategory,
+    usageUsd: Number(r.totalCostUsd ?? 0) * config.USAGE_MARGIN_MULTIPLIER,
+    taskCount: Number(r.taskCount ?? 0),
+  }));
+
+  const availableUsd = billing.monthlyLimitUsd + billing.rolloverUsd;
   return c.json({
     usage: {
-      creditsLimit:        billing.creditsLimit,
-      creditsUsed:         billing.creditsUsed,
-      creditsRemaining:    Math.max(0, billing.creditsLimit - billing.creditsUsed),
-      periodStart:         billing.currentPeriodStart?.toISOString(),
-      periodEnd:           billing.currentPeriodEnd?.toISOString(),
-      totalSessions:       Number(sessionSums?.sessionCount ?? 0),
-      totalTasks:          Number(tokenSums?.taskCount ?? 0),
-      totalInputTokens:    Number(tokenSums?.totalInputTokens ?? 0),
-      totalOutputTokens:   Number(tokenSums?.totalOutputTokens ?? 0),
-      totalCostUsd:        Number(tokenSums?.totalCostUsd ?? 0),
-      totalSessionCredits: Number(sessionSums?.totalCreditsUsed ?? 0),
+      monthlyLimitUsd:   billing.monthlyLimitUsd,
+      rolloverUsd:       billing.rolloverUsd,
+      usageUsd:          billing.usageUsd,
+      remainingUsd:      Math.max(0, availableUsd - billing.usageUsd),
+      periodStart:       billing.currentPeriodStart?.toISOString(),
+      periodEnd:         billing.currentPeriodEnd?.toISOString(),
+      totalSessions:     Number(sessionSums?.sessionCount ?? 0),
+      totalTasks:        Number(tokenSums?.taskCount ?? 0),
+      totalInputTokens:  Number(tokenSums?.totalInputTokens ?? 0),
+      totalOutputTokens: Number(tokenSums?.totalOutputTokens ?? 0),
+      totalCostUsd:      Number(tokenSums?.totalCostUsd ?? 0),
+      totalSessionUsageUsd: Number(sessionSums?.totalUsageUsd ?? 0),
+      categoryBreakdown,
     },
   });
 });

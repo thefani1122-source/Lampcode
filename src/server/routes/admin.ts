@@ -46,10 +46,12 @@ async function isAuthorized(c: Context): Promise<boolean> {
 
 const addCreditsSchema = z.object({
   userId: z.string().min(1, "userId is required"),
-  amount: z.number().int().min(0).max(1_000_000).default(500),
+  amountUsd: z.number().min(0).max(100_000).default(3),
 });
 
-// POST /api/admin/add-credits — reset a user's credit balance to `amount`.
+// POST /api/admin/add-credits — reset a user's usage balance to `amountUsd`
+// (route path kept for compatibility; the unit is now real dollars, not
+// integer credits — see db/schema.ts's userBilling rework).
 adminRouter.post("/add-credits", async (c) => {
   if (!(await isAuthorized(c))) {
     return c.json({ error: "Unauthorized" }, 403);
@@ -65,41 +67,52 @@ adminRouter.post("/add-credits", async (c) => {
     );
   }
 
-  const { userId, amount } = parsed.data;
+  const { userId, amountUsd } = parsed.data;
   const now = new Date();
+  const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-  // Upsert: set the limit to `amount` and reset usage to 0 so the user has the
-  // full `amount` available.
+  // Upsert: set monthlyLimitUsd to amountUsd and reset usage/rollover so the
+  // user has the full amountUsd available this period.
   await db
     .insert(userBilling)
     .values({
       userId,
       plan: "free",
-      creditsLimit: amount,
-      creditsUsed: 0,
+      monthlyLimitUsd: amountUsd,
+      usageUsd: 0,
+      rolloverUsd: 0,
+      currentPeriodStart: now,
+      currentPeriodEnd: periodEnd,
       createdAt: now,
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: userBilling.userId,
       set: {
-        creditsLimit: amount,
-        creditsUsed: 0,
+        monthlyLimitUsd: amountUsd,
+        usageUsd: 0,
+        rolloverUsd: 0,
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
         updatedAt: now,
       },
     });
 
   const [row] = await db
-    .select({ creditsLimit: userBilling.creditsLimit, creditsUsed: userBilling.creditsUsed })
+    .select({ monthlyLimitUsd: userBilling.monthlyLimitUsd, usageUsd: userBilling.usageUsd, rolloverUsd: userBilling.rolloverUsd })
     .from(userBilling)
     .where(eq(userBilling.userId, userId))
     .limit(1);
 
+  const monthlyLimitUsd = row?.monthlyLimitUsd ?? amountUsd;
+  const usageUsd = row?.usageUsd ?? 0;
+  const rolloverUsd = row?.rolloverUsd ?? 0;
   return c.json({
     success: true,
     userId,
-    creditsLimit: row?.creditsLimit ?? amount,
-    creditsUsed: row?.creditsUsed ?? 0,
-    creditsRemaining: (row?.creditsLimit ?? amount) - (row?.creditsUsed ?? 0),
+    monthlyLimitUsd,
+    usageUsd,
+    rolloverUsd,
+    remainingUsd: monthlyLimitUsd + rolloverUsd - usageUsd,
   });
 });

@@ -37,6 +37,12 @@ const envSchema = z.object({
   STRIPE_PRICE_PRO: z.string().min(1).optional(),
   STRIPE_PRICE_ENTERPRISE: z.string().min(1).optional(),
   ENCRYPTION_KEY: z.string().length(64, "ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)").optional(),
+  // Multiplier applied to real per-dispatch costUsd to produce the billed
+  // usage_usd amount. Covers real profit margin AND infra cost costUsd
+  // doesn't capture (E2B sandbox compute, Railway hosting, Redis, bandwidth —
+  // costUsd only measures LLM token spend). Provisional default; revisit once
+  // real all-in cost-per-build is measured post-launch.
+  USAGE_MARGIN_MULTIPLIER: z.coerce.number().positive().default(4),
 });
 
 const REQUIRED_VARS = [

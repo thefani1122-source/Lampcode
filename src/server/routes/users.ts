@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { user as userTable, userBilling, buildSessions } from "../../db/schema.js";
+import { user as userTable, buildSessions } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { isAdmin } from "../../auth/admin.js";
+import { getRemainingBudget } from "../../build/credits.js";
 
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
@@ -19,17 +20,13 @@ usersRouter.use("/*", requireAuth);
 // GET /api/users/me — current user profile + live credit balance from DB
 usersRouter.get("/me", async (c) => {
   const authUser = c.get("authUser");
-  const [profile, billing] = await Promise.all([
+  const [profile, budget] = await Promise.all([
     db
       .select()
       .from(userTable)
       .where(eq(userTable.id, authUser.id))
       .limit(1),
-    db
-      .select({ creditsUsed: userBilling.creditsUsed, creditsLimit: userBilling.creditsLimit })
-      .from(userBilling)
-      .where(eq(userBilling.userId, authUser.id))
-      .limit(1),
+    getRemainingBudget(authUser.id),
   ]);
 
   if (profile[0] === undefined) {
@@ -37,17 +34,16 @@ usersRouter.get("/me", async (c) => {
   }
 
   const admin = isAdmin(authUser.email);
-  const creditsUsed = billing[0]?.creditsUsed ?? 0;
-  const creditsLimit = billing[0]?.creditsLimit ?? 500;
 
   return c.json({
     user: {
       ...profile[0],
       isAdmin: admin,
       // Always the live DB value (admins effectively have unlimited builds).
-      creditsUsed,
-      creditsLimit,
-      creditsRemaining: admin ? Number.MAX_SAFE_INTEGER : creditsLimit - creditsUsed,
+      usageUsd: budget.usageUsd,
+      monthlyLimitUsd: budget.monthlyLimitUsd,
+      rolloverUsd: budget.rolloverUsd,
+      remainingUsd: admin ? Number.MAX_SAFE_INTEGER : budget.remainingUsd,
     },
   });
 });
@@ -84,27 +80,22 @@ usersRouter.patch("/me", async (c) => {
 usersRouter.get("/me/usage", async (c) => {
   const authUser = c.get("authUser");
 
-  const [billing, projectsBuiltRow] = await Promise.all([
-    db
-      .select({ creditsUsed: userBilling.creditsUsed, creditsLimit: userBilling.creditsLimit })
-      .from(userBilling)
-      .where(eq(userBilling.userId, authUser.id))
-      .limit(1),
+  const [budget, projectsBuiltRow] = await Promise.all([
+    getRemainingBudget(authUser.id),
     db
       .select({ count: sql<number>`cast(count(*) as integer)` })
       .from(buildSessions)
       .where(eq(buildSessions.userId, authUser.id)),
   ]);
 
-  const creditsUsed = billing[0]?.creditsUsed ?? 0;
-  const creditsLimit = billing[0]?.creditsLimit ?? 500;
   const projectsBuilt = projectsBuiltRow[0]?.count ?? 0;
 
   return c.json({
     usage: {
-      creditsUsed,
-      creditsLimit,
-      creditsRemaining: creditsLimit - creditsUsed,
+      usageUsd: budget.usageUsd,
+      monthlyLimitUsd: budget.monthlyLimitUsd,
+      rolloverUsd: budget.rolloverUsd,
+      remainingUsd: budget.remainingUsd,
       projectsBuilt,
     },
   });

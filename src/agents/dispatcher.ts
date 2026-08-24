@@ -24,6 +24,8 @@ import {
 } from "./mcp-tool-classifier.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
+import { deductUsage } from "../build/credits.js";
+import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
 
 // Workspace root: one directory per project
@@ -81,6 +83,11 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  proxy tools with a user-approval gate. Ambiguous tools stay fully blocked. */
   mcpServers?: ActiveMcpServer[] | undefined;
   restProviders?: ConnectedRestProvider[] | undefined;
+  /** Billing/analytics tag for this dispatch — separate from agentType, see
+   *  the usageCategory column comment in db/schema.ts. Defaults to "build"
+   *  when omitted so every dispatch still lands in a real category rather
+   *  than null. */
+  usageCategory?: UsageCategory | undefined;
 };
 
 export interface DispatchResult {
@@ -138,6 +145,7 @@ export class AgentDispatcher {
     const costGuard = options.costGuard;
     const mcpServers = options.mcpServers;
     const restProviders = options.restProviders;
+    const usageCategory = options.usageCategory;
 
     let lastError: Error | null = null;
 
@@ -146,7 +154,7 @@ export class AgentDispatcher {
 
       try {
         return await this.callModelWithRetry(
-          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders },
+          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders, usageCategory },
           task, model, tier as 1 | 2,
         );
       } catch (err) {
@@ -182,6 +190,7 @@ export class AgentDispatcher {
     logger.warn({ failedAgentType, sessionId }, "Auto-triggering fix agent");
     return this.dispatch({
       agentType: "fix",
+      usageCategory: "empty_output_fix",
       task: {
         description: `The ${failedAgentType} agent produced no valid output. Context: ${errorContext.slice(0, 1_000)}. Diagnose the issue and regenerate the expected output.`,
         outputFormat: "code",
@@ -226,6 +235,11 @@ export class AgentDispatcher {
     tier: 1 | 2,
   ): Promise<DispatchResult> {
     const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers, restProviders } = options;
+    // Defaults to "build" rather than left null — every dispatch is billing-
+    // relevant, and the 5 existing fix loops that predate this field (and
+    // any future caller that forgets to set it) should still land in a real,
+    // visible category rather than silently falling out of the breakdown.
+    const usageCategory: UsageCategory = options.usageCategory ?? "build";
 
     // Tools require a costGuard so the in-loop check has something to check
     // against — a call site that forgets to pass one gets tools silently
@@ -305,7 +319,7 @@ export class AgentDispatcher {
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker
-      .begin(sessionId, agentType, model, tier, userId, projectId)
+      .begin(sessionId, agentType, model, tier, userId, projectId, usageCategory)
       .catch((err) => {
         logger.warn({ err }, "Failed to record agent task start");
         return randomUUID();
@@ -471,6 +485,16 @@ export class AgentDispatcher {
     await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
+
+    // Real usage billing: deduct actualCostUsd × margin from the user's
+    // balance now that the dispatch (and every tool round-trip in it) has
+    // actually completed. Single hook point covers every dispatch() caller —
+    // build.ts's 7 call sites and any future one — without each needing to
+    // remember to deduct manually. No userId (e.g. internal/system dispatches)
+    // means no billing to do.
+    if (userId) {
+      await deductUsage(userId, usage.costUsd, usageCategory);
+    }
 
     return {
       taskId,
