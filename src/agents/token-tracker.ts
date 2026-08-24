@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { agentTasks } from "../db/schema.js";
+import { agentTasks, type UsageCategory } from "../db/schema.js";
 import { logger } from "../server/logger.js";
 
 // ── Pricing table (USD per 1M tokens) ────────────────────────────────────────
@@ -71,6 +71,7 @@ export class TokenTracker {
     tierUsed: number,
     userId?: string | undefined,
     projectId?: string | undefined,
+    usageCategory?: UsageCategory | undefined,
   ): Promise<string> {
     const id = randomUUID();
     await db.insert(agentTasks).values({
@@ -79,6 +80,7 @@ export class TokenTracker {
       userId: userId ?? null,
       projectId: projectId ?? null,
       agentType,
+      usageCategory: usageCategory ?? null,
       modelUsed,
       tierUsed,
       status: "running",

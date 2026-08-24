@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createHmac, timingSafeEqual } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { userBilling, PLAN_CREDITS, type BillingPlan } from "../../db/schema.js";
+import { userBilling, PLAN_USAGE_USD, type BillingPlan } from "../../db/schema.js";
 import { logger } from "../logger.js";
 
 const webhooksRouter = new Hono();
@@ -74,25 +74,29 @@ webhooksRouter.post("/stripe", async (c) => {
       const userId = metadata?.["userId"];
       const plan = metadata?.["plan"] as BillingPlan | undefined;
 
-      if (!userId || !plan || !(plan in PLAN_CREDITS)) {
+      if (!userId || !plan || !(plan in PLAN_USAGE_USD)) {
         logger.warn({ metadata }, "[stripe] checkout.session.completed: missing/invalid metadata");
         break;
       }
 
       const customerId = session["customer"] as string | null;
       const subscriptionId = session["subscription"] as string | null;
+      const now = new Date();
+      const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
       await db
         .update(userBilling)
         .set({
           plan,
-          creditsLimit: PLAN_CREDITS[plan],
-          creditsUsed: 0,
+          monthlyLimitUsd: PLAN_USAGE_USD[plan],
+          usageUsd: 0,
+          rolloverUsd: 0,
           ...(customerId ? { stripeCustomerId: customerId } : {}),
           ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-          currentPeriodStart: new Date(),
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
           cancelAtPeriodEnd: false,
-          updatedAt: new Date(),
+          updatedAt: now,
         })
         .where(eq(userBilling.userId, userId));
 
@@ -113,7 +117,8 @@ webhooksRouter.post("/stripe", async (c) => {
           .update(userBilling)
           .set({
             plan: "free",
-            creditsLimit: PLAN_CREDITS.free,
+            monthlyLimitUsd: PLAN_USAGE_USD.free,
+            rolloverUsd: 0,
             stripeSubscriptionId: null,
             cancelAtPeriodEnd: false,
             updatedAt: new Date(),
