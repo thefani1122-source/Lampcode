@@ -72,7 +72,10 @@ adminRouter.post("/add-credits", async (c) => {
   const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
   // Upsert: set monthlyLimitUsd to amountUsd and reset usage/rollover so the
-  // user has the full amountUsd available this period.
+  // user has the full amountUsd available this period. topUpBalanceUsd is
+  // deliberately absent from the onConflict `set` — an admin grant against
+  // the plan allotment shouldn't wipe out real, already-paid top-up money;
+  // it's only defaulted to 0 on the insert branch (brand-new row).
   await db
     .insert(userBilling)
     .values({
@@ -81,6 +84,7 @@ adminRouter.post("/add-credits", async (c) => {
       monthlyLimitUsd: amountUsd,
       usageUsd: 0,
       rolloverUsd: 0,
+      topUpBalanceUsd: 0,
       currentPeriodStart: now,
       currentPeriodEnd: periodEnd,
       createdAt: now,
@@ -99,7 +103,12 @@ adminRouter.post("/add-credits", async (c) => {
     });
 
   const [row] = await db
-    .select({ monthlyLimitUsd: userBilling.monthlyLimitUsd, usageUsd: userBilling.usageUsd, rolloverUsd: userBilling.rolloverUsd })
+    .select({
+      monthlyLimitUsd: userBilling.monthlyLimitUsd,
+      usageUsd: userBilling.usageUsd,
+      rolloverUsd: userBilling.rolloverUsd,
+      topUpBalanceUsd: userBilling.topUpBalanceUsd,
+    })
     .from(userBilling)
     .where(eq(userBilling.userId, userId))
     .limit(1);
@@ -107,12 +116,14 @@ adminRouter.post("/add-credits", async (c) => {
   const monthlyLimitUsd = row?.monthlyLimitUsd ?? amountUsd;
   const usageUsd = row?.usageUsd ?? 0;
   const rolloverUsd = row?.rolloverUsd ?? 0;
+  const topUpBalanceUsd = row?.topUpBalanceUsd ?? 0;
   return c.json({
     success: true,
     userId,
     monthlyLimitUsd,
     usageUsd,
     rolloverUsd,
-    remainingUsd: monthlyLimitUsd + rolloverUsd - usageUsd,
+    topUpBalanceUsd,
+    remainingUsd: monthlyLimitUsd + rolloverUsd - usageUsd + topUpBalanceUsd,
   });
 });
