@@ -43,6 +43,7 @@ usersRouter.get("/me", async (c) => {
       usageUsd: budget.usageUsd,
       monthlyLimitUsd: budget.monthlyLimitUsd,
       rolloverUsd: budget.rolloverUsd,
+      topUpBalanceUsd: budget.topUpBalanceUsd,
       remainingUsd: admin ? Number.MAX_SAFE_INTEGER : budget.remainingUsd,
     },
   });
@@ -95,6 +96,7 @@ usersRouter.get("/me/usage", async (c) => {
       usageUsd: budget.usageUsd,
       monthlyLimitUsd: budget.monthlyLimitUsd,
       rolloverUsd: budget.rolloverUsd,
+      topUpBalanceUsd: budget.topUpBalanceUsd,
       remainingUsd: budget.remainingUsd,
       projectsBuilt,
     },

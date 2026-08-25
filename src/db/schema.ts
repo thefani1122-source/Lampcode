@@ -652,11 +652,17 @@ export const userBilling = pgTable("user_billing", {
   // Real dollar-denominated usage metering — replaces the old flat integer
   // credits system. monthlyLimitUsd is the tier's base allotment;
   // rolloverUsd is banked unused balance from a prior period (Power only,
-  // see PLAN_ROLLOVER_CAP_USD); usageUsd is what's been spent this period.
-  // Available balance = monthlyLimitUsd + rolloverUsd - usageUsd.
+  // see PLAN_ROLLOVER_CAP_USD); usageUsd is what's been spent this period,
+  // capped at monthlyLimitUsd + rolloverUsd (overflow draws from
+  // topUpBalanceUsd instead, see credits.ts:deductUsage). topUpBalanceUsd is
+  // already-paid top-up money, drawn down only after the plan allotment is
+  // exhausted; unlike the other three fields it is NEVER reset by
+  // ensureCurrentPeriod's period rollover — it persists until spent.
+  // Available balance = monthlyLimitUsd + rolloverUsd - usageUsd + topUpBalanceUsd.
   monthlyLimitUsd: doublePrecision("monthly_limit_usd").notNull().default(3),
   usageUsd: doublePrecision("usage_usd").notNull().default(0),
   rolloverUsd: doublePrecision("rollover_usd").notNull().default(0),
+  topUpBalanceUsd: doublePrecision("top_up_balance_usd").notNull().default(0),
   currentPeriodStart: timestamp("current_period_start", { mode: "date" }),
   currentPeriodEnd: timestamp("current_period_end", { mode: "date" }),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),

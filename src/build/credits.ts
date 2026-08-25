@@ -23,6 +23,7 @@ export async function ensureBillingRow(userId: string): Promise<void> {
       monthlyLimitUsd: PLAN_USAGE_USD.free,
       usageUsd: 0,
       rolloverUsd: 0,
+      topUpBalanceUsd: 0,
       currentPeriodStart: now,
       currentPeriodEnd: end,
       createdAt: now,
@@ -74,6 +75,9 @@ export async function ensureCurrentPeriod(userId: string): Promise<void> {
   const newStart = now;
   const newEnd = new Date(now.getTime() + ONE_MONTH_MS);
 
+  // topUpBalanceUsd is deliberately absent from this .set() — it's
+  // already-paid money, not unused plan allowance, so it must survive the
+  // reset untouched (see schema.ts's userBilling comment).
   await db
     .update(userBilling)
     .set({
@@ -103,6 +107,7 @@ export async function assertHasBudget(userId: string): Promise<void> {
       monthlyLimitUsd: userBilling.monthlyLimitUsd,
       usageUsd: userBilling.usageUsd,
       rolloverUsd: userBilling.rolloverUsd,
+      topUpBalanceUsd: userBilling.topUpBalanceUsd,
     })
     .from(userBilling)
     .where(eq(userBilling.userId, userId))
@@ -113,7 +118,7 @@ export async function assertHasBudget(userId: string): Promise<void> {
     throw new AppError(402, "No billing record found. Please set up your account.", "BILLING_NOT_FOUND");
   }
 
-  const remaining = billing.monthlyLimitUsd + billing.rolloverUsd - billing.usageUsd;
+  const remaining = billing.monthlyLimitUsd + billing.rolloverUsd - billing.usageUsd + billing.topUpBalanceUsd;
   if (remaining <= 0) {
     throw new AppError(
       402,
@@ -128,10 +133,21 @@ export async function assertHasBudget(userId: string): Promise<void> {
  * deducted from the user's balance. Called once per dispatch, after it
  * completes — see dispatcher.ts. Best-effort (never throws): the model call
  * already happened and tokens were already spent, so there's nothing
- * meaningful to reject after the fact. This can push usageUsd slightly past
- * monthlyLimitUsd on a build's final dispatch — expected, bounded by
- * MAX_BUILD_COST_USD (a separate, independent per-build ceiling) and by
- * assertHasBudget refusing to START a build with zero balance left.
+ * meaningful to reject after the fact.
+ *
+ * Deduction order: the plan allotment (monthlyLimitUsd + rolloverUsd) is
+ * drawn down first — usageUsd is capped there via LEAST(), so it never
+ * overshoots the plan's "included usage" framing. Only the overflow past
+ * that ceiling draws from topUpBalanceUsd (already-paid money), via
+ * GREATEST(0, ...) so it floors at zero rather than going negative. Both
+ * expressions read the same pre-update column values in one atomic UPDATE —
+ * no separate SELECT, no read-then-write race between concurrent dispatches.
+ *
+ * If a single dispatch's cost exceeds both the remaining plan allowance AND
+ * the remaining top-up balance, the uncovered remainder isn't tracked
+ * anywhere — accepted the same way the old unbounded usageUsd overshoot was:
+ * bounded in practice by MAX_BUILD_COST_USD's independent per-build ceiling,
+ * and by assertHasBudget refusing to START a build with zero balance left.
  */
 export async function deductUsage(
   userId: string,
@@ -140,15 +156,19 @@ export async function deductUsage(
 ): Promise<void> {
   try {
     await ensureCurrentPeriod(userId);
-    const usageUsd = actualCostUsd * config.USAGE_MARGIN_MULTIPLIER;
+    const cost = actualCostUsd * config.USAGE_MARGIN_MULTIPLIER;
+    const planCeiling = sql`(${userBilling.monthlyLimitUsd} + ${userBilling.rolloverUsd})`;
+    const usageAfterCost = sql`(${userBilling.usageUsd} + ${cost})`;
+    const overflow = sql`GREATEST(0, ${usageAfterCost} - ${planCeiling})`;
     await db
       .update(userBilling)
       .set({
-        usageUsd: sql`${userBilling.usageUsd} + ${usageUsd}`,
+        usageUsd: sql`LEAST(${planCeiling}, ${usageAfterCost})`,
+        topUpBalanceUsd: sql`GREATEST(0, ${userBilling.topUpBalanceUsd} - ${overflow})`,
         updatedAt: sql`now()`,
       })
       .where(eq(userBilling.userId, userId));
-    logger.debug({ userId, category, actualCostUsd, usageUsd }, "Usage deducted");
+    logger.debug({ userId, category, actualCostUsd, cost }, "Usage deducted");
   } catch (err) {
     logger.warn({ userId, category, err }, "Failed to record usage deduction");
   }
@@ -160,7 +180,13 @@ export async function deductUsage(
  */
 export async function getRemainingBudget(
   userId: string,
-): Promise<{ monthlyLimitUsd: number; usageUsd: number; rolloverUsd: number; remainingUsd: number }> {
+): Promise<{
+  monthlyLimitUsd: number;
+  usageUsd: number;
+  rolloverUsd: number;
+  topUpBalanceUsd: number;
+  remainingUsd: number;
+}> {
   await ensureCurrentPeriod(userId);
 
   const rows = await db
@@ -168,31 +194,34 @@ export async function getRemainingBudget(
       monthlyLimitUsd: userBilling.monthlyLimitUsd,
       usageUsd: userBilling.usageUsd,
       rolloverUsd: userBilling.rolloverUsd,
+      topUpBalanceUsd: userBilling.topUpBalanceUsd,
     })
     .from(userBilling)
     .where(eq(userBilling.userId, userId))
     .limit(1);
 
-  const billing = rows[0] ?? { monthlyLimitUsd: PLAN_USAGE_USD.free, usageUsd: 0, rolloverUsd: 0 };
+  const billing = rows[0] ?? { monthlyLimitUsd: PLAN_USAGE_USD.free, usageUsd: 0, rolloverUsd: 0, topUpBalanceUsd: 0 };
   return {
     ...billing,
-    remainingUsd: Math.max(0, billing.monthlyLimitUsd + billing.rolloverUsd - billing.usageUsd),
+    remainingUsd: Math.max(0, billing.monthlyLimitUsd + billing.rolloverUsd - billing.usageUsd) + billing.topUpBalanceUsd,
   };
 }
 
 /**
- * Admin/top-up grant: add `amountUsd` directly to the user's balance for
- * this period (used by a top-up purchase, or an admin manual grant).
- * Implemented as a bump to monthlyLimitUsd for the current period — simplest
- * correct effect ("your available balance this period just went up by $X")
- * without a separate top-up ledger.
+ * Top-up grant: add `amountUsd` to the user's persistent top-up balance
+ * (used by a top-up purchase, or an admin manual grant). Deliberately NOT a
+ * bump to monthlyLimitUsd — that field gets reset to the plan's base
+ * allotment on every period rollover (see ensureCurrentPeriod), which would
+ * silently wipe unspent top-up money. topUpBalanceUsd survives rollovers and
+ * is drawn down only after the plan allotment is exhausted (see
+ * deductUsage).
  */
 export async function addTopUp(userId: string, amountUsd: number): Promise<void> {
   await ensureCurrentPeriod(userId);
   await db
     .update(userBilling)
     .set({
-      monthlyLimitUsd: sql`${userBilling.monthlyLimitUsd} + ${amountUsd}`,
+      topUpBalanceUsd: sql`${userBilling.topUpBalanceUsd} + ${amountUsd}`,
       updatedAt: sql`now()`,
     })
     .where(eq(userBilling.userId, userId));
