@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 import { createHmac, timingSafeEqual } from "crypto";
+import { EventName } from "@paddle/paddle-node-sdk";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { userBilling, PLAN_USAGE_USD, type BillingPlan } from "../../db/schema.js";
 import { logger } from "../logger.js";
+import { config } from "../config.js";
+import { paddleClient, claim, applyPaddleSubscription, applyPaddleTopUpTransaction } from "../../billing/paddle.js";
 
 const webhooksRouter = new Hono();
 
@@ -155,6 +158,63 @@ webhooksRouter.post("/stripe", async (c) => {
 
     default:
       logger.info({ type: event.type }, "[stripe] unhandled event type — ignored");
+  }
+
+  return c.json({ received: true });
+});
+
+// POST /api/webhooks/paddle
+// Must receive the raw body — same requirement as /stripe above (register
+// before any body-parsing middleware). Runs alongside Stripe — additive.
+webhooksRouter.post("/paddle", async (c) => {
+  const secret = config.PADDLE_WEBHOOK_SECRET;
+  if (!secret) {
+    logger.warn("[paddle] PADDLE_WEBHOOK_SECRET not set — webhook rejected");
+    return c.json({ error: "Webhook not configured on this server" }, 503);
+  }
+
+  const signature = c.req.header("paddle-signature") ?? "";
+  const rawBody = await c.req.text();
+
+  let event;
+  try {
+    event = await paddleClient().webhooks.unmarshal(rawBody, secret, signature);
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "[paddle] webhook signature verification failed");
+    return c.json({ error: "Invalid signature" }, 400);
+  }
+
+  if (!event) {
+    logger.warn("[paddle] unmarshal returned no event — malformed payload");
+    return c.json({ error: "Unrecognized event" }, 400);
+  }
+
+  logger.info({ type: event.eventType, eventId: event.eventId }, "[paddle] webhook received");
+
+  // General replay guard for this webhook delivery. Note: the money-critical
+  // top-up path additionally claims its own key inside
+  // applyPaddleTopUpTransaction (keyed on the transaction id, not this event
+  // id) because that action is also reachable from the sync-after-checkout
+  // endpoint, which has no webhook event id at all — see billing.ts's
+  // POST /paddle/sync and paddle.ts's doc comment on that function.
+  if (!(await claim(`evt:${event.eventId}`))) {
+    logger.info({ eventId: event.eventId }, "[paddle] webhook already processed — skipping (idempotent replay)");
+    return c.json({ received: true });
+  }
+
+  switch (event.eventType) {
+    case EventName.SubscriptionCreated:
+    case EventName.SubscriptionUpdated:
+    case EventName.SubscriptionCanceled:
+      await applyPaddleSubscription(event.data);
+      break;
+
+    case EventName.TransactionCompleted:
+      await applyPaddleTopUpTransaction(event.data);
+      break;
+
+    default:
+      logger.info({ type: event.eventType }, "[paddle] unhandled event type — ignored");
   }
 
   return c.json({ received: true });

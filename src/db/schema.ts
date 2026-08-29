@@ -649,6 +649,9 @@ export const userBilling = pgTable("user_billing", {
   plan: billingPlanEnum("plan").notNull().default("free"),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
+  // Paddle runs alongside Stripe — additive, neither replaces the other.
+  paddleCustomerId: text("paddle_customer_id"),
+  paddleSubscriptionId: text("paddle_subscription_id"),
   // Real dollar-denominated usage metering — replaces the old flat integer
   // credits system. monthlyLimitUsd is the tier's base allotment;
   // rolloverUsd is banked unused balance from a prior period (Power only,
@@ -668,6 +671,18 @@ export const userBilling = pgTable("user_billing", {
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+// Idempotency guard for Paddle billing events. A "claim" can be either a
+// webhook envelope id (evt_...) or, for the money-critical top-up path, a
+// Paddle transaction id — see src/billing/paddle.ts. Whichever caller
+// (webhook handler or the sync-after-checkout endpoint) inserts the row
+// first wins; the other becomes a safe no-op via onConflictDoNothing. This
+// exists because Paddle retries webhook delivery, and addTopUp() is an
+// additive increment — replaying it would double-credit a user.
+export const paddleProcessedEvents = pgTable("paddle_processed_events", {
+  claimKey: text("claim_key").primaryKey(),
+  processedAt: timestamp("processed_at", { mode: "date" }).notNull().defaultNow(),
 });
 
 // ── New relations ─────────────────────────────────────────────────────────────
