@@ -21,8 +21,9 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { logger } from "../logger.js";
-import { ensureCurrentPeriod } from "../../build/credits.js";
+import { ensureCurrentPeriod, getRemainingBudget } from "../../build/credits.js";
 import { config } from "../config.js";
+import { paddleClient, paddlePriceConfig, applyPaddleSubscription, applyPaddleTopUpTransaction } from "../../billing/paddle.js";
 
 // ── Stripe helpers (direct REST — no npm package required) ────────────────────
 
@@ -312,4 +313,65 @@ billingRouter.post("/upgrade", async (c) => {
     sessionId:   session.id,
     plan,
   });
+});
+
+// ── Paddle (runs alongside Stripe above — additive, neither replaces the other) ─
+
+const paddleSyncSchema = z.object({
+  transactionId:  z.string().min(1).optional(),
+  subscriptionId: z.string().min(1).optional(),
+}).refine((b) => b.transactionId ?? b.subscriptionId, {
+  message: "transactionId or subscriptionId is required",
+});
+
+// GET /api/users/me/billing/paddle/config
+// Non-secret values Paddle.js needs client-side (client token + price IDs).
+// Frontend wiring is a separate follow-up session — this just exposes what
+// it will need, from the one place that already owns the price-ID mapping.
+billingRouter.get("/paddle/config", async (c) => {
+  if (!config.PADDLE_CLIENT_TOKEN) {
+    throw new AppError(503, "Paddle is not configured", "PADDLE_NOT_CONFIGURED");
+  }
+  return c.json({
+    clientToken: config.PADDLE_CLIENT_TOKEN,
+    environment: config.PADDLE_ENVIRONMENT,
+    prices: paddlePriceConfig(),
+  });
+});
+
+// POST /api/users/me/billing/paddle/sync
+// Reliability safety net: the frontend calls this right after Paddle.js's
+// checkout.completed event fires (transaction_id in hand), so plan/top-up
+// activation doesn't have to wait on webhook delivery timing for the common
+// case where the user is still on the page. Fetches the authoritative state
+// directly from Paddle's API and applies it through the exact same functions
+// the webhook uses — so whichever path (this, or the webhook) gets there
+// first is authoritative and the other is a safe idempotent no-op.
+billingRouter.post("/paddle/sync", async (c) => {
+  const authUser = c.get("authUser");
+  const body = parseBody(
+    paddleSyncSchema,
+    await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); }),
+  );
+
+  if (body.subscriptionId) {
+    const sub = await paddleClient().subscriptions.get(body.subscriptionId);
+    const ownerId = sub.customData?.["userId"];
+    if (ownerId !== authUser.id) {
+      throw new AppError(403, "This subscription does not belong to your account", "FORBIDDEN");
+    }
+    await applyPaddleSubscription(sub);
+  }
+
+  if (body.transactionId) {
+    const txn = await paddleClient().transactions.get(body.transactionId);
+    const ownerId = txn.customData?.["userId"];
+    if (ownerId !== authUser.id) {
+      throw new AppError(403, "This transaction does not belong to your account", "FORBIDDEN");
+    }
+    await applyPaddleTopUpTransaction(txn);
+  }
+
+  const budget = await getRemainingBudget(authUser.id);
+  return c.json({ synced: true, ...budget });
 });

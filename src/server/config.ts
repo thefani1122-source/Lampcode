@@ -36,6 +36,23 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_PRO: z.string().min(1).optional(),
   STRIPE_PRICE_ENTERPRISE: z.string().min(1).optional(),
+  // Paddle runs alongside Stripe (additive, see billing.ts/webhooks.ts) — not
+  // a replacement. PADDLE_CLIENT_TOKEN is the public, non-secret token
+  // Paddle.js needs client-side; safe to return from an API response.
+  PADDLE_API_KEY: z.string().min(1).optional(),
+  PADDLE_WEBHOOK_SECRET: z.string().min(1).optional(),
+  PADDLE_CLIENT_TOKEN: z.string().min(1).optional(),
+  PADDLE_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
+  PADDLE_PRICE_PRO_MONTHLY: z.string().min(1).optional(),
+  PADDLE_PRICE_PRO_YEARLY: z.string().min(1).optional(),
+  PADDLE_PRICE_MAX_MONTHLY: z.string().min(1).optional(),
+  PADDLE_PRICE_MAX_YEARLY: z.string().min(1).optional(),
+  PADDLE_PRICE_POWER_MONTHLY: z.string().min(1).optional(),
+  PADDLE_PRICE_POWER_YEARLY: z.string().min(1).optional(),
+  PADDLE_PRICE_TOPUP_5: z.string().min(1).optional(),
+  PADDLE_PRICE_TOPUP_15: z.string().min(1).optional(),
+  PADDLE_PRICE_TOPUP_30: z.string().min(1).optional(),
+  PADDLE_PRICE_TOPUP_75: z.string().min(1).optional(),
   ENCRYPTION_KEY: z.string().length(64, "ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)").optional(),
   // Multiplier applied to real per-dispatch costUsd to produce the billed
   // usage_usd amount. Covers real profit margin AND infra cost costUsd
