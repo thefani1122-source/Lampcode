@@ -370,6 +370,19 @@ billingRouter.post("/paddle/sync", async (c) => {
       throw new AppError(403, "This transaction does not belong to your account", "FORBIDDEN");
     }
     await applyPaddleTopUpTransaction(txn);
+
+    // A plan-upgrade checkout's transaction carries the subscription it
+    // created — Paddle.js's checkout.completed event only reliably gives the
+    // frontend a transaction_id, not a subscription_id, so this is the only
+    // place that can resolve one. Not the same subscriptionId branch above
+    // (which is keyed off an already-known subscription) — this discovers it.
+    if (txn.subscriptionId && !body.subscriptionId) {
+      const sub = await paddleClient().subscriptions.get(txn.subscriptionId);
+      const subOwnerId = sub.customData?.["userId"];
+      if (subOwnerId === authUser.id) {
+        await applyPaddleSubscription(sub);
+      }
+    }
   }
 
   const budget = await getRemainingBudget(authUser.id);
