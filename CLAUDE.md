@@ -39,12 +39,13 @@ User prompt
 ### Key files
 | File | Lines | Role |
 |---|---|---|
-| `src/server/routes/build.ts` | 2083 | Build orchestration, gates, fix loops |
-| `src/agents/prompt-builder.ts` | 1427 | All prompt construction + skill loading |
-| `src/preview/e2b-service.ts` | 990 | Sandbox lifecycle |
+| `src/server/routes/build.ts` | 2488 | Build orchestration, gates, fix loops |
+| `src/agents/prompt-builder.ts` | 1757 | All prompt construction + skill loading |
+| `src/preview/e2b-service.ts` | 1041 | Sandbox lifecycle |
 | `src/agents/file-parser.ts` | 533 | Fence → file extraction |
-| `src/verify/security.ts` | 448 | Security checks (currently NOT called) |
-| `src/agents/model-gateway.ts` | 254 | Model tiers, routing, caching |
+| `src/verify/security.ts` | 448 | Security checks — wired into `build.ts`'s hard-block/auto-fix loop |
+| `src/agents/model-gateway.ts` | 498 | Model tiers, routing, tool-calling (load_skill, read_project_file), prompt-cache splitting |
+| `src/billing/paddle.ts` | 267 | Paddle subscription + top-up application logic, webhook idempotency |
 | `e2b-template/template.ts` | — | Authoritative sandbox definition (55 npm + 9 pip packages) |
 ## Things that will bite you
 1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are both
