@@ -1,8 +1,9 @@
 /**
  * Temporary admin maintenance routes — mounted at /api/admin.
  *
- * ⚠️ TESTING PHASE ONLY. These endpoints allow direct credit manipulation and
- * must be removed (or locked down further) before production launch.
+ * ⚠️ TESTING PHASE ONLY. These endpoints allow direct manipulation of a
+ * user's USD billing balance and must be removed (or locked down further)
+ * before production launch.
  *
  * Authorization for each endpoint accepts EITHER:
  *   - a valid `x-admin-secret` header matching process.env.ADMIN_SECRET, OR
