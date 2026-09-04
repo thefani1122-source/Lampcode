@@ -1,13 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
-import { bedrockStream } from "./bedrock-gateway.js";
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
 // Tier arrays: [primary, fallback]
-// Bare first-party model IDs. The Bedrock gateway maps these to Bedrock IDs;
-// token-tracker.ts keys its pricing table on these same bare names.
+// Bare first-party model IDs — token-tracker.ts keys its pricing table on
+// these same bare names.
 export const MODEL_TIERS = {
   planning:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   frontend:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
@@ -46,8 +45,8 @@ export interface ChatMessage {
   content: string | MessageContentBlock[];
 }
 
-// Anthropic tool-definition shape (also what Bedrock Converse's toolSpec
-// wraps) — kept minimal since only load_skill/read_project_file exist today.
+// Anthropic tool-definition shape — kept minimal since only
+// load_skill/read_project_file exist today.
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -221,12 +220,6 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    // AWS Bedrock gateway — uses AWS_ACCESS_KEY_ID to activate
-    if (process.env.AWS_ACCESS_KEY_ID) {
-      yield* bedrockStream(req);
-      return;
-    }
-
     // MCP connector requests need mcp_servers/tools-as-mcp_toolset and the
     // beta client — kept as a fully separate path so the already-verified
     // plain-tools (load_skill/read_project_file) route below is untouched
@@ -347,7 +340,7 @@ export class ModelGateway {
    * MCP-connector variant of stream() — same event-loop shape, but against
    * the beta client with mcp_servers/betas attached, and recognizing the two
    * additional block types (mcp_tool_use, mcp_tool_result) the connector adds.
-   * Unverified against a live Bedrock or Anthropic call in development (no API
+   * Unverified against a live Anthropic call in development (no API
    * key available there) — mirrors the plain-tools loop's proven structure and
    * the documented block shapes, but hasn't been exercised against a real API
    * response.

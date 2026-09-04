@@ -26,7 +26,6 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
-    "@aws-sdk/client-bedrock-runtime": "^3.1095.0",
     "@google/generative-ai": "^0.24.1",
     "@hono/node-server": "^2.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",

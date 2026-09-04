@@ -12,8 +12,8 @@ This repo (`Lampcode`) is the **backend**. The frontend lives in a separate repo
 | Backend framework | Hono | `src/server/index.ts` |
 | Build | tsup → `dist/` | `tsup.config.ts` |
 | Deploy | Railway (nixpacks) | `railway.toml` |
-| LLM | **Claude Sonnet 5 via AWS Bedrock** | `src/agents/bedrock-gateway.ts:8` |
-| Gateway facade | `src/agents/model-gateway.ts` wraps `bedrock-gateway.ts` | `model-gateway.ts:4,145` |
+| LLM | **Claude Sonnet 5 via Anthropic direct API** (Bedrock path removed) | `src/agents/model-gateway.ts:217-218` |
+| Gateway facade | `src/agents/model-gateway.ts`'s `ModelGateway.stream()` — Anthropic-direct, or `streamWithMcp()` when `mcpServers` is set | `model-gateway.ts:153,223` |
 | Sandbox | E2B **v2 SDK** template `lampcode-vite` | `e2b-template/template.ts` + `build.ts` |
 | Sandbox state | Redis, key `e2b:sandbox:{projectId}` | `src/preview/e2b-service.ts` |
 | DB | Supabase Postgres + Drizzle | `src/db/schema.ts` |
@@ -29,7 +29,7 @@ pending task.
 User prompt
   → build.ts:runFastBuild()          orchestrates the whole build
   → prompt-builder.ts                assembles system prompt + conditional skills
-  → dispatcher.ts → model-gateway.ts → bedrock-gateway.ts   (Sonnet 5)
+  → dispatcher.ts → model-gateway.ts                (Sonnet 5, Anthropic direct)
   → file-parser.ts                   parses ```filename:path fences out of model output
   → e2b-service.ts                   writes files into sandbox, starts Vite (:5173)
                                      and backend (:3001 — tsx for Node, uvicorn for Python)
