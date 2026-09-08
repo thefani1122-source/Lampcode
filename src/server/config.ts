@@ -54,6 +54,14 @@ const envSchema = z.object({
   PADDLE_PRICE_TOPUP_30: z.string().min(1).optional(),
   PADDLE_PRICE_TOPUP_75: z.string().min(1).optional(),
   ENCRYPTION_KEY: z.string().length(64, "ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)").optional(),
+  // Modal-hosted open-weight model (OpenAI-compatible Chat Completions API) —
+  // routed to free-tier builds only, see modal-gateway.ts/dispatcher.ts. All
+  // three must be set together for the free-tier path to work; when any is
+  // missing, dispatcher.ts falls back to Anthropic for every plan (never a
+  // silent partial-Modal state).
+  MODAL_ENDPOINT_URL: z.string().url().optional(),
+  MODAL_PROXY_TOKEN: z.string().min(1).optional(),
+  MODAL_MODEL_NAME: z.string().min(1).optional(),
   // Multiplier applied to real per-dispatch costUsd to produce the billed
   // usage_usd amount. Covers real profit margin AND infra cost costUsd
   // doesn't capture (E2B sandbox compute, Railway hosting, Redis, bandwidth —
