@@ -12,6 +12,7 @@ import {
   type MessageContentBlock,
   type McpServerDefinition,
 } from "./model-gateway.js";
+import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
@@ -88,6 +89,15 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  when omitted so every dispatch still lands in a real category rather
    *  than null. */
   usageCategory?: UsageCategory | undefined;
+  /** Which model gateway serves this dispatch — set once per build in
+   *  build.ts from the user's plan. Defaults to "anthropic" so every existing
+   *  call site is unaffected. "modal" is downgraded back to "anthropic" in
+   *  callModel() whenever mcpServers is non-empty (the Modal gateway has no
+   *  MCP-connector equivalent) — never a silent capability drop, an explicit
+   *  same-request override instead. A misconfigured/failing Modal gateway
+   *  does NOT fall back to Anthropic — that would silently spend real
+   *  Anthropic cost on a free-tier request that was never budgeted for it. */
+  provider?: "anthropic" | "modal" | undefined;
 };
 
 export interface DispatchResult {
@@ -146,6 +156,7 @@ export class AgentDispatcher {
     const mcpServers = options.mcpServers;
     const restProviders = options.restProviders;
     const usageCategory = options.usageCategory;
+    const provider = options.provider;
 
     let lastError: Error | null = null;
 
@@ -154,7 +165,7 @@ export class AgentDispatcher {
 
       try {
         return await this.callModelWithRetry(
-          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders, usageCategory },
+          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders, usageCategory, provider },
           task, model, tier as 1 | 2,
         );
       } catch (err) {
@@ -235,6 +246,12 @@ export class AgentDispatcher {
     tier: 1 | 2,
   ): Promise<DispatchResult> {
     const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers, restProviders } = options;
+    // "modal" only holds when there's no MCP connector need this dispatch —
+    // the Modal gateway has no MCP-connector equivalent, so a free-tier user
+    // with connected MCP servers still gets Anthropic for those dispatches
+    // rather than silently losing MCP tool access.
+    const effectiveProvider: "anthropic" | "modal" =
+      options.provider === "modal" && !(mcpServers && mcpServers.length > 0) ? "modal" : "anthropic";
     // Defaults to "build" rather than left null — every dispatch is billing-
     // relevant, and the 5 existing fix loops that predate this field (and
     // any future caller that forgets to set it) should still land in a real,
@@ -370,14 +387,17 @@ export class AgentDispatcher {
     let loopCostUsd = 0;
 
     for (let round = 1; round <= MAX_TOOL_ROUNDTRIPS; round++) {
-      const stream = this.gateway.stream(
-        {
-          model, messages, maxTokens, thinkingBudget,
-          tools: enableTools ? [...TOOL_DEFINITIONS, ...writeProxyDefs] : undefined,
-          ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
-        },
-        streamTimeoutMs,
-      );
+      const gatewayRequest = {
+        model, messages, maxTokens, thinkingBudget,
+        tools: enableTools ? [...TOOL_DEFINITIONS, ...writeProxyDefs] : undefined,
+        ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
+      };
+      // effectiveProvider is "modal" only when mcpDefs is empty (see the
+      // guard above) — the mcpServers spread above is dead weight on that
+      // path, kept only so gatewayRequest has one shape for both branches.
+      const stream = effectiveProvider === "modal"
+        ? modalStream(gatewayRequest, streamTimeoutMs)
+        : this.gateway.stream(gatewayRequest, streamTimeoutMs);
 
       let streamResult: StreamResult;
       try {

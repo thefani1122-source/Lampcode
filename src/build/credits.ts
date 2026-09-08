@@ -94,6 +94,24 @@ export async function ensureCurrentPeriod(userId: string): Promise<void> {
 }
 
 /**
+ * The user's current plan — used by build.ts to pick which model gateway
+ * (Anthropic vs. Modal) serves a build, see dispatcher.ts's `provider`
+ * option. Runs the same lazy rollover as assertHasBudget so the plan read
+ * here can never be stale relative to a just-completed period reset.
+ */
+export async function getUserPlan(userId: string): Promise<BillingPlan> {
+  await ensureCurrentPeriod(userId);
+
+  const rows = await db
+    .select({ plan: userBilling.plan })
+    .from(userBilling)
+    .where(eq(userBilling.userId, userId))
+    .limit(1);
+
+  return (rows[0]?.plan as BillingPlan) ?? "free";
+}
+
+/**
  * Pre-flight check before starting a build — does the user have any budget
  * left at all? Does NOT deduct anything (there's no flat per-build charge
  * anymore; real usage is deducted per-dispatch as it's actually incurred,

@@ -1,13 +1,15 @@
 /**
- * Temporary admin maintenance routes — mounted at /api/admin.
+ * Admin maintenance routes — mounted at /api/admin. Kept in production as a
+ * support tool for manual billing adjustments (refunds, goodwill credits),
+ * not removed — but the auth surface is deliberately fail-closed.
  *
- * ⚠️ TESTING PHASE ONLY. These endpoints allow direct manipulation of a
- * user's USD billing balance and must be removed (or locked down further)
- * before production launch.
- *
- * Authorization for each endpoint accepts EITHER:
+ * ADMIN_SECRET is a hard prerequisite for the entire route: if it's unset or
+ * empty, isAuthorized() returns false unconditionally and no other credential
+ * (including a valid ADMIN_EMAILS admin session) can get in. Once that gate
+ * passes, authorization accepts EITHER:
  *   - a valid `x-admin-secret` header matching process.env.ADMIN_SECRET, OR
- *   - a Bearer token belonging to an email in ADMIN_EMAILS.
+ *   - a Bearer token for a user isAdminUser() confirms (email allow-list AND
+ *     the DB role column — see src/auth/admin.ts).
  */
 
 import { Hono, type Context } from "hono";
@@ -15,28 +17,34 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { userBilling } from "../../db/schema.js";
-import { isAdmin } from "../../auth/admin.js";
+import { isAdminUser } from "../../auth/admin.js";
 import { getSupabaseAdmin } from "../../auth/supabase-server.js";
 
 export const adminRouter = new Hono();
 
 /** Returns true if the request is authorized as an admin. */
 async function isAuthorized(c: Context): Promise<boolean> {
-  // 1. Shared-secret header (only honoured when the env var is actually set).
+  // ADMIN_SECRET is a hard prerequisite for the whole route — if it isn't
+  // configured, the admin surface is disabled outright, regardless of any
+  // other credential presented below. Never fall open on a missing secret.
   const configuredSecret = process.env["ADMIN_SECRET"];
+  if (!configuredSecret) return false;
+
+  // 1. Shared-secret header.
   const providedSecret = c.req.header("x-admin-secret");
-  if (configuredSecret && providedSecret && providedSecret === configuredSecret) {
+  if (providedSecret && providedSecret === configuredSecret) {
     return true;
   }
 
-  // 2. Authenticated admin email.
+  // 2. Authenticated admin user — email allow-list AND DB role column, so an
+  // email change via a social provider reconnect can't silently grant access.
   const authHeader = c.req.header("authorization");
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (token) {
     try {
       const supabase = getSupabaseAdmin();
       const { data: { user } } = await supabase.auth.getUser(token);
-      if (user?.email && isAdmin(user.email)) return true;
+      if (user?.id && (await isAdminUser(user.id, user.email))) return true;
     } catch {
       // fall through to unauthorized
     }
