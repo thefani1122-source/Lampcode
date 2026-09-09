@@ -270,6 +270,41 @@ const writeFile = (path: string, body: string): string => {
   return `RUN mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
 }
 
+// Headless-Chromium render check (build.ts's finishPreview(), after the
+// backend-crash and typecheck fix loops) — navigates to the live Vite dev
+// server INSIDE the sandbox (never the external URL) and reports console
+// errors / an empty #root as a single JSON line on stdout. Kept as a static
+// file baked into the image (like the scaffold files below) rather than
+// written per-build, since its content never depends on the generated app.
+const CHECK_RENDER_MJS = `import { chromium } from "playwright"
+
+const url = process.argv[2] || "http://localhost:5173"
+const errors = []
+let result
+
+try {
+  const browser = await chromium.launch()
+  const page = await browser.newPage()
+  page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()) })
+  page.on("pageerror", (err) => errors.push(String(err)))
+  try {
+    await page.goto(url, { waitUntil: "networkidle", timeout: 15000 })
+    await page.waitForTimeout(500) // let async errors surface after load
+    const rootHasChildren = await page.evaluate(() => {
+      const root = document.getElementById("root")
+      return !!root && root.children.length > 0
+    })
+    result = { ok: errors.length === 0 && rootHasChildren, blank: !rootHasChildren, errors }
+  } finally {
+    await browser.close()
+  }
+} catch (err) {
+  result = { ok: false, blank: true, errors: [String(err)] }
+}
+
+console.log(JSON.stringify(result))
+`
+
 const dockerfile = [
   'FROM node:20-slim',
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
@@ -291,6 +326,19 @@ const dockerfile = [
   // --legacy-peer-deps: React 19 conflicts with peer deps on some packages
   // (three.js ecosystem, particles, spline) that still declare react ^18.
   'RUN npm install --legacy-peer-deps',
+  // ── Internal tooling, deliberately OUTSIDE /home/user/app ─────────────────
+  // Headless Chromium for the post-build render check (verifyBrowserRender in
+  // e2b-service.ts) — kept in its own directory with its own node_modules so
+  // it never touches the generated app's package.json/dependency tree (that
+  // list is what the build prompt tells the model is "allowed" — see CLAUDE.md's
+  // "Prompt-vs-reality drift" warning). `playwright install --with-deps` pulls
+  // the exact OS packages its bundled Chromium build needs for this Debian
+  // base — baked here (build time) so per-project cold start never re-fetches
+  // a browser.
+  'WORKDIR /home/user/.lampcode-tools',
+  'RUN npm init -y && npm install playwright && npx playwright install --with-deps chromium',
+  writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
+  'WORKDIR /home/user/app',
 ].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)

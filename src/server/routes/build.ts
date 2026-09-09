@@ -31,7 +31,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck } from "../../preview/e2b-service.js";
+import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -1953,6 +1953,98 @@ export async function runFastBuild(
             }
           } catch (fixErr) {
             logger.error({ sessionId, fixErr }, "Type-check fix dispatch failed");
+            break;
+          }
+          if (fixedCount === 0) break;
+          await writeFilesToSandbox(projectId, allFiles, (line) =>
+            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+          ).catch(() => {});
+        }
+      }
+
+      // Headless-Chromium render check — catches what the two checks above
+      // structurally cannot: a page that compiles clean and type-checks clean
+      // but crashes or renders blank at runtime (see verifyBrowserRender()).
+      // Same bounded/fingerprinted/fire-and-forget shape as the type-check
+      // loop above. There's no per-line diagnostic to attribute a render
+      // failure to one file, so the fix prompt always includes src/App.tsx
+      // (the render root) plus any other src/** file whose name is literally
+      // mentioned in the console error text — bounded rather than dumping
+      // every generated file into the prompt.
+      {
+        const MAX_BROWSER_FIX_ATTEMPTS = 2;
+        let lastBrowserFingerprint = "";
+        for (let attempt = 0; attempt <= MAX_BROWSER_FIX_ATTEMPTS; attempt++) {
+          const { ok, issues } = await verifyBrowserRender(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+          if (ok || issues.length === 0) break;
+
+          const errText = issues.map((i) => i.message).join("\n");
+          const fingerprint = errText;
+          if (attempt === MAX_BROWSER_FIX_ATTEMPTS || fingerprint === lastBrowserFingerprint) {
+            logger.warn({ sessionId, projectId, errText }, "Browser render issue remains after fix attempts");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `The app has a render issue: ${errText}. Try a follow-up prompt to fix it.`,
+              validationErrors: [errText],
+            });
+            break;
+          }
+          lastBrowserFingerprint = fingerprint;
+
+          logger.warn({ sessionId, projectId, errText, attempt }, "Browser render issue — dispatching fix");
+          server?.thinking(sessionId, { text: "The preview didn't render correctly — fixing it automatically…", sessionId });
+
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before browser-render fix dispatch — skipping further auto-repair",
+            );
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: "A render issue was found and the automatic fix budget for this build was reached. Try a follow-up prompt to fix it.",
+            });
+            break;
+          }
+
+          const affected = new Set<string>();
+          if (allFiles["src/App.tsx"] !== undefined) affected.add("src/App.tsx");
+          for (const p of Object.keys(allFiles)) {
+            if (p.startsWith("src/") && errText.includes(p.split("/").pop() ?? "")) affected.add(p);
+          }
+          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
+          if (affectedFiles.length === 0) break;
+
+          const fixDesc =
+            `The generated app has a RUNTIME RENDER problem in the browser (not a type error, not a crash on the backend). ` +
+            `Return the COMPLETE corrected file for EACH file below — no diffs, no truncation:\n\n` +
+            `Browser error(s):\n${errText}\n\n` +
+            affectedFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
+
+          let fixedCount = 0;
+          try {
+            const fix = await dispatcher.dispatch({
+              agentType: "frontend",
+              usageCategory: "browser_render_fix",
+              provider,
+              task: {
+                description: fixDesc,
+                requirements: [
+                  `Output the COMPLETE corrected file for each of: ${[...affected].join(", ")}.`,
+                  "Fix ONLY what's causing the reported browser error — do not change unrelated logic.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+            });
+            cumulativeCostUsd += fix.costUsd;
+            for (const f of parseFilesFromContent(fix.content)) {
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; }
+            }
+          } catch (fixErr) {
+            logger.error({ sessionId, fixErr }, "Browser-render fix dispatch failed");
             break;
           }
           if (fixedCount === 0) break;

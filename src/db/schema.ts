@@ -310,6 +310,7 @@ export const usageCategoryEnum = pgEnum("usage_category", [
   "security_fix",
   "backend_crash_fix",
   "typecheck_fix",
+  "browser_render_fix",
 ]);
 
 export const agentTasks = pgTable("agent_tasks", {

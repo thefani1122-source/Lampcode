@@ -678,6 +678,55 @@ export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; is
   return { ok: issues.length === 0, issues };
 }
 
+/**
+ * Headless-Chromium render check: loads the live Vite dev server INSIDE the
+ * sandbox (localhost:5173 — never the external preview URL) and reports
+ * console/page errors or an empty #root. Catches what verifyPreview() and
+ * runTypeCheck() structurally cannot — a page that compiles clean and
+ * type-checks clean but crashes or renders blank at runtime.
+ *
+ * check-render.mjs and its own Playwright install are baked into the image
+ * at /home/user/.lampcode-tools (see template.ts) — deliberately outside the
+ * generated app's own package.json/node_modules. No-op (ok:true) if no live
+ * in-process sandbox exists, same silent-skip behavior as the other checks.
+ */
+export async function verifyBrowserRender(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return { ok: true, issues: [] };
+
+  let stdout = "";
+  try {
+    const r = await sandbox.commands.run(
+      "node /home/user/.lampcode-tools/check-render.mjs http://localhost:5173",
+      { timeoutMs: 30_000 },
+    );
+    stdout = r.stdout;
+  } catch {
+    // Sandbox unreachable, timed out, or the check tooling itself missing —
+    // don't block the build on infrastructure trouble unrelated to the
+    // generated code (same policy as runTypeCheck's catch above).
+    return { ok: true, issues: [] };
+  }
+
+  let parsed: { ok: boolean; blank: boolean; errors: string[] };
+  try {
+    // The script prints exactly one JSON line on success or on its own
+    // caught failure — but stdout could still have leading noise (e.g. an
+    // npm/node warning), so parse the last line rather than the whole blob.
+    const lastLine = stdout.trim().split("\n").pop() ?? "";
+    parsed = JSON.parse(lastLine);
+  } catch {
+    return { ok: true, issues: [] }; // unparseable output — treat as infra noise, not a real render failure
+  }
+
+  if (parsed.ok) return { ok: true, issues: [] };
+
+  const message = parsed.blank
+    ? `The app rendered a blank page (#root has no children)${parsed.errors.length > 0 ? ": " + parsed.errors.join("; ") : ""}`
+    : `Console errors on load: ${parsed.errors.join("; ")}`;
+  return { ok: false, issues: [{ source: "src/App.tsx", message }] };
+}
+
 /** Whether a live, in-process sandbox is currently held for this project. */
 export function hasSandbox(projectId: string): boolean {
   return sandboxes.has(projectId);
