@@ -103,6 +103,25 @@ function ws() {
   }
 }
 
+// ── Preview-sandbox outer deadline ──────────────────────────────────────────────
+// createPreviewSandbox() has no timeout of its own (the E2B SDK's per-request
+// timeout only covers a single HTTP call, not the whole create+writeFiles+
+// ensureDevServer chain) — if the E2B API stalls, the call can hang
+// indefinitely with no error, log, or preview URL, while the frontend just
+// gives up after its own 120s poll with a generic message. This race gives it
+// a deadline so a stall surfaces as a real, logged error instead.
+const E2B_PREVIEW_TIMEOUT_MS = 90_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err: unknown) => { clearTimeout(timer); reject(err as Error); },
+    );
+  });
+}
+
 // ── Input schemas ─────────────────────────────────────────────────────────────
 
 const clarifyBodySchema = z.object({
@@ -2084,9 +2103,13 @@ export async function runFastBuild(
             console.warn(`[E2B] Sandbox file write FAILED for project=${projectId} — falling back to full sandbox creation:`, err instanceof Error ? err.message : err);
             logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed — falling back to createPreviewSandbox");
             server?.emitPreviewLoading(sessionId, { sessionId });
-            void createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
-              server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
-            })
+            void withTimeout(
+              createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
+                server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+              }),
+              E2B_PREVIEW_TIMEOUT_MS,
+              `createPreviewSandbox (fallback) exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
+            )
               .then((url) => {
                 console.log(`[E2B] Fallback sandbox ready for session=${sessionId} url=${url}`);
                 return finishPreview(url);
@@ -2105,9 +2128,13 @@ export async function runFastBuild(
         server?.emitPreviewLoading(sessionId, { sessionId });
         setImmediate(() => {
           console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
-          void createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
-            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
-          })
+          void withTimeout(
+            createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
+              server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+            }),
+            E2B_PREVIEW_TIMEOUT_MS,
+            `createPreviewSandbox exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
+          )
             .then((url) => {
               console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
               return finishPreview(url);

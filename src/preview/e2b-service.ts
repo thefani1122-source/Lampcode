@@ -842,8 +842,11 @@ async function awaitWarming(projectId: string): Promise<void> {
   if (warming) {
     try {
       await warming;
-    } catch {
+    } catch (err) {
       // prewarm failed — fall through; caller's own create path handles it.
+      // Logged (was previously silent) so a stuck/failed prewarm is visible
+      // in Railway logs instead of looking like an unexplained hang.
+      logger.warn({ projectId, err }, "[e2b] awaited prewarm failed");
     }
   }
 }
