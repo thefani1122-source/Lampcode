@@ -953,7 +953,15 @@ export async function runFastBuild(
     // URL in the prompt shouldn't require a user to have connected anything.
     // They still go through the same read-only classification as everything
     // else below, not special-cased as trusted.
-    const internalMcpServers = [
+    //
+    // Skipped entirely when provider is "modal": the Modal gateway has no MCP-
+    // connector equivalent (see dispatcher.ts's effectiveProvider guard), and
+    // Firecrawl/Exa are attached to essentially every build regardless of plan
+    // — leaving them in unconditionally meant that guard downgraded every
+    // free-tier build straight back to Anthropic, silently defeating the
+    // whole point of routing free tier to Modal. Since Modal can't use these
+    // anyway, omitting them for Modal builds costs nothing.
+    const internalMcpServers = provider === "modal" ? [] : [
       ...(config.FIRECRAWL_API_KEY
         ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev", authToken: config.FIRECRAWL_API_KEY }]
         : []),
@@ -961,7 +969,7 @@ export async function runFastBuild(
         ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
         : []),
     ];
-    const mcpServers = [...userMcpServers, ...internalMcpServers];
+    const mcpServers = provider === "modal" ? [] : [...userMcpServers, ...internalMcpServers];
 
     const result = await dispatcher.dispatch({
       agentType: "frontend",
