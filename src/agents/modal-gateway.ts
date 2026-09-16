@@ -138,6 +138,17 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     stream: true,
     stream_options: { include_usage: true },
     max_tokens: req.maxTokens ?? 16_000,
+    // GLM-5.3 forces reasoning on and cannot disable it (confirmed against
+    // Z.ai's own docs) — reasoning_effort defaults to "max" when omitted,
+    // and Z.ai's own benchmarks show max-effort reasoning alone can run
+    // ~75K output tokens on a real coding task. Left at default, a real
+    // build exhausted our whole max_tokens budget on reasoning_content and
+    // never reached actual code (stopReason: "length", zero content chunks
+    // — confirmed via live logs, not a guess). "low" trades some reasoning
+    // depth for actually leaving room to produce the file content within
+    // this budget, and reduces latency too (the same live test also hit
+    // our 5-minute per-request timeout with max effort).
+    reasoning_effort: "low",
     ...(req.tools && req.tools.length > 0 ? { tools: toOpenAiTools(req.tools) } : {}),
   };
 
