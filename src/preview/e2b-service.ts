@@ -634,6 +634,19 @@ export interface PreviewIssue {
 }
 
 /**
+ * Every quality gate below runs INSIDE the sandbox, so no sandbox means the
+ * gate cannot run at all. Each one reports that as `ok: true` — "not run" is
+ * indistinguishable from "passed" to the caller, which is how a build whose
+ * sandbox never came up shipped to a user as a success with five empty files
+ * in it. Changing the return value would silently arm the auto-fix loops, so
+ * the contract is left exactly as-is and the skip is made visible instead.
+ */
+function skippedGate(projectId: string, gate: string): { ok: boolean; issues: PreviewIssue[] } {
+  logger.warn({ projectId, gate }, "[e2b] gate skipped — no live sandbox; build is UNVERIFIED");
+  return { ok: true, issues: [] };
+}
+
+/**
  * Agentic verification: after the app is written and the servers (re)started,
  * checks whether the REAL backend actually came up. If the Hono server crashed
  * on startup (bad import, runtime error, etc.) the preview's /api calls would
@@ -642,7 +655,7 @@ export interface PreviewIssue {
  */
 export async function verifyPreview(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "verifyPreview");
 
   let hasBackend = false;
   try {
@@ -694,7 +707,7 @@ const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
  */
 export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "runTypeCheck");
 
   let stdout = "";
   try {
@@ -741,7 +754,7 @@ export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; is
  */
 export async function verifyBrowserRender(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "verifyBrowserRender");
 
   let stdout = "";
   try {
