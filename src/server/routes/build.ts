@@ -25,6 +25,7 @@ import {
   stripEditMarkers,
   isBackendFile,
   isSandpackExcluded,
+  isEffectivelyEmpty,
   type ParsedFile,
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -111,6 +112,20 @@ function ws() {
 // gives up after its own 120s poll with a generic message. This race gives it
 // a deadline so a stall surfaces as a real, logged error instead.
 const E2B_PREVIEW_TIMEOUT_MS = 90_000;
+
+// The three sandbox quality gates deliberately fail OPEN: a gate that itself
+// errors must never fail a build that was already delivered to the user. That
+// is still right, but it used to be entirely silent, so a gate erroring looked
+// exactly like a gate passing. Same fallback, now visible.
+function gateFailedOpen(
+  gate: string,
+  sessionId: string,
+  projectId: string,
+  err: unknown,
+): { ok: boolean; issues: { source: string; message: string }[] } {
+  logger.warn({ sessionId, projectId, gate, err }, "Sandbox quality gate errored — failing open, build is UNVERIFIED");
+  return { ok: true, issues: [] };
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -1099,6 +1114,28 @@ export async function runFastBuild(
       parsedFiles = parsedFiles.filter((f) => f.path !== "src/index.tsx");
     }
 
+    // ── Drop files the model emitted with no actual content ─────────────────
+    // A real build ("counter app with login") produced 13 files of which 5 were
+    // empty — including src/db/types.ts, which src/lib/api.ts and src/App.tsx
+    // both import (so the app could not compile), and src/server/index.ts,
+    // which `test -f` still matches, so ensureBackendServer would start a
+    // backend that dies instantly. The non-empty gate further down only runs
+    // when the classifier tagged the build "fullstack"; that one was tagged
+    // frontend, so nothing checked the backend files the model wrote anyway.
+    // An empty file can never help: don't write it and don't count it toward
+    // "Built your app with N files". Runs BEFORE the entry-point check below so
+    // an empty src/App.tsx is correctly treated as a missing entry point.
+    const emptyFiles = parsedFiles.filter((f) => isEffectivelyEmpty(f.code)).map((f) => f.path);
+    if (emptyFiles.length > 0) {
+      parsedFiles = parsedFiles.filter((f) => !isEffectivelyEmpty(f.code));
+      logger.warn({ sessionId, projectId, emptyFiles }, "Model emitted empty files — dropping them");
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message: `The AI left ${emptyFiles.length} file(s) empty, so they were skipped: ${emptyFiles.join(", ")}. Send a follow-up prompt to fill them in.`,
+        validationErrors: emptyFiles.map((p) => `${p}: empty file`),
+      });
+    }
+
     // ── Fail loudly on missing entry point for NEW builds ───────────────────
     // parseFilesFromContent no longer injects a placeholder component when it
     // can't find the entry point — that used to let broken generations silently
@@ -1831,7 +1868,7 @@ export async function runFastBuild(
     const finishPreview = async (url: string): Promise<void> => {
       const MAX = 2;
       for (let attempt = 0; attempt < MAX; attempt++) {
-        const { ok, issues } = await verifyPreview(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+        const { ok, issues } = await verifyPreview(projectId).catch((err: unknown) => gateFailedOpen("verifyPreview", sessionId, projectId, err));
         if (ok || issues.length === 0) break;
 
         const errText = issues.map((i) => `${i.source}: ${i.message}`).join("\n");
@@ -1909,7 +1946,7 @@ export async function runFastBuild(
         const MAX_TYPECHECK_ATTEMPTS = 2;
         let lastTypeFingerprint = "";
         for (let attempt = 0; attempt <= MAX_TYPECHECK_ATTEMPTS; attempt++) {
-          const { ok, issues } = await runTypeCheck(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+          const { ok, issues } = await runTypeCheck(projectId).catch((err: unknown) => gateFailedOpen("runTypeCheck", sessionId, projectId, err));
           if (ok || issues.length === 0) break;
 
           const fingerprint = issues.map((i) => `${i.source}:${i.message}`).sort().join("|");
@@ -2002,7 +2039,7 @@ export async function runFastBuild(
         const MAX_BROWSER_FIX_ATTEMPTS = 2;
         let lastBrowserFingerprint = "";
         for (let attempt = 0; attempt <= MAX_BROWSER_FIX_ATTEMPTS; attempt++) {
-          const { ok, issues } = await verifyBrowserRender(projectId).catch(() => ({ ok: true, issues: [] as { source: string; message: string }[] }));
+          const { ok, issues } = await verifyBrowserRender(projectId).catch((err: unknown) => gateFailedOpen("verifyBrowserRender", sessionId, projectId, err));
           if (ok || issues.length === 0) break;
 
           const errText = issues.map((i) => i.message).join("\n");

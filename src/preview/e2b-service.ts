@@ -67,6 +67,31 @@ function readyPollTimeoutMs(framework: FullstackFramework): number {
 
 const redis = createRedis();
 
+// Redis is only a CACHE of projectId → sandboxId here, never the source of
+// truth. But createRedis() sets maxRetriesPerRequest: null, which makes ioredis
+// queue commands indefinitely while the connection is down rather than failing
+// them — the same trap rate-limit.ts guards against. Unbounded, the redis.get()
+// on acquireRunningSandbox()'s first line hung the entire preview path forever
+// with no error and no log (confirmed against live Railway logs, where this
+// deployment reconnects constantly). Bounded, a Redis blip degrades to "no
+// cached sandbox" and we cold-start instead.
+const REDIS_TIMEOUT_MS = 2_000;
+
+class RedisTimeoutError extends Error {}
+
+function withRedisTimeout<T>(promise: Promise<T>, op: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new RedisTimeoutError(`redis ${op} exceeded ${REDIS_TIMEOUT_MS}ms`)),
+      REDIS_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err: unknown) => { clearTimeout(timer); reject(err as Error); },
+    );
+  });
+}
+
 function redisKey(projectId: string): string {
   return `e2b:sandbox:${projectId}`;
 }
@@ -135,10 +160,16 @@ async function waitForServerReady(url: string, framework: FullstackFramework): P
   const deadline = Date.now() + readyPollTimeoutMs(framework);
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { method: "GET" });
+      // The deadline above is only re-checked between iterations, so an
+      // unbounded fetch here would hang this loop (and the whole sandbox
+      // acquisition) indefinitely — E2B's edge can accept the connection for a
+      // still-booting sandbox and then never respond. Same 3s bound the
+      // ensureDevServer probe already uses; a timeout just means "not ready
+      // yet", which the catch below already handles as keep-polling.
+      const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(3_000) });
       if (res.ok || res.status < 500) return true;
     } catch {
-      // Connection refused / not yet listening — keep polling
+      // Connection refused / not yet listening / probe timed out — keep polling
     }
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
   }
@@ -323,9 +354,16 @@ async function writeFiles(
 
 async function saveSandboxId(projectId: string, sandboxId: string, framework: FullstackFramework): Promise<void> {
   try {
-    await redis.set(redisKey(projectId), sandboxId, "EX", SANDBOX_REDIS_TTL_SECONDS);
-    await redis.set(frameworkRedisKey(projectId), framework, "EX", SANDBOX_REDIS_TTL_SECONDS);
+    await withRedisTimeout(redis.set(redisKey(projectId), sandboxId, "EX", SANDBOX_REDIS_TTL_SECONDS), "set sandboxId");
+    await withRedisTimeout(redis.set(frameworkRedisKey(projectId), framework, "EX", SANDBOX_REDIS_TTL_SECONDS), "set framework");
   } catch (err) {
+    if (err instanceof RedisTimeoutError) {
+      // The sandbox itself is already live and registered in-process — losing
+      // only its durable record is not worth failing the build over. Worst
+      // case it isn't resumable after a restart and cold-starts instead.
+      logger.warn({ projectId, sandboxId, err }, "[e2b] Redis write timed out — sandbox not persisted");
+      return;
+    }
     logger.error({ projectId, err }, "[e2b] Failed to save sandboxId to Redis");
     throw err;
   }
@@ -333,7 +371,7 @@ async function saveSandboxId(projectId: string, sandboxId: string, framework: Fu
 
 async function loadFramework(projectId: string): Promise<FullstackFramework | null> {
   try {
-    const f = await redis.get(frameworkRedisKey(projectId));
+    const f = await withRedisTimeout(redis.get(frameworkRedisKey(projectId)), "get framework");
     return (f as FullstackFramework) ?? null;
   } catch {
     return null;
@@ -342,8 +380,15 @@ async function loadFramework(projectId: string): Promise<FullstackFramework | nu
 
 async function loadSandboxId(projectId: string): Promise<string | null> {
   try {
-    return await redis.get(redisKey(projectId));
+    return await withRedisTimeout(redis.get(redisKey(projectId)), "get sandboxId");
   } catch (err) {
+    if (err instanceof RedisTimeoutError) {
+      // Treat as a cache miss: the caller cold-starts a fresh sandbox, which
+      // is strictly better than hanging. Any orphaned sandbox is bounded by
+      // its own SANDBOX_TIMEOUT_MS lifetime.
+      logger.warn({ projectId, err }, "[e2b] Redis read timed out — treating as no cached sandbox");
+      return null;
+    }
     logger.error({ projectId, err }, "[e2b] Failed to read sandboxId from Redis");
     throw err;
   }
@@ -351,9 +396,13 @@ async function loadSandboxId(projectId: string): Promise<string | null> {
 
 async function deleteSandboxId(projectId: string): Promise<void> {
   try {
-    await redis.del(redisKey(projectId));
-    await redis.del(frameworkRedisKey(projectId));
+    await withRedisTimeout(redis.del(redisKey(projectId)), "del sandboxId");
+    await withRedisTimeout(redis.del(frameworkRedisKey(projectId)), "del framework");
   } catch (err) {
+    if (err instanceof RedisTimeoutError) {
+      logger.warn({ projectId, err }, "[e2b] Redis delete timed out — stale record left to expire via TTL");
+      return;
+    }
     logger.error({ projectId, err }, "[e2b] Failed to delete sandboxId from Redis");
     throw err;
   }
@@ -585,6 +634,19 @@ export interface PreviewIssue {
 }
 
 /**
+ * Every quality gate below runs INSIDE the sandbox, so no sandbox means the
+ * gate cannot run at all. Each one reports that as `ok: true` — "not run" is
+ * indistinguishable from "passed" to the caller, which is how a build whose
+ * sandbox never came up shipped to a user as a success with five empty files
+ * in it. Changing the return value would silently arm the auto-fix loops, so
+ * the contract is left exactly as-is and the skip is made visible instead.
+ */
+function skippedGate(projectId: string, gate: string): { ok: boolean; issues: PreviewIssue[] } {
+  logger.warn({ projectId, gate }, "[e2b] gate skipped — no live sandbox; build is UNVERIFIED");
+  return { ok: true, issues: [] };
+}
+
+/**
  * Agentic verification: after the app is written and the servers (re)started,
  * checks whether the REAL backend actually came up. If the Hono server crashed
  * on startup (bad import, runtime error, etc.) the preview's /api calls would
@@ -593,7 +655,7 @@ export interface PreviewIssue {
  */
 export async function verifyPreview(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "verifyPreview");
 
   let hasBackend = false;
   try {
@@ -645,7 +707,7 @@ const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
  */
 export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "runTypeCheck");
 
   let stdout = "";
   try {
@@ -692,7 +754,7 @@ export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; is
  */
 export async function verifyBrowserRender(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { ok: true, issues: [] };
+  if (!sandbox) return skippedGate(projectId, "verifyBrowserRender");
 
   let stdout = "";
   try {

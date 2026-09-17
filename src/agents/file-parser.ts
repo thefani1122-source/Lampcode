@@ -465,7 +465,7 @@ const REQUIRED_FULLSTACK_FILES = [
 
 // A file is "empty" if it has no meaningful content — blank, or only comments /
 // punctuation the LLM emitted as a placeholder.
-function isEffectivelyEmpty(code: string | undefined): boolean {
+export function isEffectivelyEmpty(code: string | undefined): boolean {
   if (code === undefined) return true;
   const stripped = code
     .split("\n")
