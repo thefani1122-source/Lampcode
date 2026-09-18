@@ -746,6 +746,19 @@ export async function runFastBuild(
     const hasExistingCode = Object.keys(existingFiles).length > 0;
     console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length}`);
 
+    // Whether this build must carry the project's prior files forward. Every
+    // edit does — the output format has no way to express a deletion, so a file
+    // the model doesn't re-emit is unchanged, never removed. This used to be
+    // tied to smartSelectionUsed, which is only ever set for follow-ups of <= 20
+    // words; a longer follow-up therefore copied nothing, rebuilt allFiles from
+    // this turn's output alone, and was saved as the new success outputDir that
+    // the NEXT edit reads from — silently dropping every file the model hadn't
+    // re-emitted. The Supabase Storage copy couldn't recover it either, since
+    // that fallback only fires when the directory is completely empty.
+    // Deliberately separate from smartSelectionUsed, which still (correctly)
+    // controls only the output-format instructions given to the model.
+    const preserveExistingFiles = hasExistingCode && Boolean(lastSuccessRow[0]?.outputDir);
+
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.
     const classificationPromise = !hasExistingCode
@@ -1054,9 +1067,9 @@ export async function runFastBuild(
     const outputDir = join(WORKSPACE_BASE, projectId, sessionId, "frontend");
     await mkdir(outputDir, { recursive: true });
 
-    // For smart follow-up edits: copy ALL existing files first so unchanged files
+    // For every follow-up edit: copy ALL existing files first so unchanged files
     // remain present. LLM output then overwrites only the changed ones.
-    if (smartSelectionUsed && lastSuccessRow[0]?.outputDir) {
+    if (preserveExistingFiles && lastSuccessRow[0]?.outputDir) {
       const copied = await copyExistingFiles(lastSuccessRow[0].outputDir, outputDir);
       console.log(`[build] copied ${copied} existing files to new outputDir`);
     }
@@ -1587,10 +1600,11 @@ export async function runFastBuild(
     }
 
     // ── Emit build:complete for frontend workspace listener ────────────────
-    // Collect final content: for smart-selection builds, merge with existing files
-    // so the frontend receives the complete file set (not just what changed).
+    // Collect final content: on any edit, merge with the existing files already
+    // copied into outputDir so the frontend (and the next edit, which reads this
+    // build's outputDir) receives the complete file set, not just what changed.
     const allFiles: Record<string, string> = {};
-    if (smartSelectionUsed) {
+    if (preserveExistingFiles) {
       // Seed with all files in outputDir (includes copies + LLM output)
       const allOnDisk = await walkDirectory(outputDir, outputDir).catch(() => []);
       for (const f of allOnDisk) allFiles[f.path] = f.content;
