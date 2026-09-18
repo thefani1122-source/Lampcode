@@ -606,11 +606,23 @@ ADDITIONAL FILES — generate these AFTER the base files:
     Use this EXACT content:
     \`\`\`
     import { createClient } from '@supabase/supabase-js'
+
+    const url = import.meta.env.VITE_SUPABASE_URL
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+    export const isSupabaseConfigured = Boolean(url && anonKey)
+
+    // createClient() throws synchronously when the URL or key is missing or
+    // malformed. This runs at module scope, so that throw would kill the app
+    // before React ever mounts — a blank page with no error boundary able to
+    // catch it. The placeholder keeps the module loadable when env vars are
+    // absent; isSupabaseConfigured drives a visible warning instead.
     export const supabase = createClient(
-      import.meta.env.VITE_SUPABASE_URL,
-      import.meta.env.VITE_SUPABASE_ANON_KEY
+      url || 'https://placeholder.supabase.co',
+      anonKey || 'placeholder-anon-key'
     )
     \`\`\`
+    NEVER remove the placeholder fallback or the isSupabaseConfigured export.
 
 9. \`\`\`filename:src/hooks/useAuth.ts
     - Import supabase from '../lib/supabase'
@@ -630,6 +642,16 @@ ADDITIONAL FILES — generate these AFTER the base files:
     - AuthProvider loading state — pure Tailwind, NO inline styles:
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    - Import { isSupabaseConfigured } from '../lib/supabase'. When it is false,
+      render this banner ABOVE {children} (app stays visible — do NOT replace it,
+      and do NOT make this dismissable; it must stay until env vars are set):
+      <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-3 text-sm text-amber-200">
+        <p className="font-semibold">Supabase is not configured</p>
+        <p className="mt-0.5 text-amber-200/80">
+          Sign-in and saved data will not work until you set VITE_SUPABASE_URL and
+          VITE_SUPABASE_ANON_KEY. See README.md for setup steps.
+        </p>
       </div>
     - Export useAuthContext() hook: returns useContext(AuthContext)
     - Export default AuthProvider
