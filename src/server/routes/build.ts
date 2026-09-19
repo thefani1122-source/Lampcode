@@ -828,6 +828,23 @@ export async function runFastBuild(
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       );
     }
+
+    // Agentic build: hand the model the sandbox and let it verify its own work
+    // instead of emitting one shot of code for the pipeline below to inspect.
+    // Deliberately narrow for now — new builds only (the edit path has its own
+    // file-preservation rules) and Anthropic only (the free/Modal tier is a
+    // one-shot budget; many turns would blow straight through it).
+    const agenticBuild =
+      config.AGENTIC_BUILD_ENABLED && provider === "anthropic" && !hasExistingCode;
+    if (agenticBuild) {
+      console.log(`[build] agentic mode: model drives write/verify/repair for session=${sessionId}`);
+      // All three agentic tools need a live sandbox, and a frontend-only build
+      // wouldn't otherwise warm one until after generation. Idempotent — a
+      // no-op when the fullstack branch above already started it.
+      prewarmSandbox(projectId, fullstackFramework, (line) =>
+        server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+      );
+    }
     // All builds use E2B — emit loading immediately so the frontend switches to
     // E2BPreview and shows a spinner during code generation instead of blank screen.
     server?.emitPreviewLoading(sessionId, { sessionId });
@@ -1043,6 +1060,9 @@ export async function runFastBuild(
       // cumulativeUsd is 0 here: this is the first dispatch of the build.
       enableTools: true,
       costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
+      agenticBuild,
+      onSandboxLog: (line: string) =>
+        server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
       restProviders,
     });
@@ -1075,7 +1095,16 @@ export async function runFastBuild(
       console.log(`[build] copied ${copied} existing files to new outputDir`);
     }
 
-    let parsedFiles: ParsedFile[] = parseFilesFromContent(result.content);
+    // In agentic mode the model wrote its files through the write_files tool
+    // rather than printing ```filename fences, so the file set comes back from
+    // the dispatch instead of being parsed out of the reply. Same shape either
+    // way, so every gate, fix loop and sandbox write below is unchanged.
+    let parsedFiles: ParsedFile[] = agenticBuild
+      ? Object.entries(result.generatedFiles).map(([path, code]) => ({ path, code }))
+      : parseFilesFromContent(result.content);
+    if (agenticBuild) {
+      console.log(`[build] agentic mode produced ${parsedFiles.length} file(s) via write_files`);
+    }
 
     // ── Pure action-only response ────────────────────────────────────────────
     // The model used a connected service's MCP tool, or declined a write

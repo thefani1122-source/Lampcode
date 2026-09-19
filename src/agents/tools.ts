@@ -8,6 +8,7 @@ import { parseSkillFrontmatter, ALL_SKILL_NAMES } from "./prompt-builder.js";
 import { logger } from "../server/logger.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { getWebSocketServer } from "../websocket/server.js";
+import { writeFilesToSandbox, verifyBrowserRender, runTypeCheck } from "../preview/e2b-service.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
@@ -72,6 +73,59 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+// ── Agentic build tools ─────────────────────────────────────────────────────
+// Offered ONLY on the agentic build path (see dispatcher's agenticBuild option).
+// These are what turn the model from a text generator into something that can
+// check its own work: it writes into the real sandbox, looks at the rendered
+// page, and repairs what it finds — the loop build.ts used to drive from the
+// outside with fixed if-statements. Each one delegates to an e2b-service export
+// that the existing fix loops already use, so nothing new touches the sandbox.
+export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
+  {
+    name: "write_files",
+    description:
+      "Write files into the project's live preview sandbox. Use this instead of printing " +
+      "code in your reply — files only exist once written. Call it as many times as you " +
+      "need; later writes to the same path replace earlier ones, and files you don't " +
+      "write are left alone. After writing, verify with check_page before you finish.",
+    input_schema: {
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          description: "The files to write.",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Project-relative path, e.g. \"src/App.tsx\"." },
+              content: { type: "string", description: "The complete file content." },
+            },
+            required: ["path", "content"],
+          },
+        },
+      },
+      required: ["files"],
+    },
+  },
+  {
+    name: "check_page",
+    description:
+      "Open the running app in a real headless browser and report what actually rendered, " +
+      "including any runtime errors from the console. This is the only way to find out " +
+      "whether the page is genuinely working or silently blank — a file that compiles can " +
+      "still render nothing. Call this after writing files, and fix anything it reports.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "check_types",
+    description:
+      "Run the TypeScript compiler against the project in the sandbox and report real type " +
+      "errors, resolved against its actual dependencies and tsconfig. Use it when you've " +
+      "written code you want verified before relying on it.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+];
+
 const SKILLS_DIR = join(process.cwd(), "src", "skills");
 
 // Allowlist check before touching the filesystem — `name` is a model-chosen
@@ -97,6 +151,15 @@ export interface ToolExecutionContext {
   writeDenied?: { value: boolean } | undefined;
   /** Anthropic tool_use block ID — used as the pending-approval correlation key. */
   toolCallId?: string | undefined;
+  /** Required by the agentic build tools — identifies the live sandbox. */
+  projectId?: string | undefined;
+  /** Accumulator the agentic build path reads back once the model is done.
+   *  write_files records into this as well as writing to the sandbox, so the
+   *  caller ends up with the same file map the old fence-parsing path produced
+   *  and every downstream gate keeps working unchanged. */
+  generatedFiles?: Record<string, string> | undefined;
+  /** Forwards sandbox/dev-server output to the client's build log. */
+  onLog?: ((line: string) => void) | undefined;
 }
 
 /** Execute one tool call and return the text to send back as its tool_result. */
@@ -130,6 +193,67 @@ export async function executeTool(
     const path = typeof args["path"] === "string" ? args["path"] : "";
     const file = ctx.contextFiles?.find((f) => f.path === path);
     return file ? file.content : `Error: "${path}" is not part of this project's current context.`;
+  }
+
+  // ── Agentic build tools ───────────────────────────────────────────────────
+
+  if (name === "write_files" || name === "check_page" || name === "check_types") {
+    const projectId = ctx.projectId;
+    if (!projectId) return "Error: no project sandbox is attached to this build.";
+
+    if (name === "write_files") {
+      const raw = Array.isArray(args["files"]) ? (args["files"] as unknown[]) : [];
+      const files: Record<string, string> = {};
+      for (const entry of raw) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const e = entry as Record<string, unknown>;
+        if (typeof e["path"] === "string" && typeof e["content"] === "string") {
+          files[e["path"]] = e["content"];
+        }
+      }
+      if (Object.keys(files).length === 0) {
+        return "Error: no valid files provided. Each entry needs a string `path` and string `content`.";
+      }
+
+      // Merge into the running set first, then write the WHOLE set. The
+      // sandbox's own writer skips template-owned files (package.json,
+      // vite.config, etc.) on its own, so the model can't break the scaffold.
+      // Recorded BEFORE the write deliberately: if the sandbox write fails,
+      // the model still authored this content, and the caller writes the set
+      // to disk and pushes it through the normal preview path afterwards.
+      // Dropping it on a sandbox hiccup would throw away real work; the model
+      // is told about the failure either way and can retry.
+      if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
+      const toWrite = ctx.generatedFiles ?? files;
+
+      try {
+        const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
+        return (
+          `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.\n` +
+          `The app is running at ${url}. Call check_page to see what it actually renders.`
+        );
+      } catch (err) {
+        return `Error writing files: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === "check_page") {
+      try {
+        const { ok, issues } = await verifyBrowserRender(projectId);
+        if (ok || issues.length === 0) return "The page rendered successfully with no console errors.";
+        return `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
+      } catch (err) {
+        return `Error checking the page: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    try {
+      const { ok, issues } = await runTypeCheck(projectId);
+      if (ok || issues.length === 0) return "No type errors.";
+      return `Type errors:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
+    } catch (err) {
+      return `Error running the type check: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 
   if (name === "request_write_action") {
