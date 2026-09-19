@@ -49,6 +49,7 @@ export const taskInputSchema = z.object({
   isAgentBuild: z.boolean().optional(),
   hasAnimationContext: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
+  agenticBuild: z.boolean().optional(),
   projectMemory: z.string().nullable().optional(),
   projectManifest: z.string().nullable().optional(),
 });
@@ -1552,6 +1553,32 @@ export class PromptBuilder {
         "Use these proactively when relevant — don't wait to be asked."
       : "";
 
+    // Agentic build mode changes how code reaches the user: through the
+    // sandbox, not through the reply. The fence format is explicitly
+    // countermanded here because the rest of the prompt teaches it at length,
+    // and a model that prints fences in this mode produces a build with no
+    // files in it at all.
+    const agenticInstruction = task.agenticBuild === true
+      ? "\n\nHOW TO BUILD (this overrides any instruction below about printing " +
+        "```filename: code blocks):\n" +
+        "You are not writing a reply that contains code. You are building the app " +
+        "directly in a live sandbox, and you can see the result of your own work.\n" +
+        "- write_files(files): writes into the running project. Code you print in your " +
+        "reply instead of writing here does NOT exist and will be lost.\n" +
+        "- check_page(): opens the running app in a real browser and tells you what it " +
+        "actually rendered, including console errors.\n" +
+        "- check_types(): runs tsc against the real project.\n" +
+        "Work like an engineer, not a code generator:\n" +
+        "1. Write the files you think the app needs.\n" +
+        "2. Call check_page. A blank page or a console error means it is broken, even " +
+        "if the code looked correct when you wrote it.\n" +
+        "3. Fix what it reports and check again. Repeat until it genuinely renders.\n" +
+        "4. Only then write your final reply — a short, plain summary of what you built " +
+        "for the user. No code, no file listings.\n" +
+        "Never claim the app works without having called check_page and seen it pass. " +
+        "If you cannot get it working, say so plainly and describe what is still wrong."
+      : "";
+
     const manifestBlock = task.projectManifest
       ? `\n## Current File Structure\n${task.projectManifest}\n`
       : "";
@@ -1568,7 +1595,7 @@ export class PromptBuilder {
     // base segment, not the variable skills segment.
     const skillIndex = agentType === "frontend" ? await buildSkillIndex() : "";
 
-    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex;
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + agenticInstruction + skillIndex;
   }
 
   private async buildContextBlock(
