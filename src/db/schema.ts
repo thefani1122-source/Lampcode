@@ -174,6 +174,9 @@ export const projects = pgTable("projects", {
   businessContext: jsonb("business_context").$type<BusinessContext>().notNull().default({}),
   projectMemory: text("project_memory"),
   projectManifest: text("project_manifest"),
+  // Storage object path of the last captured preview screenshot (not a URL —
+  // the bucket is private, so the projects route signs it on read).
+  previewImage: text("preview_image"),
   isArchived: boolean("is_archived").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),

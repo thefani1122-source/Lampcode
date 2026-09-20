@@ -195,6 +195,45 @@ const ALLOWED_HOSTS_SNIPPET = "allowedHosts: true,";
  * block with just a proxy), so every write is patched in-place here, injecting
  * only the pieces that are missing and preserving everything else the LLM set.
  */
+/**
+ * Guarantee the app's entry point still loads the stylesheet.
+ *
+ * The template bakes an `src/index.tsx` that imports `./styles.css`, which is
+ * where every Tailwind class and design token comes from. But `src/index.tsx`
+ * is deliberately NOT in BAKED_FILES — the model has to be able to wrap the app
+ * in providers (QueryClientProvider, AuthProvider, a router). So it rewrites
+ * that file, and when its version omits the stylesheet import the whole app
+ * renders completely unstyled: bare text stacked down the page, no layout.
+ *
+ * Adding it to BAKED_FILES would fix the styling and break the providers. So
+ * the import is re-inserted instead, leaving everything else the model wrote
+ * untouched. Same shape as patchViteConfig above: repair the generated file
+ * rather than forbid it.
+ */
+function patchEntryStylesheet(files: Record<string, string>, log: PreviewLogCallback): void {
+  for (const filename of ["src/index.tsx", "src/main.tsx", "src/index.jsx", "src/main.jsx"]) {
+    const content = files[filename];
+    if (content === undefined) continue;
+    // Any form of the stylesheet import counts — './styles.css', 'src/styles.css',
+    // or a different sheet the model brought itself.
+    if (/import\s+['"][^'"]*\.css['"]/.test(content)) return;
+
+    const lines = content.split("\n");
+    // Place it after the last top-level import so it can't land above a
+    // directive like "use client" or inside a comment block.
+    let lastImport = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s*import\s/.test(lines[i] ?? "")) lastImport = i;
+    }
+    const importLine = "import './styles.css'";
+    lines.splice(lastImport + 1, 0, importLine);
+    files[filename] = lines.join("\n");
+    log(`Re-added the stylesheet import to ${filename} — without it the app renders unstyled`);
+    logger.warn({ filename }, "[e2b] generated entry point dropped the stylesheet import — re-added");
+    return;
+  }
+}
+
 function patchViteConfig(files: Record<string, string>, log: PreviewLogCallback): void {
   for (const filename of VITE_CONFIG_FILENAMES) {
     const content = files[filename];
@@ -940,6 +979,7 @@ export async function writeFilesToSandbox(
 
   const framework = sandboxFrameworks.get(projectId) ?? "react";
   patchViteConfig(files, log);
+  patchEntryStylesheet(files, log);
   // Heartbeat: every follow-up write extends the sandbox lifetime so an
   // actively-used session never hits the timeout set at create/resume.
   await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
@@ -1052,6 +1092,7 @@ export async function createPreviewSandbox(
   };
 
   patchViteConfig(files, log);
+  patchEntryStylesheet(files, log);
 
   let sandbox: Sandbox | undefined;
   try {
@@ -1152,4 +1193,55 @@ export async function killAllSandboxes(): Promise<void> {
   if (projectIds.length === 0) return;
   logger.info({ count: projectIds.length }, "Killing all active E2B sandboxes");
   await Promise.all(projectIds.map((projectId) => killSandbox(projectId)));
+}
+
+/**
+ * Capture a screenshot of the running preview, for the project card thumbnail.
+ *
+ * Playwright and Chromium are already baked into the template (they back
+ * verifyBrowserRender), so this writes a tiny capture script into /tmp at
+ * runtime rather than requiring a template rebuild. The PNG comes back as
+ * base64 through stdout because that is the one channel guaranteed to work for
+ * binary data across the sandbox boundary without a second round trip.
+ *
+ * Returns null on any failure. A missing thumbnail is a cosmetic gap; it must
+ * never fail a build that otherwise succeeded — same policy as the other
+ * sandbox-side gates.
+ */
+export async function capturePreviewScreenshot(projectId: string): Promise<Buffer | null> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return null;
+
+  const framework = sandboxFrameworks.get(projectId) ?? "react";
+  const port = devPort(framework);
+  const script = `
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+try {
+  await p.goto("http://localhost:${port}", { waitUntil: "networkidle", timeout: 20000 });
+} catch {}
+await p.waitForTimeout(1200);
+const buf = await p.screenshot({ type: "png" });
+await b.close();
+process.stdout.write("B64:" + buf.toString("base64"));
+`;
+
+  try {
+    await sandbox.files.write("/tmp/lampcode-shot.mjs", script);
+    const r = await sandbox.commands.run(
+      "cd /home/user/.lampcode-tools && node /tmp/lampcode-shot.mjs",
+      { timeoutMs: 45_000 },
+    );
+    const marker = r.stdout.indexOf("B64:");
+    if (marker === -1) return null;
+    const b64 = r.stdout.slice(marker + 4).trim();
+    if (!b64) return null;
+    const buf = Buffer.from(b64, "base64");
+    // A PNG under ~1KB is a blank or failed render, not a screenshot worth showing.
+    return buf.length > 1024 ? buf : null;
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] preview screenshot failed");
+    return null;
+  }
 }

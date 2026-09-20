@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
+import { signPreviewScreenshot } from "../../storage/project-files.js";
 import {
   projects,
   projectMembers,
@@ -138,6 +139,7 @@ projectsRouter.get("/", async (c) => {
       mode: projects.mode,
       status: projects.status,
       createdAt: projects.createdAt,
+      previewImage: projects.previewImage,
     })
     .from(projects)
     .where(
@@ -147,7 +149,17 @@ projectsRouter.get("/", async (c) => {
     )
     .orderBy(desc(projects.createdAt));
 
-  return c.json({ projects: list });
+  // Screenshots live in a private bucket, so each card gets a short-lived
+  // signed URL rather than a public link. Signed in parallel, and a failure
+  // just means that card falls back to its placeholder.
+  const withThumbnails = await Promise.all(
+    list.map(async ({ previewImage, ...p }) => ({
+      ...p,
+      previewImage: previewImage ? await signPreviewScreenshot(previewImage) : null,
+    })),
+  );
+
+  return c.json({ projects: withThumbnails });
 });
 
 // POST /api/projects

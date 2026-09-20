@@ -117,3 +117,51 @@ async function listAllStorageFiles(
   }
   return paths;
 }
+
+// ── Preview screenshots ───────────────────────────────────────────────────────
+
+/**
+ * Store a project's preview screenshot and return its object path.
+ *
+ * Deliberately reuses the existing private bucket rather than adding a public
+ * one. A public bucket would make every generated app's screenshot readable by
+ * anyone who guesses or is given the URL, and these are the user's projects —
+ * often built from their own prompts and data. Signing on read costs one call
+ * per card and keeps them private.
+ */
+export async function uploadPreviewScreenshot(
+  projectId: string,
+  png: Buffer,
+): Promise<string | null> {
+  try {
+    await ensureBucket();
+    const path = `${projectId}/.preview/thumbnail.png`;
+    const { error } = await getSupabaseAdmin()
+      .storage.from(BUCKET)
+      .upload(path, png, { contentType: "image/png", upsert: true });
+    if (error) {
+      console.warn(`[project-files] screenshot upload failed: ${error.message}`);
+      return null;
+    }
+    return path;
+  } catch (err) {
+    console.warn(`[project-files] screenshot upload threw: ${String(err)}`);
+    return null;
+  }
+}
+
+/** Sign a stored screenshot for display. Null when it can't be signed. */
+export async function signPreviewScreenshot(
+  path: string,
+  expiresInSeconds = 60 * 60,
+): Promise<string | null> {
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .storage.from(BUCKET)
+      .createSignedUrl(path, expiresInSeconds);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}

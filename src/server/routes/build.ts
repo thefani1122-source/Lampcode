@@ -33,7 +33,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -41,7 +41,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
 import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTree } from "../../verify/security.js";
-import { uploadProjectFiles, downloadProjectFiles } from "../../storage/project-files.js";
+import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1827,6 +1827,25 @@ export async function runFastBuild(
       previewUrl: null,
       totalFiles: Object.keys(allFiles).length,
       ...(buildSummary ? { summary: buildSummary } : {}),
+    });
+
+    // ── Async preview thumbnail — never blocks the build ──────────────────
+    // Runs after the sandbox has had time to serve the finished app. A failure
+    // here only costs the project card its picture, so every step is optional
+    // and nothing is retried.
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const png = await capturePreviewScreenshot(projectId);
+          if (!png) return;
+          const path = await uploadPreviewScreenshot(projectId, png);
+          if (!path) return;
+          await db.update(projects).set({ previewImage: path }).where(eq(projects.id, projectId));
+          console.log(`[thumbnail] captured preview for project=${projectId} (${png.length} bytes)`);
+        } catch (err) {
+          logger.warn({ projectId, err }, "Preview thumbnail capture failed");
+        }
+      })();
     });
 
     // ── Async project memory + manifest update — never blocks the build ────
