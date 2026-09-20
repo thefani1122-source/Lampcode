@@ -1820,7 +1820,13 @@ export async function runFastBuild(
         max_tokens: 120,
         messages: [{
           role: "user",
-          content: `A web app was just built. Describe it in 1-2 enthusiastic sentences.\nPrompt: "${prompt.slice(0, 300)}"\nFiles: ${fileList}\n\nBe specific about what was built. No preamble, no "Here's" opener.`,
+          content:
+            `You just finished building a web app for someone. Tell them what you built, ` +
+            `in 1-2 sentences, the way an engineer would say it to a colleague.\n\n` +
+            `What they asked for: "${prompt.slice(0, 300)}"\nFiles you wrote: ${fileList}\n\n` +
+            `Be concrete about what the app actually does. Write plainly — no marketing ` +
+            `language, no exclamation marks, no "Here's" or "I've successfully" opener, ` +
+            `and don't recite the file count or list the filenames.`,
         }],
       })
       const block = summaryResp.content[0]
@@ -1837,9 +1843,6 @@ export async function runFastBuild(
       previewUrl: null,
       totalFiles: Object.keys(allFiles).length,
       ...(buildSummary ? { summary: buildSummary } : {}),
-      ...(!hasExistingCode && classification?.buildType === "frontend"
-        ? { hint: "Built with sample data. Say 'add user login and real database' to make it production-ready." }
-        : {}),
     });
 
     // ── Async project memory + manifest update — never blocks the build ────
