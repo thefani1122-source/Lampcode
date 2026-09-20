@@ -1161,7 +1161,13 @@ export async function runFastBuild(
       fullstackFramework === "tanstack" ? "app/routes/index.tsx" :
       "src/App.tsx";
     if (!hasExistingCode && !parsedFiles.some((f) => f.path === expectedEntryPoint)) {
-      const msg = `The AI did not produce a valid ${expectedEntryPoint} — generation failed.`;
+      // Say which of the two actually happened. A cut-off response and a model
+      // that genuinely produced nothing usable look identical from here, but
+      // they mean completely different things to the person waiting: one is
+      // "ask for less in one go", the other is "try again".
+      const msg = result.stopReason === "max_tokens"
+        ? `The build ran out of room before finishing ${expectedEntryPoint}. Try asking for a smaller first version — you can add the rest in follow-up messages.`
+        : `The AI did not produce a valid ${expectedEntryPoint} — generation failed.`;
       logger.error({ sessionId, projectId }, `Parse failure: ${expectedEntryPoint} missing from new build output`);
       server?.emitToRoom(sessionId, "build:warning", {
         sessionId,

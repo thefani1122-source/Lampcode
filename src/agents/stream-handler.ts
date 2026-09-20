@@ -88,8 +88,12 @@ export async function handleAgentStream(
           contentChunkCount++
           console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
 
-          // Mark code as started the moment a fence appears anywhere in fullContent
-          if (!codeStarted && fullContent.includes("```filename:")) {
+          // Mark code as started the moment ANY fence appears. This used to look
+          // only for "```filename:", so whenever the model opened with a plain
+          // ```tsx fence — or a "### src/App.tsx" heading above one — codeStarted
+          // stayed false and raw source code streamed straight into the thinking
+          // panel. A fence of any kind means prose is over.
+          if (!codeStarted && (/```/.test(fullContent) || /^#{1,4}\s+\S+\.\w{1,10}\s*$/m.test(fullContent))) {
             codeStarted = true
           }
 

@@ -113,6 +113,9 @@ export interface DispatchResult {
    *  action was needed but isn't available yet. Lets the caller distinguish
    *  "declined a write action" from "generation genuinely produced nothing". */
   requestedWriteAction: boolean;
+  /** Why the model stopped. "max_tokens" means the response was cut off,
+   *  which the caller reports differently from a genuine generation failure. */
+  stopReason: string | undefined;
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -352,12 +355,23 @@ export class AgentDispatcher {
     // a tool loop's turns each get this budget individually, not the whole loop.
     const streamTimeoutMs = agentType === "frontend" ? 300_000 : undefined;
 
-    // Fullstack builds emit ~10 files (frontend + backend + db) — double the
-    // output budget so the response isn't truncated mid-file.
+    // One budget for every build. This used to give frontend builds half as
+    // much room, on the reasoning that only fullstack emits ~10 files — but a
+    // website is a frontend build and emits just as much (nav, hero, features,
+    // testimonials, footer), and "website" isn't a keyword the classifier
+    // promotes, so those requests ran on the small budget, got cut off
+    // mid-file, and surfaced as "The AI did not produce a valid src/App.tsx".
+    // max_tokens is a ceiling, not a charge: a small build still only bills for
+    // what it generates, so raising it costs nothing and removes a whole class
+    // of truncation failure.
+    const maxTokens = 32_000;
+
+    // Still distinguished for the thinking budget below — that one is about how
+    // much planning the task warrants, which genuinely does differ, not about
+    // how much room the answer needs.
     const isFullstackBuild =
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    const maxTokens = isFullstackBuild ? 32_000 : 16_000;
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -385,6 +399,7 @@ export class AgentDispatcher {
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
     let requestedWriteAction = false;
     let loopCostUsd = 0;
+    let lastStopReason: string | undefined;
 
     for (let round = 1; round <= MAX_TOOL_ROUNDTRIPS; round++) {
       const gatewayRequest = {
@@ -413,6 +428,7 @@ export class AgentDispatcher {
       fullContent += streamResult.content;
       totalInputTokens += streamResult.inputTokens;
       totalOutputTokens += streamResult.outputTokens;
+      lastStopReason = streamResult.stopReason;
       allToolCalls.push(...streamResult.toolCalls);
       allMcpToolCalls.push(...streamResult.mcpToolCalls);
       if (streamResult.toolCalls.some((tc) => tc.name === "request_write_action")) {
@@ -525,6 +541,7 @@ export class AgentDispatcher {
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
       requestedWriteAction,
+      stopReason: lastStopReason,
       outputPath,
       durationMs: Date.now() - startMs,
       inputTokens: totalInputTokens,
