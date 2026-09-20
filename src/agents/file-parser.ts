@@ -561,12 +561,26 @@ export function extractBuildSummary(content: string): string {
       continue;
     }
     if (inFence) continue;
-    if (fileHeadingRe.test(line.trim())) continue;
+    const trimmed = line.trim();
+    if (fileHeadingRe.test(trimmed)) continue;
+    // Drop section headings outright ("## Summary", "### What I built").
+    // The bubble already sits under the user's message in a chat — a document
+    // heading above one paragraph reads like a report, not a reply.
+    if (/^#{1,6}\s/.test(trimmed)) continue;
     out.push(line);
   }
 
-  // Collapse the blank runs left behind by the removed blocks.
-  const prose = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  // Collapse the blank runs left behind by the removed blocks, then flatten the
+  // markdown. The chat bubble renders plain text, so leaving the syntax in
+  // means the reader literally sees "**Momentum** — ... (indigo `#7c6cf5`)".
+  const prose = out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // bold
+    .replace(/(^|[\s(])\*(?!\s)(.+?)(?<!\s)\*/g, "$1$2") // italic, not bullets
+    .replace(/`([^`]+)`/g, "$1")       // inline code
+    .replace(/^\s*[-*]\s+/gm, "• ")    // bullets → a real bullet character
+    .trim();
   if (prose.length < 15) return "";
 
   // Keep it to the first paragraph or two — the model sometimes continues into
