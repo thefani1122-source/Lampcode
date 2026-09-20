@@ -531,3 +531,47 @@ export function validateSandpackFiles(files: Record<string, string>): {
 
   return { valid: errors.length === 0, errors, files };
 }
+
+// ── Build summary extraction ──────────────────────────────────────────────────
+
+/**
+ * Pull the model's own words out of a code response — everything that isn't a
+ * fenced block or a filename heading announcing one.
+ *
+ * This replaces a separate Haiku call that existed only to describe a build the
+ * model had just finished describing itself. That call cost money per build,
+ * added latency on the critical path, and told the user about an app it had
+ * never seen — it was handed a prompt and a list of filenames. The model that
+ * actually wrote the code is the one that knows what it built.
+ */
+export function extractBuildSummary(content: string): string {
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+
+  // Matches the heading a model writes above a fence ("### src/App.tsx",
+  // "**package.json**", "src/lib/api.ts:") — same shape parseFilesFromContent
+  // looks backwards for, so it's announcing a file rather than saying anything.
+  const fileHeadingRe =
+    /^(?:#{1,4}\s+(?:File:\s+)?|>\s*|[-*]\s+)?[`*_]{0,3}[^\s`*_<>|]+\.[a-zA-Z0-9]{1,10}[`*_]{0,3}:?\s*$/;
+
+  for (const line of lines) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (fileHeadingRe.test(line.trim())) continue;
+    out.push(line);
+  }
+
+  // Collapse the blank runs left behind by the removed blocks.
+  const prose = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (prose.length < 15) return "";
+
+  // Keep it to the first paragraph or two — the model sometimes continues into
+  // setup notes that belong in the README, not in a chat bubble.
+  const paragraphs = prose.split(/\n{2,}/).filter((p) => p.trim().length > 0);
+  const summary = paragraphs.slice(0, 2).join("\n\n").trim();
+  return summary.length > 600 ? `${summary.slice(0, 600).trimEnd()}…` : summary;
+}

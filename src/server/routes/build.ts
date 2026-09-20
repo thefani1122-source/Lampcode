@@ -26,6 +26,7 @@ import {
   isBackendFile,
   isSandpackExcluded,
   isEffectivelyEmpty,
+  extractBuildSummary,
   type ParsedFile,
 } from "../../agents/file-parser.js";
 import { getWebSocketServer } from "../../websocket/server.js";
@@ -1810,30 +1811,13 @@ export async function runFastBuild(
     );
     const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
 
-    // ── Generate AI summary with Haiku (fast, non-blocking path) ─────────────
-    let buildSummary = ""
-    try {
-      const anthropicClient = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
-      const fileList = Object.keys(allFiles).slice(0, 20).join(", ")
-      const summaryResp = await anthropicClient.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        messages: [{
-          role: "user",
-          content:
-            `You just finished building a web app for someone. Tell them what you built, ` +
-            `in 1-2 sentences, the way an engineer would say it to a colleague.\n\n` +
-            `What they asked for: "${prompt.slice(0, 300)}"\nFiles you wrote: ${fileList}\n\n` +
-            `Be concrete about what the app actually does. Write plainly — no marketing ` +
-            `language, no exclamation marks, no "Here's" or "I've successfully" opener, ` +
-            `and don't recite the file count or list the filenames.`,
-        }],
-      })
-      const block = summaryResp.content[0]
-      if (block?.type === "text") buildSummary = block.text.trim()
-    } catch (err) {
-      logger.warn({ sessionId, err }, "AI summary generation failed — using fallback")
-    }
+    // ── Build summary: the builder's own words ──────────────────────────────
+    // This used to be a second Haiku call describing a build it had never seen,
+    // working only from the prompt and a list of filenames. It cost money on
+    // every build, sat on the critical path, and was the weaker description of
+    // the two — the model that wrote the code already says what it made, either
+    // side of its file fences. Free, no extra latency, and actually informed.
+    const buildSummary = extractBuildSummary(result.content);
 
     server?.buildComplete(sessionId, {
       sessionId,
