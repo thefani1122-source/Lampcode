@@ -108,6 +108,18 @@ function extractFencePath(fenceLine: string): string | null {
   // Pure language hint → not a path
   if (LANG_HINTS.has(after.toLowerCase())) return null;
 
+  // "```tsx:src/App.tsx" / "```json:package.json" — a language hint and the
+  // path, which is a form the model uses regularly despite being told to write
+  // "filename:". Without this the whole prefix became part of the path
+  // ("tsx:src/App.tsx"), so src/App.tsx was never found and the build failed
+  // with "The AI did not produce a valid src/App.tsx" — even though it had
+  // written the file perfectly well. Confirmed from a real build whose output
+  // opened with "```json:package.json" and parsed to nothing.
+  const colon = after.indexOf(":");
+  if (colon > 0 && LANG_HINTS.has(after.slice(0, colon).toLowerCase())) {
+    return after.slice(colon + 1).trim() || null;
+  }
+
   // Contains a slash → definitely a path
   if (after.includes("/")) return after;
 
