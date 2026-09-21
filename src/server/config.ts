@@ -68,6 +68,18 @@ const envSchema = z.object({
   // costUsd only measures LLM token spend). Provisional default; revisit once
   // real all-in cost-per-build is measured post-launch.
   USAGE_MARGIN_MULTIPLIER: z.coerce.number().positive().default(4),
+  // Pre-launch waitlist. While on, /api/build/fast refuses non-admin requests
+  // so no build spend can be triggered by someone who bypasses the frontend.
+  // Defaults to ON: leaving the waitlist up by mistake is a visible annoyance
+  // fixed in seconds, while opening builds to everyone by mistake costs real
+  // Anthropic and E2B money. Set WAITLIST_MODE=false to open the product.
+  // Parsed explicitly, not with z.coerce.boolean() — Boolean("false") is true,
+  // so a coerced flag set to "false" would switch this ON.
+  WAITLIST_MODE: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() !== "false")
+    .pipe(z.boolean()),
 });
 
 const REQUIRED_VARS = [

@@ -2343,6 +2343,19 @@ buildRouter.post("/fast", async (c) => {
   const t0 = Date.now();
   const authUser = c.get("authUser");
 
+  // Pre-launch waitlist. The frontend already replaces the product with a
+  // thank-you page, but that's a UI decision and this endpoint is the one that
+  // spends real money on every call — Anthropic tokens and an E2B sandbox. A
+  // gate that only exists in the client is not a gate. Admins stay exempt so
+  // the product can still be tested while the waitlist is up.
+  if (config.WAITLIST_MODE && !isAdmin(authUser.email)) {
+    throw new AppError(
+      403,
+      "Lampcode is not open yet — you're on the waitlist and we'll email you when your access is ready.",
+      "WAITLIST_ACTIVE",
+    );
+  }
+
   const bodyRaw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
   });
