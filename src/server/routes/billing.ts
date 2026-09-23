@@ -329,6 +329,13 @@ const paddleSyncSchema = z.object({
 // Frontend wiring is a separate follow-up session — this just exposes what
 // it will need, from the one place that already owns the price-ID mapping.
 billingRouter.get("/paddle/config", async (c) => {
+  // A gate that only exists in the client is not a gate. Without the client
+  // token and price IDs, Paddle.js cannot open a checkout at all, so refusing
+  // here closes the bypass the pricing page's own guard leaves open. No admin
+  // exemption: nobody should be billed before launch, ourselves included.
+  if (config.WAITLIST_MODE) {
+    throw new AppError(403, "Checkout opens when Lampcode launches.", "WAITLIST_ACTIVE");
+  }
   if (!config.PADDLE_CLIENT_TOKEN) {
     throw new AppError(503, "Paddle is not configured", "PADDLE_NOT_CONFIGURED");
   }
