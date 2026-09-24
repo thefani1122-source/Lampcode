@@ -673,16 +673,30 @@ export interface PreviewIssue {
 }
 
 /**
- * Every quality gate below runs INSIDE the sandbox, so no sandbox means the
- * gate cannot run at all. Each one reports that as `ok: true` — "not run" is
- * indistinguishable from "passed" to the caller, which is how a build whose
- * sandbox never came up shipped to a user as a success with five empty files
- * in it. Changing the return value would silently arm the auto-fix loops, so
- * the contract is left exactly as-is and the skip is made visible instead.
+ * Result of a sandbox quality gate. `ok` keeps its original meaning — "do not
+ * trigger the auto-fix loop" — so every existing caller that destructures
+ * `{ ok, issues }` behaves exactly as before.
+ *
+ * `unavailable` is the state that was previously unrepresentable: the gate
+ * could not run at all (no sandbox, unreachable, tooling missing, unparseable
+ * output). That has always been reported as `ok: true`, because failing a
+ * delivered build on our own infrastructure trouble would be worse. But it
+ * makes "not run" and "passed" identical to the caller, and a caller that
+ * cannot tell them apart cannot be honest about it — which matters most for
+ * anything that reports a verdict onward, to a user or to a model deciding
+ * whether its work is done. Telling an agent "no type errors" when tsc never
+ * ran is how it ships broken code believing it checked.
  */
-function skippedGate(projectId: string, gate: string): { ok: boolean; issues: PreviewIssue[] } {
+export interface GateResult {
+  ok: boolean;
+  issues: PreviewIssue[];
+  /** True when the gate could not run. `ok` is still true — see above. */
+  unavailable?: boolean;
+}
+
+function skippedGate(projectId: string, gate: string): GateResult {
   logger.warn({ projectId, gate }, "[e2b] gate skipped — no live sandbox; build is UNVERIFIED");
-  return { ok: true, issues: [] };
+  return { ok: true, issues: [], unavailable: true };
 }
 
 /**
@@ -692,7 +706,7 @@ function skippedGate(projectId: string, gate: string): { ok: boolean; issues: Pr
  * silently fail — instead we capture its error so the build flow can re-prompt
  * the model to fix src/server and try again. No-op for frontend-only apps.
  */
-export async function verifyPreview(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+export async function verifyPreview(projectId: string): Promise<GateResult> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyPreview");
 
@@ -704,7 +718,9 @@ export async function verifyPreview(projectId: string): Promise<{ ok: boolean; i
     );
     hasBackend = r.stdout.includes("y");
   } catch {
-    return { ok: true, issues: [] };
+    // Couldn't even probe for a backend — the sandbox is unreachable, so
+    // nothing was checked.
+    return { ok: true, issues: [], unavailable: true };
   }
   if (!hasBackend) return { ok: true, issues: [] };
 
@@ -744,7 +760,7 @@ const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
  * No-op (ok:true) if no live in-process sandbox exists for this project —
  * same silent-skip behavior as verifyPreview.
  */
-export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+export async function runTypeCheck(projectId: string): Promise<GateResult> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "runTypeCheck");
 
@@ -762,8 +778,9 @@ export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; is
       stdout = err.stdout;
     } else {
       // Sandbox unreachable, timed out, or tsc itself missing — don't block
-      // the build on infrastructure trouble unrelated to the generated code.
-      return { ok: true, issues: [] };
+      // the build on infrastructure trouble unrelated to the generated code,
+      // but don't report it as a clean type check either: nothing was checked.
+      return { ok: true, issues: [], unavailable: true };
     }
   }
 
@@ -791,7 +808,7 @@ export async function runTypeCheck(projectId: string): Promise<{ ok: boolean; is
  * generated app's own package.json/node_modules. No-op (ok:true) if no live
  * in-process sandbox exists, same silent-skip behavior as the other checks.
  */
-export async function verifyBrowserRender(projectId: string): Promise<{ ok: boolean; issues: PreviewIssue[] }> {
+export async function verifyBrowserRender(projectId: string): Promise<GateResult> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyBrowserRender");
 
@@ -805,8 +822,9 @@ export async function verifyBrowserRender(projectId: string): Promise<{ ok: bool
   } catch {
     // Sandbox unreachable, timed out, or the check tooling itself missing —
     // don't block the build on infrastructure trouble unrelated to the
-    // generated code (same policy as runTypeCheck's catch above).
-    return { ok: true, issues: [] };
+    // generated code (same policy as runTypeCheck's catch above), but the
+    // page was never actually opened, so say so.
+    return { ok: true, issues: [], unavailable: true };
   }
 
   let parsed: { ok: boolean; blank: boolean; errors: string[] };
@@ -817,7 +835,9 @@ export async function verifyBrowserRender(projectId: string): Promise<{ ok: bool
     const lastLine = stdout.trim().split("\n").pop() ?? "";
     parsed = JSON.parse(lastLine);
   } catch {
-    return { ok: true, issues: [] }; // unparseable output — treat as infra noise, not a real render failure
+    // Unparseable output — infra noise, not a real render failure. Nothing
+    // was learned about the page either way.
+    return { ok: true, issues: [], unavailable: true };
   }
 
   if (parsed.ok) return { ok: true, issues: [] };

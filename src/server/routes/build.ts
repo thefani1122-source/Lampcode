@@ -123,9 +123,9 @@ function gateFailedOpen(
   sessionId: string,
   projectId: string,
   err: unknown,
-): { ok: boolean; issues: { source: string; message: string }[] } {
+): { ok: boolean; issues: { source: string; message: string }[]; unavailable: boolean } {
   logger.warn({ sessionId, projectId, gate, err }, "Sandbox quality gate errored — failing open, build is UNVERIFIED");
-  return { ok: true, issues: [] };
+  return { ok: true, issues: [], unavailable: true };
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {

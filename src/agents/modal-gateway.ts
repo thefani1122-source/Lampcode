@@ -124,6 +124,28 @@ function mapModalError(status: number | undefined, message: string): GatewayErro
   return new GatewayError("NETWORK", message);
 }
 
+/**
+ * Translate OpenAI's `finish_reason` vocabulary into the Anthropic `stop_reason`
+ * vocabulary the rest of the codebase is written against.
+ *
+ * Everything downstream compares against Anthropic's words — dispatcher.ts's
+ * tool loop tests `stopReason === "tool_use"` to decide whether to execute
+ * tools and continue, and stream-handler.ts tests `"max_tokens"` to detect a
+ * truncated response. An OpenAI-compatible endpoint says "tool_calls" and
+ * "length" for those same two states, so passing the raw value through meant
+ * neither check ever fired on this path: the model could ask for a tool and
+ * the loop would just stop, and a cut-off response looked like a clean finish.
+ *
+ * Mapping here, at the boundary, keeps the one vocabulary everywhere else
+ * rather than teaching every call site to know which provider it came from.
+ */
+function toAnthropicStopReason(finishReason: string | undefined): string | undefined {
+  if (finishReason === "tool_calls") return "tool_use";
+  if (finishReason === "length") return "max_tokens";
+  if (finishReason === "stop") return "end_turn";
+  return finishReason; // unknown / provider-specific — pass through unchanged
+}
+
 /** Yield parsed chunks from a Modal (OpenAI-compatible) streaming completion. */
 export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
   if (!config.MODAL_ENDPOINT_URL || !config.MODAL_PROXY_TOKEN || !config.MODAL_MODEL_NAME) {
@@ -251,12 +273,21 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   // Flush accumulated tool calls once the stream ends — mirrors
   // model-gateway.ts's content_block_stop flush, just batched at stream end
   // since OpenAI's delta shape (unlike Anthropic's) has no per-call stop event.
+  let emittedToolCall = false;
   for (const buf of toolBuffers.values()) {
     if (buf.id && buf.name) {
+      emittedToolCall = true;
       yield { type: "tool_call", toolCall: { id: buf.id, name: buf.name, arguments: buf.args } };
     }
   }
 
+  // Some OpenAI-compatible servers report finish_reason "stop" on a turn that
+  // did request tools. The caller's loop only continues when it sees BOTH a
+  // tool-use stop reason and at least one tool call, so trusting the server's
+  // word there would drop the tools it just asked us to run. Actual tool calls
+  // on the wire are the stronger signal — believe those.
+  const finalStopReason = emittedToolCall ? "tool_use" : toAnthropicStopReason(stopReason);
+
   yield { type: "usage", usage: { promptTokens: inputTokens, completionTokens: outputTokens } };
-  yield { type: "done", stopReason };
+  yield { type: "done", stopReason: finalStopReason };
 }
