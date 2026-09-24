@@ -62,6 +62,13 @@ const envSchema = z.object({
   MODAL_ENDPOINT_URL: z.string().url().optional(),
   MODAL_PROXY_TOKEN: z.string().min(1).optional(),
   MODAL_MODEL_NAME: z.string().min(1).optional(),
+  // Reasoning depth sent to the OpenAI-compatible endpoint. "low" preserves
+  // the value tuned against GLM-5.3 (which forces reasoning on and would
+  // otherwise spend the whole token budget thinking). "off" omits the field
+  // entirely — the right setting for any model that doesn't accept it.
+  MODAL_REASONING_EFFORT: z
+    .enum(["off", "low", "medium", "high", "max"])
+    .default("low"),
   // Multiplier applied to real per-dispatch costUsd to produce the billed
   // usage_usd amount. Covers real profit margin AND infra cost costUsd
   // doesn't capture (E2B sandbox compute, Railway hosting, Redis, bandwidth —

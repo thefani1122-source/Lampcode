@@ -831,11 +831,19 @@ export async function runFastBuild(
 
     // Agentic build: hand the model the sandbox and let it verify its own work
     // instead of emitting one shot of code for the pipeline below to inspect.
-    // Deliberately narrow for now — new builds only (the edit path has its own
-    // file-preservation rules) and Anthropic only (the free/Modal tier is a
-    // one-shot budget; many turns would blow straight through it).
-    const agenticBuild =
-      config.AGENTIC_BUILD_ENABLED && provider === "anthropic" && !hasExistingCode;
+    // Still new builds only — the edit path has its own file-preservation rules.
+    //
+    // Deliberately NOT restricted by provider. Running the pipeline for one tier
+    // and the agentic loop for another would mean a project built on the free
+    // plan behaves differently after the user upgrades — two products in one
+    // app, and a follow-up edit that doesn't work the way the original build
+    // did. Both gateways speak tool calling (modal-gateway translates the
+    // Anthropic tool shape to and from OpenAI's), so the tier difference stays
+    // where it belongs: which model runs, not which architecture.
+    //
+    // Cost is bounded the same way on both: the in-loop costGuard is the real
+    // limit and AGENTIC_MAX_TURNS is the backstop.
+    const agenticBuild = config.AGENTIC_BUILD_ENABLED && !hasExistingCode;
     if (agenticBuild) {
       console.log(`[build] agentic mode: model drives write/verify/repair for session=${sessionId}`);
       // All three agentic tools need a live sandbox, and a frontend-only build
