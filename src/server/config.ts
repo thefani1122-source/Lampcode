@@ -62,6 +62,13 @@ const envSchema = z.object({
   MODAL_ENDPOINT_URL: z.string().url().optional(),
   MODAL_PROXY_TOKEN: z.string().min(1).optional(),
   MODAL_MODEL_NAME: z.string().min(1).optional(),
+  // Reasoning depth sent to the OpenAI-compatible endpoint. "low" preserves
+  // the value tuned against GLM-5.3 (which forces reasoning on and would
+  // otherwise spend the whole token budget thinking). "off" omits the field
+  // entirely — the right setting for any model that doesn't accept it.
+  MODAL_REASONING_EFFORT: z
+    .enum(["off", "low", "medium", "high", "max"])
+    .default("low"),
   // Multiplier applied to real per-dispatch costUsd to produce the billed
   // usage_usd amount. Covers real profit margin AND infra cost costUsd
   // doesn't capture (E2B sandbox compute, Railway hosting, Redis, bandwidth —
@@ -80,6 +87,26 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v?.toLowerCase() !== "false")
     .pipe(z.boolean()),
+  // Agentic build loop (see tools.ts AGENTIC_BUILD_TOOLS). When on, a NEW
+  // paid-tier build hands the model real sandbox tools and lets it drive:
+  // write files, look at the rendered page, repair, repeat — instead of
+  // build.ts running a fixed pipeline around a one-shot generation. Off by
+  // default so the existing path stays the default until this is proven; it
+  // costs materially more per build (many model turns instead of one), which
+  // is why it never applies to the free/Modal tier.
+  // NOT z.coerce.boolean() — that runs JS Boolean() over the raw env string, so
+  // the string "false" (and "0") coerce to TRUE. Setting the var to "false" to
+  // switch this off would have silently switched it on, with real money
+  // attached. Only an explicit "true"/"1" enables it.
+  AGENTIC_BUILD_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1")
+    .pipe(z.boolean()),
+  // Hard ceiling on model turns inside one agentic build. The cost guard is
+  // the real budget limit; this is the belt-and-braces stop so a model that
+  // never says "done" can't spin.
+  AGENTIC_MAX_TURNS: z.coerce.number().int().positive().default(12),
 });
 
 const REQUIRED_VARS = [

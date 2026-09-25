@@ -16,7 +16,7 @@ import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
-import { TOOL_DEFINITIONS, executeTool } from "./tools.js";
+import { TOOL_DEFINITIONS, AGENTIC_BUILD_TOOLS, executeTool } from "./tools.js";
 import {
   classifyMcpServers,
   buildWriteProxyDefinitions,
@@ -25,6 +25,7 @@ import {
 } from "./mcp-tool-classifier.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
+import { config } from "../server/config.js";
 import { deductUsage } from "../build/credits.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
@@ -98,6 +99,15 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  does NOT fall back to Anthropic — that would silently spend real
    *  Anthropic cost on a free-tier request that was never budgeted for it. */
   provider?: "anthropic" | "modal" | undefined;
+  /** Agentic build mode: hands the model real sandbox tools (write_files,
+   *  check_page, check_types) and lets it drive its own write-verify-repair
+   *  loop instead of emitting one shot of code for build.ts to orchestrate
+   *  around. Requires enableTools + costGuard, and a projectId whose sandbox
+   *  is already warming. Turn count is bounded by config.AGENTIC_MAX_TURNS and,
+   *  as the real budget, by the same in-loop costGuard every tool round uses. */
+  agenticBuild?: boolean | undefined;
+  /** Forwards sandbox/dev-server output to the client's build log. */
+  onSandboxLog?: ((line: string) => void) | undefined;
 };
 
 export interface DispatchResult {
@@ -116,6 +126,10 @@ export interface DispatchResult {
   /** Why the model stopped. "max_tokens" means the response was cut off,
    *  which the caller reports differently from a genuine generation failure. */
   stopReason: string | undefined;
+  /** Files the model wrote via write_files during an agentic build, in the
+   *  same shape the fence-parsing path produces — so every downstream gate
+   *  consumes it unchanged. Empty on all non-agentic dispatches. */
+  generatedFiles: Record<string, string>;
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -273,6 +287,12 @@ export class AgentDispatcher {
       enableTools = false;
     }
 
+    // Declared here rather than at the loop because the prompt needs it too:
+    // in agentic mode the model is told to build via write_files instead of
+    // printing ```filename fences, and that instruction has to be in the
+    // system prompt that the first round is built from.
+    const agenticBuild = options.agenticBuild === true && enableTools && Boolean(projectId);
+
     // Discover + classify each connected server's real tools once per dispatch
     // (not per round — the classification doesn't change mid-loop). Read-only
     // tools (by MCP annotation or name convention) get enabled; everything
@@ -326,7 +346,9 @@ export class AgentDispatcher {
     // task.toolsEnabled drives prompt-builder.ts's TOOLS AVAILABLE instruction —
     // must match `enableTools` exactly, or the model gets told about a
     // capability it doesn't actually have this call (or vice versa).
-    const effectiveTask: TaskInput = enableTools ? { ...task, toolsEnabled: true } : task;
+    const effectiveTask: TaskInput = enableTools
+      ? { ...task, toolsEnabled: true, ...(agenticBuild ? { agenticBuild: true } : {}) }
+      : task;
 
     // Build prompt
     const { systemPrompt, userMessage, estimatedInputTokens } =
@@ -401,10 +423,19 @@ export class AgentDispatcher {
     let loopCostUsd = 0;
     let lastStopReason: string | undefined;
 
-    for (let round = 1; round <= MAX_TOOL_ROUNDTRIPS; round++) {
+    // Agentic builds need many more turns than a context-gathering tool call —
+    // the model is writing, looking at the result and repairing, which is
+    // several round-trips by design. The costGuard below is the real budget;
+    // this cap only stops a model that never declares itself finished.
+    const maxRounds = agenticBuild ? config.AGENTIC_MAX_TURNS : MAX_TOOL_ROUNDTRIPS;
+    const generatedFiles: Record<string, string> = {};
+
+    for (let round = 1; round <= maxRounds; round++) {
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
-        tools: enableTools ? [...TOOL_DEFINITIONS, ...writeProxyDefs] : undefined,
+        tools: enableTools
+          ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
+          : undefined,
         ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
       };
       // effectiveProvider is "modal" only when mcpDefs is empty (see the
@@ -454,7 +485,7 @@ export class AgentDispatcher {
       const wantsTools = streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
       if (!wantsTools) break; // model is done — this round's content is final
 
-      if (round === MAX_TOOL_ROUNDTRIPS) {
+      if (round === maxRounds) {
         // Used the last allowed round and still wants more — stop instead of
         // executing/continuing, same "surface it, don't loop forever" pattern
         // every other bounded fix loop in this codebase already uses.
@@ -485,6 +516,9 @@ export class AgentDispatcher {
           writeMcpRegistry: writeProxyRegistry,
           writeDenied,
           toolCallId: tc.id,
+          ...(agenticBuild
+            ? { projectId, generatedFiles, onLog: options.onSandboxLog }
+            : {}),
         }).catch(
           (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -542,6 +576,7 @@ export class AgentDispatcher {
       mcpToolCalls: allMcpToolCalls,
       requestedWriteAction,
       stopReason: lastStopReason,
+      generatedFiles,
       outputPath,
       durationMs: Date.now() - startMs,
       inputTokens: totalInputTokens,

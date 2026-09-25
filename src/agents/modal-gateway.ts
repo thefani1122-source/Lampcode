@@ -170,7 +170,15 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     // depth for actually leaving room to produce the file content within
     // this budget, and reduces latency too (the same live test also hit
     // our 5-minute per-request timeout with max effort).
-    reasoning_effort: "low",
+    // ...but "reasoning_effort" is not a standard OpenAI-compatible field, and
+    // what a server does with an unknown one differs — most ignore it, some
+    // reject the request. Baking a GLM-tuned value in meant every future model
+    // swap carried it. Configurable now, still "low" by default so the GLM
+    // behaviour above is unchanged; set MODAL_REASONING_EFFORT=off to send no
+    // reasoning field at all.
+    ...(config.MODAL_REASONING_EFFORT === "off"
+      ? {}
+      : { reasoning_effort: config.MODAL_REASONING_EFFORT }),
     ...(req.tools && req.tools.length > 0 ? { tools: toOpenAiTools(req.tools) } : {}),
   };
 
