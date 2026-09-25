@@ -59,6 +59,15 @@ const envSchema = z.object({
   // three must be set together for the free-tier path to work; when any is
   // missing, dispatcher.ts falls back to Anthropic for every plan (never a
   // silent partial-Modal state).
+  // Preferred names. The MODAL_* names below still work and are read as a
+  // fallback, but they are misleading now: this is any OpenAI-compatible
+  // /v1/chat/completions endpoint — Moonshot, Z.ai, a self-hosted model on
+  // Modal, anything. Nothing about it is Modal-specific, and reading
+  // "MODAL_ENDPOINT_URL = https://api.moonshot.ai" in a dashboard invites
+  // exactly the wrong conclusion about where the model is coming from.
+  LLM_ENDPOINT_URL: z.string().url().optional(),
+  LLM_API_KEY: z.string().min(1).optional(),
+  LLM_MODEL_NAME: z.string().min(1).optional(),
   MODAL_ENDPOINT_URL: z.string().url().optional(),
   MODAL_PROXY_TOKEN: z.string().min(1).optional(),
   MODAL_MODEL_NAME: z.string().min(1).optional(),

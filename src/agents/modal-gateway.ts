@@ -148,14 +148,23 @@ function toAnthropicStopReason(finishReason: string | undefined): string | undef
 
 /** Yield parsed chunks from a Modal (OpenAI-compatible) streaming completion. */
 export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-  if (!config.MODAL_ENDPOINT_URL || !config.MODAL_PROXY_TOKEN || !config.MODAL_MODEL_NAME) {
-    throw new GatewayError("UNKNOWN", "Modal gateway called without MODAL_ENDPOINT_URL/MODAL_PROXY_TOKEN/MODAL_MODEL_NAME configured");
+  // LLM_* is the preferred spelling; MODAL_* is the original name and still
+  // works, so an existing deployment keeps running untouched.
+  const endpointUrl = config.LLM_ENDPOINT_URL ?? config.MODAL_ENDPOINT_URL;
+  const apiKey = config.LLM_API_KEY ?? config.MODAL_PROXY_TOKEN;
+  const modelName = config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME;
+
+  if (!endpointUrl || !apiKey || !modelName) {
+    throw new GatewayError(
+      "UNKNOWN",
+      "OpenAI-compatible gateway called without LLM_ENDPOINT_URL/LLM_API_KEY/LLM_MODEL_NAME (or the legacy MODAL_* equivalents) configured",
+    );
   }
 
-  logger.debug({ model: config.MODAL_MODEL_NAME }, "ModalGateway: OpenAI-compatible stream");
+  logger.debug({ model: modelName }, "OpenAI-compatible stream");
 
   const body = {
-    model: config.MODAL_MODEL_NAME,
+    model: modelName,
     messages: toOpenAiMessages(req.messages),
     stream: true,
     stream_options: { include_usage: true },
@@ -188,10 +197,10 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
 
   let response: Response;
   try {
-    response = await fetch(`${config.MODAL_ENDPOINT_URL}/v1/chat/completions`, {
+    response = await fetch(`${endpointUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.MODAL_PROXY_TOKEN}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
