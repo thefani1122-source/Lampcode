@@ -481,11 +481,20 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
  * in-memory buffer (last `maxLines` lines). Used to collect dev-server output
  * for diagnostics when waitForServerReady times out.
  */
+/** Recent dev-server (Vite/Next) output per sandbox, for readSandboxLogs(). */
+const devLogs = new Map<string, string[]>();
+
 function makeDevLog(
   log: PreviewLogCallback,
+  sandboxId?: string,
   maxLines = 80,
 ): { log: PreviewLogCallback; last: () => string[] } {
   const buf: string[] = [];
+  // Registered per sandbox so the buffer outlives this call. It used to be
+  // purely local, readable only by the one diagnostic that took it as an
+  // argument — but "why is the page blank" is usually answered in this output,
+  // and an agent that can't read it has to guess.
+  if (sandboxId) devLogs.set(sandboxId, buf);
   return {
     log: (line: string) => {
       log(line);
@@ -577,7 +586,7 @@ async function ensureDevServer(
     // Kill any half-dead process first so the restart won't lose a port conflict.
     const killPat = devKillPattern(framework);
     await sandbox.commands.run(`pkill -f ${killPat} || true`, { timeoutMs: 10_000 }).catch(() => {});
-    const devLog = makeDevLog(log);
+    const devLog = makeDevLog(log, sandbox.sandboxId);
     await startDevServer(sandbox, devLog.log, framework);
     const ready = await waitForServerReady(url, framework);
     if (!ready) {
@@ -848,6 +857,66 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
   return { ok: false, issues: [{ source: "src/App.tsx", message }] };
 }
 
+// ── Agent observation reads ─────────────────────────────────────────────────
+// These exist so the model can investigate the project it is working on rather
+// than guessing from whatever was inlined into its prompt.
+
+/** `.env`, `.env.local`, `src/.env.production`, … at any depth. */
+const SECRET_FILE_RE = /(^|\/)\.env(\.|$)/i;
+
+/**
+ * Validate a model-chosen path before it reaches the filesystem.
+ *
+ * Returns the cleaned project-relative path, or null to refuse. Two things are
+ * refused: anything that could escape PROJECT_DIR (absolute paths, `..`), and
+ * the preview env files. The env refusal is not about this project's own
+ * secrets — it holds the shared preview Supabase and MongoDB credentials that
+ * every generated app in the fleet uses. The agent never needs them: it writes
+ * code that reads `import.meta.env.VITE_SUPABASE_URL` at runtime.
+ */
+function safeProjectPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const p = raw.trim().replace(/^\.\//, "");
+  if (!p || p.startsWith("/") || p.includes("..") || p.includes("\0")) return null;
+  if (SECRET_FILE_RE.test(p)) return null;
+  return p;
+}
+
+/** Read one project file out of the live sandbox. Throws with a readable reason. */
+export async function readProjectFile(projectId: string, path: string): Promise<string> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) throw new Error("no live sandbox for this project");
+  const safe = safeProjectPath(path);
+  if (!safe) throw new Error(`refused to read "${path}"`);
+  return sandbox.files.read(`${PROJECT_DIR}/${safe}`);
+}
+
+/** List the project's source files (excludes deps, build output and env files). */
+export async function listProjectFiles(projectId: string): Promise<string[]> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) throw new Error("no live sandbox for this project");
+  const r = await sandbox.commands.run(
+    "find . -type f " +
+      "-not -path './node_modules/*' -not -path './.git/*' -not -path './dist/*' " +
+      "-not -path './.next/*' -not -name '.env*' | sed 's|^\\./||' | sort | head -400",
+    { cwd: PROJECT_DIR, timeoutMs: 15_000 },
+  );
+  return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/**
+ * Recent dev-server and app-backend output for this project's sandbox.
+ * Both are ring buffers captured as the processes run — nothing is re-executed.
+ */
+export function readSandboxLogs(projectId: string): { dev: string[]; backend: string[] } | null {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return null;
+  return {
+    dev: devLogs.get(sandbox.sandboxId) ?? [],
+    backend: backendLogs.get(sandbox.sandboxId) ?? [],
+  };
+}
+
 /** Whether a live, in-process sandbox is currently held for this project. */
 export function hasSandbox(projectId: string): boolean {
   return sandboxes.has(projectId);
@@ -907,7 +976,7 @@ async function acquireRunningSandbox(
     // Inject preview env BEFORE the dev server boots (env is only read at startup).
     await writePreviewEnv(sandbox, projectId, log);
     // Baked scaffold already has node_modules — this is just dev-server startup.
-    const devLog = makeDevLog(log);
+    const devLog = makeDevLog(log, sandbox.sandboxId);
     await startDevServer(sandbox, devLog.log, framework);
     const ready = await waitForServerReady(previewUrlFor(sandbox, framework), framework);
     if (!ready) {

@@ -8,7 +8,14 @@ import { parseSkillFrontmatter, ALL_SKILL_NAMES } from "./prompt-builder.js";
 import { logger } from "../server/logger.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { writeFilesToSandbox, verifyBrowserRender, runTypeCheck } from "../preview/e2b-service.js";
+import {
+  writeFilesToSandbox,
+  verifyBrowserRender,
+  runTypeCheck,
+  readProjectFile,
+  listProjectFiles,
+  readSandboxLogs,
+} from "../preview/e2b-service.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
@@ -124,6 +131,42 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       "written code you want verified before relying on it.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "list_files",
+    description:
+      "List the project's source files as they exist right now in the sandbox. Use this " +
+      "before editing an existing project so you know what is actually there, instead of " +
+      "assuming a file exists or guessing its path. Dependencies, build output and " +
+      "environment files are not listed.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "read_file",
+    description:
+      "Read one project file's current contents from the sandbox. This is the real file on " +
+      "disk, including any edit you just made — use it to understand existing code before " +
+      "changing it, and to check what a file actually contains when something doesn't work " +
+      "the way you expect. Call list_files first if you're not sure of the path.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Project-relative path, e.g. \"src/components/Header.tsx\".",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "read_logs",
+    description:
+      "Read recent output from the running dev server and, if the app has one, its backend. " +
+      "This is where the real reason for a broken page usually is — a failed import, a " +
+      "compile error, a crashed server — in wording check_page cannot show you. Read this " +
+      "when something is wrong and you don't yet know why.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
 ];
 
 const SKILLS_DIR = join(process.cwd(), "src", "skills");
@@ -153,6 +196,13 @@ export interface ToolExecutionContext {
   toolCallId?: string | undefined;
   /** Required by the agentic build tools — identifies the live sandbox. */
   projectId?: string | undefined;
+  /** The project's existing files on a follow-up edit, as build.ts already
+   *  loaded them. read_file/list_files serve from here first, so the model can
+   *  see the real project without depending on a sandbox that may still be
+   *  warming — and write_files writes these alongside its own output, so the
+   *  sandbox holds the WHOLE project and check_page tests the real thing
+   *  rather than a template with three edited files dropped into it. */
+  projectFiles?: Record<string, string> | undefined;
   /** Accumulator the agentic build path reads back once the model is done.
    *  write_files records into this as well as writing to the sandbox, so the
    *  caller ends up with the same file map the old fence-parsing path produced
@@ -197,7 +247,14 @@ export async function executeTool(
 
   // ── Agentic build tools ───────────────────────────────────────────────────
 
-  if (name === "write_files" || name === "check_page" || name === "check_types") {
+  if (
+    name === "write_files" ||
+    name === "check_page" ||
+    name === "check_types" ||
+    name === "list_files" ||
+    name === "read_file" ||
+    name === "read_logs"
+  ) {
     const projectId = ctx.projectId;
     if (!projectId) return "Error: no project sandbox is attached to this build.";
 
@@ -224,7 +281,13 @@ export async function executeTool(
       // Dropping it on a sandbox hiccup would throw away real work; the model
       // is told about the failure either way and can retry.
       if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
-      const toWrite = ctx.generatedFiles ?? files;
+      // The sandbox gets the WHOLE project, not just this turn's files. On an
+      // edit the model writes only what it changed (correctly — that is what
+      // preserves everything else), but the sandbox may be a fresh template,
+      // and checking a template with three edited files dropped into it tells
+      // the model nothing about the real app. Existing files first so this
+      // turn's writes win on any path they both have.
+      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? files) };
 
       try {
         const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
@@ -237,18 +300,85 @@ export async function executeTool(
       }
     }
 
+    // Reads resolve newest-first: what the model wrote this turn, then the
+    // project as it stood when the build started, then the sandbox. The first
+    // two are already in memory and authoritative, so an edit doesn't have to
+    // wait on a sandbox that may still be warming — and can't be misled into
+    // thinking the project is empty because it asked a second too early.
+    const known = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+
+    if (name === "list_files") {
+      const inMemory = Object.keys(known).sort();
+      if (inMemory.length > 0) {
+        return `${inMemory.length} file(s) in the project:\n${inMemory.join("\n")}`;
+      }
+      try {
+        const files = await listProjectFiles(projectId);
+        if (files.length === 0) return "The project has no source files yet.";
+        return `${files.length} file(s) in the project:\n${files.join("\n")}`;
+      } catch (err) {
+        return `Error listing files: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === "read_file") {
+      const path = typeof args["path"] === "string" ? args["path"].trim() : "";
+      if (!path) return "Error: `path` is required.";
+      const inMemory = known[path] ?? known[path.replace(/^\.\//, "")];
+      if (inMemory !== undefined) {
+        return inMemory.trim() === "" ? `${path} exists but is empty.` : `${path}:\n${inMemory}`;
+      }
+      try {
+        const content = await readProjectFile(projectId, path);
+        if (content.trim() === "") return `${path} exists but is empty.`;
+        return `${path}:\n${content}`;
+      } catch (err) {
+        // Covers both "refused" (see safeProjectPath) and a genuine miss. Says
+        // what to do next rather than just failing, so a wrong guess at a path
+        // costs one turn instead of derailing the build.
+        return (
+          `Could not read ${path}: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Call list_files to see what the project actually contains.`
+        );
+      }
+    }
+
+    if (name === "read_logs") {
+      const logs = readSandboxLogs(projectId);
+      if (!logs) return "No live sandbox, so there are no logs to read.";
+      const parts: string[] = [];
+      if (logs.dev.length > 0) parts.push(`Dev server output:\n${logs.dev.join("\n")}`);
+      if (logs.backend.length > 0) parts.push(`Backend output:\n${logs.backend.join("\n")}`);
+      if (parts.length === 0) {
+        return "Nothing has been logged yet — the servers may still be starting.";
+      }
+      return parts.join("\n\n");
+    }
+
     if (name === "check_page") {
       try {
-        const { ok, issues } = await verifyBrowserRender(projectId);
+        const { ok, issues, unavailable } = await verifyBrowserRender(projectId);
+        // Report "couldn't check" as itself. Saying the page rendered fine when
+        // the browser never opened it is how an agent ships a blank app while
+        // believing it verified one.
+        if (unavailable) {
+          return "The page check could not run (the sandbox did not respond). Nothing was verified — do not treat this as a pass.";
+        }
         if (ok || issues.length === 0) return "The page rendered successfully with no console errors.";
-        return `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
+        return (
+          `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}\n` +
+          `Call read_logs if you need the dev server's own account of what happened.`
+        );
       } catch (err) {
         return `Error checking the page: ${err instanceof Error ? err.message : String(err)}`;
       }
     }
 
     try {
-      const { ok, issues } = await runTypeCheck(projectId);
+      const { ok, issues, unavailable } = await runTypeCheck(projectId);
+      if (unavailable) {
+        return "The type check could not run (tsc was unreachable in the sandbox). Nothing was verified — do not treat this as a pass.";
+      }
       if (ok || issues.length === 0) return "No type errors.";
       return `Type errors:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
     } catch (err) {

@@ -108,6 +108,9 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   agenticBuild?: boolean | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onSandboxLog?: ((line: string) => void) | undefined;
+  /** The project's current files on a follow-up edit. Lets the agentic tools
+   *  serve reads from memory and keep the sandbox holding the whole project. */
+  projectFiles?: Record<string, string> | undefined;
 };
 
 export interface DispatchResult {
@@ -517,7 +520,12 @@ export class AgentDispatcher {
           writeDenied,
           toolCallId: tc.id,
           ...(agenticBuild
-            ? { projectId, generatedFiles, onLog: options.onSandboxLog }
+            ? {
+                projectId,
+                generatedFiles,
+                onLog: options.onSandboxLog,
+                projectFiles: options.projectFiles,
+              }
             : {}),
         }).catch(
           (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,

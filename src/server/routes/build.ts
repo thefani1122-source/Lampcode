@@ -831,7 +831,15 @@ export async function runFastBuild(
 
     // Agentic build: hand the model the sandbox and let it verify its own work
     // instead of emitting one shot of code for the pipeline below to inspect.
-    // Still new builds only — the edit path has its own file-preservation rules.
+    //
+    // Edits included. They were held back while the model had no way to see an
+    // existing project; with list_files and read_file it does, and edits are
+    // where this helps most — the pipeline picks the files to show the model
+    // with a regex over the prompt (selectFollowUpFiles), which is a guess, and
+    // a wrong guess means editing a file the model never saw. Now it looks.
+    // File preservation is unaffected: preserveExistingFiles copies the whole
+    // previous project into the new outputDir before anything is written, so
+    // files the model doesn't touch survive exactly as they were.
     //
     // Deliberately NOT restricted by provider. Running the pipeline for one tier
     // and the agentic loop for another would mean a project built on the free
@@ -843,7 +851,7 @@ export async function runFastBuild(
     //
     // Cost is bounded the same way on both: the in-loop costGuard is the real
     // limit and AGENTIC_MAX_TURNS is the backstop.
-    const agenticBuild = config.AGENTIC_BUILD_ENABLED && !hasExistingCode;
+    const agenticBuild = config.AGENTIC_BUILD_ENABLED;
     if (agenticBuild) {
       console.log(`[build] agentic mode: model drives write/verify/repair for session=${sessionId}`);
       // All three agentic tools need a live sandbox, and a frontend-only build
@@ -1069,6 +1077,9 @@ export async function runFastBuild(
       enableTools: true,
       costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
       agenticBuild,
+      // Only on an edit — on a new build there is no prior project, and an
+      // empty map would make list_files fall through to the sandbox anyway.
+      ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
       onSandboxLog: (line: string) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
@@ -1142,8 +1153,18 @@ export async function runFastBuild(
       return;
     }
 
-    // Auto-trigger fix agent if frontend produced no structured file output
-    if (parsedFiles.length === 0 && result.content.trim().length < 200) {
+    // Auto-trigger fix agent if frontend produced no structured file output.
+    //
+    // Never in agentic mode. This rescue re-parses ```filename fences, which an
+    // agentic run is explicitly instructed not to produce, so it cannot recover
+    // anything there — and on an edit it would actively cause harm: a model
+    // that read the project and correctly concluded nothing needed changing
+    // also produces zero files and a short reply, and this would answer that by
+    // spending another dispatch and writing whatever fences came back over a
+    // project that was already fine. Agentic runs that genuinely produced
+    // nothing are caught by the entry-point check below (new builds) or
+    // complete as a no-op with the project intact (edits).
+    if (!agenticBuild && parsedFiles.length === 0 && result.content.trim().length < 200) {
       logger.warn({ sessionId }, "Frontend agent produced no structured output — triggering fix agent");
       try {
         const fixResult = await dispatcher.triggerFixAgent(

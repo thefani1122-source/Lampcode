@@ -1565,18 +1565,29 @@ export class PromptBuilder {
         "directly in a live sandbox, and you can see the result of your own work.\n" +
         "- write_files(files): writes into the running project. Code you print in your " +
         "reply instead of writing here does NOT exist and will be lost.\n" +
+        "- list_files(): what the project actually contains right now.\n" +
+        "- read_file(path): one file's real current contents.\n" +
         "- check_page(): opens the running app in a real browser and tells you what it " +
         "actually rendered, including console errors.\n" +
         "- check_types(): runs tsc against the real project.\n" +
+        "- read_logs(): recent dev-server and backend output — usually where the real " +
+        "reason for a broken page is.\n" +
         "Work like an engineer, not a code generator:\n" +
-        "1. Write the files you think the app needs.\n" +
-        "2. Call check_page. A blank page or a console error means it is broken, even " +
+        "1. If the project already has code, call list_files and read the files you are " +
+        "about to touch BEFORE changing them. Do not rewrite a file you have not read.\n" +
+        "2. Write the files you need. On an existing project write ONLY the files you are " +
+        "changing — anything you don't write is left exactly as it is, which is what you " +
+        "want. Do not re-emit the whole project to change one thing.\n" +
+        "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
-        "3. Fix what it reports and check again. Repeat until it genuinely renders.\n" +
-        "4. Only then write your final reply — a short, plain summary of what you built " +
-        "for the user. No code, no file listings.\n" +
-        "Never claim the app works without having called check_page and seen it pass. " +
-        "If you cannot get it working, say so plainly and describe what is still wrong."
+        "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
+        "check_page tells you something but not why, call read_logs.\n" +
+        "5. Only then write your final reply — a short, plain summary of what you built " +
+        "or changed, for the user. No code, no file listings.\n" +
+        "Never claim the app works without having called check_page and seen it pass. If a " +
+        "check reports that it could not run, that is NOT a pass — say so rather than " +
+        "assuming it was fine. If you cannot get it working, say so plainly and describe " +
+        "what is still wrong."
       : "";
 
     const manifestBlock = task.projectManifest
