@@ -33,7 +33,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
-import { capturePreviewScreenshot, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -2030,7 +2030,23 @@ export async function runFastBuild(
         const MAX_TYPECHECK_ATTEMPTS = 2;
         let lastTypeFingerprint = "";
         for (let attempt = 0; attempt <= MAX_TYPECHECK_ATTEMPTS; attempt++) {
-          const { ok, issues } = await runTypeCheck(projectId).catch((err: unknown) => gateFailedOpen("runTypeCheck", sessionId, projectId, err));
+          const { ok, issues: allIssues } = await runTypeCheck(projectId).catch((err: unknown) => gateFailedOpen("runTypeCheck", sessionId, projectId, err));
+          // Drop errors in template-owned files. A rewrite of one is discarded
+          // on the way into the sandbox, so reporting it to the user as "your
+          // generated files have type errors" is wrong, and dispatching a fix
+          // for it is spend that cannot change anything. This was live: the
+          // baked tsconfig carried a `baseUrl` that current TypeScript rejects,
+          // so every build surfaced that one config error — and, because tsc
+          // stops at the config, surfaced nothing else. patchSandboxTsconfig
+          // now removes it; this guard is what keeps the next such error from
+          // costing anything.
+          const issues = allIssues.filter((i) => !isTemplateOwnedFile(i.source));
+          if (allIssues.length > issues.length) {
+            logger.warn(
+              { sessionId, projectId, skipped: allIssues.filter((i) => isTemplateOwnedFile(i.source)) },
+              "Type errors in template-owned files — not fixable from here, ignoring",
+            );
+          }
           if (ok || issues.length === 0) break;
 
           const fingerprint = issues.map((i) => `${i.source}:${i.message}`).sort().join("|");
@@ -2044,6 +2060,13 @@ export async function runFastBuild(
             break;
           }
           lastTypeFingerprint = fingerprint;
+
+          const affected = new Set(issues.map((i) => i.source));
+          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
+          // Nothing we hold the source for — say nothing and stop, rather than
+          // logging "dispatching fix" and telling the user we're fixing
+          // something when the next line breaks out without dispatching.
+          if (affectedFiles.length === 0) break;
 
           logger.warn({ sessionId, projectId, issues, attempt }, "Type errors — dispatching fix");
           server?.thinking(sessionId, {
@@ -2062,10 +2085,6 @@ export async function runFastBuild(
             });
             break;
           }
-
-          const affected = new Set(issues.map((i) => i.source));
-          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
-          if (affectedFiles.length === 0) break;
 
           const fixDesc =
             `These files have TypeScript type errors. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +

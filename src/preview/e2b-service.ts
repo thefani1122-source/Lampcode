@@ -365,6 +365,140 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   }
 }
 
+/**
+ * Strip `baseUrl` from the sandbox's tsconfig.json.
+ *
+ * The template bakes `"baseUrl": "."`, and it installs TypeScript globally at
+ * image-build time, which now resolves to a version where that option was
+ * REMOVED. So `tsc --noEmit` fails on the config itself with TS5102 and never
+ * reaches the app's code — which is why runTypeCheck has been reporting one
+ * config error and nothing else on every build, missing real type errors
+ * (including missing-module errors) entirely.
+ *
+ * `paths` still resolves without `baseUrl` under `moduleResolution: "bundler"`,
+ * so dropping it is the whole fix. Done at runtime rather than only in
+ * template.ts so it takes effect without an E2B template rebuild; template.ts
+ * is corrected too, for the next rebuild.
+ *
+ * tsconfig.json is in BAKED_FILES, so this deliberately writes it directly
+ * rather than going through writeFiles().
+ */
+async function patchSandboxTsconfig(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  const path = `${PROJECT_DIR}/tsconfig.json`;
+  try {
+    const raw = await sandbox.files.read(path);
+    const parsed = JSON.parse(raw) as { compilerOptions?: Record<string, unknown> };
+    if (parsed.compilerOptions?.["baseUrl"] === undefined) return; // already fine
+    delete parsed.compilerOptions["baseUrl"];
+    await sandbox.files.write(path, JSON.stringify(parsed, null, 2));
+    log("Removed tsconfig baseUrl (removed in current TypeScript)");
+  } catch (err) {
+    // Never fail a build over this — the type check degrades to what it
+    // already does today rather than the preview not coming up.
+    logger.warn({ err }, "[e2b] could not patch tsconfig.json");
+  }
+}
+
+/**
+ * npm package name: optional @scope/, then the name. The first character is
+ * deliberately narrower than the rest — a leading hyphen is not a legal npm
+ * name, and a "package" called `-g` would be read by npm as a FLAG rather than
+ * an operand. `--` is also passed on the command line below, so a name would
+ * have to defeat both to be treated as an option.
+ */
+const NPM_NAME_RE = /^(@[a-z0-9~][a-z0-9-._~]*\/)?[a-z0-9~][a-z0-9-._~]*$/;
+/** Most apps add a handful of libraries; a request for 30 is a runaway, not a build. */
+const MAX_EXTRA_DEPS = 12;
+
+/**
+ * Install dependencies the generated app declares but the template doesn't ship.
+ *
+ * The model writes its package.json like any other file, but package.json is in
+ * BAKED_FILES, so that declaration was silently dropped and nothing installed
+ * it — an app importing `recharts` would build "successfully" and then fail to
+ * resolve the import in the browser. The model was doing the right thing and
+ * the system was throwing it away.
+ *
+ * Runtime `npm install` was removed from this service once before, because
+ * installing into a RUNNING dev server crashed it ("no service on port 5173").
+ * That reasoning still holds and is why this is called before the dev server
+ * starts, never underneath a live one.
+ *
+ * Names are validated rather than passed through: they come from model output,
+ * and npm's install syntax accepts URLs, git refs and local paths, none of
+ * which should be reachable from here.
+ */
+async function installExtraDependencies(
+  sandbox: Sandbox,
+  files: Record<string, string>,
+  log: PreviewLogCallback,
+): Promise<void> {
+  const declared = files["package.json"];
+  if (!declared) return;
+
+  let wanted: Record<string, string>;
+  try {
+    const parsed = JSON.parse(declared) as { dependencies?: Record<string, string> };
+    wanted = parsed.dependencies ?? {};
+  } catch {
+    log("Generated package.json is not valid JSON — skipping dependency install");
+    return;
+  }
+
+  let already: Record<string, string> = {};
+  try {
+    const baked = JSON.parse(await sandbox.files.read(`${PROJECT_DIR}/package.json`)) as {
+      dependencies?: Record<string, string>;
+    };
+    already = baked.dependencies ?? {};
+  } catch {
+    // Can't tell what's installed — installing everything the app asks for is
+    // still better than installing nothing, and npm no-ops what's present.
+  }
+
+  const missing = Object.keys(wanted).filter((n) => !(n in already));
+  const valid = missing.filter((n) => NPM_NAME_RE.test(n));
+  const rejected = missing.filter((n) => !NPM_NAME_RE.test(n));
+  if (rejected.length > 0) {
+    logger.warn({ rejected }, "[e2b] refused to install packages with invalid names");
+    log(`Skipped ${rejected.length} package(s) with unusable names.`);
+  }
+  if (valid.length === 0) return;
+
+  const toInstall = valid.slice(0, MAX_EXTRA_DEPS);
+  if (valid.length > toInstall.length) {
+    log(`Installing the first ${MAX_EXTRA_DEPS} of ${valid.length} extra packages.`);
+  }
+
+  log(`Installing ${toInstall.length} extra package(s): ${toInstall.join(", ")}...`);
+  try {
+    await sandbox.commands.run(
+      // --no-save keeps the baked package.json authoritative; --legacy-peer-deps
+      // matches how the template installed its own deps (React 19 vs peers).
+      // `--` ends option parsing, so everything after it is an operand even if
+      // a name somehow got past NPM_NAME_RE.
+      `npm install --no-save --legacy-peer-deps -- ${toInstall.join(" ")}`,
+      { cwd: PROJECT_DIR, timeoutMs: 180_000 },
+    );
+    log(`Installed: ${toInstall.join(", ")}`);
+  } catch (err) {
+    // A package that doesn't exist, or a registry hiccup. The app will fail on
+    // that import and the user sees why, which beats failing the whole preview.
+    logger.warn({ err, toInstall }, "[e2b] extra dependency install failed");
+    log(`Could not install: ${toInstall.join(", ")}. Imports of those will fail.`);
+  }
+}
+
+/**
+ * Whether the template owns this path, so a generated copy of it is discarded
+ * on the way into the sandbox. Exported because callers outside this module
+ * need to know a rewrite of such a file can never take effect — asking a model
+ * to fix one is spend with no possible result.
+ */
+export function isTemplateOwnedFile(path: string): boolean {
+  return BAKED_FILES.has(path);
+}
+
 async function writeFiles(
   sandbox: Sandbox,
   files: Record<string, string>,
@@ -975,6 +1109,7 @@ async function acquireRunningSandbox(
   try {
     // Inject preview env BEFORE the dev server boots (env is only read at startup).
     await writePreviewEnv(sandbox, projectId, log);
+    await patchSandboxTsconfig(sandbox, log);
     // Baked scaffold already has node_modules — this is just dev-server startup.
     const devLog = makeDevLog(log, sandbox.sandboxId);
     await startDevServer(sandbox, devLog.log, framework);
@@ -1073,6 +1208,12 @@ export async function writeFilesToSandbox(
   // actively-used session never hits the timeout set at create/resume.
   await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
   await writeFiles(sandbox, files, log);
+  // Before ensureDevServer, which is what makes this safe: on a follow-up the
+  // dev server may already be running, and installing underneath a live one is
+  // exactly what broke previews before. ensureDevServer restarts it if the
+  // install disturbed it, so new deps are picked up either way.
+  await installExtraDependencies(sandbox, files, log);
+  await patchSandboxTsconfig(sandbox, log);
   await ensureDevServer(sandbox, log, framework);
   const url = previewUrlFor(sandbox, framework);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
@@ -1209,6 +1350,10 @@ export async function createPreviewSandbox(
     await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
 
     await writeFiles(sandbox, files, log);
+    // Same ordering as the follow-up write path: install before the dev server
+    // is (re)started, never underneath a running one.
+    await installExtraDependencies(sandbox, files, log);
+    await patchSandboxTsconfig(sandbox, log);
     await ensureDevServer(sandbox, log, framework);
 
     const url = previewUrlFor(sandbox, framework);

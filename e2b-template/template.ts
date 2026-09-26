@@ -131,7 +131,6 @@ const TSCONFIG = `{
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
