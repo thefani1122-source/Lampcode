@@ -94,6 +94,22 @@ Modal now offers **Shared Endpoints** (per-token, Modal-managed) carrying DeepSe
 GLM 5.3 Flash, Kimi K3, Qwen and others — so Modal *can* serve Kimi, contrary to what
 "Modal is compute, not a model provider" would suggest. Note: **Modal plan credits do not
 apply to shared-endpoint usage.**
+
+**How Modal Shared Endpoints are actually addressed** (from Modal's own docs — this is not
+guessable and getting it wrong looks exactly like a broken model):
+- Base URL is the shared inference host, e.g. `https://inference.us-west.modal.direct`.
+  Our gateway appends `/v1/chat/completions`, so it must NOT include `/v1`.
+- The `model` field is **the endpoint's own hostname**, e.g.
+  `my-endpoint.us-west.modal.direct` — NOT a model slug like `moonshotai/Kimi-K3`.
+- Auth is a Proxy Token: a Token ID (`wk-…`) and Token Secret (`ws-…`) joined with a
+  **period** and sent as `Authorization: Bearer wk-….ws-…`. One workspace token reaches
+  every Shared Endpoint in that workspace, so switching models means changing only the
+  model/hostname — not the URL and not the token.
+- To see exactly which endpoints a token can reach:
+  `curl https://inference.us-west.modal.direct/v1/models -H "Authorization: Bearer wk-….ws-…"`
+- Modal's own Claude Code integration doc says to pick "an Endpoint whose model supports
+  tool calling" — so tool-calling support varies by model on this surface, which is
+  consistent with GLM-5.3 returning `toolCalls: 0` here.
 ## Current state and what is NOT proven — 2026-09-25
 The owner cannot top up Anthropic credits (card failures), is pre-launch, and is preparing a
 LinkedIn launch. Keep this in mind: cost and "can this be tested at all" are real constraints,
