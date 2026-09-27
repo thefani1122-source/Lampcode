@@ -1559,8 +1559,10 @@ export class PromptBuilder {
     // and a model that prints fences in this mode produces a build with no
     // files in it at all.
     const agenticInstruction = task.agenticBuild === true
-      ? "\n\nHOW TO BUILD (this overrides any instruction below about printing " +
-        "```filename: code blocks):\n" +
+      ? "\n\n=== HOW TO BUILD — THIS SECTION WINS ===\n" +
+        "Everything ABOVE this line describes writing code into a reply as " +
+        "```filename: fenced blocks. For this build, that format is WRONG and is " +
+        "replaced by what follows. Where the two disagree, this section is correct.\n" +
         "You are not writing a reply that contains code. You are building the app " +
         "directly in a live sandbox, and you can see the result of your own work.\n" +
         "- write_files(files): writes into the running project. Code you print in your " +
@@ -1606,7 +1608,13 @@ export class PromptBuilder {
     // base segment, not the variable skills segment.
     const skillIndex = agentType === "frontend" ? await buildSkillIndex() : "";
 
-    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + agenticInstruction + skillIndex;
+    // agenticInstruction goes LAST, after skillIndex. It countermands the fence
+    // format that everything before it teaches at length, so it has to be the
+    // final word — and it refers to that material as "above", which is only
+    // true from here. It previously sat before skillIndex and said "below",
+    // pointing the model at nothing; the model followed the fence instructions
+    // it could actually see and never called a tool.
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex + agenticInstruction;
   }
 
   private async buildContextBlock(
