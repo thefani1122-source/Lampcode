@@ -661,15 +661,24 @@ export async function runFastBuild(
 ): Promise<void> {
   const server = ws();
 
-  // Free-tier builds route to the Modal-hosted gateway (see modal-gateway.ts,
-  // dispatcher.ts's `provider` option) — computed once per build, not
-  // per-dispatch, so every agent call in this build uses the same gateway.
-  // Falls back to "anthropic" on a billing-lookup failure — paid-gateway
-  // behavior is the safe default, never silently defaulting a paid user onto
-  // the free-tier model.
-  const provider: "anthropic" | "modal" = await getUserPlan(userId)
-    .then((plan) => (plan === "free" ? "modal" : "anthropic"))
-    .catch(() => "anthropic");
+  // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
+  // routing outright — without it a paid or admin account can never exercise
+  // the OpenAI-compatible model the product is meant to run on, because the
+  // plan silently sends it to Anthropic instead.
+  const provider: "anthropic" | "modal" =
+    config.LLM_PROVIDER_MODE === "openai"
+      ? "modal"
+      : config.LLM_PROVIDER_MODE === "anthropic"
+        ? "anthropic"
+        : await getUserPlan(userId)
+            .then((plan) => (plan === "free" ? "modal" : "anthropic"))
+            // Paid-gateway behavior is the safe default on a lookup failure —
+            // never silently drop a paid user onto the free-tier model.
+            .catch(() => "anthropic");
+
+  console.log(
+    `[build] provider=${provider} (mode=${config.LLM_PROVIDER_MODE}) session=${sessionId}`,
+  );
 
   // Mark project building + session started (moved from handler hot-path)
   await Promise.all([

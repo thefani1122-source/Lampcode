@@ -71,6 +71,16 @@ const envSchema = z.object({
   MODAL_ENDPOINT_URL: z.string().url().optional(),
   MODAL_PROXY_TOKEN: z.string().min(1).optional(),
   MODAL_MODEL_NAME: z.string().min(1).optional(),
+  // Which gateway every build uses, overriding the per-plan routing.
+  //   "auto" (default) — free plans use the OpenAI-compatible endpoint, paid
+  //                      plans use Anthropic. This is the shipping behaviour.
+  //   "openai"         — EVERY build uses LLM_ENDPOINT_URL, whatever the plan.
+  //   "anthropic"      — EVERY build uses Anthropic, whatever the plan.
+  // "openai" exists because plan-based routing makes the product impossible to
+  // test on the model you actually intend to ship: an admin or paid account
+  // silently gets Anthropic, so a GLM/Kimi setup can be fully configured and
+  // never once exercised.
+  LLM_PROVIDER_MODE: z.enum(["auto", "openai", "anthropic"]).default("auto"),
   // Reasoning depth sent to the OpenAI-compatible endpoint. "low" preserves
   // the value tuned against GLM-5.3 (which forces reasoning on and would
   // otherwise spend the whole token budget thinking). "off" omits the field
