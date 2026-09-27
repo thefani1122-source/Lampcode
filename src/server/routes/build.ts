@@ -1114,15 +1114,44 @@ export async function runFastBuild(
       console.log(`[build] copied ${copied} existing files to new outputDir`);
     }
 
-    // In agentic mode the model wrote its files through the write_files tool
-    // rather than printing ```filename fences, so the file set comes back from
-    // the dispatch instead of being parsed out of the reply. Same shape either
-    // way, so every gate, fix loop and sandbox write below is unchanged.
-    let parsedFiles: ParsedFile[] = agenticBuild
-      ? Object.entries(result.generatedFiles).map(([path, code]) => ({ path, code }))
-      : parseFilesFromContent(result.content);
+    // In agentic mode the model is told to write files through write_files
+    // rather than printing ```filename fences, so the file set normally comes
+    // back from the dispatch. Normally — but not every model actually calls
+    // the tool. A model that ignores the instruction (or whose endpoint
+    // doesn't really support tool calling) still writes perfectly good code,
+    // just in its reply, and reading only generatedFiles threw all of it away
+    // and reported "generation failed" over a build that had produced a whole
+    // app. Fall back to parsing the reply: an agentic build that degrades into
+    // a pipeline build is a far better outcome than no build.
+    let parsedFiles: ParsedFile[];
     if (agenticBuild) {
-      console.log(`[build] agentic mode produced ${parsedFiles.length} file(s) via write_files`);
+      const written = Object.entries(result.generatedFiles).map(([path, code]) => ({ path, code }));
+      if (written.length > 0) {
+        parsedFiles = written;
+        console.log(`[build] agentic mode produced ${written.length} file(s) via write_files`);
+      } else {
+        parsedFiles = parseFilesFromContent(result.content);
+        logger.warn(
+          {
+            sessionId,
+            projectId,
+            model: result.modelUsed,
+            toolCallsMade: result.toolCalls.length,
+            toolNames: [...new Set(result.toolCalls.map((t) => t.name))],
+            stopReason: result.stopReason,
+            recoveredFiles: parsedFiles.length,
+          },
+          "Agentic build wrote no files via write_files — falling back to parsing the reply. " +
+            "toolCallsMade: 0 means the model never called any tool at all, which usually means " +
+            "this model or endpoint does not do tool calling; the harness cannot work on it.",
+        );
+        console.log(
+          `[build] agentic mode produced 0 file(s) via write_files ` +
+            `(toolCalls=${result.toolCalls.length}) — recovered ${parsedFiles.length} file(s) from the reply`,
+        );
+      }
+    } else {
+      parsedFiles = parseFilesFromContent(result.content);
     }
 
     // ── Pure action-only response ────────────────────────────────────────────
@@ -1155,16 +1184,14 @@ export async function runFastBuild(
 
     // Auto-trigger fix agent if frontend produced no structured file output.
     //
-    // Never in agentic mode. This rescue re-parses ```filename fences, which an
-    // agentic run is explicitly instructed not to produce, so it cannot recover
-    // anything there — and on an edit it would actively cause harm: a model
-    // that read the project and correctly concluded nothing needed changing
-    // also produces zero files and a short reply, and this would answer that by
-    // spending another dispatch and writing whatever fences came back over a
-    // project that was already fine. Agentic runs that genuinely produced
-    // nothing are caught by the entry-point check below (new builds) or
-    // complete as a no-op with the project intact (edits).
-    if (!agenticBuild && parsedFiles.length === 0 && result.content.trim().length < 200) {
+    // Never on an agentic EDIT. This rescue re-parses ```filename fences, and
+    // on an edit a model that read the project and correctly concluded nothing
+    // needed changing also produces zero files and a short reply — answering
+    // that by spending another dispatch and writing stale fences over a project
+    // that was already correct is a regression, not a repair. A new agentic
+    // build with nothing to show has genuinely failed, so it still gets the
+    // rescue like any other build.
+    if (!(agenticBuild && hasExistingCode) && parsedFiles.length === 0 && result.content.trim().length < 200) {
       logger.warn({ sessionId }, "Frontend agent produced no structured output — triggering fix agent");
       try {
         const fixResult = await dispatcher.triggerFixAgent(
