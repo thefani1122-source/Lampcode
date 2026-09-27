@@ -106,10 +106,27 @@ frontend gate via `VITE_ADMIN_EMAILS` (mirrors backend `ADMIN_EMAILS`). Set
 `WAITLIST_MODE=false` + `VITE_WAITLIST_MODE=false` to open the product.
 
 **Nothing in the harness has run against a live build.** Everything is typecheck-clean and
-verified by simulation only. Specifically unproven: whether any model holds a 12-turn tool
-loop, whether `check_page` reports usefully mid-loop, and real cost per agentic build.
-`MAX_BUILD_COST_USD` is still 1.0, which is probably too low for a harness build — expect to
-raise it, deliberately, once there is a measurement.
+verified by simulation only.
+
+**Measured on real builds, 2026-09-27 — the harness has still never actually run:**
+- Claude Sonnet 5, tools in the request, corrected prompt: `toolCallsMade: 0`.
+- GLM-5.3 via the Modal shared endpoint, same: `toolCallsMade: 0`.
+
+In both cases the model printed ```filename fences instead, and the build only succeeded
+because `build.ts` falls back to parsing them when `generatedFiles` is empty. So every
+"successful" build so far is still the old pipeline. **Do not read a working preview as
+evidence that the harness works — check the logs for `toolCalls=` first.**
+
+Next thing to try is a model built for agentic tool use (Kimi K3) on the same endpoint. If
+that is also 0, the endpoint is dropping the `tools` parameter and the answer is a
+first-party API (Moonshot/Z.ai) rather than a shared endpoint.
+
+**Two routing facts that wasted days of testing — check them before diagnosing anything:**
+- Provider is chosen per PLAN, so a paid or admin account silently gets Anthropic no matter
+  what the `LLM_*` vars say. `LLM_PROVIDER_MODE=openai` forces every build to the
+  OpenAI-compatible endpoint. Each build now logs `[build] provider=… (mode=…)`.
+- `MAX_BUILD_COST_USD` is still 1.0, which is probably too low for a real harness build —
+  expect to raise it deliberately once there is a measurement.
 
 **To actually test the harness:** set `LLM_*` (or `MODAL_*`) to a working OpenAI-compatible
 endpoint, then `AGENTIC_BUILD_ENABLED=true` on Railway. Run one new build and one follow-up
