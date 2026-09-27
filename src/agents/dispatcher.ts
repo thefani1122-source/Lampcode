@@ -441,6 +441,22 @@ export class AgentDispatcher {
           : undefined,
         ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
       };
+      // What the model was ACTUALLY offered this round. Three different models
+      // have now returned zero tool calls with tools supposedly in the request,
+      // which points at the request rather than the models — and nothing so far
+      // logs what was really sent, so this is guesswork until it does.
+      logger.info(
+        {
+          sessionId,
+          agentType,
+          round,
+          provider: effectiveProvider,
+          agenticBuild,
+          toolsSent: gatewayRequest.tools?.map((t) => t.name) ?? [],
+        },
+        "Gateway request: tools offered",
+      );
+
       // effectiveProvider is "modal" only when mcpDefs is empty (see the
       // guard above) — the mcpServers spread above is dead weight on that
       // path, kept only so gatewayRequest has one shape for both branches.
