@@ -149,6 +149,26 @@ const INDEX_HTML = `<!DOCTYPE html>
   </body>
 </html>`
 
+// Ambient declarations for non-code imports. index.tsx below does
+// `import './styles.css'`, which TypeScript reports as TS2882 without these.
+// Kept in sync with VITE_ENV_DTS in src/preview/e2b-service.ts, which writes
+// the same file at runtime so existing sandboxes don't need a rebuild.
+const VITE_ENV_DTS = `/// <reference types="vite/client" />
+declare module '*.css';
+declare module '*.scss';
+declare module '*.sass';
+declare module '*.less';
+declare module '*.svg';
+declare module '*.png';
+declare module '*.jpg';
+declare module '*.jpeg';
+declare module '*.gif';
+declare module '*.webp';
+declare module '*.avif';
+declare module '*.woff';
+declare module '*.woff2';
+`
+
 const INDEX_TSX = `import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
@@ -316,6 +336,7 @@ const dockerfile = [
   writeFile('/home/user/app/tsconfig.json', TSCONFIG),
   writeFile('/home/user/app/index.html', INDEX_HTML),
   writeFile('/home/user/app/src/index.tsx', INDEX_TSX),
+  writeFile('/home/user/app/src/vite-env.d.ts', VITE_ENV_DTS),
   writeFile('/home/user/app/src/App.tsx', APP_TSX),
   writeFile('/home/user/app/src/styles.css', STYLES_CSS),
   writeFile('/home/user/app/src/lib/utils.ts', UTILS_TS),

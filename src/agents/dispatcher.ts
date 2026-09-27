@@ -576,7 +576,16 @@ export class AgentDispatcher {
 
     return {
       taskId,
-      modelUsed: model,
+      // The model that actually served this dispatch. `model` is the Anthropic
+      // tier name, which the Modal path never uses — it sends its own
+      // configured model. Reporting the tier name regardless made every log and
+      // warning on that path claim "claude-sonnet-5" while the request had gone
+      // somewhere else entirely, which is exactly the wrong thing to be told
+      // while diagnosing a model's behaviour.
+      modelUsed:
+        effectiveProvider === "modal"
+          ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
+          : model,
       tierUsed: tier,
       content: fullContent,
       reasoning: "",

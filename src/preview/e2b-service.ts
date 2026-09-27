@@ -400,7 +400,44 @@ async function patchSandboxTsconfig(sandbox: Sandbox, log: PreviewLogCallback): 
 }
 
 /**
- * npm package name: optional @scope/, then the name. The first character is
+ * Ambient module declarations for non-code imports (CSS, images, fonts).
+ *
+ * The template's own `src/index.tsx` does `import './styles.css'`, which is
+ * normal Vite and normal at runtime, but TypeScript has no idea what a `.css`
+ * module is without a declaration and reports TS2882 for it. Nothing caught
+ * this before because tsc was failing on the config (see patchSandboxTsconfig)
+ * and never reached any code; with that fixed, this became the first error on
+ * EVERY build — in a file the fix loop cannot repair, because the problem is a
+ * missing declaration rather than anything wrong with the import.
+ *
+ * Lives under src/ because the baked tsconfig has `include: ["src"]`.
+ */
+const VITE_ENV_DTS = `/// <reference types="vite/client" />
+declare module '*.css';
+declare module '*.scss';
+declare module '*.sass';
+declare module '*.less';
+declare module '*.svg';
+declare module '*.png';
+declare module '*.jpg';
+declare module '*.jpeg';
+declare module '*.gif';
+declare module '*.webp';
+declare module '*.avif';
+declare module '*.woff';
+declare module '*.woff2';
+`;
+
+async function patchSandboxTypeShims(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  try {
+    await sandbox.files.write(`${PROJECT_DIR}/src/vite-env.d.ts`, VITE_ENV_DTS);
+  } catch (err) {
+    logger.warn({ err }, "[e2b] could not write src/vite-env.d.ts");
+    log("Could not add asset type declarations — the type check may report CSS imports as errors");
+  }
+}
+
+/** npm package name: optional @scope/, then the name. The first character is
  * deliberately narrower than the rest — a leading hyphen is not a legal npm
  * name, and a "package" called `-g` would be read by npm as a FLAG rather than
  * an operand. `--` is also passed on the command line below, so a name would
@@ -1110,6 +1147,7 @@ async function acquireRunningSandbox(
     // Inject preview env BEFORE the dev server boots (env is only read at startup).
     await writePreviewEnv(sandbox, projectId, log);
     await patchSandboxTsconfig(sandbox, log);
+    await patchSandboxTypeShims(sandbox, log);
     // Baked scaffold already has node_modules — this is just dev-server startup.
     const devLog = makeDevLog(log, sandbox.sandboxId);
     await startDevServer(sandbox, devLog.log, framework);
@@ -1214,6 +1252,7 @@ export async function writeFilesToSandbox(
   // install disturbed it, so new deps are picked up either way.
   await installExtraDependencies(sandbox, files, log);
   await patchSandboxTsconfig(sandbox, log);
+  await patchSandboxTypeShims(sandbox, log);
   await ensureDevServer(sandbox, log, framework);
   const url = previewUrlFor(sandbox, framework);
   log(`Preview updated at ${url} (HMR will refresh automatically)`);
@@ -1354,6 +1393,7 @@ export async function createPreviewSandbox(
     // is (re)started, never underneath a running one.
     await installExtraDependencies(sandbox, files, log);
     await patchSandboxTsconfig(sandbox, log);
+    await patchSandboxTypeShims(sandbox, log);
     await ensureDevServer(sandbox, log, framework);
 
     const url = previewUrlFor(sandbox, framework);
