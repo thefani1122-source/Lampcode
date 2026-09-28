@@ -168,15 +168,6 @@ export class AgentDispatcher {
     const parsed = dispatchOptionsSchema.parse(options);
     const tiers = MODEL_TIERS[parsed.agentType];
     const task = parsed.task as TaskInput;
-    // contextFiles/enableTools/costGuard/mcpServers/restProviders are not in
-    // the Zod schema so read from original options
-    const contextFiles = options.contextFiles;
-    const enableTools = options.enableTools;
-    const costGuard = options.costGuard;
-    const mcpServers = options.mcpServers;
-    const restProviders = options.restProviders;
-    const usageCategory = options.usageCategory;
-    const provider = options.provider;
 
     let lastError: Error | null = null;
 
@@ -185,7 +176,20 @@ export class AgentDispatcher {
 
       try {
         return await this.callModelWithRetry(
-          { ...parsed, contextFiles, enableTools, costGuard, mcpServers, restProviders, usageCategory, provider },
+          // `parsed` LAST so validated values and schema defaults win, but
+          // spread `options` first so every field outside the schema survives.
+          //
+          // Zod's .object() drops unknown keys, and half of DispatchOptions is
+          // deliberately outside the schema (contextFiles, enableTools,
+          // costGuard, agenticBuild, …). This used to re-attach them by hand,
+          // one name at a time — so adding a field to the type and to the call
+          // site was not enough, and forgetting the third place failed silently.
+          // That is exactly what happened to agenticBuild: build.ts announced
+          // "agentic mode", the flag was stripped here, the harness tools were
+          // never offered, and three different models were blamed for returning
+          // no tool calls. Spreading removes the trap rather than fixing one
+          // instance of it.
+          { ...options, ...parsed },
           task, model, tier as 1 | 2,
         );
       } catch (err) {
