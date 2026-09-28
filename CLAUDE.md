@@ -121,28 +121,59 @@ pre-launch), and the frontend shows a thank-you page instead of the product. Adm
 frontend gate via `VITE_ADMIN_EMAILS` (mirrors backend `ADMIN_EMAILS`). Set
 `WAITLIST_MODE=false` + `VITE_WAITLIST_MODE=false` to open the product.
 
-**Nothing in the harness has run against a live build.** Everything is typecheck-clean and
-verified by simulation only.
+## THE HARNESS WORKS — measured on real builds, 2026-09-28
+Two clean agentic builds on Kimi K3 via the Modal shared endpoint, with
+`AGENTIC_BUILD_ENABLED=true` and `LLM_PROVIDER_MODE=openai`:
 
-**Measured on real builds, 2026-09-27 — the harness has still never actually run:**
-- Claude Sonnet 5, tools in the request, corrected prompt: `toolCallsMade: 0`.
-- GLM-5.3 via the Modal shared endpoint, same: `toolCallsMade: 0`.
+| | first working run | next run |
+|---|---|---|
+| rounds | 12 (hit `AGENTIC_MAX_TURNS`) | 8 (model finished on its own) |
+| files | 3, via `write_files` | 3, via `write_files` |
+| creditsUsed | 555 | 357 |
 
-In both cases the model printed ```filename fences instead, and the build only succeeded
-because `build.ts` falls back to parsing them when `generatedFiles` is empty. So every
-"successful" build so far is still the old pipeline. **Do not read a working preview as
-evidence that the harness works — check the logs for `toolCalls=` first.**
+The observed loop: `write_files` → `check_page` → `read_logs` → `check_page` →
+`check_types` → `write_files`. The model wrote, looked at what rendered, read the dev-server
+log, found its own mistake and repaired it. That is the thing the pipeline structurally could
+not do.
 
-Next thing to try is a model built for agentic tool use (Kimi K3) on the same endpoint. If
-that is also 0, the endpoint is dropping the `tools` parameter and the answer is a
-first-party API (Moonshot/Z.ai) rather than a shared endpoint.
+**What had to be true first — four bugs, none of them the model's fault.** Claude Sonnet 5,
+GLM-5.3 and Kimi K3 each returned `toolCallsMade: 0` and all three were wrongly blamed:
+1. `dispatch()` validates options with a Zod object, which drops unknown keys. Half of
+   DispatchOptions sits outside that schema deliberately and was re-attached by hand, one
+   name at a time — so `agenticBuild`, `onSandboxLog` and `projectFiles` were silently
+   stripped and the harness tools were never sent. Now spreads instead of listing.
+2. The agentic instruction said it overrode "any instruction below" while sitting
+   second-to-last, so it pointed at nothing. It is last now and says "above".
+3. `list_files` on a cold sandbox returned a bare "no live sandbox" error; a model read that
+   as "the harness isn't available here" and abandoned tools for the whole build. The read
+   tools now distinguish "not ready yet" from a real failure.
+4. `DispatchResult.modelUsed` reported the Anthropic tier name even on Modal dispatches, so
+   logs claimed `claude-sonnet-5` while the request went elsewhere — which misled diagnosis
+   for a full day, and also billed against the wrong `MODEL_PRICING` row.
+
+**Still true:** a working preview is still not evidence the harness ran — `build.ts` falls
+back to fence parsing when `generatedFiles` is empty, and that path produces a working app
+too. Check `[build] agentic mode produced N file(s) via write_files` and the
+`Gateway request: tools offered` line before concluding anything.
+
+**Known and NOT fixed — billing overstates agentic builds.** An agentic build resends the
+conversation each round, so most input tokens are a repeated prefix the provider bills at its
+cached rate ($0.30/MTok on Kimi K3 vs $3.00 full). `computeUsage` charges every input token at
+the full rate. The provider dashboard read $0.42 across a day of builds while this put a
+single build at $0.555. Fixing it needs the cached-token count from the usage response, which
+the gateway does not read yet. Until then `usage_usd` is a ceiling, not a measurement — do not
+set prices from it.
+
+**Not yet exercised:** a follow-up EDIT through the harness (new builds only so far), and the
+preview iframe occasionally shows "Preview failed to load" and then recovers on retry — a
+timing race between the preview URL and Vite being ready, not diagnosed.
 
 **Two routing facts that wasted days of testing — check them before diagnosing anything:**
 - Provider is chosen per PLAN, so a paid or admin account silently gets Anthropic no matter
   what the `LLM_*` vars say. `LLM_PROVIDER_MODE=openai` forces every build to the
   OpenAI-compatible endpoint. Each build now logs `[build] provider=… (mode=…)`.
-- `MAX_BUILD_COST_USD` is still 1.0, which is probably too low for a real harness build —
-  expect to raise it deliberately once there is a measurement.
+- `MAX_BUILD_COST_USD` is 1.0. Real agentic builds measured 0.357–0.555 by our own
+  (overstated) reckoning, so this is not binding yet, but it is close enough to matter.
 
 **To actually test the harness:** set `LLM_*` (or `MODAL_*`) to a working OpenAI-compatible
 endpoint, then `AGENTIC_BUILD_ENABLED=true` on Railway. Run one new build and one follow-up
