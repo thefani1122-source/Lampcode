@@ -1138,6 +1138,19 @@ export async function runFastBuild(
       if (written.length > 0) {
         parsedFiles = written;
         console.log(`[build] agentic mode produced ${written.length} file(s) via write_files`);
+      } else if (result.toolCalls.length > 0) {
+        // Tools were used and nothing was written: that is a decision, not a
+        // failure. On an edit the model can read the project, find the change
+        // already present, and correctly write nothing — which is exactly what
+        // happened here (toolCalls=5, files=0). Parsing the reply in that case
+        // mined prose for code and invented a file out of an explanation, which
+        // then failed validation and told the user the project was missing
+        // App.tsx while it sat there rendering perfectly.
+        parsedFiles = [];
+        console.log(
+          `[build] agentic mode wrote no files but used ${result.toolCalls.length} tool(s) ` +
+            `— treating as a deliberate no-op, not parsing the reply`,
+        );
       } else {
         parsedFiles = parseFilesFromContent(result.content);
         logger.warn(
@@ -1537,11 +1550,19 @@ export async function runFastBuild(
       }
     }
 
-    // ── Validate the parsed file set before writing (Sandpack builds only) ───
+    // ── Validate the parsed file set before writing (new builds only) ───────
     // Catches missing entry points, missing default exports, and server-side
-    // imports leaking into browser-bundled files (which would crash Sandpack).
-    // Fullstack builds run in E2B (not Sandpack) — skip these checks for them.
-    if (!isFullstackBuild) {
+    // imports leaking into browser-bundled files.
+    //
+    // Only meaningful when the file set IS the whole project. On a follow-up
+    // edit `filesToWrite` holds just what changed — by design, since that is
+    // what preserves everything else — so asking whether it contains App.tsx
+    // and package.json always answers "no". A correct no-op edit, where the
+    // model read the code and found nothing to change, produced the worst
+    // version of this: zero files written, and the user told
+    // "Validation found issues: Missing src/App.tsx; Missing package.json"
+    // about a project that was intact and rendering fine.
+    if (!isFullstackBuild && !hasExistingCode) {
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
