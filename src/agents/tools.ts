@@ -312,6 +312,20 @@ export async function executeTool(
     // thinking the project is empty because it asked a second too early.
     const known = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
 
+    // "No sandbox" must never read as "tools don't work here". On a brand-new
+    // build the sandbox is still warming while the model takes its first turn,
+    // and these reads legitimately have nothing to show yet. Reporting that as
+    // a bare error made a model conclude the harness was unavailable — its own
+    // words were "No sandbox; output files in reply per task format" — and
+    // abandon the tools for the rest of the build. Every message below keeps it
+    // on the tool path.
+    const NOT_READY =
+      "The sandbox is still starting, so there is nothing to read yet. This is normal at " +
+      "the beginning of a new build — go ahead and write your files with write_files, " +
+      "then read and check afterwards.";
+    const isNoSandbox = (e: unknown): boolean =>
+      e instanceof Error && e.message.includes("no live sandbox");
+
     if (name === "list_files") {
       const inMemory = Object.keys(known).sort();
       if (inMemory.length > 0) {
@@ -319,10 +333,13 @@ export async function executeTool(
       }
       try {
         const files = await listProjectFiles(projectId);
-        if (files.length === 0) return "The project has no source files yet.";
+        if (files.length === 0) {
+          return "The project has no source files yet — this is a new build. Write them with write_files.";
+        }
         return `${files.length} file(s) in the project:\n${files.join("\n")}`;
       } catch (err) {
-        return `Error listing files: ${err instanceof Error ? err.message : String(err)}`;
+        if (isNoSandbox(err)) return NOT_READY;
+        return `Could not list files: ${err instanceof Error ? err.message : String(err)}. You can still write files with write_files.`;
       }
     }
 
@@ -338,6 +355,7 @@ export async function executeTool(
         if (content.trim() === "") return `${path} exists but is empty.`;
         return `${path}:\n${content}`;
       } catch (err) {
+        if (isNoSandbox(err)) return NOT_READY;
         // Covers both "refused" (see safeProjectPath) and a genuine miss. Says
         // what to do next rather than just failing, so a wrong guess at a path
         // costs one turn instead of derailing the build.
@@ -350,7 +368,7 @@ export async function executeTool(
 
     if (name === "read_logs") {
       const logs = readSandboxLogs(projectId);
-      if (!logs) return "No live sandbox, so there are no logs to read.";
+      if (!logs) return NOT_READY;
       const parts: string[] = [];
       if (logs.dev.length > 0) parts.push(`Dev server output:\n${logs.dev.join("\n")}`);
       if (logs.backend.length > 0) parts.push(`Backend output:\n${logs.backend.join("\n")}`);

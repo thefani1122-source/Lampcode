@@ -15,8 +15,22 @@ const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> =
   "anthropic/claude-opus-4-5":   { inputPerM: 15.00, outputPerM: 75.00 },
   "anthropic/claude-sonnet-4-5": { inputPerM: 3.00,  outputPerM: 15.00 },
   // Kimi
+  // Rates as shown on the Modal Shared Endpoint's own usage page
+  // (prompt $3.00 / cached prompt $0.30 / completion $15.00 per MTok).
+  // Cached prompt is NOT modelled here: an agentic build resends the whole
+  // conversation each round, so most of its input tokens are a repeated prefix
+  // that the provider bills at the cached rate. Costing every input token at
+  // the full rate therefore OVERSTATES a multi-round build — confirmed against
+  // the provider's own dashboard, which read $0.42 across a day of builds while
+  // this put one build at $0.555. Fixing that needs the provider's cached-token
+  // count in the usage response, which this does not yet read.
+  "moonshotai/kimi-k3":          { inputPerM: 3.00,  outputPerM: 15.00 },
+  "moonshotai/kimi-k2.7-code":   { inputPerM: 0.95,  outputPerM: 4.00  },
   "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
   "moonshotai/kimi-k2":          { inputPerM: 0.60,  outputPerM: 2.50  },
+  // GLM (Z.ai rates)
+  "zai-org/glm-5.3":             { inputPerM: 1.40,  outputPerM: 4.40  },
+  "zai-org/glm-5.3-flash":       { inputPerM: 1.40,  outputPerM: 4.40  },
   // DeepSeek
   "deepseek/deepseek-v4-pro":    { inputPerM: 0.55,  outputPerM: 2.19  },
   "deepseek/deepseek-v4-flash":  { inputPerM: 0.14,  outputPerM: 0.28  },
@@ -127,7 +141,18 @@ export class TokenTracker {
     inputTokens: number,
     outputTokens: number,
   ): TokenUsage {
-    const pricing = MODEL_PRICING[model] ?? DEFAULT_PRICING;
+    // Case-insensitive: model ids arrive from config and provider dashboards
+    // with whatever casing they use there (e.g. "moonshotai/Kimi-K3"), and a
+    // miss here silently falls back to DEFAULT_PRICING rather than failing —
+    // so a casing difference becomes a wrong bill, not an error.
+    const key = model.toLowerCase();
+    const pricing = MODEL_PRICING[key] ?? DEFAULT_PRICING;
+    if (MODEL_PRICING[key] === undefined) {
+      logger.warn(
+        { model },
+        "No pricing entry for this model — billing at DEFAULT_PRICING, which is a guess. Add it to MODEL_PRICING.",
+      );
+    }
     const costUsd =
       (inputTokens / 1_000_000) * pricing.inputPerM +
       (outputTokens / 1_000_000) * pricing.outputPerM;

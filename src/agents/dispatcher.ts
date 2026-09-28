@@ -504,7 +504,12 @@ export class AgentDispatcher {
       // outer checkpoint gets a chance to see it. This makes the round-trip
       // cap the primary spend bound during the loop, not just an anti-hang guard.
       if (costGuard) {
-        loopCostUsd += this.tracker.computeUsage(model, streamResult.inputTokens, streamResult.outputTokens).costUsd;
+        loopCostUsd += this.tracker.computeUsage(
+          effectiveProvider === "modal"
+            ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
+            : model,
+          streamResult.inputTokens, streamResult.outputTokens,
+        ).costUsd;
         if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
           logger.warn(
             { sessionId, agentType, round, loopCostUsd, cumulativeUsd: costGuard.cumulativeUsd, maxUsd: costGuard.maxUsd },
@@ -588,7 +593,15 @@ export class AgentDispatcher {
       console.error("[dispatcher] Failed to persist full tool-loop transcript:", err);
     });
 
-    const usage = this.tracker.computeUsage(model, totalInputTokens, totalOutputTokens);
+    // Bill against the model that actually served this dispatch. `model` is the
+    // Anthropic tier name, which the Modal path never uses, so costing with it
+    // looked up the wrong row in MODEL_PRICING (or missed and silently fell
+    // back to a guess) on every non-Anthropic build.
+    const billingModel =
+      effectiveProvider === "modal"
+        ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
+        : model;
+    const usage = this.tracker.computeUsage(billingModel, totalInputTokens, totalOutputTokens);
     await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });
