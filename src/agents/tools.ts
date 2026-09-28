@@ -92,9 +92,14 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     name: "write_files",
     description:
       "Write files into the project's live preview sandbox. Use this instead of printing " +
-      "code in your reply — files only exist once written. Call it as many times as you " +
-      "need; later writes to the same path replace earlier ones, and files you don't " +
-      "write are left alone. After writing, verify with check_page before you finish.",
+      "code in your reply — files only exist once written.\n" +
+      "Each file's `content` REPLACES THAT FILE ENTIRELY. There is no merging, patching or " +
+      "appending: whatever you send becomes the whole file, and anything you leave out is " +
+      "gone. To change one line of a file, send the complete file with that line changed — " +
+      "never send only the changed part.\n" +
+      "Files you do not write are untouched. Call it as many times as you need; a later " +
+      "write to the same path replaces the earlier one. After writing, verify with " +
+      "check_page before you finish.",
     input_schema: {
       type: "object",
       properties: {

@@ -118,6 +118,13 @@ export interface DispatchResult {
   modelUsed: string;
   tierUsed: number;
   content: string;
+  /** Just the LAST round's text. `content` is every round concatenated, which
+   *  is what the fence-parsing fallback needs but is wrong for anything shown
+   *  to the user: in an agentic build the early rounds are the model talking to
+   *  itself between tool calls ("that write replaced the whole file — I need
+   *  to…"), and a summary built from `content` starts with that instead of with
+   *  what was built. Same value as `content` on a single-round dispatch. */
+  finalContent: string;
   reasoning: string;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** MCP tool calls actually executed (server-side, already resolved) this dispatch. */
@@ -422,6 +429,7 @@ export class AgentDispatcher {
     // byte the same single dispatch behavior every existing call site had
     // before this loop existed.
     let fullContent = "";
+    let lastRoundContent = "";
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -480,6 +488,7 @@ export class AgentDispatcher {
       }
 
       fullContent += streamResult.content;
+      lastRoundContent = streamResult.content;
       totalInputTokens += streamResult.inputTokens;
       totalOutputTokens += streamResult.outputTokens;
       lastStopReason = streamResult.stopReason;
@@ -608,6 +617,7 @@ export class AgentDispatcher {
           : model,
       tierUsed: tier,
       content: fullContent,
+      finalContent: lastRoundContent,
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,

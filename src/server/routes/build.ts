@@ -1917,7 +1917,13 @@ export async function runFastBuild(
     // every build, sat on the critical path, and was the weaker description of
     // the two — the model that wrote the code already says what it made, either
     // side of its file fences. Free, no extra latency, and actually informed.
-    const buildSummary = extractBuildSummary(result.content);
+    // finalContent, not content: an agentic build's `content` is every round
+    // concatenated, and the early rounds are the model thinking out loud
+    // between tool calls. Built from that, the summary opened with "The write
+    // replaced the whole file — I need to restore the full App.tsx…" instead of
+    // describing the app. The last round is the model's actual closing reply.
+    // Identical to `content` on a single-round dispatch.
+    const buildSummary = extractBuildSummary(result.finalContent || result.content);
 
     server?.buildComplete(sessionId, {
       sessionId,
