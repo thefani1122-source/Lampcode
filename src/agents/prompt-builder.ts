@@ -154,11 +154,28 @@ Think deeply before building. Always choose the technically better option. If th
 
 ━━ DESIGN RULES ━━
 - Choose colors that MATCH the app's purpose and mood
-- NO ugly colors: avoid #333, #666, gray, lightgray, neon colors, oversaturated single-color themes, loud primary-only palettes (all-red, all-yellow, all-green)
-- NO following color stereotypes blindly — do not default to "fitness = red/orange" or "finance = blue" — choose what is actually beautiful and appropriate
 - Each app must have its OWN unique visual identity — every project looks different
 - If the user specifies a design system, brand color, or visual theme — follow it exactly
-- Modern, clean, premium color combinations — think Vercel, Linear, Stripe, Notion
+
+COLOR — restraint is the house style. Build every palette this way:
+1. FOUNDATION (95% of the page): near-neutral, never pure black or pure white.
+   Dark → #0B0B0C–#18181B charcoal, or a warm near-black like #12100E.
+   Light → #FAFAF8–#F4F2ED warm off-white. Surfaces sit 3–6% lighter/darker
+   than the base, not in a different hue.
+2. TEXT: one high-contrast tone plus one muted tone for secondary text
+   (roughly 55–70% opacity of the primary). That pair carries the hierarchy.
+3. ACCENT: exactly ONE, and desaturated. Muted gold #C8A45C, sage #8A9A7B,
+   terracotta #C4704F, deep teal #2F5D62, dusty plum #6B5B72, soft amber
+   #D4A574 are the register. It appears on small surfaces only — a button, a
+   link underline, a tag, a thin rule, a small icon. NEVER as a full-width
+   section background.
+BANNED as accents: electric lime, neon green, acid yellow, hot pink, pure
+cyan, and any fully saturated primary on a dark background. They read as
+"trendy startup", not premium — and a lime accent on charcoal is the single
+most overused agency-site cliché there is.
+Contrast comes from TYPE SCALE and WHITESPACE, not from loud colour. A large
+quiet heading on generous space looks more expensive than a bright accent.
+Think Aesop, Kinfolk, Cereal magazine, Loro Piana — not a SaaS landing page.
 
 ━━ CODE RULES — NON-NEGOTIABLE ━━
 - ALL buttons must do something — no dead buttons anywhere

@@ -650,7 +650,13 @@ export async function fetchReferenceDesign(
     { timeoutMs: 60_000 },
   );
   const marker = r.stdout.indexOf("JSON:");
-  if (marker === -1) throw new Error("the reference page could not be read");
+  if (marker === -1) {
+    logger.warn(
+      { projectId, url, stdoutHead: r.stdout.slice(0, 300), stderrHead: r.stderr.slice(0, 300) },
+      "[e2b] fetchReferenceDesign produced no result — reference fetch is not working",
+    );
+    throw new Error("the reference page could not be read");
+  }
   return JSON.parse(r.stdout.slice(marker + 5).trim()) as Record<string, unknown>;
 }
 
@@ -1127,11 +1133,20 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
       { timeoutMs: 30_000 },
     );
     stdout = r.stdout;
-  } catch {
+  } catch (err) {
     // Sandbox unreachable, timed out, or the check tooling itself missing —
     // don't block the build on infrastructure trouble unrelated to the
     // generated code (same policy as runTypeCheck's catch above), but the
     // page was never actually opened, so say so.
+    //
+    // Logged, not swallowed: this catch used to discard the error entirely,
+    // so a browser check that kept failing across a whole session left no
+    // trace of WHY — unreachable sandbox, missing script and timeout all
+    // looked identical from outside.
+    logger.warn(
+      { projectId, err: err instanceof Error ? err.message : String(err) },
+      "[e2b] verifyBrowserRender could not run",
+    );
     return { ok: true, issues: [], unavailable: true };
   }
 
@@ -1144,7 +1159,12 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
     parsed = JSON.parse(lastLine);
   } catch {
     // Unparseable output — infra noise, not a real render failure. Nothing
-    // was learned about the page either way.
+    // was learned about the page either way. The head of stdout is logged
+    // because what the script actually printed is the only clue to why.
+    logger.warn(
+      { projectId, stdoutHead: stdout.slice(0, 300) },
+      "[e2b] verifyBrowserRender output could not be parsed",
+    );
     return { ok: true, issues: [], unavailable: true };
   }
 
