@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq, desc, isNotNull } from "drizzle-orm";
+import { and, eq, desc, isNotNull, inArray } from "drizzle-orm";
 import { mkdir, writeFile, readFile, readdir, rm, stat } from "fs/promises";
 import { join, dirname, relative, resolve, sep } from "path";
 import { db } from "../../db/client.js";
@@ -93,6 +93,49 @@ const MAX_BUILD_COST_USD = process.env["MAX_BUILD_COST_USD"]
 // ── In-memory cancel registry ─────────────────────────────────────────────────
 
 const cancelledSessions = new Set<string>();
+
+// Sessions this process is currently building. Only this process's own, so a
+// second replica's builds are never touched.
+const runningSessions = new Set<string>();
+
+/**
+ * Fail every build this process is still running, and tell its client.
+ *
+ * Called on SIGTERM. Without it a redeploy or restart kills the container
+ * mid-build and nothing says so: the row stays `running` forever, no
+ * build:failed is emitted, and the user watches a spinner that will never
+ * resolve. Observed live — a deploy landed eight seconds into an agency-site
+ * build and the build simply vanished.
+ *
+ * Deliberately says the build was interrupted rather than that it failed,
+ * because nothing was wrong with it.
+ */
+export async function failRunningBuildsOnShutdown(): Promise<void> {
+  const sessions = [...runningSessions];
+  if (sessions.length === 0) return;
+  logger.warn({ sessions }, "Shutting down with builds in flight — failing them so clients don't hang");
+
+  const server = ws();
+  const reason = "The server restarted while this build was running. Nothing was saved — please run it again.";
+
+  for (const sessionId of sessions) {
+    server?.buildFailed(sessionId, {
+      sessionId,
+      phase: "BUILD",
+      reason,
+      logs: "",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  await db
+    .update(buildSessions)
+    .set({ status: "failed", error: reason, completedAt: new Date() })
+    .where(inArray(buildSessions.id, sessions))
+    .catch((err: unknown) => {
+      logger.error({ err }, "Could not mark in-flight builds as failed during shutdown");
+    });
+}
 
 // ── WS helper — never throws ──────────────────────────────────────────────────
 
@@ -660,6 +703,9 @@ export async function runFastBuild(
   projectManifest: string | null = null,
 ): Promise<void> {
   const server = ws();
+  // Registered before anything can throw and cleared in the finally at the very
+  // end, so a shutdown at any point in between can still find and close it out.
+  runningSessions.add(sessionId);
 
   // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
   // routing outright — without it a paid or admin account can never exercise
@@ -2450,6 +2496,8 @@ export async function runFastBuild(
       logs: "",
       timestamp: new Date().toISOString(),
     });
+  } finally {
+    runningSessions.delete(sessionId);
   }
 }
 

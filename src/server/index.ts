@@ -19,7 +19,7 @@ import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
 import { projectsRouter } from "./routes/projects.js";
-import { buildRouter } from "./routes/build.js";
+import { buildRouter, failRunningBuildsOnShutdown } from "./routes/build.js";
 import { brainRouter } from "./routes/brain.js";
 import { settingsRouter, userSettingsRouter } from "./routes/settings.js";
 import { envRouter } from "./routes/env.js";
@@ -121,9 +121,12 @@ createWebSocketServer(httpServer);
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Kill any live E2B preview sandboxes so redeploys/restarts don't leak running
 // VMs — without this they only die via E2B's own 30-minute idle timeout.
+// Also close out any build still in flight: a redeploy landing mid-build used
+// to leave the row `running` forever and the user watching a spinner that would
+// never resolve, with nothing anywhere saying what happened.
 process.on("SIGTERM", () => {
   logger.info("SIGTERM received — shutting down");
-  void killAllSandboxes().finally(() => {
+  void Promise.allSettled([failRunningBuildsOnShutdown(), killAllSandboxes()]).finally(() => {
     httpServer.close(() => process.exit(0));
   });
 });
