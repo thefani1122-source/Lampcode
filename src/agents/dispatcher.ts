@@ -535,6 +535,22 @@ export class AgentDispatcher {
         // every other bounded fix loop in this codebase already uses.
         turnsExhausted = true;
         logger.warn({ sessionId, agentType, round }, "Tool loop: max round-trips reached — proceeding with partial context");
+        // Close out the tools the model just asked for. The client shows a
+        // spinner from build:tool_call and clears it on build:tool_result —
+        // and breaking here skips execution, so those results never came and
+        // the last tool spun forever on a finished build. Whoever reads this
+        // next: these emits are the only thing that ends that spinner.
+        for (const tc of streamResult.toolCalls) {
+          try {
+            getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+              tool: tc.name,
+              result: "error",
+              sessionId,
+            });
+          } catch {
+            // WS unavailable — same non-fatal treatment as every other emit here.
+          }
+        }
         break;
       }
 
