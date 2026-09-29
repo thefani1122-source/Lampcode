@@ -17,6 +17,7 @@ import {
   readSandboxLogs,
   fetchReferenceDesign,
   isFetchableReferenceUrl,
+  isTemplateOwnedFile,
 } from "../preview/e2b-service.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 
@@ -101,7 +102,11 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       "never send only the changed part.\n" +
       "Files you do not write are untouched. Call it as many times as you need; a later " +
       "write to the same path replaces the earlier one. After writing, verify with " +
-      "check_page before you finish.",
+      "check_page before you finish.\n" +
+      "Some files belong to the project template and cannot be written — src/styles.css, " +
+      "package.json, vite.config.ts, tsconfig.json, index.html. For custom CSS (keyframes, " +
+      "animations, anything styles.css doesn't cover) create your OWN stylesheet, e.g. " +
+      "src/app.css, and import it from src/App.tsx.",
     input_schema: {
       type: "object",
       properties: {
@@ -306,6 +311,23 @@ export async function executeTool(
       // to disk and pushes it through the normal preview path afterwards.
       // Dropping it on a sandbox hiccup would throw away real work; the model
       // is told about the failure either way and can retry.
+      // Refuse template-owned paths here, out loud, instead of accepting them
+      // and letting them be dropped further down. A model asked for scroll
+      // animations wrote them into src/styles.css, was told "Wrote 2 files",
+      // and reported the animations as done — while the file was discarded on
+      // the way in and the page never changed. Silent rejection is how an agent
+      // ends up honestly describing work that does not exist.
+      const refused = Object.keys(files).filter((p) => isTemplateOwnedFile(p));
+      for (const p of refused) delete files[p];
+      if (Object.keys(files).length === 0) {
+        return (
+          `Nothing was written. ${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} ` +
+          `owned by the project template and cannot be changed.\n` +
+          `For custom CSS, create your own stylesheet — e.g. src/app.css — and import it from ` +
+          `src/App.tsx. It will be picked up normally. Do not put it in src/styles.css.`
+        );
+      }
+
       if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
       // The sandbox gets the WHOLE project, not just this turn's files. On an
       // edit the model writes only what it changed (correctly — that is what
@@ -317,8 +339,12 @@ export async function executeTool(
 
       try {
         const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
+        const note = refused.length > 0
+          ? `\nNOT written: ${refused.join(", ")} — owned by the project template. ` +
+            `Put custom CSS in your own file (e.g. src/app.css) and import it from src/App.tsx.`
+          : "";
         return (
-          `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.\n` +
+          `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}\n` +
           `The app is running at ${url}. Call check_page to see what it actually renders.`
         );
       } catch (err) {

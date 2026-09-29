@@ -1657,9 +1657,25 @@ export async function runFastBuild(
       // Prevents the LLM from wiping the design tokens on feature additions
       // or text/layout edits. Token-only edits are exempt (they exist to update CSS).
       if (safePath === "src/styles.css" && hasExistingCode && !isTokenOnlyEdit) {
+        // Keyword-matching the user's prompt to decide whether the model's work
+        // survives is exactly the kind of guess this codebase is moving away
+        // from — "add smooth animations" contains none of these words, so the
+        // stylesheet carrying those animations was dropped and the build
+        // reported success. The agentic path no longer reaches here at all:
+        // write_files refuses template-owned paths up front and tells the model
+        // to put custom CSS in its own file, so it can correct itself mid-build.
+        // This stays for the pipeline path, but it no longer does it silently.
         const isThemePrompt = /\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/i.test(prompt);
         if (!isThemePrompt) {
           console.log(`[build] CSS file rejected for non-theme edit — keeping existing styles.css`);
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message:
+              "The AI tried to rewrite the project's main stylesheet, which is locked to " +
+              "protect the design system — so that part of the change wasn't applied. If " +
+              "you were asking for styling or animation changes, ask again and mention the " +
+              "colours or theme explicitly.",
+          });
           continue;
         }
       }
