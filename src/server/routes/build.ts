@@ -1562,7 +1562,14 @@ export async function runFastBuild(
     // version of this: zero files written, and the user told
     // "Validation found issues: Missing src/App.tsx; Missing package.json"
     // about a project that was intact and rendering fine.
-    if (!isFullstackBuild && !hasExistingCode) {
+    // Also skipped for agentic builds. It asks whether the model wrote
+    // index.tsx and package.json — but the template already owns both, and a
+    // harness build correctly writes only the files it actually needs. A build
+    // that produced one good App.tsx and rendered fine still reported
+    // "Missing src/index.tsx; Missing package.json". The harness's own
+    // check_page is a real render of the real page, which is a stronger check
+    // than this ever was.
+    if (!isFullstackBuild && !hasExistingCode && !agenticBuild) {
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
