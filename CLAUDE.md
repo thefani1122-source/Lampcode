@@ -207,10 +207,18 @@ What a dead Redis silently costs here, since none of it announces itself:
 **`enableOfflineQueue: false` is deliberate** (`src/lib/redis.ts`). With it on, `maxRetriesPerRequest: null`
 means commands issued while Redis is down queue forever and are never flushed with an error —
 measured: 200 buffered build events left 800 commands resident and produced **zero** rejections,
-so every `.catch()` in the app was dead code. The trade-off is that the **first command after
-process start always rejects** ("Stream isn't writeable") because the socket hasn't opened yet;
-eager connect does not avoid this. Every Redis call site must therefore degrade on *any* error,
-not just `RedisTimeoutError` — three of them re-threw and would have failed builds.
+so every `.catch()` in the app was dead code. Every Redis call site must therefore degrade on
+*any* error, not just `RedisTimeoutError` — three of them re-threw and would have failed builds.
+
+Two consequences of that switch, both already handled — do not "fix" them again:
+- `createRedis()` **connects eagerly** (`client.connect()` at creation). Without it, `lazyConnect`
+  defers the handshake to the first command, which then loses the race and is rejected; Railway's
+  healthcheck made that log a false `"[rate-limit] Redis unavailable"` on every single deploy.
+- **The Socket.IO adapter's two clients keep the offline queue** (`websocket/server.ts`).
+  `RedisAdapter`'s constructor calls `subClient.psubscribe()` before the socket is open and never
+  handles the promise, so disabling the queue there is an unhandled rejection that **crash-loops
+  the service on boot** — it did, on 2026-09-29. The surrounding try/catch does not help; a
+  rejected promise walks straight past it.
 
 ## Sandbox-side scripts must live in `/home/user/.lampcode-tools`
 Playwright is installed there, in its own `node_modules`, deliberately outside the generated

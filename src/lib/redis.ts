@@ -103,5 +103,15 @@ export function createRedis(overrides: Partial<RedisOptions> = {}): Redis {
     suppressed = 0;
   });
 
+  // Open the socket now instead of on the first command. lazyConnect defers the
+  // handshake until something is sent, and with the offline queue disabled that
+  // first command loses the race and is rejected — Railway's healthcheck hits
+  // /health within milliseconds of "Server listening", so every deploy logged
+  // "[rate-limit] Redis unavailable — failing open" about a Redis that was
+  // perfectly healthy. Connecting here gives the socket the whole startup to
+  // open; measured, it removes the rejection even with only 50 ms of boot left.
+  // Errors are reported by the handler above, so this catch stays empty.
+  if (client.status === "wait") void client.connect().catch(() => {});
+
   return client;
 }
