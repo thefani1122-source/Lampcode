@@ -81,8 +81,19 @@ function schedulePause(projectId: string, sessionId: string): void {
   pendingPauseTimers.set(projectId, timer);
 }
 
+// Both call sites await this inside a connection/join handler, so it must
+// never reject: an unhandled rejection there takes the process down, and a
+// throw before ack(true) leaves the client's join unacknowledged forever.
+// Replay is a convenience — a client that misses it still receives every
+// subsequent live event — so a Redis failure degrades to "no replay".
 async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<void> {
-  const buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);
+  let buffered: string[];
+  try {
+    buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);
+  } catch (err) {
+    logger.warn({ socketId: socket.id, sessionId, err }, "Could not replay buffered build events");
+    return;
+  }
   if (buffered.length > 0) {
     for (const raw of buffered) {
       try {

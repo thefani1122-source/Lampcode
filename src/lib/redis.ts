@@ -8,9 +8,30 @@ const BASE_OPTIONS: RedisOptions = {
   enableReadyCheck: false,
   lazyConnect: true,
   family: 0,
+  // Do NOT queue commands issued while the connection is down. ioredis's
+  // offline queue is unbounded, and maxRetriesPerRequest: null means a queued
+  // command is never flushed with an error — so while Redis is unreachable
+  // every command accumulates forever and none of the .catch() handlers at the
+  // call sites ever run. Measured against a dead endpoint: 200 buffered build
+  // events left 800 commands resident and produced zero rejections, which is
+  // why a Redis outage lasting ~2 months logged nothing but reconnects.
+  //
+  // The cost is that the first command after process start is rejected with
+  // "Stream isn't writeable", because the socket has not finished opening yet
+  // (verified — eager connect does not avoid it either). Every call site in
+  // this app already degrades on a Redis failure rather than propagating it
+  // (rate-limit fails open, e2b-service cold-starts, the event buffer warns),
+  // so one rejected command per client per boot is absorbed where it lands.
+  enableOfflineQueue: false,
   // Retry up to 20 times with exponential back-off, cap at 30 s.
   retryStrategy: (times: number) => Math.min(times * 500, 30_000),
 };
+
+// A dead Redis reconnects on the retryStrategy's 30 s ceiling forever. Logging
+// every attempt buries real diagnostics under ~5,800 lines a day, which is
+// exactly how the outage above stayed invisible. Report a connection going bad
+// once, then stay quiet until it recovers or a minute has passed.
+const ERROR_LOG_INTERVAL_MS = 60_000;
 
 /**
  * Create a single ioredis connection.
@@ -34,14 +55,52 @@ export function createRedis(overrides: Partial<RedisOptions> = {}): Redis {
   const effective = url ?? "redis://localhost:6379";
   const client = new Redis(effective, { ...BASE_OPTIONS, ...overrides });
 
+  const masked = effective.replace(/:\/\/[^@]+@/, "://***@");
+
+  // Outage state, so the log describes a condition rather than each retry.
+  let downSince: number | null = null;
+  let suppressed = 0;
+  let lastReported = 0;
+
   client.on("connect", () => {
-    const masked = effective.replace(/:\/\/[^@]+@/, "://***@");
-    console.log(`[redis] connected → ${masked}`);
+    if (downSince === null) {
+      console.log(`[redis] connected → ${masked}`);
+      return;
+    }
+    const seconds = Math.round((Date.now() - downSince) / 1000);
+    console.log(
+      `[redis] reconnected → ${masked} after ${seconds}s down` +
+        (suppressed > 0 ? ` (${suppressed} errors suppressed)` : ""),
+    );
+    downSince = null;
+    suppressed = 0;
+    lastReported = 0;
   });
 
   // Log errors but do NOT re-throw — ioredis will retry automatically.
   client.on("error", (err: Error) => {
-    console.error(`[redis] error: ${err.message}`);
+    const now = Date.now();
+    if (downSince === null) {
+      // First failure of this outage — always say so, and say it loudly,
+      // because from here on the app is running without Redis.
+      downSince = now;
+      lastReported = now;
+      console.error(
+        `[redis] UNREACHABLE (${masked}): ${err.message} — ` +
+          "rate limiting is now fail-open, sandbox IDs will not persist across " +
+          "restarts, and build events are not being buffered for replay.",
+      );
+      return;
+    }
+    suppressed++;
+    if (now - lastReported < ERROR_LOG_INTERVAL_MS) return;
+    const minutes = Math.round((now - downSince) / 60_000);
+    console.error(
+      `[redis] still unreachable after ${minutes}m — ` +
+        `${suppressed} errors since last report (latest: ${err.message})`,
+    );
+    lastReported = now;
+    suppressed = 0;
   });
 
   return client;

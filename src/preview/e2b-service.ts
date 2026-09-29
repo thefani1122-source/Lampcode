@@ -701,15 +701,14 @@ async function saveSandboxId(projectId: string, sandboxId: string, framework: Fu
     await withRedisTimeout(redis.set(redisKey(projectId), sandboxId, "EX", SANDBOX_REDIS_TTL_SECONDS), "set sandboxId");
     await withRedisTimeout(redis.set(frameworkRedisKey(projectId), framework, "EX", SANDBOX_REDIS_TTL_SECONDS), "set framework");
   } catch (err) {
-    if (err instanceof RedisTimeoutError) {
-      // The sandbox itself is already live and registered in-process — losing
-      // only its durable record is not worth failing the build over. Worst
-      // case it isn't resumable after a restart and cold-starts instead.
-      logger.warn({ projectId, sandboxId, err }, "[e2b] Redis write timed out — sandbox not persisted");
-      return;
-    }
-    logger.error({ projectId, err }, "[e2b] Failed to save sandboxId to Redis");
-    throw err;
+    // The sandbox itself is already live and registered in-process — losing
+    // only its durable record is not worth failing the build over. Worst
+    // case it isn't resumable after a restart and cold-starts instead.
+    // Every failure mode is handled the same way, not just the timeout: with
+    // the offline queue disabled an unreachable Redis rejects immediately
+    // rather than timing out, and re-throwing that would fail a build over a
+    // cache write.
+    logger.warn({ projectId, sandboxId, err }, "[e2b] Redis write failed — sandbox not persisted");
   }
 }
 
@@ -726,15 +725,11 @@ async function loadSandboxId(projectId: string): Promise<string | null> {
   try {
     return await withRedisTimeout(redis.get(redisKey(projectId)), "get sandboxId");
   } catch (err) {
-    if (err instanceof RedisTimeoutError) {
-      // Treat as a cache miss: the caller cold-starts a fresh sandbox, which
-      // is strictly better than hanging. Any orphaned sandbox is bounded by
-      // its own SANDBOX_TIMEOUT_MS lifetime.
-      logger.warn({ projectId, err }, "[e2b] Redis read timed out — treating as no cached sandbox");
-      return null;
-    }
-    logger.error({ projectId, err }, "[e2b] Failed to read sandboxId from Redis");
-    throw err;
+    // Treat any failure as a cache miss: the caller cold-starts a fresh
+    // sandbox, which is strictly better than hanging or failing. Any orphaned
+    // sandbox is bounded by its own SANDBOX_TIMEOUT_MS lifetime.
+    logger.warn({ projectId, err }, "[e2b] Redis read failed — treating as no cached sandbox");
+    return null;
   }
 }
 
@@ -743,12 +738,9 @@ async function deleteSandboxId(projectId: string): Promise<void> {
     await withRedisTimeout(redis.del(redisKey(projectId)), "del sandboxId");
     await withRedisTimeout(redis.del(frameworkRedisKey(projectId)), "del framework");
   } catch (err) {
-    if (err instanceof RedisTimeoutError) {
-      logger.warn({ projectId, err }, "[e2b] Redis delete timed out — stale record left to expire via TTL");
-      return;
-    }
-    logger.error({ projectId, err }, "[e2b] Failed to delete sandboxId from Redis");
-    throw err;
+    // Same reasoning: the record carries a TTL, so a failed delete expires on
+    // its own. Nothing here is worth propagating to a caller.
+    logger.warn({ projectId, err }, "[e2b] Redis delete failed — stale record left to expire via TTL");
   }
 }
 
