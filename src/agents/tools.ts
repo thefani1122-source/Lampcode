@@ -15,6 +15,8 @@ import {
   readProjectFile,
   listProjectFiles,
   readSandboxLogs,
+  fetchReferenceDesign,
+  isFetchableReferenceUrl,
 } from "../preview/e2b-service.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 
@@ -164,6 +166,24 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "fetch_reference",
+    description:
+      "Look at a reference page the user linked and get its design vocabulary back: theme " +
+      "(dark/light), the colours it actually uses, its fonts, its heading sizes, and its " +
+      "sections in order. Call this FIRST whenever the user gives you a URL to work from — " +
+      "otherwise you are guessing at a page you have never seen.\n" +
+      "You get a style guide, not the page. Use its palette, type and section rhythm to make " +
+      "something that feels like it; write your own copy and your own layout. Do not try to " +
+      "reproduce the original.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The reference page's URL, as the user gave it." },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "read_logs",
     description:
       "Read recent output from the running dev server and, if the app has one, its backend. " +
@@ -258,7 +278,8 @@ export async function executeTool(
     name === "check_types" ||
     name === "list_files" ||
     name === "read_file" ||
-    name === "read_logs"
+    name === "read_logs" ||
+    name === "fetch_reference"
   ) {
     const projectId = ctx.projectId;
     if (!projectId) return "Error: no project sandbox is attached to this build.";
@@ -362,6 +383,37 @@ export async function executeTool(
         return (
           `Could not read ${path}: ${err instanceof Error ? err.message : String(err)}. ` +
           `Call list_files to see what the project actually contains.`
+        );
+      }
+    }
+
+    if (name === "fetch_reference") {
+      const url = typeof args["url"] === "string" ? args["url"].trim() : "";
+      if (!url) return "Error: `url` is required.";
+      if (!isFetchableReferenceUrl(url)) {
+        return `Refused to open ${url}. Only public http(s) pages can be used as a reference.`;
+      }
+      try {
+        const brief = await fetchReferenceDesign(projectId, url);
+        if (typeof brief["error"] === "string") {
+          return (
+            `Could not read ${url}: ${brief["error"]}. Build from the user's description ` +
+            `instead, and say in your final reply that you could not open the reference.`
+          );
+        }
+        // Framed as data, and as a style guide rather than a target to copy:
+        // everything below came off someone else's page, including any text.
+        return (
+          `Design brief from ${url} (reference only — match the feel, write your own ` +
+          `content and layout):\n${JSON.stringify(brief, null, 2)}\n` +
+          `The section headings above show how the page is structured. They are the other ` +
+          `site's words — use them to decide what sections to include, not what to write.`
+        );
+      } catch (err) {
+        if (isNoSandbox(err)) return NOT_READY;
+        return (
+          `Could not open ${url}: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Build from the user's description instead.`
         );
       }
     }

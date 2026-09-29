@@ -527,6 +527,134 @@ async function installExtraDependencies(
 }
 
 /**
+ * Runs inside the reference page. Kept as a source string because it is
+ * serialised into a script that executes in the sandbox, not here.
+ *
+ * Verified against a realistic dark agency page before shipping: it recovered
+ * the accent colour, both font families, the 76/42/22/17 type scale and the
+ * section order — which is the whole vocabulary a "make it feel like this"
+ * request actually needs.
+ */
+const PAGE_EXTRACTOR = `() => {
+  const rgb = (s) => {
+    const m = /rgba?\\(([\\d.]+),\\s*([\\d.]+),\\s*([\\d.]+)(?:,\\s*([\\d.]+))?\\)/.exec(s || "");
+    if (!m) return null;
+    if (m[4] !== undefined && parseFloat(m[4]) < 0.5) return null;   // ~transparent
+    return [ +m[1], +m[2], +m[3] ];
+  };
+  const hex = (c) => "#" + c.map((n) => Math.round(n).toString(16).padStart(2, "0")).join("");
+  const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  const bgCount = new Map(), fgCount = new Map(), fonts = new Set();
+  let sampled = 0;
+  for (const el of document.querySelectorAll("body *")) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) continue;          // spacers and hidden nodes
+    if (sampled++ > 1500) break;                        // cap work on huge pages
+    const cs = getComputedStyle(el);
+    if (cs.visibility === "hidden" || cs.display === "none") continue;
+    const bg = rgb(cs.backgroundColor);
+    // Area-weighted: a full-bleed section should outrank a hundred small chips.
+    if (bg) bgCount.set(hex(bg), (bgCount.get(hex(bg)) ?? 0) + Math.min(r.width * r.height, 2000000));
+    const fg = rgb(cs.color);
+    if (fg && el.textContent && el.textContent.trim().length > 1) {
+      fgCount.set(hex(fg), (fgCount.get(hex(fg)) ?? 0) + 1);
+    }
+    const fam = (cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim();
+    if (fam) fonts.add(fam);
+  }
+  const top = (m, n) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k);
+  const headings = [];
+  for (const h of document.querySelectorAll("h1, h2, h3")) {
+    const t = (h.textContent || "").trim().replace(/\\s+/g, " ");
+    if (t && t.length < 90) headings.push(h.tagName.toLowerCase() + ": " + t);
+    if (headings.length >= 24) break;
+  }
+  const sizeOf = (s) => {
+    const el = document.querySelector(s);
+    return el ? Math.round(parseFloat(getComputedStyle(el).fontSize)) : null;
+  };
+  const bodyBg = rgb(getComputedStyle(document.body).backgroundColor) ?? [255,255,255];
+  return {
+    title: (document.title || "").slice(0, 120),
+    theme: lum(bodyBg) < 0.5 ? "dark" : "light",
+    backgrounds: top(bgCount, 5),
+    textColors: top(fgCount, 5),
+    fonts: [...fonts].slice(0, 6),
+    typeScale: { h1: sizeOf("h1"), h2: sizeOf("h2"), h3: sizeOf("h3"), body: sizeOf("p") },
+    sections: headings,
+  };
+}`;
+
+/**
+ * Reject URLs a reference fetch has no business loading.
+ *
+ * The fetch runs in the sandbox, so our own network is already out of reach —
+ * but the sandbox can still reach its own localhost, where the generated app
+ * and its dev server live. Honest about its limit: this blocks literal
+ * internal addresses, not a public hostname that resolves to one.
+ */
+export function isFetchableReferenceUrl(raw: string): boolean {
+  let u: URL;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h === "::1") return false;
+  if (/^127\./.test(h) || /^0\./.test(h)) return false;
+  if (/^10\./.test(h) || /^192\.168\./.test(h)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  if (/^169\.254\./.test(h)) return false;              // cloud metadata
+  if (/^(fc|fd)[0-9a-f]{2}:/i.test(h)) return false;    // IPv6 unique-local
+  return true;
+}
+
+/**
+ * Load a reference page in the sandbox's headless browser and extract the
+ * design vocabulary from it — palette, fonts, type scale, section order.
+ *
+ * Deliberately returns a BRIEF, not the page. What makes something "feel like"
+ * a reference is colour, type and rhythm — not its copy, its images or its
+ * exact layout. Handing back page source would invite reproducing it, which is
+ * both a worse result and a problem for whoever's site is being cloned.
+ *
+ * Runs inside the sandbox rather than from this server, so a user-supplied URL
+ * never becomes an outbound request from our own process and cannot be aimed at
+ * anything on our network. The sandbox can still reach its own localhost, which
+ * is why the caller validates the URL before this is reached.
+ */
+export async function fetchReferenceDesign(
+  projectId: string,
+  url: string,
+): Promise<Record<string, unknown>> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) throw new Error("no live sandbox for this project");
+
+  const script = [
+    'import { chromium } from "playwright";',
+    'const b = await chromium.launch();',
+    'const p = await b.newPage({ viewport: { width: 1440, height: 900 } });',
+    'let out;',
+    'try {',
+    '  await p.goto(' + JSON.stringify(url) + ', { waitUntil: "domcontentloaded", timeout: 25000 });',
+    '  await p.waitForTimeout(2500);',
+    '  out = await p.evaluate(' + PAGE_EXTRACTOR + ');',
+    '} catch (e) {',
+    '  out = { error: String(e).slice(0, 200) };',
+    '}',
+    'await b.close();',
+    'process.stdout.write("JSON:" + JSON.stringify(out));',
+  ].join("\n");
+
+  await sandbox.files.write("/tmp/lampcode-ref.mjs", script);
+  const r = await sandbox.commands.run(
+    "cd /home/user/.lampcode-tools && node /tmp/lampcode-ref.mjs",
+    { timeoutMs: 60_000 },
+  );
+  const marker = r.stdout.indexOf("JSON:");
+  if (marker === -1) throw new Error("the reference page could not be read");
+  return JSON.parse(r.stdout.slice(marker + 5).trim()) as Record<string, unknown>;
+}
+
+/**
  * Whether the template owns this path, so a generated copy of it is discarded
  * on the way into the sandbox. Exported because callers outside this module
  * need to know a rewrite of such a file can never take effect — asking a model
