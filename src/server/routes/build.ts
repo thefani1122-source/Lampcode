@@ -1951,7 +1951,31 @@ export async function runFastBuild(
     // replaced the whole file — I need to restore the full App.tsx…" instead of
     // describing the app. The last round is the model's actual closing reply.
     // Identical to `content` on a single-round dispatch.
-    const buildSummary = extractBuildSummary(result.finalContent || result.content);
+    let buildSummary = extractBuildSummary(result.finalContent || result.content);
+
+    // The loop can stop because the model finished, or because it ran out of
+    // turns mid-task. Those are completely different outcomes and looked
+    // identical to the user: a fullstack build was cut at turn 12 while still
+    // retrying a page check, and the chat showed its half-finished sentence
+    // ("Backend is up on :3001 now. Retrying the page check:") as if that were
+    // the summary. The files are real and the app runs, but nothing after the
+    // cut was verified — so say so rather than letting it read as complete.
+    if (result.turnsExhausted) {
+      logger.warn(
+        { sessionId, projectId, files: writtenPaths.length },
+        "Agentic loop hit the turn cap while still working — build delivered unverified",
+      );
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message:
+          "This build used up its allowed steps before the AI finished checking its work. " +
+          "What it wrote is here and should run, but the last changes weren't verified — " +
+          "send a follow-up message if something looks wrong.",
+      });
+      buildSummary =
+        (buildSummary ? buildSummary + "\n\n" : "") +
+        "Note: I ran out of steps before I could finish verifying this — tell me if anything is off.";
+    }
 
     server?.buildComplete(sessionId, {
       sessionId,

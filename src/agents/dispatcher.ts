@@ -118,6 +118,12 @@ export interface DispatchResult {
   modelUsed: string;
   tierUsed: number;
   content: string;
+  /** True when the tool loop stopped because it ran out of turns while the
+   *  model was still working — as opposed to the model declaring itself done.
+   *  The files written so far are real and usable, but nothing was verified
+   *  after the cut and there is no closing summary, so the caller must not
+   *  present the build as finished. */
+  turnsExhausted: boolean;
   /** Just the LAST round's text. `content` is every round concatenated, which
    *  is what the fence-parsing fallback needs but is wrong for anything shown
    *  to the user: in an agentic build the early rounds are the model talking to
@@ -430,6 +436,7 @@ export class AgentDispatcher {
     // before this loop existed.
     let fullContent = "";
     let lastRoundContent = "";
+    let turnsExhausted = false;
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -526,6 +533,7 @@ export class AgentDispatcher {
         // Used the last allowed round and still wants more — stop instead of
         // executing/continuing, same "surface it, don't loop forever" pattern
         // every other bounded fix loop in this codebase already uses.
+        turnsExhausted = true;
         logger.warn({ sessionId, agentType, round }, "Tool loop: max round-trips reached — proceeding with partial context");
         break;
       }
@@ -631,6 +639,7 @@ export class AgentDispatcher {
       tierUsed: tier,
       content: fullContent,
       finalContent: lastRoundContent,
+      turnsExhausted,
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
