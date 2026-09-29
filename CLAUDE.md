@@ -186,6 +186,44 @@ declares "done" on a broken app) because it sits outside the agent's control. No
 the site is a community site with no published pricing, and its two doc pages disagree on the
 request shape. Revisit after the harness is running and false "done" rates can be measured.
 
+## Redis lives in a DIFFERENT Railway project — and was dead for two months
+`REDIS_URL` points at the `Redis` service in the **`honest-endurance`** project, not
+`steadfast-encouragement` where Lampcode runs. Cross-project traffic cannot use Railway private
+networking, so it goes over the public TCP proxy (`ballast.proxy.rlwy.net`). If you are looking
+for a Redis service next to Lampcode, there isn't one.
+
+**That service's only deployment sat `REMOVED` from 2026-08-05 until it was redeployed on
+2026-09-29.** The proxy accepted each connection and reset it, so the log showed
+`connected` → `ECONNRESET` every 30 s — which read as background chatter, not as an outage.
+Check `latestDeployment` on the Redis service before trusting anything Redis-backed.
+
+What a dead Redis silently costs here, since none of it announces itself:
+- **Rate limiting is entirely off** (`rate-limit.ts` fails open after 200 ms). Not urgent while
+  `WAITLIST_MODE` is on, but **must be verified working before launch**.
+- **Sandbox IDs do not persist**, so every Railway restart orphans every paused sandbox and the
+  next open cold-starts. This is the `"sandbox not persisted"` warning.
+- **Build events are not buffered**, so a client that refreshes mid-build replays nothing.
+
+**`enableOfflineQueue: false` is deliberate** (`src/lib/redis.ts`). With it on, `maxRetriesPerRequest: null`
+means commands issued while Redis is down queue forever and are never flushed with an error —
+measured: 200 buffered build events left 800 commands resident and produced **zero** rejections,
+so every `.catch()` in the app was dead code. The trade-off is that the **first command after
+process start always rejects** ("Stream isn't writeable") because the socket hasn't opened yet;
+eager connect does not avoid this. Every Redis call site must therefore degrade on *any* error,
+not just `RedisTimeoutError` — three of them re-threw and would have failed builds.
+
+## Sandbox-side scripts must live in `/home/user/.lampcode-tools`
+Playwright is installed there, in its own `node_modules`, deliberately outside the generated
+app's dependency tree (`template.ts`). Node resolves a bare specifier like `"playwright"`
+relative to **the importing file**, never the process working directory — so a script written to
+`/tmp` dies with `ERR_MODULE_NOT_FOUND` no matter what you `cd` into first.
+
+`fetchReferenceDesign` and `capturePreviewScreenshot` both did exactly that (`cd
+/home/user/.lampcode-tools && node /tmp/lampcode-*.mjs`), which means **`fetch_reference` and
+the preview thumbnail never worked once** — not flaky, impossible. Fixed 2026-09-29 by writing
+the scripts into `TOOLS_DIR`. `check-render.mjs` was always baked at the right path, so
+`check_page`'s failures are a *different* problem and are still undiagnosed.
+
 ## Things that will bite you
 1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are both
    legacy. The live template is built from `e2b-template/template.ts` via

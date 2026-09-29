@@ -18,6 +18,13 @@ import type { FullstackFramework } from "../agents/prompt-builder.js";
 export type PreviewLogCallback = (line: string) => void;
 
 const PROJECT_DIR = "/home/user/app";
+// Internal tooling, with its own node_modules holding playwright (template.ts).
+// Any script that imports from it MUST be written INTO this directory: Node
+// resolves a bare specifier like "playwright" relative to the importing FILE,
+// not the process working directory, so a script left in /tmp fails with
+// ERR_MODULE_NOT_FOUND however we cd beforehand. Verified — it is why
+// fetch_reference and the preview thumbnail never once worked.
+const TOOLS_DIR = "/home/user/.lampcode-tools";
 // Sandbox lifetime per session. Set on create AND resume, and refreshed every
 // build turn (heartbeat). Generous so an active testing session never expires
 // mid-use; idle sandboxes are paused on WS disconnect well before this.
@@ -644,9 +651,9 @@ export async function fetchReferenceDesign(
     'process.stdout.write("JSON:" + JSON.stringify(out));',
   ].join("\n");
 
-  await sandbox.files.write("/tmp/lampcode-ref.mjs", script);
+  await sandbox.files.write(`${TOOLS_DIR}/lampcode-ref.mjs`, script);
   const r = await sandbox.commands.run(
-    "cd /home/user/.lampcode-tools && node /tmp/lampcode-ref.mjs",
+    `node ${TOOLS_DIR}/lampcode-ref.mjs`,
     { timeoutMs: 60_000 },
   );
   const marker = r.stdout.indexOf("JSON:");
@@ -1642,9 +1649,9 @@ process.stdout.write("B64:" + buf.toString("base64"));
 `;
 
   try {
-    await sandbox.files.write("/tmp/lampcode-shot.mjs", script);
+    await sandbox.files.write(`${TOOLS_DIR}/lampcode-shot.mjs`, script);
     const r = await sandbox.commands.run(
-      "cd /home/user/.lampcode-tools && node /tmp/lampcode-shot.mjs",
+      `node ${TOOLS_DIR}/lampcode-shot.mjs`,
       { timeoutMs: 45_000 },
     );
     const marker = r.stdout.indexOf("B64:");
