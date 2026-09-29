@@ -113,9 +113,15 @@ export class WebSocketServer {
 
     // ── Redis adapter — required for multi-instance deployments ──────────────
     // Each call creates a dedicated connection; ioredis handles reconnection.
+    // These two MUST keep ioredis's offline queue, unlike every other client in
+    // the app. RedisAdapter's constructor calls subClient.psubscribe() straight
+    // away, before the socket has finished opening, and does not handle the
+    // resulting promise — with the queue disabled that rejection is unhandled
+    // and takes the process down on boot, in a restart loop. Queueing that one
+    // subscribe until the connection is up is exactly what the queue is for.
     try {
-      const pubClient = createRedis();
-      const subClient = createRedis();
+      const pubClient = createRedis({ enableOfflineQueue: true });
+      const subClient = createRedis({ enableOfflineQueue: true });
       this.io.adapter(createAdapter(pubClient, subClient));
       logger.info("Socket.IO Redis adapter attached");
     } catch (err) {
