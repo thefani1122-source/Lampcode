@@ -25,6 +25,12 @@ const PROJECT_DIR = "/home/user/app";
 // ERR_MODULE_NOT_FOUND however we cd beforehand. Verified — it is why
 // fetch_reference and the preview thumbnail never once worked.
 const TOOLS_DIR = "/home/user/.lampcode-tools";
+// Where the template installed Chromium. playwright otherwise resolves it from
+// the running user's home, and the image is built as root but run as `user`, so
+// the default lands the binary somewhere the sandbox cannot see. template.ts
+// sets the same value as a Docker ENV; prefixing it on the command too means
+// this does not depend on that ENV surviving into E2B's runtime.
+const TOOLS_ENV = `PLAYWRIGHT_BROWSERS_PATH=${TOOLS_DIR}/browsers`;
 // Sandbox lifetime per session. Set on create AND resume, and refreshed every
 // build turn (heartbeat). Generous so an active testing session never expires
 // mid-use; idle sandboxes are paused on WS disconnect well before this.
@@ -653,7 +659,7 @@ export async function fetchReferenceDesign(
 
   await sandbox.files.write(`${TOOLS_DIR}/lampcode-ref.mjs`, script);
   const r = await sandbox.commands.run(
-    `node ${TOOLS_DIR}/lampcode-ref.mjs`,
+    `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-ref.mjs`,
     { timeoutMs: 60_000 },
   );
   const marker = r.stdout.indexOf("JSON:");
@@ -1128,7 +1134,7 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
   let stdout = "";
   try {
     const r = await sandbox.commands.run(
-      "node /home/user/.lampcode-tools/check-render.mjs http://localhost:5173",
+      `${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://localhost:5173`,
       { timeoutMs: 30_000 },
     );
     stdout = r.stdout;
@@ -1651,7 +1657,7 @@ process.stdout.write("B64:" + buf.toString("base64"));
   try {
     await sandbox.files.write(`${TOOLS_DIR}/lampcode-shot.mjs`, script);
     const r = await sandbox.commands.run(
-      `node ${TOOLS_DIR}/lampcode-shot.mjs`,
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-shot.mjs`,
       { timeoutMs: 45_000 },
     );
     const marker = r.stdout.indexOf("B64:");

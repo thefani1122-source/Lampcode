@@ -371,9 +371,20 @@ const dockerfile = [
   // taking the whole && chain with it. That failed every template build since
   // this step was added on 2026-09-09 — so playwright and check-render.mjs
   // never reached the image, and check_page could never have worked.
+  //
+  // PLAYWRIGHT_BROWSERS_PATH is set because the image is BUILT as root but RUN
+  // as `user`, and playwright resolves its browser directory from the running
+  // user's home. Left at the default, chromium downloads into /root/.cache and
+  // check_page dies at launch with "Executable doesn't exist at
+  // /home/user/.cache/ms-playwright/..." — confirmed in a live sandbox, with
+  // playwright and check-render.mjs both present and correct. The path is
+  // repeated on the commands in e2b-service.ts, so this does not depend on
+  // Docker ENV surviving into E2B's runtime.
   'WORKDIR /home/user/.lampcode-tools',
   writeFile('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
-  'RUN npm install playwright && npx playwright install --with-deps chromium',
+  'ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
+  'RUN npm install playwright && npx playwright install --with-deps chromium ' +
+    '&& chown -R user:user /home/user/.lampcode-tools',
   writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
   'WORKDIR /home/user/app',
 ].join('\n')
