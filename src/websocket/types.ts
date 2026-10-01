@@ -163,6 +163,9 @@ export interface BuildClientEvents {
   join_session: (sessionId: string, ack: (joined: boolean) => void) => void;
   leave_session: (sessionId: string) => void;
   "build:write_action_decision": (payload: { toolCallId: string; sessionId: string; approved: boolean }) => void;
+  /** User asked to rebuild a preview whose sandbox E2B has reclaimed. Answered
+   *  with build:preview_url on success, or build:preview_failed with a reason. */
+  "build:restore_preview": (payload: { sessionId?: string }) => void;
 }
 
 // ── Project namespace events ──────────────────────────────────────────────────

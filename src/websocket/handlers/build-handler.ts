@@ -4,7 +4,7 @@ import { logger } from "../../server/logger.js";
 import { createRedis } from "../../lib/redis.js";
 import { db } from "../../db/client.js";
 import { buildSessions } from "../../db/schema.js";
-import { pauseSandbox, ensurePreviewForProject } from "../../preview/e2b-service.js";
+import { pauseSandbox, ensurePreviewForProject, restorePreviewForProject } from "../../preview/e2b-service.js";
 
 const redis = createRedis();
 import {
@@ -132,12 +132,70 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
         emitRaw("build:preview_log", { sessionId, line }),
       )
         .then((url) => {
-          if (url) emitRaw("build:preview_url", { sessionId, url });
+          if (url) {
+            emitRaw("build:preview_url", { sessionId, url });
+            return;
+          }
+          // Resume is deliberately resume-only, and E2B reclaims a sandbox
+          // after a while — so this is the ordinary case for anyone who closes
+          // the tab and comes back, not an error. Saying nothing left the
+          // client on a dead pane reporting that no preview URL was returned.
+          // Offer the restore instead; rebuilding costs a fresh sandbox, so it
+          // waits for the user to ask.
+          logger.info({ projectId, sessionId }, "resume-on-open: nothing to resume — offering restore");
+          emitRaw("build:preview_expired", {
+            sessionId,
+            projectId,
+            message: "The preview sandbox has expired. Restore it to run this project again.",
+          });
         })
         .catch((err) => {
           logger.warn({ projectId, sessionId, err }, "resume-on-open failed");
+          emitRaw("build:preview_expired", {
+            sessionId,
+            projectId,
+            message: "The preview could not be resumed. Restore it to run this project again.",
+          });
         });
     };
+
+    // Rebuild the preview from stored files, on the user's explicit request —
+    // see restorePreviewForProject for why this is not done automatically.
+    // Ownership: the socket must already be in the session's room, which it
+    // only joins after verifySessionOwner passes.
+    socket.on("build:restore_preview", (payload: { sessionId?: string }) => {
+      const sid = typeof payload?.sessionId === "string" ? payload.sessionId : activeSessionId;
+      const emitRaw = socket.emit.bind(socket) as (event: string, data: unknown) => boolean;
+      if (!sid || !socket.rooms.has(SESSION_ROOM(sid))) {
+        logger.warn({ socketId: socket.id, userId, sid }, "restore_preview rejected — socket not in session room");
+        return;
+      }
+      void (async () => {
+        const projectId = await resolveProjectId(sid);
+        if (!projectId) {
+          emitRaw("build:preview_failed", { sessionId: sid, message: "This session has no project to restore." });
+          return;
+        }
+        try {
+          const url = await restorePreviewForProject(projectId, (line) =>
+            emitRaw("build:preview_log", { sessionId: sid, line }),
+          );
+          if (url) emitRaw("build:preview_url", { sessionId: sid, url });
+          else {
+            emitRaw("build:preview_failed", {
+              sessionId: sid,
+              message: "This project has no saved files to restore from.",
+            });
+          }
+        } catch (err) {
+          logger.warn({ projectId, sessionId: sid, err }, "restore_preview failed");
+          emitRaw("build:preview_failed", {
+            sessionId: sid,
+            message: err instanceof Error ? err.message : "The preview could not be restored.",
+          });
+        }
+      })();
+    });
 
     // Auto-join session room if sessionId provided in handshake query (Step 1)
     const querySid = socket.handshake.query["sessionId"];

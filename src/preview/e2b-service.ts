@@ -2,6 +2,7 @@ import { Sandbox, CommandExitError } from "e2b";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
+import { downloadProjectFiles } from "../storage/project-files.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
 
 /**
@@ -1441,6 +1442,50 @@ export async function writeFilesToSandbox(
  * is nothing to resume (no prior build, or the snapshot expired) so the caller
  * simply leaves the preview as-is until the next build.
  */
+/**
+ * Bring a project's preview back when there is nothing left to resume.
+ *
+ * ensurePreviewForProject is resume-only by design and returns null once E2B
+ * has reclaimed the sandbox — which is what a user hits whenever they close
+ * the tab and come back later. Nothing downstream distinguished that from "no
+ * preview exists", so the client was left on a dead pane with no explanation.
+ *
+ * This rebuilds from the files already in storage: a cold sandbox written with
+ * the project as it was last saved. Deliberately NOT called on open — it costs
+ * a fresh sandbox every time, so it runs only when the user asks for it.
+ *
+ * Returns null if the project has no stored files, i.e. there is genuinely
+ * nothing to restore, which the caller should say rather than retry.
+ */
+export async function restorePreviewForProject(
+  projectId: string,
+  onLog?: PreviewLogCallback,
+): Promise<string | null> {
+  if (!config.E2B_API_KEY) return null;
+
+  // A sandbox that is still alive or still resumable beats rebuilding one.
+  const existing = await ensurePreviewForProject(projectId, onLog);
+  if (existing) return existing;
+
+  let files: Record<string, string>;
+  try {
+    files = await downloadProjectFiles(projectId);
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] restore: could not read stored project files");
+    throw new Error("the saved project files could not be read");
+  }
+
+  const count = Object.keys(files).length;
+  if (count === 0) {
+    logger.info({ projectId }, "[e2b] restore: project has no stored files");
+    return null;
+  }
+
+  onLog?.(`Restoring preview from ${count} saved file(s)...`);
+  logger.info({ projectId, count }, "[e2b] restore: rebuilding sandbox from stored files");
+  return await writeFilesToSandbox(projectId, files, onLog);
+}
+
 export async function ensurePreviewForProject(
   projectId: string,
   onLog?: PreviewLogCallback,
