@@ -121,6 +121,41 @@ pre-launch), and the frontend shows a thank-you page instead of the product. Adm
 frontend gate via `VITE_ADMIN_EMAILS` (mirrors backend `ADMIN_EMAILS`). Set
 `WAITLIST_MODE=false` + `VITE_WAITLIST_MODE=false` to open the product.
 
+## 2026-10-01 — first build where the agent could actually SEE its own page
+Everything below this heading (from 09-28) was measured while `check_page` was structurally
+incapable of working — see the three sandbox-browser bugs further down. This is the first run
+with it genuinely functioning.
+
+Prompt: "Atlas", a 4-view client/project tracker (dashboard + KPI cards + revenue chart,
+searchable client table with detail panel, drag-and-drop kanban, settings), localStorage
+persistence, validation, empty states, Escape-to-close, responsive to 390px.
+
+| | |
+|---|---|
+| rounds | **8**, ended `stopReason=end_turn` — the model stopped on its own |
+| turn cap | not reached (raised to 40 for this test) |
+| cost guard | not reached ($0.84 of $3.00; raised from $1.00 beforehand) |
+| wall clock | 2 min 41 s |
+| files | **1** |
+| creditsUsed | 841 |
+
+Round 4→5 took 51 s and 5→6 took 70 s — the model wrote the app, looked at it, and repaired.
+It reported "Atlas is built and rendering cleanly", and the delivered app matched the brief.
+
+**The HMR filter is confirmed in production.** The previous build ended with
+`Browser render issue — dispatching fix` over Vite's websocket noise; this one did not fire it
+at all.
+
+**Open quality problem: the model puts the whole app in ONE file.** Four views, kanban, chart
+and settings all landed in `App.tsx`. It works, but a follow-up edit then has to rewrite the
+entire app every time, and one bad line takes down everything. Not yet addressed — it needs
+either a prompt instruction to split into components or a rule in `prompt-builder.ts`.
+
+**Cost note:** 841 credits is 2.5× the small build on the same day (325). The old
+`MAX_BUILD_COST_USD=1.0` would have cleared this by $0.16 and cut anything larger. Our
+reckoning still overstates agentic builds (cached tokens, below), so the real figure is lower —
+but it remains unmeasured.
+
 ## THE HARNESS WORKS — measured on real builds, 2026-09-28
 Two clean agentic builds on Kimi K3 via the Modal shared endpoint, with
 `AGENTIC_BUILD_ENABLED=true` and `LLM_PROVIDER_MODE=openai`:
