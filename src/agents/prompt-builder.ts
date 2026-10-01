@@ -1625,6 +1625,12 @@ export class PromptBuilder {
         "2. Write the files you need. On an existing project write ONLY the files you are " +
         "changing — anything you don't write is left exactly as it is, which is what you " +
         "want. Do not re-emit the whole project to change one thing.\n" +
+        "   Split the app across files the way you would in a real project. Anything with " +
+        "more than one screen gets a file per screen under src/components/ or src/views/, " +
+        "with shared types and seed data in their own modules, and src/App.tsx left as " +
+        "routing and layout. A single file holding every screen still renders, but every " +
+        "later edit then has to rewrite the whole app, and one bad line takes all of it " +
+        "down. Keep a file you would be willing to open again.\n" +
         "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
