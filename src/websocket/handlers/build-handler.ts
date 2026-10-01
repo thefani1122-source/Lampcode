@@ -6,6 +6,7 @@ import { db } from "../../db/client.js";
 import { buildSessions } from "../../db/schema.js";
 import { pauseSandbox, ensurePreviewForProject, restorePreviewForProject } from "../../preview/e2b-service.js";
 import { downloadProjectFiles } from "../../storage/project-files.js";
+import { loadMessages } from "../message-recorder.js";
 
 const redis = createRedis();
 import {
@@ -135,24 +136,70 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
   }
   if (!row) return;
 
+  // session_status is: running, paused, completed, failed, cancelled, success.
+  // "running" and "paused" are left alone — a build still in flight sends its
+  // own events, and guessing would contradict them.
+  const failed = row.status === "failed" || row.status === "cancelled";
+  const finished = row.status === "success" || row.status === "completed";
+  if (!failed && !finished) return;
+
   const emitRaw = socket.emit.bind(socket) as (event: string, data: unknown) => boolean;
 
-  // session_status is: running, paused, completed, failed, cancelled, success.
-  // "running" and "paused" are not settled here — a build still in flight will
-  // send its own events, and guessing at it would contradict them.
-  if (row.status === "failed" || row.status === "cancelled") {
+  // The stored conversation, rendered back through the same events that drew
+  // it the first time. The rows are semantic messages, so nothing here can
+  // replay something that has since stopped being true — notably a preview
+  // URL, which is resolved from the live sandbox instead.
+  let history: Awaited<ReturnType<typeof loadMessages>> = [];
+  try {
+    history = await loadMessages(sessionId);
+  } catch (err) {
+    logger.warn({ sessionId, err }, "Could not load stored messages for a replayed view");
+  }
+
+  // Tells the client these are stored messages, not live ones, so it replaces
+  // whatever it restored from its own sessionStorage snapshot instead of
+  // appending to it. Without this, a tab left open past the Redis buffer's
+  // hour and then refreshed would show the whole conversation twice.
+  emitRaw("build:history", { sessionId, count: history.length });
+
+  let summary = "";
+  let hint: string | undefined;
+  for (const m of history) {
+    switch (m.role) {
+      case "user":
+        emitRaw("build:prompt", { sessionId, text: m.content });
+        break;
+      case "thinking":
+        emitRaw("build:thinking", { sessionId, text: m.content });
+        break;
+      case "tool":
+        // Two events: one opens the line, the other marks it finished, which
+        // is how the chat draws a completed tool call.
+        emitRaw("build:tool_call", { sessionId, tool: m.content });
+        emitRaw("build:tool_result", { sessionId, tool: m.content });
+        break;
+      case "assistant":
+        // Held back: it belongs to build:complete, which must come last
+        // because the client stops accepting chat events once it arrives.
+        summary = m.content;
+        hint = typeof m.metadata["hint"] === "string" ? (m.metadata["hint"] as string) : undefined;
+        break;
+      case "error":
+        emitRaw("build:error", { sessionId, message: m.content });
+        break;
+    }
+  }
+
+  if (failed) {
     emitRaw("build:failed", {
       sessionId,
       error:
         row.error ??
-        (row.status === "cancelled"
-          ? "This build was cancelled."
-          : "This build failed. Run it again to try once more."),
+        (row.status === "cancelled" ? "This build was cancelled." : "This build failed. Run it again to try once more."),
     });
-    logger.info({ sessionId, status: row.status }, "Settled a replayed view from the session row");
+    logger.info({ sessionId, status: row.status, messages: history.length }, "Replayed a finished session");
     return;
   }
-  if (row.status !== "success" && row.status !== "completed") return;
 
   let files: Record<string, string> = {};
   try {
@@ -161,16 +208,22 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
     logger.warn({ sessionId, err }, "Could not load stored files while settling a replayed view");
   }
 
-  const count = Object.keys(files).length;
   emitRaw("build:complete", {
     sessionId,
     files,
-    totalFiles: count,
+    totalFiles: Object.keys(files).length,
+    // Only invented when the session predates stored history; otherwise the
+    // model's own words are what the person reads back.
     summary:
-      "This build finished earlier, so the live log for it is no longer available. " +
-      "The project and its files are here, and you can carry on from where you left off.",
+      summary ||
+      "This build finished before its conversation was being saved, so the log for it is gone. " +
+        "The project and its files are here, and you can carry on from where you left off.",
+    hint,
   });
-  logger.info({ sessionId, files: count }, "Settled a replayed view from the session row");
+  logger.info(
+    { sessionId, messages: history.length, files: Object.keys(files).length },
+    "Replayed a finished session",
+  );
 }
 
 export function registerBuildHandlers(nsp: BuildNamespace): void {

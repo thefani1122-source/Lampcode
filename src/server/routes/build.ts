@@ -33,6 +33,7 @@ import { getWebSocketServer } from "../../websocket/server.js";
 import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
+import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
@@ -1051,6 +1052,11 @@ export async function runFastBuild(
               "Always include src/App.tsx, src/index.tsx, and package.json.",
               "src/App.tsx must have `export default function App()`.",
             ];
+
+    // The person's own words, stored first so the history reads as a
+    // conversation rather than starting mid-reply. Nothing else records this:
+    // the chat shows it from a sessionStorage key that dies with the tab.
+    recordUserPrompt(sessionId, prompt);
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
     server?.thinking(sessionId, { text: `Building: ${prompt}`, sessionId });

@@ -741,3 +741,50 @@ export type UserBilling = typeof userBilling.$inferSelect;
 export type BillingPlan = (typeof billingPlanEnum.enumValues)[number];
 export type UsageCategory = (typeof usageCategoryEnum.enumValues)[number];
 export type EnvEnvironment = (typeof envEnvironmentEnum.enumValues)[number];
+
+// ── Build chat history ──────────────────────────────────────────────────────
+// The conversation was only ever in two places: React state, and a Redis event
+// buffer with a one-hour TTL. sessionStorage made a refresh look like it
+// persisted, but closing the tab lost everything — reopening a project showed
+// an empty chat for work that had really happened.
+//
+// These rows are the durable record. Deliberately SEMANTIC messages rather
+// than an archive of socket events: an event log welds the schema to today's
+// wire protocol, and replaying it would also replay things that are wrong
+// later, like a preview URL pointing at a sandbox that no longer exists. The
+// live preview is resolved from the sandbox on open and never from here.
+export const buildMessageRoleEnum = pgEnum("build_message_role", [
+  "user",
+  "thinking",
+  "tool",
+  "assistant",
+  "error",
+]);
+
+export const buildMessages = pgTable(
+  "build_messages",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => buildSessions.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // Monotonic within a session: the order the user saw, independent of
+    // timestamp collisions between messages written in the same millisecond.
+    seq: integer("seq").notNull(),
+    role: buildMessageRoleEnum("role").notNull(),
+    content: text("content").notNull(),
+    // Role-specific extras the chat needs to render: a tool's name and whether
+    // it finished, a hint under an assistant summary.
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("build_messages_session_seq_idx").on(t.sessionId, t.seq)],
+);
+
+export const buildMessagesRelations = relations(buildMessages, ({ one }) => ({
+  session: one(buildSessions, { fields: [buildMessages.sessionId], references: [buildSessions.id] }),
+  project: one(projects, { fields: [buildMessages.projectId], references: [projects.id] }),
+}));

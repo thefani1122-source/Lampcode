@@ -4,6 +4,7 @@ import { type ServerType } from "@hono/node-server";
 import { config, ALLOWED_ORIGINS } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
+import { recordEvent } from "./message-recorder.js";
 import { type StreamChunk } from "../agents/model-gateway.js";
 
 interface StreamBroadcaster {
@@ -168,6 +169,16 @@ export class WebSocketServer {
   // Emit to a literal room name — used for bare sessionId rooms joined via 'join' event
   emitToRoom(room: string, event: string, data: Record<string, unknown>): void {
     this.io.to(room).emit(event, data);
+
+    // Durable chat history. The room IS the sessionId for build events, and
+    // every emitter funnels through here, so this is the one place that sees
+    // the whole conversation. Guarded because a build must not fail over its
+    // own transcript.
+    try {
+      recordEvent(room, event, data);
+    } catch (err) {
+      logger.warn({ room, event, err }, "Failed to record build message");
+    }
 
     // Buffer the event so a client that connects/refreshes AFTER it fired can
     // replay the build via build-handler.ts replayBuffer().
