@@ -184,8 +184,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 
 // ── Input schemas ─────────────────────────────────────────────────────────────
 
+// 4,000 characters turned out to be roughly 3,100 for the person typing: the
+// workspace composer appends SANDBOX_PREVIEW_CONSTRAINTS (~890 chars) and any
+// clarifying answers to every prompt before it is sent, and the limit applies
+// to the total. A detailed brief for an app — the thing this product is for —
+// goes past that easily, and the only signal was a 400.
+//
+// 16,000 characters is about 4,000 tokens, which is nothing beside the build
+// it starts, and spend is already bounded by the credit check and
+// MAX_BUILD_COST_USD rather than by how much someone typed.
+const MAX_PROMPT_CHARS = 16_000;
+
 const clarifyBodySchema = z.object({
-  prompt: z.string().min(1).max(4_000),
+  prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
   projectId: z.string().min(1),
 });
 
@@ -202,7 +213,7 @@ const fastBuildBodySchema = z.preprocess(
   },
   z.object({
     projectId: z.string().min(1),
-    prompt: z.string().min(1).max(4_000),
+    prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
     attachments: z.array(z.string()).max(10).optional(),
   }),
 );
