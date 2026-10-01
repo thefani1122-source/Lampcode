@@ -1516,21 +1516,40 @@ export class PromptBuilder {
       agentType === "frontend" &&
       task.description.startsWith("EXISTING PROJECT FILES:") &&
       !task.projectMemory;
-    const editModeInstruction = isEditMode
-      ? "\n\nEDIT MODE — You are modifying an existing app:\n" +
-        "- Preserve the existing design system, colors, and component patterns\n" +
-        "- Only change what the user explicitly asked for\n" +
-        "- Preserve all working functionality and state management\n" +
-        "- Do NOT redesign or restructure anything the user did not mention\n\n" +
-        "SURGICAL EDITS — use for small, targeted changes:\n" +
-        "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
-        "  // BEGIN_EDIT: [brief description of what changes]\n" +
-        "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
-        "  // END_EDIT\n" +
-        "The system will splice this in place of the matching section in the existing file.\n" +
-        "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
-        "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged."
-      : "";
+    const editModePreamble =
+      "\n\nEDIT MODE — You are modifying an existing app:\n" +
+      "- Preserve the existing design system, colors, and component patterns\n" +
+      "- Only change what the user explicitly asked for\n" +
+      "- Preserve all working functionality and state management\n" +
+      "- Do NOT redesign or restructure anything the user did not mention\n";
+
+    // BEGIN_EDIT/END_EDIT markers are a PIPELINE mechanism: file-parser.ts
+    // splices the marked block into the existing file. write_files does no
+    // such thing — it writes exactly what it is given — so offering markers to
+    // the harness tells the model to send a fragment that then REPLACES the
+    // whole file. On 2026-10-01 that turned a working App.tsx into a syntax
+    // error mid-edit; the model only recovered because check_page showed it the
+    // wreckage. Each path is told the truth about the one it is actually on.
+    const editModeInstruction = !isEditMode
+      ? ""
+      : task.agenticBuild === true
+        ? editModePreamble +
+          "\nWRITING CHANGES — write_files replaces each file ENTIRELY:\n" +
+          "Always send the COMPLETE file content, every line of it, including the parts you did\n" +
+          "not change. There is no patching, splicing or merging — whatever you send becomes the\n" +
+          "whole file, and anything you leave out is gone.\n" +
+          "Do NOT use // BEGIN_EDIT or // END_EDIT markers. Nothing will splice them, and a file\n" +
+          "containing them is rejected.\n" +
+          "Files you do not write are left untouched, so write only the files you actually change."
+        : editModePreamble +
+          "\nSURGICAL EDITS — use for small, targeted changes:\n" +
+          "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
+          "  // BEGIN_EDIT: [brief description of what changes]\n" +
+          "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
+          "  // END_EDIT\n" +
+          "The system will splice this in place of the matching section in the existing file.\n" +
+          "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
+          "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
 
     const jsonInstruction =
       JSON_OUTPUT_AGENTS.has(agentType) || task.outputFormat === "json"

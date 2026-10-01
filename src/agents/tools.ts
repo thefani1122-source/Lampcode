@@ -317,6 +317,26 @@ export async function executeTool(
       // and reported the animations as done — while the file was discarded on
       // the way in and the page never changed. Silent rejection is how an agent
       // ends up honestly describing work that does not exist.
+      // Refuse fragments carrying unresolved edit markers. Those belong to the
+      // pipeline, where file-parser.ts splices them into the existing file;
+      // here the content IS the file, so writing it destroys the real one. The
+      // prompt no longer offers markers on this path, but a model can still
+      // reach for them, and the cost of being wrong is a working app replaced
+      // by a syntax error. build.ts's validateAppTsx refuses the same thing on
+      // the pipeline side.
+      const marked = Object.keys(files).filter((p) =>
+        /\/\/\s*(BEGIN_EDIT|END_EDIT)\b/.test(files[p] ?? ""),
+      );
+      if (marked.length > 0) {
+        return (
+          `Nothing was written. ${marked.join(", ")} contained // BEGIN_EDIT or // END_EDIT ` +
+          `markers.\n` +
+          `write_files replaces a file entirely — nothing splices those markers, so writing a ` +
+          `fragment would destroy the rest of the file. Send the COMPLETE content of each file ` +
+          `you are changing, every line, including the parts you are not changing.`
+        );
+      }
+
       const refused = Object.keys(files).filter((p) => isTemplateOwnedFile(p));
       for (const p of refused) delete files[p];
       if (Object.keys(files).length === 0) {
