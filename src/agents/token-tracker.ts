@@ -6,7 +6,16 @@ import { logger } from "../server/logger.js";
 
 // ── Pricing table (USD per 1M tokens) ────────────────────────────────────────
 
-const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> = {
+// What a provider charges for a prompt token it served from cache, as a share
+// of its normal input rate. Anthropic reads cache at a tenth, and Kimi K3 is
+// $0.30 against $3.00 — the same tenth — so this is the rate to assume when a
+// model has no explicit entry.
+const CACHED_INPUT_RATIO = 0.1;
+
+const MODEL_PRICING: Record<
+  string,
+  { inputPerM: number; outputPerM: number; cachedInputPerM?: number }
+> = {
   // Claude 4.x
   "anthropic/claude-opus-4-6":   { inputPerM: 15.00, outputPerM: 75.00 },
   "anthropic/claude-sonnet-4-6": { inputPerM: 3.00,  outputPerM: 15.00 },
@@ -52,7 +61,8 @@ const MODEL_PRICING: Record<string, { inputPerM: number; outputPerM: number }> =
   "claude-haiku-4-5-20251001":   { inputPerM: 0.25,  outputPerM: 1.25  },
 };
 
-const DEFAULT_PRICING = { inputPerM: 1.00, outputPerM: 4.00 };
+const DEFAULT_PRICING: { inputPerM: number; outputPerM: number; cachedInputPerM?: number } =
+  { inputPerM: 1.00, outputPerM: 4.00 };
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
@@ -62,6 +72,8 @@ export interface TokenUsage {
   outputTokens: number;
   totalTokens: number;
   costUsd: number;
+  /** Part of inputTokens the provider served from its own cache. */
+  cachedInputTokens?: number;
 }
 
 export interface SessionUsage {
@@ -140,6 +152,9 @@ export class TokenTracker {
     model: string,
     inputTokens: number,
     outputTokens: number,
+    /** Prompt tokens the provider served from ITS cache, as reported in the
+     *  usage response. Counted inside inputTokens, billed far cheaper. */
+    cachedInputTokens = 0,
   ): TokenUsage {
     // Case-insensitive: model ids arrive from config and provider dashboards
     // with whatever casing they use there (e.g. "moonshotai/Kimi-K3"), and a
@@ -153,14 +168,25 @@ export class TokenTracker {
         "No pricing entry for this model — billing at DEFAULT_PRICING, which is a guess. Add it to MODEL_PRICING.",
       );
     }
+    // An agentic build resends the whole conversation every round, so most
+    // input tokens are a prefix the provider already has and charges a
+    // fraction for. Billing all of them at the full rate overstated a build by
+    // several times over — enough that a 14-round build was aborted at a $3
+    // "ceiling" it had probably not reached. Only tokens the provider itself
+    // reports as cached are discounted; anything unreported is billed in full.
+    const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
+    const fresh = inputTokens - cached;
+    const cachedPerM = pricing.cachedInputPerM ?? pricing.inputPerM * CACHED_INPUT_RATIO;
     const costUsd =
-      (inputTokens / 1_000_000) * pricing.inputPerM +
+      (fresh / 1_000_000) * pricing.inputPerM +
+      (cached / 1_000_000) * cachedPerM +
       (outputTokens / 1_000_000) * pricing.outputPerM;
 
     return {
       model,
       inputTokens,
       outputTokens,
+      cachedInputTokens: cached,
       totalTokens: inputTokens + outputTokens,
       costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, // 6 decimal places
     };

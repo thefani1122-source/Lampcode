@@ -438,6 +438,7 @@ export class AgentDispatcher {
     let lastRoundContent = "";
     let turnsExhausted = false;
     let totalInputTokens = 0;
+    let totalCachedInputTokens = 0;
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
@@ -497,6 +498,7 @@ export class AgentDispatcher {
       fullContent += streamResult.content;
       lastRoundContent = streamResult.content;
       totalInputTokens += streamResult.inputTokens;
+      totalCachedInputTokens += streamResult.cachedInputTokens;
       totalOutputTokens += streamResult.outputTokens;
       lastStopReason = streamResult.stopReason;
       allToolCalls.push(...streamResult.toolCalls);
@@ -515,7 +517,7 @@ export class AgentDispatcher {
           effectiveProvider === "modal"
             ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
             : model,
-          streamResult.inputTokens, streamResult.outputTokens,
+          streamResult.inputTokens, streamResult.outputTokens, streamResult.cachedInputTokens,
         ).costUsd;
         if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
           logger.warn(
@@ -625,7 +627,12 @@ export class AgentDispatcher {
       effectiveProvider === "modal"
         ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
         : model;
-    const usage = this.tracker.computeUsage(billingModel, totalInputTokens, totalOutputTokens);
+    const usage = this.tracker.computeUsage(
+      billingModel,
+      totalInputTokens,
+      totalOutputTokens,
+      totalCachedInputTokens,
+    );
     await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");
     });

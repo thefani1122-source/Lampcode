@@ -11,6 +11,8 @@ export type { StreamChunk }
 export interface StreamResult {
   content: string
   inputTokens: number
+  /** Part of inputTokens the provider served from its own cache. */
+  cachedInputTokens: number
   outputTokens: number
   stopReason?: string | undefined
   toolCalls: Array<{ id: string; name: string; arguments: string }>
@@ -30,6 +32,7 @@ export async function handleAgentStream(
   const { sessionId, agentType, taskId, outputPath, wsServer } = opts
   let fullContent = ""
   let inputTokens = 0
+  let cachedInputTokens = 0
   let outputTokens = 0
   let stopReason: string | undefined
 
@@ -153,6 +156,7 @@ export async function handleAgentStream(
         case "usage":
           if (chunk.usage) {
             inputTokens = chunk.usage.promptTokens ?? 0
+            cachedInputTokens = chunk.usage.cachedPromptTokens ?? 0
             outputTokens = chunk.usage.completionTokens ?? 0
           }
           break
@@ -224,5 +228,5 @@ export async function handleAgentStream(
     // Emitting here too caused a duplicate event reaching the frontend.
   }
 
-  return { content: fullContent, inputTokens, outputTokens, stopReason, toolCalls, mcpToolCalls }
+  return { content: fullContent, inputTokens, cachedInputTokens, outputTokens, stopReason, toolCalls, mcpToolCalls }
 }

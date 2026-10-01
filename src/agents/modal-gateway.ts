@@ -45,7 +45,14 @@ interface OpenAiStreamChoice {
 
 interface OpenAiStreamEvent {
   choices?: OpenAiStreamChoice[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    // OpenAI-compatible providers report the part of the prompt they
+    // served from cache here. It was never read, so every resent round of
+    // an agentic build was billed as if it were new.
+    prompt_tokens_details?: { cached_tokens?: number } | null;
+  } | null;
 }
 
 // ── Message / tool translation ──────────────────────────────────────────────
@@ -227,6 +234,7 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
   let stopReason: string | undefined;
 
   const reader = response.body.getReader();
@@ -257,6 +265,8 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
         if (event.usage) {
           inputTokens = event.usage.prompt_tokens ?? inputTokens;
           outputTokens = event.usage.completion_tokens ?? outputTokens;
+          cachedInputTokens =
+            event.usage.prompt_tokens_details?.cached_tokens ?? cachedInputTokens;
         }
 
         const choice = event.choices?.[0];
@@ -305,6 +315,13 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   // on the wire are the stronger signal — believe those.
   const finalStopReason = emittedToolCall ? "tool_use" : toAnthropicStopReason(stopReason);
 
-  yield { type: "usage", usage: { promptTokens: inputTokens, completionTokens: outputTokens } };
+  yield {
+    type: "usage",
+    usage: {
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      cachedPromptTokens: cachedInputTokens,
+    },
+  };
   yield { type: "done", stopReason: finalStopReason };
 }

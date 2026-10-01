@@ -101,7 +101,14 @@ export interface StreamChunk {
   // Anthropic's docs: no interception point exists). This carries both the
   // request and its already-computed result for observability/logging only.
   mcpToolCall?: { id: string; name: string; serverName: string; input: unknown; result: string; isError: boolean } | undefined;
-  usage?: { promptTokens: number; completionTokens: number } | undefined;
+  usage?:
+    | {
+        promptTokens: number;
+        completionTokens: number;
+        /** Part of promptTokens the provider served from its own cache. */
+        cachedPromptTokens?: number;
+      }
+    | undefined;
   stopReason?: string | undefined;
 }
 
