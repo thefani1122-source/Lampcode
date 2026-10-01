@@ -1175,9 +1175,30 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
 
   if (parsed.ok) return { ok: true, issues: [] };
 
+  // Vite's HMR client is configured for the EXTERNAL e2b.app preview domain,
+  // but check-render.mjs opens the page on localhost INSIDE the sandbox, so its
+  // websocket is always refused there. It says nothing about the generated app,
+  // and on every build it made this gate report failure on a page that rendered
+  // fine — costing a repair dispatch and inviting the model to change working
+  // code to satisfy a complaint about the environment.
+  //
+  // Matched narrowly: a localhost websocket failure and Vite's own two
+  // messages. An app's websocket to its real backend does not match.
+  const HMR_NOISE = [
+    /^WebSocket connection to 'wss?:\/\/localhost[:/][^']*' failed/i,
+    /^\[vite\] failed to connect to websocket/i,
+    /^Error: WebSocket closed without opened\.?$/i,
+  ];
+  const errors = parsed.errors.filter(
+    (e) => !HMR_NOISE.some((re) => re.test(e.trim())),
+  );
+
+  // Nothing left but that noise, and the page did render — it passed.
+  if (!parsed.blank && errors.length === 0) return { ok: true, issues: [] };
+
   const message = parsed.blank
-    ? `The app rendered a blank page (#root has no children)${parsed.errors.length > 0 ? ": " + parsed.errors.join("; ") : ""}`
-    : `Console errors on load: ${parsed.errors.join("; ")}`;
+    ? `The app rendered a blank page (#root has no children)${errors.length > 0 ? ": " + errors.join("; ") : ""}`
+    : `Console errors on load: ${errors.join("; ")}`;
   return { ok: false, issues: [{ source: "src/App.tsx", message }] };
 }
 
