@@ -246,8 +246,29 @@ so the live template stayed frozen at its pre-09-09 state and never contained pl
 build it has ever run in — the agent was never once able to look at its own page. Nobody saw it
 because the template is rebuilt by hand and its log was never read.
 
-Fixed by writing the manifest explicitly instead of generating it. **Two separate bugs were
-breaking the same capability** (the sandbox's browser) — the `/tmp` path above and this one.
+Fixed by writing the manifest explicitly instead of generating it.
+
+### …and then Chromium landed where the sandbox user could not read it
+With that fixed the build succeeded and `check_page` would *still* have failed. The image is
+**built as root but run as `user`**, and playwright resolves its browser directory from the
+running user's home — so `playwright install` put Chromium in `/root/.cache` and launching it
+as `user` died with `Executable doesn't exist at /home/user/.cache/ms-playwright/…`. The error
+names the path it wanted, not the path it used, so it reads like a missing install.
+
+`PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers` now, set BOTH as a Docker `ENV`
+and as a prefix on the three commands in `e2b-service.ts` (`TOOLS_ENV`). The prefix is not
+redundant: **the Docker ENV does not survive into E2B's runtime** — measured, a sandbox command
+without the prefix still looked in `/home/user/.cache`.
+
+**Three separate bugs were breaking the same capability** — the sandbox's browser: the script
+written to `/tmp`, the `npm init` failure, and the browser path. Each alone was enough for
+`check_page` to report that the sandbox did not respond.
+
+**Verified 2026-10-01 in a live sandbox** (not inferred): `browsers/` holds chromium-1243 +
+chromium_headless_shell-1243, `chromium.launch()` returns LAUNCH OK as `user`,
+`check-render.mjs` emits parseable JSON, and the `fetch_reference` mechanism loads an external
+URL and returns its JSON marker. Re-run that check after any template change — a green
+`✅ Template built` proved nothing here twice.
 
 Lesson: when a template build fails, every sandbox silently keeps running the LAST GOOD image.
 Nothing downstream reports a stale template, so always read the build log to its last line.
