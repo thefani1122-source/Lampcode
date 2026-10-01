@@ -308,6 +308,16 @@ URL and returns its JSON marker. Re-run that check after any template change —
 Lesson: when a template build fails, every sandbox silently keeps running the LAST GOOD image.
 Nothing downstream reports a stale template, so always read the build log to its last line.
 
+## Open, deliberately parked — raise these when the current work settles
+1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every
+   build (seen 2026-10-01). It reaches for Anthropic credentials, and `ANTHROPIC_API_KEY` is
+   not set on Railway (the boot banner says so too). It does not fail the build. Owner asked to
+   park it and discuss later: decide whether project memory should route through the same
+   plan-based provider choice as everything else, or be switched off while the key is absent.
+2. **Billing overstates agentic builds** (cached prompt tokens — see above). Unfixed.
+3. **`AGENTIC_MAX_TURNS=40` and `MAX_BUILD_COST_USD=3.0`** were raised on Railway on 2026-10-01
+   for a long-running test. Revisit before opening the product to real users.
+
 ## Things that will bite you
 1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are both
    legacy. The live template is built from `e2b-template/template.ts` via
