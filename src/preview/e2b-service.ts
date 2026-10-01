@@ -1459,6 +1459,7 @@ export async function writeFilesToSandbox(
  */
 export async function restorePreviewForProject(
   projectId: string,
+  sessionId: string,
   onLog?: PreviewLogCallback,
 ): Promise<string | null> {
   if (!config.E2B_API_KEY) return null;
@@ -1481,9 +1482,13 @@ export async function restorePreviewForProject(
     return null;
   }
 
+  // createPreviewSandbox, NOT writeFilesToSandbox: the latter requires a live
+  // sandbox and throws "No live E2B sandbox" when there is none, which is
+  // exactly the case this function exists to handle. It did, in production.
+  const framework = (await loadFramework(projectId)) ?? "react";
   onLog?.(`Restoring preview from ${count} saved file(s)...`);
-  logger.info({ projectId, count }, "[e2b] restore: rebuilding sandbox from stored files");
-  return await writeFilesToSandbox(projectId, files, onLog);
+  logger.info({ projectId, count, framework }, "[e2b] restore: rebuilding sandbox from stored files");
+  return await createPreviewSandbox(sessionId, projectId, framework, files, onLog);
 }
 
 export async function ensurePreviewForProject(
