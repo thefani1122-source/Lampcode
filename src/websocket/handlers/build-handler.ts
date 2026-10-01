@@ -5,6 +5,7 @@ import { createRedis } from "../../lib/redis.js";
 import { db } from "../../db/client.js";
 import { buildSessions } from "../../db/schema.js";
 import { pauseSandbox, ensurePreviewForProject, restorePreviewForProject } from "../../preview/e2b-service.js";
+import { downloadProjectFiles } from "../../storage/project-files.js";
 
 const redis = createRedis();
 import {
@@ -86,13 +87,13 @@ function schedulePause(projectId: string, sessionId: string): void {
 // throw before ack(true) leaves the client's join unacknowledged forever.
 // Replay is a convenience — a client that misses it still receives every
 // subsequent live event — so a Redis failure degrades to "no replay".
-async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<void> {
+async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<number> {
   let buffered: string[];
   try {
     buffered = await redis.lrange(`buffer:${sessionId}`, 0, -1);
   } catch (err) {
     logger.warn({ socketId: socket.id, sessionId, err }, "Could not replay buffered build events");
-    return;
+    return 0;
   }
   if (buffered.length > 0) {
     for (const raw of buffered) {
@@ -103,6 +104,73 @@ async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<voi
     }
     logger.debug({ socketId: socket.id, sessionId, count: buffered.length }, "Replayed buffered events");
   }
+  return buffered.length;
+}
+
+/**
+ * Settle the UI for a build that finished before this socket existed.
+ *
+ * The event buffer lives in Redis for one hour. After that, reopening a
+ * finished project replayed nothing, so the client never received
+ * build:complete and sat on skeleton placeholders reading "Building..."
+ * forever — for a build that had succeeded hours earlier. The session row
+ * knew the truth the whole time and nobody asked it.
+ *
+ * Only called when the replay was empty, so a live or recently-finished build
+ * is untouched. The files come from storage rather than the buffer, which is
+ * why this can restore the view at all.
+ */
+async function settleFinishedSession(socket: BuildSocket, sessionId: string): Promise<void> {
+  let row: { status: string; error: string | null; projectId: string } | undefined;
+  try {
+    const rows = await db
+      .select({ status: buildSessions.status, error: buildSessions.error, projectId: buildSessions.projectId })
+      .from(buildSessions)
+      .where(eq(buildSessions.id, sessionId))
+      .limit(1);
+    row = rows[0] as typeof row;
+  } catch (err) {
+    logger.warn({ sessionId, err }, "Could not read session state to settle a replayed view");
+    return;
+  }
+  if (!row) return;
+
+  const emitRaw = socket.emit.bind(socket) as (event: string, data: unknown) => boolean;
+
+  // session_status is: running, paused, completed, failed, cancelled, success.
+  // "running" and "paused" are not settled here — a build still in flight will
+  // send its own events, and guessing at it would contradict them.
+  if (row.status === "failed" || row.status === "cancelled") {
+    emitRaw("build:failed", {
+      sessionId,
+      error:
+        row.error ??
+        (row.status === "cancelled"
+          ? "This build was cancelled."
+          : "This build failed. Run it again to try once more."),
+    });
+    logger.info({ sessionId, status: row.status }, "Settled a replayed view from the session row");
+    return;
+  }
+  if (row.status !== "success" && row.status !== "completed") return;
+
+  let files: Record<string, string> = {};
+  try {
+    files = await downloadProjectFiles(row.projectId);
+  } catch (err) {
+    logger.warn({ sessionId, err }, "Could not load stored files while settling a replayed view");
+  }
+
+  const count = Object.keys(files).length;
+  emitRaw("build:complete", {
+    sessionId,
+    files,
+    totalFiles: count,
+    summary:
+      "This build finished earlier, so the live log for it is no longer available. " +
+      "The project and its files are here, and you can carry on from where you left off.",
+  });
+  logger.info({ sessionId, files: count }, "Settled a replayed view from the session row");
 }
 
 export function registerBuildHandlers(nsp: BuildNamespace): void {
@@ -212,7 +280,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
       console.log(`[WS JOIN] auto-join room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.info({ socketId: socket.id, sessionId: querySid, totalClients: size }, "Auto-joined build session room from query");
-      await replayBuffer(socket, querySid);
+      if ((await replayBuffer(socket, querySid)) === 0) await settleFinishedSession(socket, querySid);
       await trackSession(querySid);
     } else {
       console.log(`[WS CONNECT] no sessionId in query — client must emit join_session manually`);
@@ -251,7 +319,7 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       const size = nsp.adapter.rooms.get(room)?.size ?? 0;
       console.log(`[WS JOIN] join_session room=${room} socketId=${socket.id} userId=${userId} totalClients=${size}`);
       logger.debug({ socketId: socket.id, sessionId, totalClients: size }, "Joined build session room");
-      await replayBuffer(socket, sessionId);
+      if ((await replayBuffer(socket, sessionId)) === 0) await settleFinishedSession(socket, sessionId);
       await trackSession(sessionId);
       ack(true);
     });
