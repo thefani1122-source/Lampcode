@@ -324,6 +324,14 @@ try {
 console.log(JSON.stringify(result))
 `
 
+// Minimal manifest for the internal tooling directory — see the note beside
+// the WORKDIR below for why this is not `npm init -y`.
+const TOOLS_PKG_JSON = JSON.stringify(
+  { name: 'lampcode-tools', version: '1.0.0', private: true },
+  null,
+  2,
+)
+
 const dockerfile = [
   'FROM node:20-slim',
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
@@ -355,8 +363,17 @@ const dockerfile = [
   // the exact OS packages its bundled Chromium build needs for this Debian
   // base — baked here (build time) so per-project cold start never re-fetches
   // a browser.
+  //
+  // The package.json is written explicitly rather than generated with
+  // `npm init -y`, which names the package after its directory. npm rejects a
+  // name beginning with a dot, so in `.lampcode-tools` it exits with
+  //   npm error Invalid name: ".lampcode-tools"
+  // taking the whole && chain with it. That failed every template build since
+  // this step was added on 2026-09-09 — so playwright and check-render.mjs
+  // never reached the image, and check_page could never have worked.
   'WORKDIR /home/user/.lampcode-tools',
-  'RUN npm init -y && npm install playwright && npx playwright install --with-deps chromium',
+  writeFile('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
+  'RUN npm install playwright && npx playwright install --with-deps chromium',
   writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
   'WORKDIR /home/user/app',
 ].join('\n')

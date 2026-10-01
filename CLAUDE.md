@@ -229,8 +229,28 @@ relative to **the importing file**, never the process working directory — so a
 `fetchReferenceDesign` and `capturePreviewScreenshot` both did exactly that (`cd
 /home/user/.lampcode-tools && node /tmp/lampcode-*.mjs`), which means **`fetch_reference` and
 the preview thumbnail never worked once** — not flaky, impossible. Fixed 2026-09-29 by writing
-the scripts into `TOOLS_DIR`. `check-render.mjs` was always baked at the right path, so
-`check_page`'s failures are a *different* problem and are still undiagnosed.
+the scripts into `TOOLS_DIR`.
+
+### …and that directory was never in the image either — why `check_page` never worked
+`npm init -y` names the package after its directory, and npm **rejects a name starting with a
+dot**. In `.lampcode-tools` it exits with `npm error Invalid name: ".lampcode-tools"`, which
+took down the whole `&&` chain behind it:
+
+```
+RUN npm init -y && npm install playwright && npx playwright install --with-deps chromium
+```
+
+**Every template build failed at that step from 2026-09-09 (when it was added) to 2026-10-01**,
+so the live template stayed frozen at its pre-09-09 state and never contained playwright or
+`check-render.mjs`. `check_page` therefore returned "the sandbox did not respond" on every
+build it has ever run in — the agent was never once able to look at its own page. Nobody saw it
+because the template is rebuilt by hand and its log was never read.
+
+Fixed by writing the manifest explicitly instead of generating it. **Two separate bugs were
+breaking the same capability** (the sandbox's browser) — the `/tmp` path above and this one.
+
+Lesson: when a template build fails, every sandbox silently keeps running the LAST GOOD image.
+Nothing downstream reports a stale template, so always read the build log to its last line.
 
 ## Things that will bite you
 1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are both
