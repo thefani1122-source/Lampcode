@@ -3,6 +3,10 @@ import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
 import { downloadProjectFiles } from "../storage/project-files.js";
+import { eq } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { projectEnvVars } from "../db/schema.js";
+import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
 
 /**
@@ -322,6 +326,52 @@ const BAKED_FILES = new Set([
 ]);
 
 /**
+ * A project's own environment variables, decrypted.
+ *
+ * Values are AES-256-GCM at rest (see env-crypto). A row that cannot be
+ * decrypted is skipped rather than failing the whole preview: one unreadable
+ * variable should not cost the app the rest of its configuration.
+ */
+async function loadProjectEnvVars(projectId: string): Promise<{ key: string; value: string }[]> {
+  try {
+    const rows = await db
+      .select({
+        key: projectEnvVars.key,
+        environment: projectEnvVars.environment,
+        encryptedValue: projectEnvVars.encryptedValue,
+        iv: projectEnvVars.iv,
+        tag: projectEnvVars.tag,
+      })
+      .from(projectEnvVars)
+      .where(eq(projectEnvVars.projectId, projectId));
+
+    // The same key may exist per environment — the unique index is on
+    // (projectId, environment, key) — so a project can hold three values for
+    // one name. The preview runs the app as it would run live, so production
+    // wins, then staging, then development. Without an explicit order this
+    // came down to whichever row the database returned last.
+    const RANK: Record<string, number> = { production: 3, staging: 2, development: 1 };
+    const best = new Map<string, { rank: number; value: string }>();
+    for (const row of rows) {
+      let value: string;
+      try {
+        value = decrypt({ encrypted: row.encryptedValue, iv: row.iv, tag: row.tag });
+      } catch (err) {
+        logger.warn({ projectId, key: row.key, err }, "[e2b] could not decrypt a project variable");
+        continue;
+      }
+      const rank = RANK[row.environment] ?? 0;
+      const held = best.get(row.key);
+      if (!held || rank > held.rank) best.set(row.key, { rank, value });
+    }
+    return [...best.entries()].map(([key, { value }]) => ({ key, value }));
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] could not read project variables");
+    return [];
+  }
+}
+
+/**
  * Writes the preview `.env` with the Supabase credentials the generated app
  * needs to initialise its client. Must run BEFORE the dev server starts — Vite
  * only reads VITE_* env at startup, so injecting after boot wouldn't take.
@@ -366,6 +416,21 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   }
   // Stable per-project secret for custom (MongoDB) JWT auth.
   env += `JWT_SECRET=lampcode_${projectId}\n`;
+
+  // The project's OWN variables, last so they win on a name clash: the person
+  // set them deliberately for their own app, and the platform defaults are
+  // only defaults.
+  //
+  // These were stored and never used. A key saved in project settings reached
+  // the database and stopped there — e2b-service never read the table — so
+  // every generated app that needed one ran without it, silently. That covers
+  // the AI-agent path the template ships crewai, langgraph and
+  // langchain-anthropic for: all installed, none of them able to authenticate.
+  const ownVars = await loadProjectEnvVars(projectId);
+  if (ownVars.length > 0) {
+    for (const { key, value } of ownVars) env += `${key}=${value}\n`;
+    log(`Injected ${ownVars.length} project variable(s) from your settings`);
+  }
 
   if (!env.trim()) {
     log("No preview DB configured — skipping .env injection");
