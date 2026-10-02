@@ -3,3 +3,14 @@ dist/
 
 # Eval runs — real builds, local to whoever ran them.
 eval-results/
+
+# Local secrets. `npm run dev` loads .env, so one exists on every machine that
+# runs this — holding DATABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY and
+# the provider keys. It was not ignored here, so a single `git add -A` would
+# have published all of it. Only .env.example belongs in the repo.
+.env
+.env.*
+!.env.example
+
+# Stray build artifacts that have been committed by accident before.
+.wrangler/
