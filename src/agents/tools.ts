@@ -20,6 +20,7 @@ import {
   isFetchableReferenceUrl,
   isTemplateOwnedFile,
 } from "../preview/e2b-service.js";
+import { persistFilesAsWritten } from "../storage/project-files.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
@@ -416,19 +417,32 @@ export async function executeTool(
       // turn's writes win on any path they both have.
       const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? files) };
 
+      let url: string | undefined;
+      let writeError: string | undefined;
       try {
-        const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
-        const note = refused.length > 0
-          ? `\nNOT written: ${refused.join(", ")} — owned by the project template. ` +
-            `Put custom CSS in your own file (e.g. src/app.css) and import it from src/App.tsx.`
-          : "";
-        return (
-          `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}\n` +
-          `The app is running at ${url}. Call check_page to see what it actually renders.`
-        );
+        url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
       } catch (err) {
-        return `Error writing files: ${err instanceof Error ? err.message : String(err)}`;
+        writeError = err instanceof Error ? err.message : String(err);
       }
+
+      // Store them NOW, not at the end of the build. A build that dies partway
+      // — the cost ceiling mid-dispatch, a provider error, a restart — used to
+      // leave a sandbox full of working files and nothing recoverable. Done
+      // even when the sandbox write failed: the model authored this content,
+      // and the same reasoning that records it in generatedFiles above applies
+      // to keeping it.
+      await persistFilesAsWritten(projectId, files);
+
+      if (writeError !== undefined) return `Error writing files: ${writeError}`;
+
+      const note = refused.length > 0
+        ? `\nNOT written: ${refused.join(", ")} — owned by the project template. ` +
+          `Put custom CSS in your own file (e.g. src/app.css) and import it from src/App.tsx.`
+        : "";
+      return (
+        `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}\n` +
+        `The app is running at ${url}. Call check_page to see what it actually renders.`
+      );
     }
 
     // Reads resolve newest-first: what the model wrote this turn, then the
@@ -525,16 +539,25 @@ export async function executeTool(
       // template, and checking one edited file dropped into it would tell the
       // model nothing about the real app.
       const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? { [path]: updated }) };
+      let url: string | undefined;
+      let writeError: string | undefined;
       try {
-        const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
-        const removed = newString === "";
-        return (
-          `Edited ${path} — ${removed ? "removed" : "replaced"} 1 occurrence.\n` +
-          `The app is running at ${url}. Call check_page to see what it actually renders.`
-        );
+        url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
       } catch (err) {
-        return `Error writing ${path}: ${err instanceof Error ? err.message : String(err)}`;
+        writeError = err instanceof Error ? err.message : String(err);
       }
+
+      // Same reason as write_files: store the edited file now, so a build that
+      // dies later is still recoverable. Only this one file — uploads are
+      // upserts keyed on path, so the stored project stays whole.
+      await persistFilesAsWritten(projectId, { [path]: updated });
+
+      if (writeError !== undefined) return `Error writing ${path}: ${writeError}`;
+      const removed = newString === "";
+      return (
+        `Edited ${path} — ${removed ? "removed" : "replaced"} 1 occurrence.\n` +
+        `The app is running at ${url}. Call check_page to see what it actually renders.`
+      );
     }
 
     if (name === "list_files") {

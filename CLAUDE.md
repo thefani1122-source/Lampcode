@@ -334,10 +334,10 @@ vitest or jest, and there is no `run_tests` tool. The agent can ask "did it rend
 compile" but never "is it correct", which is exactly why bug-finding is capped. Add vitest to
 the template, add the tool, and ask the model to cover non-trivial logic.
 
-**4. Persist files as they are written.** `uploadProjectFiles` runs once, at the end of a build
-(`build.ts:1957`). The ForgeFlow build hit the cost ceiling at round 14 with 15 files written
-and lost all of them — `restore: project has no stored files`. Persist per write and an
-interrupted build can be resumed rather than restarted.
+**4. Persist files as they are written — DONE (2026-10-02).** `uploadProjectFiles` ran once, at
+the end of a build. The ForgeFlow build hit the cost ceiling at round 14 with 15 files written
+and lost all of them — `restore: project has no stored files`. Now `persistFilesAsWritten`
+stores each write as it happens; see below.
 
 **5. A planning phase for long builds.** ForgeFlow died mid-repair at round 14. A cheap plan
 dispatch producing a file-by-file plan, then execution against it, makes a long build tractable
@@ -436,6 +436,28 @@ holding the template's real `package.json`, `vitest.config.ts`, `vitest.setup.ts
 a bug. Read the build log to its LAST LINE: a green `✅ Template built` has twice proved
 nothing here, and a failed template build leaves every sandbox silently running the last good
 image.
+
+## Files are stored as they are written — 2026-10-02
+`persistFilesAsWritten` (`src/storage/project-files.ts`) is called from three places:
+`write_files` and `edit_file` store just the file(s) that changed, and `build.ts` stores the
+whole set the moment it is assembled, before the five repair loops that follow it. The
+end-of-build sync still runs and upserts anything those loops changed.
+
+Uploads are upserts keyed on path, so incremental writes converge on the same stored project as
+one sync at the end, for a fraction of the requests.
+
+**Awaited, not fired and forgotten.** A detached upload dies with the process, and a dying
+process is one of the cases this exists to survive. It cannot throw and is bounded by a 15 s
+timeout — storage trouble must never fail a build whose code is already written and running.
+Verified with no Supabase credentials configured: resolves, does not throw, logs the
+degradation, and the process exits immediately rather than being held open by the timer.
+
+**The trade-off, on purpose:** a FAILED EDIT now leaves partial work in storage where it used
+to leave the last good version. Restore prefers a live sandbox and only falls back to storage,
+and that sandbox already holds the partial edit — the user watched it happen — so this makes
+storage agree with what they already saw instead of silently reverting their newest work. A
+half-finished edit can be finished; work that was never stored is gone. Reverting a failed edit
+properly would need a previous-version snapshot, which is not built.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every

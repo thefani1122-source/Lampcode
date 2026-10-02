@@ -43,7 +43,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
 import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTree } from "../../verify/security.js";
-import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot } from "../../storage/project-files.js";
+import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1874,6 +1874,15 @@ export async function runFastBuild(
         allFiles[f.path] = f.code;
       }
     }
+
+    // Store the generated code the moment it exists, before the gates below it.
+    // Five repair loops run between here and the end-of-build sync — security,
+    // typecheck, browser-render, each able to throw or to stop on the cost
+    // ceiling — and until now a build that died in any of them left nothing
+    // recoverable at all. The sync at the end still runs and upserts whatever
+    // those loops changed; this one is the insurance, and it is what covers the
+    // pipeline path, whose files never pass through the agentic write tools.
+    await persistFilesAsWritten(projectId, allFiles);
 
     // ── Security validation + auto-fix / hard-block loop ────────────────────
     // Runs in-memory against the current allFiles snapshot — none of the seven

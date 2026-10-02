@@ -54,6 +54,71 @@ export async function uploadProjectFiles(
   await Promise.all(uploads);
 }
 
+const PERSIST_TIMEOUT_MS = 15_000;
+
+/**
+ * Store the files a build has just written, at the moment it writes them.
+ *
+ * The end-of-build sync in build.ts only runs if the build REACHES its end.
+ * A build that dies partway — the cost ceiling mid-dispatch, a provider error,
+ * a Railway restart — leaves a sandbox full of real, working files and nothing
+ * in storage, so the next open reports "project has no stored files" and the
+ * work is gone. That is measured, not hypothetical: the ForgeFlow build stopped
+ * at round 14 with 15 files written and lost all of them.
+ *
+ * Awaited rather than fired and forgotten. A detached upload dies with the
+ * process, which is one of the cases this exists to survive; the cost is a few
+ * hundred milliseconds per write against a build that runs for minutes.
+ * Bounded by a timeout and incapable of throwing — storage trouble must never
+ * be able to fail a build whose code is already written and running.
+ *
+ * Only the files that just changed are sent. Uploads are upserts keyed on path,
+ * so writing incrementally converges on the same stored project as one big
+ * sync at the end, at a fraction of the requests.
+ *
+ * The trade-off, stated plainly: a FAILED edit now leaves partial work in
+ * storage where it previously left the last good version. That is the right
+ * way round. Restore prefers a live sandbox and only falls back to storage, and
+ * that sandbox already holds the partial edit — the user watched it happen — so
+ * this makes storage agree with what they already saw instead of silently
+ * reverting their newest work. A half-finished edit can be finished; work that
+ * was never stored is gone. If reverting a failed edit is ever wanted, it needs
+ * a real previous-version snapshot, not the absence of this.
+ */
+export async function persistFilesAsWritten(
+  projectId: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const count = Object.keys(files).length;
+  if (count === 0) return;
+
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      uploadProjectFiles(projectId, files),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timed out after ${PERSIST_TIMEOUT_MS}ms`)),
+          PERSIST_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    console.log(`[storage] persisted ${count} file(s) as written project=${projectId}`);
+  } catch (err) {
+    // Degraded, not failed: the files are in the sandbox and the end-of-build
+    // sync will try again. Said out loud because the consequence — this build
+    // is not yet recoverable — is invisible otherwise.
+    console.warn(
+      `[storage] could not persist ${count} file(s) project=${projectId}: ` +
+      `${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    // Without this the pending timer holds the event loop open for 15s after
+    // every successful write.
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // ── Download ──────────────────────────────────────────────────────────────────
 
 /**
