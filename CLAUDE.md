@@ -308,6 +308,47 @@ URL and returns its JSON marker. Re-run that check after any template change —
 Lesson: when a template build fails, every sandbox silently keeps running the LAST GOOD image.
 Nothing downstream reports a stale template, so always read the build log to its last line.
 
+## The capability roadmap — agreed 2026-10-02, in this order
+The goal is a coding agent that handles long, complex, full-stack projects and finds and fixes
+its own bugs. What stands between here and there is mostly TOOLS, not the model. The agent has
+seven: `write_files`, `check_page`, `check_types`, `list_files`, `read_file`, `read_logs`,
+`fetch_reference`. What is missing from that list is the ceiling.
+
+**1. A surgical `edit_file`.** `write_files` replaces a file ENTIRELY, so a one-line change
+means rewriting the whole file. Two consequences: project size is bounded by what the model can
+rewrite in a turn, and every edit risks the rest of the file — on 2026-10-01 an edit replaced a
+working `App.tsx` with a fragment. `edit_file(path, old_string, new_string)` with exact-match,
+must-be-unique semantics is what Claude Code and Cursor use, and it is the single change that
+makes long projects structurally possible. `write_files` stays for new files.
+
+**2. An evaluation harness — 20 tasks is enough.** `npm test` exits 1. Both prompt changes made
+on 2026-10-01 (file splitting, the palette) rest on ONE build each; nobody can say whether they
+help in general. Twenty fixed prompts scored on fixed criteria — build completed, page rendered,
+typecheck clean, rounds, cost — run before and after every prompt or harness change. Until this
+exists, every other improvement here is a guess. Do it second so the rest can be measured.
+
+**3. The agent must be able to run tests.** No test runner exists anywhere: the template has no
+vitest or jest, and there is no `run_tests` tool. The agent can ask "did it render" and "did it
+compile" but never "is it correct", which is exactly why bug-finding is capped. Add vitest to
+the template, add the tool, and ask the model to cover non-trivial logic.
+
+**4. Persist files as they are written.** `uploadProjectFiles` runs once, at the end of a build
+(`build.ts:1957`). The ForgeFlow build hit the cost ceiling at round 14 with 15 files written
+and lost all of them — `restore: project has no stored files`. Persist per write and an
+interrupted build can be resumed rather than restarted.
+
+**5. A planning phase for long builds.** ForgeFlow died mid-repair at round 14. A cheap plan
+dispatch producing a file-by-file plan, then execution against it, makes a long build tractable
+and resumable instead of one long improvisation.
+
+**6. Project memory from what the harness already knows.** `memory-generator.ts` fails on every
+build (Anthropic credentials, which are not set). Derive memory from the file manifest and the
+decisions already observed instead of wiring it to a provider — so an edit does not re-read five
+files first.
+
+**Explicitly NOT yet:** new models, market positioning, or the agent-research papers. Those
+matter once the foundation holds.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every
    build (seen 2026-10-01). It reaches for Anthropic credentials, and `ANTHROPIC_API_KEY` is
