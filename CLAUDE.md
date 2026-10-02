@@ -302,8 +302,21 @@ written to `/tmp`, the `npm init` failure, and the browser path. Each alone was 
 **Verified 2026-10-01 in a live sandbox** (not inferred): `browsers/` holds chromium-1243 +
 chromium_headless_shell-1243, `chromium.launch()` returns LAUNCH OK as `user`,
 `check-render.mjs` emits parseable JSON, and the `fetch_reference` mechanism loads an external
-URL and returns its JSON marker. Re-run that check after any template change — a green
-`✅ Template built` proved nothing here twice.
+URL and returns its JSON marker.
+
+**`e2b-template/verify-template.ts` now does that check for you** — run it after EVERY template
+build, because a green `✅ Template built` has proved nothing here twice:
+
+```bash
+cd e2b-template && npx tsx verify-template.ts     # needs the same .env as build.ts
+```
+
+It starts a real sandbox and checks, with the same commands and paths the backend uses: who the
+commands run as, that `node_modules` is writable by that user, that the vitest config and setup
+are baked in and wired to tsconfig, that the test tooling is installed, that a logic test and a
+component test both pass and the JSON report parses, that `tsc --noEmit` is clean over them,
+that Chromium launches as `user`, and that the Python backend deps are present. It exits
+non-zero if anything fails.
 
 Lesson: when a template build fails, every sandbox silently keeps running the LAST GOOD image.
 Nothing downstream reports a stale template, so always read the build log to its last line.
@@ -430,12 +443,16 @@ holding the template's real `package.json`, `vitest.config.ts`, `vitest.setup.ts
   that project — mixed pass/fail, all-pass, no-test-files, a component-test failure — plus the
   ways a run yields no report at all. Fixtures live in `scripts/fixtures/vitest/`.
 
-**STILL REQUIRED: rebuild the E2B template.** Nothing above reaches a sandbox until
-`e2b-template/build.ts` runs and the new image is live. Until then `run_tests` returns
-`unavailable` with "vitest is not installed in this sandbox" — which is correct behaviour, not
-a bug. Read the build log to its LAST LINE: a green `✅ Template built` has twice proved
-nothing here, and a failed template build leaves every sandbox silently running the last good
-image.
+**The template must be rebuilt for any of this to reach a sandbox** (`e2b-template/build.ts`),
+and then verified with `verify-template.ts` — a green `✅ Template built` has twice proved
+nothing here, and a failed build leaves every sandbox silently running the last good image.
+Until a sandbox has the new image, `run_tests` reports `unavailable` with "vitest is not
+installed in this sandbox", which is correct behaviour rather than a bug.
+
+Note for the rebuild: `/home/user/app` is now chowned to `user` after `npm install`. The image
+is built as root but run as `user` — the same fact that sent Chromium into `/root/.cache` — so
+node_modules was root-owned and read-only to the sandbox user. Vite got away with that; vitest
+would not, because it writes a transform cache there before running a single test.
 
 ## Files are stored as they are written — 2026-10-02
 `persistFilesAsWritten` (`src/storage/project-files.ts`) is called from three places:
