@@ -304,6 +304,13 @@ const BAKED_FILES = new Set([
   "tsconfig.json",
   "tsconfig.node.json",
   "index.html",
+  // Vitest config + its jest-dom setup file. The model writes test files, not
+  // the harness they run in: a rewritten vitest.config.ts loses the jsdom
+  // environment and the @ alias, and every component test then fails on
+  // something that has nothing to do with the code under test.
+  "vitest.config.ts",
+  "vitest.config.js",
+  "vitest.setup.ts",
   // Next.js template config
   "next.config.ts",
   "next.config.js",
@@ -1128,6 +1135,196 @@ export async function verifyPreview(projectId: string): Promise<GateResult> {
   const message = extractBackendError(backendLogs.get(sandbox.sandboxId) ?? []) || "backend did not start on port 3001";
   return { ok: false, issues: [{ source: "src/server/index.ts", message }] };
 }
+
+/**
+ * What a test run actually found.
+ *
+ * Deliberately not a GateResult. A GateResult has two states plus
+ * "unavailable", and a test run has four that matter: the tests passed, the
+ * tests failed, there are no tests, or the runner could not run. Collapsing
+ * "no tests" into a pass is the failure mode worth designing against — an
+ * agent that writes nothing and is told "tests passed" has been handed proof
+ * of correctness it never earned.
+ */
+export type TestRunResult = {
+  outcome: "passed" | "failed" | "none" | "unavailable";
+  total: number;
+  passed: number;
+  failed: number;
+  failures: Array<{ test: string; message: string }>;
+  /** Why it couldn't run, when outcome is "unavailable". */
+  reason?: string;
+};
+
+// Vitest's JSON reporter is jest-compatible. Only the fields used here are
+// declared; the report carries a great deal more.
+type VitestJsonReport = {
+  numTotalTests?: number;
+  numPassedTests?: number;
+  numFailedTests?: number;
+  testResults?: Array<{
+    name?: string;
+    assertionResults?: Array<{
+      fullName?: string;
+      title?: string;
+      status?: string;
+      failureMessages?: string[];
+    }>;
+  }>;
+};
+
+const VITEST_RESULT_PATH = "/tmp/lampcode-vitest.json";
+const VITEST_EXIT_MARKER = "__LAMPCODE_VITEST_EXIT__";
+
+/**
+ * Reduce one vitest failure message to the part the model can act on.
+ *
+ * A raw message is the assertion ("expected 120 to be 108") followed by a
+ * stack, most of which is absolute paths inside the sandbox's node_modules.
+ * Those frames cost context and tell the model nothing it can use — but the
+ * ONE frame that points at the project's own file is exactly what it needs to
+ * find the failing line, so that is kept and the rest dropped.
+ */
+function summarizeFailure(raw: string): string {
+  const lines = raw.split("\n");
+  const assertion: string[] = [];
+  let projectFrame: string | null = null;
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t.startsWith("at ")) {
+      // Collect prose until the project's own frame is found, capped at 8
+      // lines. The cap is what keeps @testing-library's failure report — which
+      // prints the whole rendered DOM — from running away, while still keeping
+      // its first few lines, where it says what it could not find.
+      if (projectFrame === null && assertion.length < 8) assertion.push(t);
+      continue;
+    }
+    if (projectFrame === null && !t.includes("node_modules")) projectFrame = t;
+  }
+  return [...assertion, ...(projectFrame ? [projectFrame] : [])]
+    .filter((l) => l.length > 0)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Run the project's vitest suite inside its sandbox and report what happened.
+ *
+ * vitest, jsdom and @testing-library live in the generated app's OWN
+ * devDependencies (template.ts), not in .lampcode-tools like playwright: a
+ * test file does `import { describe } from "vitest"`, and Node resolves a bare
+ * specifier relative to the IMPORTING FILE, so a vitest installed anywhere
+ * else is invisible to the tests that need it.
+ *
+ * The JSON reporter writes to a file under /tmp rather than stdout: the run's
+ * own console output (a test's own logs, vite's warnings) shares stdout and
+ * there is no reliable way to tell where the report begins. /tmp also keeps it
+ * out of the project directory, where Vite's polling watcher would see it
+ * appear and the file would end up in the user's project.
+ */
+export async function runTests(projectId: string): Promise<TestRunResult> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) {
+    logger.warn({ projectId, gate: "runTests" }, "[e2b] gate skipped — no live sandbox");
+    return { outcome: "unavailable", total: 0, passed: 0, failed: 0, failures: [], reason: "no live sandbox" };
+  }
+
+  // `;` not `&&`: a failing suite exits non-zero, which is the normal path
+  // here, and the report still has to be read. The marker carries the real
+  // exit code through, since the shell's own status is now always 0.
+  const command =
+    `rm -f ${VITEST_RESULT_PATH}; ` +
+    `npx vitest run --reporter=json --outputFile=${VITEST_RESULT_PATH} 2>&1; ` +
+    `echo "${VITEST_EXIT_MARKER}$?"; ` +
+    `cat ${VITEST_RESULT_PATH} 2>/dev/null`;
+
+  let output = "";
+  try {
+    const r = await sandbox.commands.run(command, {
+      cwd: PROJECT_DIR,
+      // Generously above the per-test 10s in vitest.config.ts: a cold first
+      // run pays for vite's transform of every imported module.
+      timeoutMs: 180_000,
+    });
+    output = r.stdout;
+  } catch (err) {
+    if (err instanceof CommandExitError) {
+      output = err.stdout;
+    } else {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.warn({ projectId, err: reason }, "[e2b] runTests could not run");
+      return { outcome: "unavailable", total: 0, passed: 0, failed: 0, failures: [], reason };
+    }
+  }
+
+  const result = parseVitestOutput(output);
+  if (result.outcome === "unavailable") {
+    // Logged here rather than in the parser, which stays pure so it can be
+    // tested. Without this, a run that never produced a report left no trace
+    // of why — missing vitest, a crash on startup and a timeout all read the
+    // same from outside.
+    logger.warn({ projectId, reason: result.reason }, "[e2b] runTests produced no parseable report");
+  }
+  return result;
+}
+
+/**
+ * Pull a TestRunResult out of what the sandbox command printed.
+ *
+ * Separate and exported so it can be checked against real vitest output
+ * (scripts/vitest-parse.test.ts) rather than trusted. Each branch here stands
+ * for a specific way a run goes wrong, and a parser that reads a failing run
+ * as a pass would be worse than having no test tool at all.
+ */
+export function parseVitestOutput(output: string): TestRunResult {
+  const markerAt = output.indexOf(VITEST_EXIT_MARKER);
+  const consoleOutput = markerAt === -1 ? output : output.slice(0, markerAt);
+  const afterMarker = markerAt === -1 ? "" : output.slice(markerAt + VITEST_EXIT_MARKER.length);
+  // The marker line is "<exit code>\n"; the report follows it.
+  const newlineAt = afterMarker.indexOf("\n");
+  const reportText = newlineAt === -1 ? "" : afterMarker.slice(newlineAt + 1).trim();
+
+  let report: VitestJsonReport | null = null;
+  if (reportText.startsWith("{")) {
+    try {
+      report = JSON.parse(reportText) as VitestJsonReport;
+    } catch {
+      // Fall through to the text-based readings below — a half-written report
+      // is no worse than no report.
+    }
+  }
+
+  if (!report) {
+    // Two cases that are NOT "the tests failed", and must not be reported as
+    // though they were.
+    if (/No test files found/i.test(consoleOutput)) {
+      return { outcome: "none", total: 0, passed: 0, failed: 0, failures: [] };
+    }
+    const reason =
+      /not found|could not determine executable|ERR_MODULE_NOT_FOUND|Cannot find package/i.test(consoleOutput)
+        ? "vitest is not installed in this sandbox — its template predates the test tooling"
+        : `vitest produced no report. Output:\n${consoleOutput.slice(-1_500)}`;
+    return { outcome: "unavailable", total: 0, passed: 0, failed: 0, failures: [], reason };
+  }
+
+  const total = report.numTotalTests ?? 0;
+  const passed = report.numPassedTests ?? 0;
+  const failed = report.numFailedTests ?? 0;
+
+  const failures: Array<{ test: string; message: string }> = [];
+  for (const suite of report.testResults ?? []) {
+    for (const a of suite.assertionResults ?? []) {
+      if (a.status !== "failed") continue;
+      const name = a.fullName || a.title || suite.name || "unnamed test";
+      const message = (a.failureMessages ?? []).map(summarizeFailure).join("\n").trim();
+      failures.push({ test: name, message: message || "failed with no message" });
+    }
+  }
+
+  if (total === 0) return { outcome: "none", total: 0, passed: 0, failed: 0, failures: [] };
+  return { outcome: failed > 0 ? "failed" : "passed", total, passed, failed, failures };
+}
+
 
 // tsc --pretty false emits one line per diagnostic:
 //   src/components/Header.tsx(12,5): error TS2339: Property 'foo' does not exist on type 'Bar'.

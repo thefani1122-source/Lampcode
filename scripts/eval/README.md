@@ -83,6 +83,5 @@ mark the old one `retired: true`, so old results stay readable.
 Keep checks to things any correct implementation has to satisfy. A check a good
 build can fail is worse than no check — it trains you to ignore the harness.
 
-`npm run eval:test` exercises the scoring rules without spending anything, and runs
-as part of neither `npm test` (there isn't one) nor the typecheck gate, so run it
-after touching `score.ts`.
+`npm test` exercises the scoring rules — and the vitest output parser behind
+`run_tests` — without spending anything. Run it after touching `score.ts`.

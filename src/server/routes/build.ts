@@ -1189,6 +1189,7 @@ export async function runFastBuild(
       // check_page looked like a model problem for three weeks.
       checkPage: result.gateResults.checkPage ?? "never",
       checkTypes: result.gateResults.checkTypes ?? "never",
+      checkTests: result.gateResults.checkTests ?? "never",
       costUsd: result.costUsd,
       durationMs: Date.now() - buildStartedMs,
     };

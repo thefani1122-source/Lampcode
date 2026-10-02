@@ -61,9 +61,10 @@ function summarize(run: Run): void {
   );
   console.log(
     `\n${pad("task", 18)}${pad("verdict", 8)}${pad("rounds", 7)}${pad("files", 6)}` +
-    `${pad("biggest", 8)}${pad("page", 12)}${pad("types", 12)}${pad("cost", 8)}${"time"}`,
+    `${pad("biggest", 8)}${pad("page", 12)}${pad("types", 12)}${pad("tests", 12)}` +
+    `${pad("cost", 8)}${"time"}`,
   );
-  console.log("─".repeat(92));
+  console.log("─".repeat(104));
   for (const t of r) {
     console.log(
       pad(t.taskId, 18) +
@@ -73,6 +74,7 @@ function summarize(run: Run): void {
       pad(t.largestFileLines ? `${t.largestFileLines}L` : "—", 8) +
       pad(t.outcome?.checkPage ?? "—", 12) +
       pad(t.outcome?.checkTypes ?? "—", 12) +
+      pad(t.outcome?.checkTests ?? "—", 12) +
       pad(t.outcome ? `$${t.outcome.costUsd.toFixed(3)}` : "—", 8) +
       `${t.wallClockSec}s`,
     );
@@ -114,6 +116,14 @@ function summarize(run: Run): void {
       `  fail ${count((t) => t.outcome?.checkTypes === "fail")}` +
       `  unavailable ${count((t) => t.outcome?.checkTypes === "unavailable")}` +
       `  never called ${count((t) => t.outcome?.checkTypes === "never")}`);
+    // "no tests written" is tracked separately from "never called": the first
+    // is an agent that looked and had nothing to run, the second is one that
+    // never thought to check correctness at all.
+    console.log(`run_tests   pass   ${count((t) => t.outcome?.checkTests === "pass")}` +
+      `  fail ${count((t) => t.outcome?.checkTests === "fail")}` +
+      `  no tests ${count((t) => t.outcome?.checkTests === "none")}` +
+      `  unavailable ${count((t) => t.outcome?.checkTests === "unavailable")}` +
+      `  never called ${count((t) => t.outcome?.checkTests === "never")}`);
   }
   console.log(`one-file builds    ${count((t) => t.fileCount === 1)}`);
   console.log(`mean wall clock    ${mean(r.map((t) => t.wallClockSec)).toFixed(0)}s`);

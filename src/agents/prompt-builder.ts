@@ -1257,12 +1257,28 @@ async function buildNpmManifest(): Promise<string> {
     const raw = await readFile(TEMPLATE_TS_PATH, "utf-8");
     const m = /const PKG_JSON = `([\s\S]*?)`\n/.exec(raw);
     if (!m) throw new Error("PKG_JSON block not found in template.ts");
-    const pkg = JSON.parse(m[1] ?? "{}") as { dependencies?: Record<string, string> };
+    const pkg = JSON.parse(m[1] ?? "{}") as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
     const names = Object.keys(pkg.dependencies ?? {}).filter((n) => !DB_AUTH_LIBS.has(n));
+
+    // Test tooling sits in devDependencies, so it is absent from the list
+    // above — but the line above ends with "plus EXACTLY the DB/auth
+    // libraries", which reads as a closed set. Without naming them here, a
+    // model that has been told to write tests also has an instruction saying
+    // the vitest import it needs is not allowed.
+    const testLibs = Object.keys(pkg.devDependencies ?? {}).filter(
+      (n) => n === "vitest" || n.startsWith("@testing-library/"),
+    );
+    const testLine = testLibs.length > 0
+      ? `\nIn TEST FILES ONLY (*.test.ts / *.test.tsx) you may also import: ${testLibs.join(", ")}.`
+      : "";
 
     npmManifestCache =
       `AVAILABLE IN THIS SANDBOX (pre-installed — use freely, no install step needed):\n` +
-      `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.`;
+      `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.` +
+      testLine;
   } catch (err) {
     // template.ts unreadable — fail safe to the old static list rather than
     // emitting an empty/broken instruction block.
@@ -1613,6 +1629,9 @@ export class PromptBuilder {
         "- check_page(): opens the running app in a real browser and tells you what it " +
         "actually rendered, including console errors.\n" +
         "- check_types(): runs tsc against the real project.\n" +
+        "- run_tests(): runs the project's vitest suite and reports which tests failed and " +
+        "why. The only tool that tells you the code is CORRECT rather than merely rendering " +
+        "and compiling.\n" +
         "- read_logs(): recent dev-server and backend output — usually where the real " +
         "reason for a broken page is.\n" +
         "- fetch_reference(url): opens a page the user linked and returns its palette, " +
@@ -1642,7 +1661,15 @@ export class PromptBuilder {
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
         "check_page tells you something but not why, call read_logs.\n" +
-        "5. Only then write your final reply — a short, plain summary of what you built " +
+        "5. If the app has logic whose correctness you cannot see by reading it — a " +
+        "reducer, a running total, a date or currency calculation, validation rules, a " +
+        "formula evaluator, sorting or filtering with edge cases — put that logic in its " +
+        "own module, write a test file beside it (src/lib/totals.test.ts), and call " +
+        "run_tests. A page that renders can still compute the wrong number, and that is " +
+        "the one kind of bug neither check_page nor check_types can see. Skip this for an " +
+        "app that is only layout and presentation; a test that restates the " +
+        "implementation proves nothing and costs a round.\n" +
+        "6. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page and seen it pass. If a " +
         "check reports that it could not run, that is NOT a pass — say so rather than " +

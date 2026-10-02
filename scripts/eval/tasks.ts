@@ -38,6 +38,12 @@ export type EvalTask = {
   minFiles?: number;
   /** Fail a build whose largest single file exceeds this. */
   maxLinesPerFile?: number;
+  /** Minimum number of `*.test.ts(x)` files. Set this only where the task has
+   *  logic whose correctness is not visible by reading it — a formula
+   *  evaluator, a running total — since that is the only case the build prompt
+   *  asks for tests. Asking for tests on a layout task would penalise a build
+   *  for something it was never told to do. */
+  minTestFiles?: number;
   /** Set instead of deleting a task, so old results stay readable. */
   retired?: boolean;
 };
@@ -263,6 +269,10 @@ export const EVAL_TASKS: EvalTask[] = [
     mustContain: ["localStorage", /SUM/],
     minFiles: 4,
     maxLinesPerFile: 500,
+    // The clearest case in the set for a test: formula evaluation with a
+    // circular-reference rule is logic that can render perfectly and still be
+    // wrong, which is exactly what check_page and check_types cannot see.
+    minTestFiles: 1,
   },
   {
     id: "editor-undo",

@@ -16,6 +16,9 @@ export type BuildOutcome = {
   toolCalls: Record<string, number>;
   checkPage: "pass" | "fail" | "unavailable" | "never";
   checkTypes: "pass" | "fail" | "unavailable" | "never";
+  /** Optional, unlike in schema.ts: rows written before run_tests existed have
+   *  no such key, and the harness has to read those runs too. */
+  checkTests?: "pass" | "fail" | "unavailable" | "none" | "never";
   costUsd: number;
   durationMs: number;
 };
@@ -59,6 +62,12 @@ export function scoreChecks(task: EvalTask, files: FileEntry[], outcome: BuildOu
   if (task.minFiles !== undefined && authored.length < task.minFiles) {
     failed.push(`only ${authored.length} file(s), expected at least ${task.minFiles}`);
   }
+  if (task.minTestFiles !== undefined) {
+    const testFiles = authored.filter((f) => /\.(test|spec)\.tsx?$/.test(f.path));
+    if (testFiles.length < task.minTestFiles) {
+      failed.push(`${testFiles.length} test file(s), expected at least ${task.minTestFiles}`);
+    }
+  }
   if (task.maxLinesPerFile !== undefined) {
     for (const f of authored) {
       if (f.lines > task.maxLinesPerFile) {
@@ -73,6 +82,8 @@ export function scoreChecks(task: EvalTask, files: FileEntry[], outcome: BuildOu
     if (outcome.checkPage === "fail") failed.push("the agent's own check_page ended on a failure");
     if (outcome.checkTypes === "fail") failed.push("the agent's own check_types ended on a failure");
     if (outcome.checkPage === "unavailable") failed.push("check_page could not run (sandbox browser)");
+    if (outcome.checkTests === "fail") failed.push("the agent's own run_tests ended on a failure");
+    if (outcome.checkTests === "unavailable") failed.push("run_tests could not run (vitest in the sandbox)");
     if (outcome.turnsExhausted) failed.push("ran out of turns while still working");
   }
   return failed;

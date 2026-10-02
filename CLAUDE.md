@@ -314,20 +314,22 @@ its own bugs. What stands between here and there is mostly TOOLS, not the model.
 seven: `write_files`, `check_page`, `check_types`, `list_files`, `read_file`, `read_logs`,
 `fetch_reference`. What is missing from that list is the ceiling.
 
-**1. A surgical `edit_file`.** `write_files` replaces a file ENTIRELY, so a one-line change
+**1. A surgical `edit_file` — DONE (2026-10-01).** `write_files` replaces a file ENTIRELY, so a one-line change
 means rewriting the whole file. Two consequences: project size is bounded by what the model can
 rewrite in a turn, and every edit risks the rest of the file — on 2026-10-01 an edit replaced a
 working `App.tsx` with a fragment. `edit_file(path, old_string, new_string)` with exact-match,
 must-be-unique semantics is what Claude Code and Cursor use, and it is the single change that
 makes long projects structurally possible. `write_files` stays for new files.
 
-**2. An evaluation harness — 20 tasks is enough.** `npm test` exits 1. Both prompt changes made
+**2. An evaluation harness — 20 tasks is enough. DONE (2026-10-02), see `scripts/eval/`.**
+At the time this was written `npm test` exited 1; it now runs the repo's own cases. Both prompt changes made
 on 2026-10-01 (file splitting, the palette) rest on ONE build each; nobody can say whether they
 help in general. Twenty fixed prompts scored on fixed criteria — build completed, page rendered,
 typecheck clean, rounds, cost — run before and after every prompt or harness change. Until this
 exists, every other improvement here is a guess. Do it second so the rest can be measured.
 
-**3. The agent must be able to run tests.** No test runner exists anywhere: the template has no
+**3. The agent must be able to run tests — DONE (2026-10-02), see below. Template rebuild
+still required.** When this was written no test runner existed anywhere: the template had no
 vitest or jest, and there is no `run_tests` tool. The agent can ask "did it render" and "did it
 compile" but never "is it correct", which is exactly why bug-finding is capped. Add vitest to
 the template, add the tool, and ask the model to cover non-trivial logic.
@@ -374,7 +376,7 @@ access token while `WAITLIST_MODE` is on) and `EVAL_BASE_URL`.
 npm run eval -- --tier smoke --label baseline   # --dry-run spends nothing
 npm run eval:report                             # newest run
 npm run eval:report -- --diff old.json new.json
-npm run eval:test                               # scoring rules, costs nothing
+npm test                                        # scoring rules + parsers, costs nothing
 ```
 
 **Never edit an existing task's `prompt`** — it makes every stored run incomparable. Add a new
@@ -382,8 +384,58 @@ task and set `retired: true` on the old one. `npm run typecheck` now also checks
 via `tsconfig.scripts.json`.
 
 **Not yet run against a real deployment.** The scoring, report, diff and error paths are
-exercised (`npm run eval:test`, synthetic runs, dry-run), but no eval has spent a build. The
+exercised (`npm test`, synthetic runs, dry-run), but no eval has spent a build. The
 first real run is the next step and will need Modal or Anthropic credit.
+
+## The agent can run tests — `run_tests`, 2026-10-02
+`check_page` answers "did it render" and `check_types` answers "does it compile". Neither can
+answer "is it correct", so a build that computes the wrong total passed every gate. That was
+the ceiling on bug-finding.
+
+**`run_tests()`** runs vitest inside the sandbox and reports which tests failed and why.
+Four outcomes, deliberately kept apart — `pass`, `fail`, **`none`** (it ran; the project has no
+tests) and `unavailable` (the runner could not run). "No tests" is NOT a pass: an agent told
+its tests passed after writing none has proof of correctness it never earned. Recorded as
+`buildOutcome.checkTests`, so the eval can see whether the agent tests anything at all.
+
+**vitest lives in the generated app's own devDependencies**, not in `.lampcode-tools` with
+playwright. A test file does `import { describe } from "vitest"`, and Node resolves a bare
+specifier relative to the IMPORTING FILE — a vitest installed anywhere else is invisible to the
+tests that need it. Installed: `vitest`, `jsdom`, `@testing-library/react`,
+`@testing-library/dom` (a peer of RTL v16, and `--legacy-peer-deps` does not install peers),
+`@testing-library/jest-dom`.
+
+**`vitest.config.ts` is its own file, not a `test` key in `vite.config.ts`.** vite.config.ts is
+the most load-bearing file in the image — if its imports fail, the dev server never starts and
+every build dies — and importing `vitest/config` there would hang that on a devDependency. It
+is in `BAKED_FILES`, with `vitest.setup.ts`, so the model cannot overwrite the harness its own
+tests run in.
+
+**`vitest.setup.ts` is in tsconfig's `include`, and that is load-bearing.** It holds jest-dom's
+type augmentation, which must be in the SAME TypeScript program as the test files. Verified both
+ways: without it, `tsc --noEmit` reports `toBeInTheDocument()` as a non-existent matcher on a
+test that passes perfectly — `check_types` failing on correct code, and the agent then "fixing"
+working logic.
+
+**Verified by running it, not by reading it.** vitest 2.1 was installed in a scratch project
+holding the template's real `package.json`, `vitest.config.ts`, `vitest.setup.ts` and
+`tsconfig.json`, extracted verbatim from `template.ts`:
+- `npm install --legacy-peer-deps` of the full dependency set succeeds
+- a logic test importing through the `@/` alias passes
+- a component test (`render`, `screen`, `toBeInTheDocument`) passes — so jsdom, the react
+  plugin and the setup file are all wired
+- `css: false` does not break a component that imports its own stylesheet
+- `tsc --noEmit` is clean over both test files
+- `parseVitestOutput` has 25 cases (`npm test`) against **real** vitest output captured from
+  that project — mixed pass/fail, all-pass, no-test-files, a component-test failure — plus the
+  ways a run yields no report at all. Fixtures live in `scripts/fixtures/vitest/`.
+
+**STILL REQUIRED: rebuild the E2B template.** Nothing above reaches a sandbox until
+`e2b-template/build.ts` runs and the new image is live. Until then `run_tests` returns
+`unavailable` with "vitest is not installed in this sandbox" — which is correct behaviour, not
+a bug. Read the build log to its LAST LINE: a green `✅ Template built` has twice proved
+nothing here, and a failed template build leaves every sandbox silently running the last good
+image.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every
@@ -430,7 +482,11 @@ State the remaining step explicitly.
 ```bash
 npm run dev         # tsx watch, loads .env
 npm run build       # tsup → dist/
-npm run typecheck   # tsc --noEmit
+npm run typecheck   # tsc --noEmit, src/ and scripts/
+npm test            # the repo's own cases — parser + eval scoring, costs nothing
 npm run db:generate # drizzle-kit generate
 ```
-There is no test suite (`npm test` exits 1). `tsc --noEmit` is the verification gate.
+`npm test` runs the repo's own cases — the vitest-output parser behind `run_tests` and the
+eval scoring rules (`scripts/*.test.ts`, plain tsx scripts, no runner). It costs nothing and
+needs no credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
+covers `scripts/` too.

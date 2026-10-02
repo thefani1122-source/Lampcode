@@ -1,6 +1,6 @@
 /**
- * Cases for scoreChecks. There is no test runner in this repo (`npm test`
- * exits 1), so this is a script: `npx tsx scripts/eval/score.test.ts`. It
+ * Cases for scoreChecks. There is no test runner in this repo, so this is a
+ * plain script — `npm test` runs it alongside the vitest-parser cases. It
  * prints each case and exits non-zero if any fails.
  *
  * It exists because the scoring is the part that silently decides what counts
@@ -35,6 +35,7 @@ const outcome = (over: Partial<BuildOutcome> = {}): BuildOutcome => ({
   toolCalls: {},
   checkPage: "pass",
   checkTypes: "pass",
+  checkTests: "none",
   costUsd: 0.1,
   durationMs: 1000,
   ...over,
@@ -119,6 +120,54 @@ expectChecks(
     outcome(),
   ),
   ["present but shouldn't be"],
+);
+
+// minTestFiles — only set on tasks whose logic warrants a test.
+expectChecks(
+  "minTestFiles catches a build with no tests",
+  scoreChecks(
+    task({ minTestFiles: 1 }),
+    [f("src/lib/formula.ts", "export const evaluate = () => 0")],
+    outcome(),
+  ),
+  ["0 test file(s)"],
+);
+expectChecks(
+  "minTestFiles is satisfied by a .test.ts file",
+  scoreChecks(
+    task({ minTestFiles: 1 }),
+    [
+      f("src/lib/formula.ts", "export const evaluate = () => 0"),
+      f("src/lib/formula.test.ts", "import { it } from 'vitest'"),
+    ],
+    outcome(),
+  ),
+  [],
+);
+expectChecks(
+  "minTestFiles accepts .test.tsx too",
+  scoreChecks(
+    task({ minTestFiles: 1 }),
+    [f("src/components/Grid.test.tsx", "import { it } from 'vitest'")],
+    outcome(),
+  ),
+  [],
+);
+// A source file merely NAMED like a test must not count — and a task with no
+// minTestFiles must never be scored on tests at all.
+expectChecks(
+  "a file named latest.ts is not a test file",
+  scoreChecks(
+    task({ minTestFiles: 1 }),
+    [f("src/lib/latest.ts", "export const latest = 1")],
+    outcome(),
+  ),
+  ["0 test file(s)"],
+);
+expectChecks(
+  "a task without minTestFiles is not scored on tests",
+  scoreChecks(task({}), [f("src/App.tsx", "app")], outcome()),
+  [],
 );
 
 expectChecks(

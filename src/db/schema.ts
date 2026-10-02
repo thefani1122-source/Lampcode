@@ -125,6 +125,10 @@ export type BuildOutcome = {
    *  which is a different and worse thing than calling it and failing. */
   checkPage: "pass" | "fail" | "unavailable" | "never";
   checkTypes: "pass" | "fail" | "unavailable" | "never";
+  /** run_tests has one extra state: "none" means it ran and the project has no
+   *  tests. Kept apart from "pass" on purpose — an agent that writes no tests
+   *  and is told they passed has proof of correctness it never earned. */
+  checkTests: "pass" | "fail" | "unavailable" | "none" | "never";
   costUsd: number;
   durationMs: number;
 };

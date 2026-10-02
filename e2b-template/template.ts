@@ -26,7 +26,8 @@ const PKG_JSON = `{
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "react": "19.0.0",
@@ -69,6 +70,11 @@ const PKG_JSON = `{
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^6.0.0",
+    "vitest": "^2.1.8",
+    "jsdom": "^25.0.1",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
     "tailwindcss": "^4.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "typescript": "^5.5.4",
@@ -117,6 +123,11 @@ export default defineConfig({
   },
 })`
 
+// vitest.setup.ts is in `include` even though it sits outside src/. Its only
+// statement imports jest-dom's type augmentation, and that augmentation has to
+// be part of the SAME TypeScript program as the test files or `tsc --noEmit`
+// reports toBeInTheDocument() as a non-existent matcher on a test that passes
+// perfectly well at runtime — check_types failing on correct code.
 const TSCONFIG = `{
   "compilerOptions": {
     "target": "ES2020",
@@ -133,7 +144,7 @@ const TSCONFIG = `{
     "strict": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src"]
+  "include": ["src", "vitest.setup.ts"]
 }`
 
 const INDEX_HTML = `<!DOCTYPE html>
@@ -324,6 +335,48 @@ try {
 console.log(JSON.stringify(result))
 `
 
+// Vitest gets its OWN config rather than a `test` key inside vite.config.ts.
+// vite.config.ts is the most load-bearing file in the image — if its imports
+// ever fail the dev server never starts and every build dies — and importing
+// `vitest/config` there would hang that on a devDependency. Here, a broken
+// import costs only the tests.
+//
+// Plugins and the @ alias are repeated because a separate vitest.config.ts
+// REPLACES vite.config.ts rather than extending it; without the react plugin,
+// every .tsx test fails on the first JSX token. tailwindcss is deliberately
+// left out (tests don't render CSS) along with `css: false`, which keeps a
+// component's stylesheet import from being compiled on every run.
+//
+// No passWithNoTests: a run with no test files must exit non-zero, because
+// "the agent wrote no tests" and "the tests pass" are different facts and
+// runTests in e2b-service.ts reports them differently.
+const VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    css: false,
+    // Each file gets its own process group; a test that hangs on a timer
+    // cannot then hold the whole run open past the tool's timeout.
+    testTimeout: 10000,
+    hookTimeout: 10000,
+  },
+})`
+
+// jest-dom's matchers (toBeInTheDocument, toHaveTextContent, …). Registered
+// here because models reach for them by habit, and without the import they
+// fail as "not a function", which reads like a broken test rather than a
+// missing matcher.
+const VITEST_SETUP = `import '@testing-library/jest-dom/vitest'`
+
 // Minimal manifest for the internal tooling directory — see the note beside
 // the WORKDIR below for why this is not `npm init -y`.
 const TOOLS_PKG_JSON = JSON.stringify(
@@ -341,6 +394,8 @@ const dockerfile = [
   'WORKDIR /home/user/app',
   writeFile('/home/user/app/package.json', PKG_JSON),
   writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),
+  writeFile('/home/user/app/vitest.config.ts', VITEST_CONFIG),
+  writeFile('/home/user/app/vitest.setup.ts', VITEST_SETUP),
   writeFile('/home/user/app/tsconfig.json', TSCONFIG),
   writeFile('/home/user/app/index.html', INDEX_HTML),
   writeFile('/home/user/app/src/index.tsx', INDEX_TSX),

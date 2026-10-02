@@ -16,7 +16,13 @@ import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
-import { TOOL_DEFINITIONS, AGENTIC_BUILD_TOOLS, executeTool, type GateOutcome } from "./tools.js";
+import {
+  TOOL_DEFINITIONS,
+  AGENTIC_BUILD_TOOLS,
+  executeTool,
+  type GateOutcome,
+  type TestGateOutcome,
+} from "./tools.js";
 import {
   classifyMcpServers,
   buildWriteProxyDefinitions,
@@ -155,7 +161,11 @@ export interface DispatchResult {
    *  key = the model never called that gate. The tool results go to the model
    *  as prose and nothing else saw them, so a finished build carried no
    *  evidence that the page ever rendered. */
-  gateResults: { checkPage?: GateOutcome; checkTypes?: GateOutcome };
+  gateResults: {
+    checkPage?: GateOutcome;
+    checkTypes?: GateOutcome;
+    checkTests?: TestGateOutcome;
+  };
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -459,7 +469,11 @@ export class AgentDispatcher {
     // One object for the whole loop: the model is expected to check, repair and
     // check again, so each call overwrites the last and the final value is the
     // state the build actually ended in.
-    const gateResults: { checkPage?: GateOutcome; checkTypes?: GateOutcome } = {};
+    const gateResults: {
+      checkPage?: GateOutcome;
+      checkTypes?: GateOutcome;
+      checkTests?: TestGateOutcome;
+    } = {};
 
     // Agentic builds need many more turns than a context-gathering tool call —
     // the model is writing, looking at the result and repairing, which is

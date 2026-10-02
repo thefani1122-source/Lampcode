@@ -12,6 +12,7 @@ import {
   writeFilesToSandbox,
   verifyBrowserRender,
   runTypeCheck,
+  runTests,
   readProjectFile,
   listProjectFiles,
   readSandboxLogs,
@@ -168,6 +169,24 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "run_tests",
+    description:
+      "Run the project's test suite with vitest and report which tests passed and which " +
+      "failed, with the failure messages. This is the only tool that tells you whether the " +
+      "code is CORRECT — check_page tells you the app rendered and check_types tells you it " +
+      "compiles, and code can do both while computing the wrong answer.\n" +
+      "Write tests for logic whose correctness is not obvious by reading it: a reducer, a " +
+      "total, a date or currency calculation, a formula evaluator, validation rules, " +
+      "sorting and filtering, anything with an edge case. Put them next to the code as " +
+      "`<name>.test.ts` (or `.test.tsx`) under src/, import from \"vitest\" explicitly " +
+      "(`import { describe, it, expect } from \"vitest\"`), and test the exported function " +
+      "rather than the component wrapped around it. jsdom and @testing-library/react are " +
+      "available if you do need to render one.\n" +
+      "Do not write tests that only restate the implementation, and do not test layout or " +
+      "styling — check_page covers what rendered.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "list_files",
     description:
       "List the project's source files as they exist right now in the sandbox. Use this " +
@@ -224,6 +243,10 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
 ];
 
 export type GateOutcome = "pass" | "fail" | "unavailable";
+/** run_tests has a fourth answer the other gates cannot give: it ran, and the
+ *  project has no tests. That is not a pass — an agent told "tests passed"
+ *  after writing none has been handed proof it never earned. */
+export type TestGateOutcome = GateOutcome | "none";
 
 const SKILLS_DIR = join(process.cwd(), "src", "skills");
 
@@ -271,7 +294,9 @@ export interface ToolExecutionContext {
    *  whether the page actually rendered, which left a finished build with no
    *  evidence beyond status = success. Last call wins — the model is expected
    *  to check, fix, and check again, and the final state is the real one. */
-  gateResults?: { checkPage?: GateOutcome; checkTypes?: GateOutcome } | undefined;
+  gateResults?:
+    | { checkPage?: GateOutcome; checkTypes?: GateOutcome; checkTests?: TestGateOutcome }
+    | undefined;
 }
 
 /** Execute one tool call and return the text to send back as its tool_result. */
@@ -314,6 +339,7 @@ export async function executeTool(
     name === "edit_file" ||
     name === "check_page" ||
     name === "check_types" ||
+    name === "run_tests" ||
     name === "list_files" ||
     name === "read_file" ||
     name === "read_logs" ||
@@ -615,6 +641,48 @@ export async function executeTool(
         );
       } catch (err) {
         return `Error checking the page: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    if (name === "run_tests") {
+      try {
+        const run = await runTests(projectId);
+        if (ctx.gateResults) {
+          ctx.gateResults.checkTests =
+            run.outcome === "passed" ? "pass"
+            : run.outcome === "failed" ? "fail"
+            : run.outcome;
+        }
+        if (run.outcome === "unavailable") {
+          return (
+            `The tests could not be run: ${run.reason ?? "unknown reason"}. Nothing was ` +
+            `verified — do not treat this as a pass. Carry on with the build and rely on ` +
+            `check_page and check_types instead.`
+          );
+        }
+        if (run.outcome === "none") {
+          return (
+            "There are no tests in this project yet, so nothing was verified. If this app " +
+            "has logic whose correctness isn't obvious by reading it, write a test file " +
+            "next to that code (e.g. src/lib/totals.test.ts), then call run_tests again."
+          );
+        }
+        if (run.outcome === "passed") {
+          return `All ${run.total} test(s) passed.`;
+        }
+        // Cap the detail: a broken shared module can fail fifty tests with the
+        // same message, and fifty copies of it crowds out the context the model
+        // needs to fix the one cause.
+        const shown = run.failures.slice(0, 10);
+        const omitted = run.failures.length - shown.length;
+        return (
+          `${run.failed} of ${run.total} test(s) failed.\n` +
+          shown.map((f) => `- ${f.test}\n  ${f.message.replace(/\n/g, "\n  ")}`).join("\n") +
+          (omitted > 0 ? `\n…and ${omitted} more failing test(s), likely the same cause.` : "") +
+          `\nFix the code, not the test — unless the test itself asserts the wrong thing.`
+        );
+      } catch (err) {
+        return `Error running the tests: ${err instanceof Error ? err.message : String(err)}`;
       }
     }
 
