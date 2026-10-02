@@ -127,6 +127,30 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "edit_file",
+    description:
+      "Change part of an existing file by replacing an exact piece of its text. Prefer this " +
+      "over write_files for anything that already exists — it does not require you to " +
+      "reproduce the rest of the file, so it is far cheaper and cannot lose the parts you " +
+      "are not changing.\n" +
+      "`old_string` must match the file EXACTLY, including indentation and line breaks, and " +
+      "must appear exactly ONCE. If it appears more than once, include more surrounding " +
+      "lines until it is unique. Read the file first if you are not certain of its contents.\n" +
+      "To delete something, pass an empty `new_string`.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Project-relative path, e.g. \"src/App.tsx\"." },
+        old_string: {
+          type: "string",
+          description: "The exact text to replace. Must appear exactly once in the file.",
+        },
+        new_string: { type: "string", description: "What to put in its place. May be empty." },
+      },
+      required: ["path", "old_string", "new_string"],
+    },
+  },
+  {
     name: "check_page",
     description:
       "Open the running app in a real headless browser and report what actually rendered, " +
@@ -279,6 +303,7 @@ export async function executeTool(
 
   if (
     name === "write_files" ||
+    name === "edit_file" ||
     name === "check_page" ||
     name === "check_types" ||
     name === "list_files" ||
@@ -392,6 +417,91 @@ export async function executeTool(
       "then read and check afterwards.";
     const isNoSandbox = (e: unknown): boolean =>
       e instanceof Error && e.message.includes("no live sandbox");
+
+    if (name === "edit_file") {
+      const path = typeof args["path"] === "string" ? args["path"].trim() : "";
+      const oldString = typeof args["old_string"] === "string" ? args["old_string"] : "";
+      const newString = typeof args["new_string"] === "string" ? args["new_string"] : "";
+
+      if (!path) return "Error: `path` is required.";
+      if (oldString === "") {
+        return (
+          "Error: `old_string` is required and cannot be empty. To create a new file, use " +
+          "write_files instead."
+        );
+      }
+      if (oldString === newString) {
+        return "Nothing was changed: `old_string` and `new_string` are identical.";
+      }
+      if (isTemplateOwnedFile(path)) {
+        return (
+          `${path} is owned by the project template and cannot be changed.\n` +
+          `For custom CSS, create your own stylesheet — e.g. src/app.css — and import it from ` +
+          `src/App.tsx.`
+        );
+      }
+
+      // Same precedence as read_file: what this turn wrote, then the project as
+      // it stood at build start, then the sandbox. Editing anything staler than
+      // that would silently undo the model's own previous edit.
+      const current =
+        (ctx.generatedFiles ?? {})[path] ??
+        (ctx.projectFiles ?? {})[path] ??
+        (await readProjectFile(projectId, path).catch((err: unknown) => {
+          if (isNoSandbox(err)) return null;
+          return undefined;
+        }));
+
+      if (current === null) return NOT_READY;
+      if (current === undefined) {
+        return (
+          `Could not read ${path}. Call list_files to see what the project actually contains, ` +
+          `or use write_files if this file does not exist yet.`
+        );
+      }
+
+      // Exact match, and it has to be unambiguous. Replacing the first of
+      // several matches is how an edit tool quietly changes the wrong line.
+      const occurrences = current.split(oldString).length - 1;
+      if (occurrences === 0) {
+        return (
+          `No change made: that exact text does not appear in ${path}. It must match the ` +
+          `file character for character, including indentation and line breaks. Call ` +
+          `read_file on ${path} and copy the text from what it returns.`
+        );
+      }
+      if (occurrences > 1) {
+        return (
+          `No change made: that text appears ${occurrences} times in ${path}, so it is ` +
+          `ambiguous. Include more of the surrounding lines until it identifies exactly one ` +
+          `place.`
+        );
+      }
+
+      // A FUNCTION replacement, not a string one: in String.replace a literal
+      // replacement treats $&, $1, $` and $' as substitution patterns, so new
+      // text containing them would be silently mangled — and generated code
+      // contains them often, in exactly the regex replacements this tool would
+      // be used to edit. Verified: replacing with "[$&]" writes "[1]" the
+      // naive way and "[$&]" this way.
+      const updated = current.replace(oldString, () => newString);
+      if (ctx.generatedFiles) ctx.generatedFiles[path] = updated;
+
+      // Write the WHOLE project, as write_files does: the sandbox may be a fresh
+      // template, and checking one edited file dropped into it would tell the
+      // model nothing about the real app.
+      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? { [path]: updated }) };
+      try {
+        const url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
+        const removed = newString === "";
+        return (
+          `Edited ${path} — ${removed ? "removed" : "replaced"} 1 occurrence.\n` +
+          `The app is running at ${url}. Call check_page to see what it actually renders.`
+        );
+      } catch (err) {
+        return `Error writing ${path}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
 
     if (name === "list_files") {
       const inMemory = Object.keys(known).sort();
