@@ -104,6 +104,31 @@ export type VerifyReport = {
   checks: VerifyCheck[];
 };
 
+/**
+ * What actually happened in a build, recorded so it can be compared.
+ *
+ * Nothing stored this before: after a build finished, there was no record of
+ * whether the agent verified its own work, how hard it had to try, or what it
+ * cost — only that the row said "success". That makes every change to the
+ * prompt or the harness a matter of opinion, which is how both of yesterday's
+ * prompt changes were judged, on one build each.
+ */
+export type BuildOutcome = {
+  /** Tool-loop rounds the model used. */
+  rounds: number;
+  /** True if the loop stopped at AGENTIC_MAX_TURNS rather than the model finishing. */
+  turnsExhausted: boolean;
+  filesWritten: number;
+  /** How many times each tool was called, e.g. { write_files: 2, check_page: 3 }. */
+  toolCalls: Record<string, number>;
+  /** Result of the last call to each gate. "never" means the model did not call it,
+   *  which is a different and worse thing than calling it and failing. */
+  checkPage: "pass" | "fail" | "unavailable" | "never";
+  checkTypes: "pass" | "fail" | "unavailable" | "never";
+  costUsd: number;
+  durationMs: number;
+};
+
 export type ProjectSettings = {
   buildCommand?: string | undefined;
   outputDir?: string | undefined;
@@ -289,6 +314,7 @@ export const buildSessions = pgTable("build_sessions", {
   planTasks: jsonb("plan_tasks").$type<PlanTask[]>(),
   verifyRound: integer("verify_round").notNull().default(0),
   verifyReport: jsonb("verify_report").$type<VerifyReport>(),
+  buildOutcome: jsonb("build_outcome").$type<BuildOutcome>(),
 });
 
 export const agentTaskStatusEnum = pgEnum("task_status", [

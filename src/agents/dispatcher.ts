@@ -16,7 +16,7 @@ import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
-import { TOOL_DEFINITIONS, AGENTIC_BUILD_TOOLS, executeTool } from "./tools.js";
+import { TOOL_DEFINITIONS, AGENTIC_BUILD_TOOLS, executeTool, type GateOutcome } from "./tools.js";
 import {
   classifyMcpServers,
   buildWriteProxyDefinitions,
@@ -146,6 +146,16 @@ export interface DispatchResult {
    *  same shape the fence-parsing path produces — so every downstream gate
    *  consumes it unchanged. Empty on all non-agentic dispatches. */
   generatedFiles: Record<string, string>;
+  /** How many model round-trips the tool loop actually used. 1 on every
+   *  non-tool dispatch. Recorded so a build can be scored afterwards: rounds
+   *  is the difference between a model that wrote and verified once and one
+   *  that spent twelve turns fighting its own output. */
+  rounds: number;
+  /** What the model's own verification tools reported, last call wins. Absent
+   *  key = the model never called that gate. The tool results go to the model
+   *  as prose and nothing else saw them, so a finished build carried no
+   *  evidence that the page ever rendered. */
+  gateResults: { checkPage?: GateOutcome; checkTypes?: GateOutcome };
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -445,6 +455,11 @@ export class AgentDispatcher {
     let requestedWriteAction = false;
     let loopCostUsd = 0;
     let lastStopReason: string | undefined;
+    let roundsUsed = 0;
+    // One object for the whole loop: the model is expected to check, repair and
+    // check again, so each call overwrites the last and the final value is the
+    // state the build actually ended in.
+    const gateResults: { checkPage?: GateOutcome; checkTypes?: GateOutcome } = {};
 
     // Agentic builds need many more turns than a context-gathering tool call —
     // the model is writing, looking at the result and repairing, which is
@@ -454,6 +469,7 @@ export class AgentDispatcher {
     const generatedFiles: Record<string, string> = {};
 
     for (let round = 1; round <= maxRounds; round++) {
+      roundsUsed = round;
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
@@ -585,6 +601,7 @@ export class AgentDispatcher {
                 generatedFiles,
                 onLog: options.onSandboxLog,
                 projectFiles: options.projectFiles,
+                gateResults,
               }
             : {}),
         }).catch(
@@ -663,6 +680,8 @@ export class AgentDispatcher {
       content: fullContent,
       finalContent: lastRoundContent,
       turnsExhausted,
+      rounds: roundsUsed,
+      gateResults,
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,

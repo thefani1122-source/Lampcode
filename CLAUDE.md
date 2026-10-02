@@ -349,6 +349,42 @@ files first.
 **Explicitly NOT yet:** new models, market positioning, or the agent-research papers. Those
 matter once the foundation holds.
 
+## Every build now records what it did — and there is an eval set
+Until 2026-10-02 a finished build left no evidence beyond `status = success`. Rounds used,
+whether the agent called its own gates, what they said, which tools it reached for: none of it
+was stored. That is why the unstyled-page bug survived three months and why `check_page` could
+be structurally incapable of running for three weeks while the model was blamed.
+
+**`build_sessions.build_outcome`** (jsonb, type `BuildOutcome` in `schema.ts`) is written at
+the end of every build — on failure too, with whatever was gathered before the throw. It holds
+`rounds`, `turnsExhausted`, `filesWritten`, `toolCalls` (a per-tool count), `checkPage`,
+`checkTypes`, `costUsd`, `durationMs`. `GET /api/build/:sessionId/status` returns it.
+
+The gate fields keep four states apart, and collapsing them is the mistake to avoid:
+`pass` / `fail` (the gate ran), `unavailable` (the gate could not run — a sandbox problem, not
+a model problem) and `never` (the model did not call it). On the **pipeline** path all gates
+read `never` and `rounds` is 1 — it has no agent gates, so that is not a finding.
+
+**`scripts/eval/`** is twenty fixed prompts (4 smoke, 11 core, 5 hard) run through the real
+HTTP API, scored against `build_outcome` plus the generated files. See its `README.md`. It
+spends real money — every task is a real build — and needs `EVAL_TOKEN` (an admin Supabase
+access token while `WAITLIST_MODE` is on) and `EVAL_BASE_URL`.
+
+```bash
+npm run eval -- --tier smoke --label baseline   # --dry-run spends nothing
+npm run eval:report                             # newest run
+npm run eval:report -- --diff old.json new.json
+npm run eval:test                               # scoring rules, costs nothing
+```
+
+**Never edit an existing task's `prompt`** — it makes every stored run incomparable. Add a new
+task and set `retired: true` on the old one. `npm run typecheck` now also checks `scripts/`
+via `tsconfig.scripts.json`.
+
+**Not yet run against a real deployment.** The scoring, report, diff and error paths are
+exercised (`npm run eval:test`, synthetic runs, dry-run), but no eval has spent a build. The
+first real run is the next step and will need Modal or Anthropic credit.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every
    build (seen 2026-10-01). It reaches for Anthropic credentials, and `ANTHROPIC_API_KEY` is

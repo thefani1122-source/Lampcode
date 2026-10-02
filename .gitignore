@@ -1,2 +1,5 @@
 node_modules/
 dist/
+
+# Eval runs — real builds, local to whoever ran them.
+eval-results/

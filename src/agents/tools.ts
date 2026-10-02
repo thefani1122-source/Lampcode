@@ -223,6 +223,8 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
   },
 ];
 
+export type GateOutcome = "pass" | "fail" | "unavailable";
+
 const SKILLS_DIR = join(process.cwd(), "src", "skills");
 
 // Allowlist check before touching the filesystem — `name` is a model-chosen
@@ -264,6 +266,12 @@ export interface ToolExecutionContext {
   generatedFiles?: Record<string, string> | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onLog?: ((line: string) => void) | undefined;
+  /** Where the verification tools record what they found, so the build can be
+   *  scored afterwards. The tools return prose to the model; nothing else sees
+   *  whether the page actually rendered, which left a finished build with no
+   *  evidence beyond status = success. Last call wins — the model is expected
+   *  to check, fix, and check again, and the final state is the real one. */
+  gateResults?: { checkPage?: GateOutcome; checkTypes?: GateOutcome } | undefined;
 }
 
 /** Execute one tool call and return the text to send back as its tool_result. */
@@ -593,9 +601,14 @@ export async function executeTool(
         // the browser never opened it is how an agent ships a blank app while
         // believing it verified one.
         if (unavailable) {
+          if (ctx.gateResults) ctx.gateResults.checkPage = "unavailable";
           return "The page check could not run (the sandbox did not respond). Nothing was verified — do not treat this as a pass.";
         }
-        if (ok || issues.length === 0) return "The page rendered successfully with no console errors.";
+        if (ok || issues.length === 0) {
+          if (ctx.gateResults) ctx.gateResults.checkPage = "pass";
+          return "The page rendered successfully with no console errors.";
+        }
+        if (ctx.gateResults) ctx.gateResults.checkPage = "fail";
         return (
           `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}\n` +
           `Call read_logs if you need the dev server's own account of what happened.`
@@ -608,9 +621,14 @@ export async function executeTool(
     try {
       const { ok, issues, unavailable } = await runTypeCheck(projectId);
       if (unavailable) {
+        if (ctx.gateResults) ctx.gateResults.checkTypes = "unavailable";
         return "The type check could not run (tsc was unreachable in the sandbox). Nothing was verified — do not treat this as a pass.";
       }
-      if (ok || issues.length === 0) return "No type errors.";
+      if (ok || issues.length === 0) {
+        if (ctx.gateResults) ctx.gateResults.checkTypes = "pass";
+        return "No type errors.";
+      }
+      if (ctx.gateResults) ctx.gateResults.checkTypes = "fail";
       return `Type errors:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
     } catch (err) {
       return `Error running the type check: ${err instanceof Error ? err.message : String(err)}`;

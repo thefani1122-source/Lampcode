@@ -9,6 +9,7 @@ import {
   projects,
   buildSessions,
   agentTasks,
+  type BuildOutcome,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -701,6 +702,15 @@ function buildFullstackEditPrompt(
   );
 }
 
+/** How many times the model called each tool, across every round of a dispatch.
+ *  Part of the build's outcome record: if check_page barely appears here, the
+ *  agent is not verifying its own work whatever the prompt says. */
+function countToolCalls(calls: Array<{ name: string }>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const c of calls) counts[c.name] = (counts[c.name] ?? 0) + 1;
+  return counts;
+}
+
 // ── Background build runner ───────────────────────────────────────────────────
 
 export async function runFastBuild(
@@ -718,6 +728,16 @@ export async function runFastBuild(
   // Registered before anything can throw and cleared in the finally at the very
   // end, so a shutdown at any point in between can still find and close it out.
   runningSessions.add(sessionId);
+  // Wall clock for the whole build, for buildOutcome below. completedAt minus
+  // startedAt would be close, but startedAt is written a few awaits later and
+  // both are DB round-trips.
+  const buildStartedMs = Date.now();
+
+  // Outcome evidence, captured as soon as the generation dispatch returns and
+  // refined at the end. Declared out here so the catch can write it too: a
+  // build that FAILED is the case you most want rounds and gate results for,
+  // and the completion block never runs on that path.
+  let outcomeDraft: BuildOutcome | null = null;
 
   // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
   // routing outright — without it a paid or admin account can never exercise
@@ -1157,6 +1177,21 @@ export async function runFastBuild(
       mcpServers,
       restProviders,
     });
+
+    outcomeDraft = {
+      rounds: result.rounds,
+      turnsExhausted: result.turnsExhausted,
+      filesWritten: Object.keys(result.generatedFiles).length,
+      toolCalls: countToolCalls(result.toolCalls),
+      // "never" and "unavailable" are different failures and both matter: the
+      // first is a model that didn't look, the second is a gate that couldn't
+      // run. Collapsing either into "fail" is how a structurally broken
+      // check_page looked like a model problem for three weeks.
+      checkPage: result.gateResults.checkPage ?? "never",
+      checkTypes: result.gateResults.checkTypes ?? "never",
+      costUsd: result.costUsd,
+      durationMs: Date.now() - buildStartedMs,
+    };
 
     // Running spend across this build's dispatches. The main dispatch above
     // always fires regardless of cost — there is nothing to check it against yet.
@@ -2486,6 +2521,17 @@ export async function runFastBuild(
     // build, main dispatch + every fix loop that ran.
     const creditsUsed = Math.ceil(result.costUsd * 1_000);
     const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
+
+    // Close out the evidence record: file count from what was actually written
+    // to disk (the fence-parsing path writes files the dispatch never reported),
+    // and cost across every dispatch this build made, not just the first.
+    const outcome: BuildOutcome = {
+      ...outcomeDraft,
+      filesWritten: writtenPaths.length,
+      costUsd: cumulativeCostUsd,
+      durationMs: Date.now() - buildStartedMs,
+    };
+
     await db
       .update(buildSessions)
       .set({
@@ -2494,6 +2540,7 @@ export async function runFastBuild(
         outputDir,
         creditsUsed,
         usageUsd,
+        buildOutcome: outcome,
         completedAt: new Date(),
       })
       .where(eq(buildSessions.id, sessionId));
@@ -2531,7 +2578,16 @@ export async function runFastBuild(
 
     await db
       .update(buildSessions)
-      .set({ status: "failed", error: errorMsg, completedAt: new Date() })
+      .set({
+        status: "failed",
+        error: errorMsg,
+        // Null when the failure happened before the generation dispatch
+        // returned — there is genuinely nothing to record in that case.
+        ...(outcomeDraft
+          ? { buildOutcome: { ...outcomeDraft, durationMs: Date.now() - buildStartedMs } }
+          : {}),
+        completedAt: new Date(),
+      })
       .where(eq(buildSessions.id, sessionId));
 
     await db
@@ -2830,8 +2886,14 @@ buildRouter.get("/:sessionId/status", async (c) => {
     status: session.status,
     agents,
     creditsUsed: session.creditsUsed,
+    usageUsd: session.usageUsd,
     outputDir: session.outputDir,
     previewUrl: session.previewUrl,
+    // What the build actually did — rounds, tool calls, and whether the model's
+    // own gates passed. Null on every session built before this was recorded,
+    // and on the pipeline path, which has no agent gates to report. The eval
+    // harness (scripts/eval) scores builds from this.
+    buildOutcome: session.buildOutcome,
     error: session.error,
     createdAt: session.createdAt,
     startedAt: session.startedAt,
