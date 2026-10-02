@@ -352,9 +352,9 @@ the end of a build. The ForgeFlow build hit the cost ceiling at round 14 with 15
 and lost all of them — `restore: project has no stored files`. Now `persistFilesAsWritten`
 stores each write as it happens; see below.
 
-**5. A planning phase for long builds.** ForgeFlow died mid-repair at round 14. A cheap plan
-dispatch producing a file-by-file plan, then execution against it, makes a long build tractable
-and resumable instead of one long improvisation.
+**5. A planning phase for long builds — DONE (2026-10-02).** ForgeFlow died mid-repair at round
+14. A cheap plan dispatch producing a file-by-file plan, then execution against it, makes a
+long build tractable and resumable instead of one long improvisation. See below.
 
 **6. Project memory from what the harness already knows.** `memory-generator.ts` fails on every
 build (Anthropic credentials, which are not set). Derive memory from the file manifest and the
@@ -478,6 +478,57 @@ and that sandbox already holds the partial edit — the user watched it happen �
 storage agree with what they already saw instead of silently reverting their newest work. A
 half-finished edit can be finished; work that was never stored is gone. Reverting a failed edit
 properly would need a previous-version snapshot, which is not built.
+
+## Long builds get a plan first — 2026-10-02
+A big build used to be one long improvisation: the model found out what the app was while
+writing it. That is where the one-file-app habit comes from, and when the ForgeFlow build died
+at round 14 nothing anywhere stated what it had set out to make, so there was nothing to resume
+against.
+
+**`src/agents/build-planner.ts`** runs ONE cheap dispatch before the build and returns a
+file-by-file plan: `{ summary, files: [{ path, purpose }], outOfScope? }`. It decides layout and
+nothing else — no schemas, no libraries, no code. A plan that specifies everything costs as much
+as the build and is wrong by the second file.
+
+**`shouldPlan` is deliberately narrow.** Only new builds, only agentic mode, only prompts of
+`BUILD_PLAN_MIN_WORDS` (default 60) or more:
+- an EDIT already has a layout, the project's own — planning again invites restructuring a
+  working app, the opposite of what an edit should do;
+- the PIPELINE path never reads a plan, so planning for it is paid for and thrown away;
+- a SMALL build does not need one and should not pay for one.
+
+`BUILD_PLANNING_ENABLED=false` switches it off entirely. Both vars use the same explicit-string
+parsing as `AGENTIC_BUILD_ENABLED`, for the same reason: `z.coerce.boolean()` reads `"false"` as
+true.
+
+**The plan is stored before the build runs**, in `build_sessions.plan_tasks`. Writing it at the
+end would lose it in exactly the case it exists for. That column previously held an unused
+`PlanTask` type from a multi-agent design that was never built — NULL in all 309 rows, no reader
+or writer — so it is reused rather than migrated, which is why the column name does not match
+the `BuildPlan` type.
+
+**The plan is handed to the builder as a starting point, not a contract.** The planner saw only
+the prompt; the builder can see the running app, so when they disagree the builder has the
+evidence. What the block does forbid is collapsing the layout back into one large file.
+
+**The `planning` agent type was already there and dead** — a "BuildForge Architect / CONTRACT.md"
+prompt writing a full technical spec for specialized agents that were never built, dispatched by
+nothing. Its prompt is replaced; its model tier and `JSON_OUTPUT_AGENTS` membership were the
+useful parts and are reused. The new prompt is 1748 chars.
+
+**Costs are counted.** `planCostUsd` is added to `cumulativeCostUsd` and to
+`buildOutcome.costUsd` — a planned build must not look cheaper than it was. `buildOutcome` also
+records `planned` and `plannedFiles`, and the eval report prints planned-vs-unplanned, so
+whether planning helps is a question the harness can answer rather than a matter of opinion.
+
+**Never throws.** Every failure path returns no plan and the build proceeds exactly as it would
+have: a parse failure, a dispatch error, a DB write failure. `parsePlan` also refuses a plan
+that would make things worse — empty, unparseable, or naming only template-owned files — and
+drops individual template-owned paths so the build does not try to write one, get refused, and
+read that as a failure. 32 cases in `npm test`.
+
+**Not yet run against a real build.** The gating, parsing and prompt-injection are verified by
+cases and by inspecting the assembled prompt; no planned build has actually been dispatched.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every

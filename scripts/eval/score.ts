@@ -19,6 +19,9 @@ export type BuildOutcome = {
   /** Optional, unlike in schema.ts: rows written before run_tests existed have
    *  no such key, and the harness has to read those runs too. */
   checkTests?: "pass" | "fail" | "unavailable" | "none" | "never";
+  /** Also optional: rows written before the planning pass existed have neither. */
+  planned?: boolean;
+  plannedFiles?: number;
   costUsd: number;
   durationMs: number;
 };

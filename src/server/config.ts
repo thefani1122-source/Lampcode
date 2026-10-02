@@ -126,6 +126,21 @@ const envSchema = z.object({
   // the real budget limit; this is the belt-and-braces stop so a model that
   // never says "done" can't spin.
   AGENTIC_MAX_TURNS: z.coerce.number().int().positive().default(12),
+  // One cheap dispatch before a LONG new build, producing a file-by-file plan
+  // the build then executes against. Only ever runs for big new builds (see
+  // shouldPlan in build-planner.ts) — a small app does not need a plan and
+  // should not pay for one. Set to "false" to switch it off entirely.
+  // Same explicit-string parsing as AGENTIC_BUILD_ENABLED above, and for the
+  // same reason: z.coerce.boolean() would read "false" as true.
+  BUILD_PLANNING_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === undefined || v === "" ? true : v === "true" || v === "1")
+    .pipe(z.boolean()),
+  // How long a new build's prompt has to be before it earns a planning pass.
+  // 60 words is roughly the Atlas/ForgeFlow class of prompt — the ones that
+  // actually run long — while leaving "build me a todo app" alone.
+  BUILD_PLAN_MIN_WORDS: z.coerce.number().int().positive().default(60),
 });
 
 const REQUIRED_VARS = [

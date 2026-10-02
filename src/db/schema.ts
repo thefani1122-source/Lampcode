@@ -84,11 +84,35 @@ export type InterviewData = {
   answers: PlanAnswer[];
 };
 
-export type PlanTask = {
-  agent: string;
-  task: string;
-  estimatedTokens: number;
-  phase: string;
+/**
+ * A long build's file-by-file plan, produced by one cheap dispatch before the
+ * build starts (`src/agents/build-planner.ts`).
+ *
+ * Why this exists: a big build was one long improvisation. The ForgeFlow build
+ * died mid-repair at round 14 with no statement anywhere of what it had set out
+ * to make, so there was nothing to resume against and no way to tell which of
+ * its fifteen files were the ones it still needed.
+ *
+ * This REPLACES an older `PlanTask` type ({agent, task, estimatedTokens,
+ * phase}) from a multi-agent design that was never built. Its column,
+ * `plan_tasks`, was NULL in all 309 rows and had no reader or writer anywhere,
+ * so the column is reused rather than migrated — hence the name.
+ */
+export type PlannedFile = {
+  /** Project-relative path, e.g. "src/views/Dashboard.tsx". */
+  path: string;
+  /** One line on what it contains and why it exists. */
+  purpose: string;
+};
+
+export type BuildPlan = {
+  /** One or two sentences: what is being built, in the planner's own words. */
+  summary: string;
+  /** The files to write, in the order they should be written. */
+  files: PlannedFile[];
+  /** Anything the planner judged out of scope, so the build does not drift
+   *  into it and the user can see what was deliberately left out. */
+  outOfScope?: string[];
 };
 
 export type VerifyCheck = {
@@ -129,6 +153,11 @@ export type BuildOutcome = {
    *  tests. Kept apart from "pass" on purpose — an agent that writes no tests
    *  and is told they passed has proof of correctness it never earned. */
   checkTests: "pass" | "fail" | "unavailable" | "none" | "never";
+  /** Whether a planning pass ran and produced a usable plan, and how many
+   *  files it planned. Recorded so the eval can compare planned builds against
+   *  unplanned ones instead of the question being settled by opinion. */
+  planned: boolean;
+  plannedFiles: number;
   costUsd: number;
   durationMs: number;
 };
@@ -315,7 +344,9 @@ export const buildSessions = pgTable("build_sessions", {
   currentPlanPhase: text("current_plan_phase"),
   interviewData: jsonb("interview_data").$type<InterviewData>(),
   contractContent: text("contract_content"),
-  planTasks: jsonb("plan_tasks").$type<PlanTask[]>(),
+  // Column name is historical — see BuildPlan above. Holds the build's
+  // file-by-file plan, or null when the build did not earn a planning pass.
+  buildPlan: jsonb("plan_tasks").$type<BuildPlan>(),
   verifyRound: integer("verify_round").notNull().default(0),
   verifyReport: jsonb("verify_report").$type<VerifyReport>(),
   buildOutcome: jsonb("build_outcome").$type<BuildOutcome>(),

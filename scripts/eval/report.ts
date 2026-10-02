@@ -98,7 +98,7 @@ function summarize(run: Run): void {
     }
   }
 
-  console.log("\n" + "─".repeat(92));
+  console.log("\n" + "─".repeat(104));
   console.log(`built              ${built}/${r.length}`);
   console.log(`all checks held    ${count((t) => t.verdict === "pass")}/${r.length}` +
     `  (${Math.round((count((t) => t.verdict === "pass") / n) * 100)}%)`);
@@ -124,6 +124,15 @@ function summarize(run: Run): void {
       `  no tests ${count((t) => t.outcome?.checkTests === "none")}` +
       `  unavailable ${count((t) => t.outcome?.checkTests === "unavailable")}` +
       `  never called ${count((t) => t.outcome?.checkTests === "never")}`);
+  }
+  // Planned vs unplanned is the question the planning pass exists to settle,
+  // and it can only be settled by comparing runs — not by looking at one build.
+  if (withOutcome.some((t) => t.outcome?.planned !== undefined)) {
+    const planned = r.filter((t) => t.outcome?.planned === true);
+    console.log(`planned builds     ${planned.length}/${withOutcome.length}` +
+      (planned.length > 0
+        ? `  mean planned files ${mean(planned.map((t) => t.outcome?.plannedFiles ?? 0)).toFixed(1)}`
+        : ""));
   }
   console.log(`one-file builds    ${count((t) => t.fileCount === 1)}`);
   console.log(`mean wall clock    ${mean(r.map((t) => t.wallClockSec)).toFixed(0)}s`);

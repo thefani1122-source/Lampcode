@@ -10,6 +10,7 @@ import {
   buildSessions,
   agentTasks,
   type BuildOutcome,
+  type BuildPlan,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -45,6 +46,7 @@ import { generateFileManifest, findOrphanExports, type OrphanExport } from "../.
 import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTree } from "../../verify/security.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
+import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1113,6 +1115,47 @@ export async function runFastBuild(
         ]
       : requirements;
 
+    // ── Planning pass, for long new builds only ─────────────────────────────
+    // One cheap dispatch that decides the file layout before any code exists.
+    // A big build was otherwise one long improvisation: the model found out
+    // what the app was while writing it, which is where the one-file-app habit
+    // comes from, and when ForgeFlow died at round 14 nothing stated what it
+    // had set out to make. Never throws — a build must not fail because its
+    // optional planning pass did.
+    let buildPlan: BuildPlan | null = null;
+    let planCostUsd = 0;
+    if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
+      server?.emitToRoom(sessionId, "build:preview_log", {
+        sessionId,
+        line: "Planning the file layout…",
+      });
+      const planned = await planBuild({
+        dispatcher, prompt, sessionId, userId, projectId, provider,
+      });
+      buildPlan = planned.plan;
+      planCostUsd = planned.costUsd;
+      if (buildPlan) {
+        console.log(
+          `[build] planned ${buildPlan.files.length} file(s) session=${sessionId} ` +
+          `cost=$${planCostUsd.toFixed(4)}`,
+        );
+        // Stored before the build runs, not after. The point of the plan is to
+        // survive a build that does not finish — writing it at the end would
+        // lose it in exactly the case it exists for.
+        await db
+          .update(buildSessions)
+          .set({ buildPlan })
+          .where(eq(buildSessions.id, sessionId))
+          .catch((err: unknown) => {
+            logger.warn({ sessionId, err }, "[planner] could not store the plan");
+          });
+        server?.emitToRoom(sessionId, "build:preview_log", {
+          sessionId,
+          line: `Plan: ${buildPlan.files.length} file(s) — ${buildPlan.summary}`,
+        });
+      }
+    }
+
     // Fetched unconditionally now — there's no upfront keyword gate deciding
     // whether this build might need a connected service; the model decides
     // that itself once these are attached to the dispatch. Cheap (single DB
@@ -1149,7 +1192,7 @@ export async function runFastBuild(
       usageCategory: "build",
       provider,
       task: {
-        description: taskDescription,
+        description: buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription,
         requirements: effectiveRequirements,
         outputFormat: "code",
         hasReferenceImage,
@@ -1190,13 +1233,17 @@ export async function runFastBuild(
       checkPage: result.gateResults.checkPage ?? "never",
       checkTypes: result.gateResults.checkTypes ?? "never",
       checkTests: result.gateResults.checkTests ?? "never",
-      costUsd: result.costUsd,
+      planned: buildPlan !== null,
+      plannedFiles: buildPlan?.files.length ?? 0,
+      costUsd: result.costUsd + planCostUsd,
       durationMs: Date.now() - buildStartedMs,
     };
 
     // Running spend across this build's dispatches. The main dispatch above
     // always fires regardless of cost — there is nothing to check it against yet.
-    let cumulativeCostUsd = result.costUsd;
+    // The planning pass counts: it is a model call this build paid for, and
+    // leaving it out would understate every planned build's cost.
+    let cumulativeCostUsd = result.costUsd + planCostUsd;
 
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {
