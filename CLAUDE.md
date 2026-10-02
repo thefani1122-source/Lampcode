@@ -356,10 +356,9 @@ stores each write as it happens; see below.
 14. A cheap plan dispatch producing a file-by-file plan, then execution against it, makes a
 long build tractable and resumable instead of one long improvisation. See below.
 
-**6. Project memory from what the harness already knows.** `memory-generator.ts` fails on every
-build (Anthropic credentials, which are not set). Derive memory from the file manifest and the
-decisions already observed instead of wiring it to a provider — so an edit does not re-read five
-files first.
+**6. Project memory from what the harness already knows — DONE (2026-10-02).**
+`memory-generator.ts` failed on every build (Anthropic credentials, which are not set). It is
+now derived from the project's own files, with no model call. See below.
 
 **Explicitly NOT yet:** new models, market positioning, or the agent-research papers. Those
 matter once the foundation holds.
@@ -530,12 +529,48 @@ read that as a failure. 32 cases in `npm test`.
 **Not yet run against a real build.** The gating, parsing and prompt-injection are verified by
 cases and by inspecting the assembled prompt; no planned build has actually been dispatched.
 
+## Project memory is derived, not generated — 2026-10-02
+`memory-generator.ts` used to dispatch Haiku over 8 KB of concatenated code and ask it to write
+a prose summary. It built its Anthropic client from `config.ANTHROPIC_API_KEY`, which is not set
+on Railway, so it logged `[memory-generator] failed: Could not resolve authentication method` on
+**every build** and returned the previous memory instead. It never failed a build, which is
+exactly why nobody noticed memory had stopped being written.
+
+It is now pure, synchronous and incapable of failing. Everything the old prompt asked a model to
+infer is already knowable from the files: which packages are imported, what the `:root` tokens
+are, which files exist, what tables the SQL declares. Deriving it costs nothing, needs no
+credentials — the absence of credentials being the whole problem — and cannot name a component
+that does not exist.
+
+The one thing a model genuinely did better was "what was built, and why". That is not inferred
+either: **the user's own prompts are kept verbatim**, oldest first, capped at 8. Their words beat
+any summary of their words. That list is the only part that accumulates; every other section is
+re-derived each build, so a stale fact cannot survive one.
+
+Sections: the prompt history, the detected stack, the structure (views / components / logic
+modules / tests / backend files, listed), declared SQL tables, and the project's own design
+tokens with an instruction not to change them. A real four-view CRM's memory comes to ~1.1 KB.
+
+**It deliberately does not repeat the file manifest.** Both are injected into the same edit
+prompt, so memory answers WHAT and WHY and the manifest answers WHERE. Restating the manifest's
+per-file export lists here would spend the edit's context twice on the same facts — there is a
+case asserting `exports:` never appears.
+
+**Migration is graceful, not lossless.** 53 of 311 projects hold memory in the old LLM shape,
+from whenever the key was present. `parseHistory` returns nothing for that shape, so those
+projects start their history fresh at their next build and everything else is re-derived; the
+old prose is replaced rather than merged. Carrying the old "What Was Built" paragraph forward
+once would be possible and is not built.
+
+44 cases in `npm test`, the most important being the round trip: build N's memory must be
+readable by build N+1, and the cap must drop the OLDEST entry, never the newest.
+
 ## Open, deliberately parked — raise these when the current work settles
-1. **`[memory-generator] failed: Could not resolve authentication method`** — logs on every
-   build (seen 2026-10-01). It reaches for Anthropic credentials, and `ANTHROPIC_API_KEY` is
-   not set on Railway (the boot banner says so too). It does not fail the build. Owner asked to
-   park it and discuss later: decide whether project memory should route through the same
-   plan-based provider choice as everything else, or be switched off while the key is absent.
+1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
+   2026-10-02.** The parked question was whether memory should route through the plan-based
+   provider choice or be switched off while the key is absent. Neither: it needs no provider at
+   all, because everything the old prompt asked a model to infer is already in the files. The
+   log line is gone with it.
 2. **Billing overstates agentic builds** (cached prompt tokens — see above). Unfixed.
 3. **`AGENTIC_MAX_TURNS=40` and `MAX_BUILD_COST_USD=3.0`** were raised on Railway on 2026-10-01
    for a long-running test. Revisit before opening the product to real users.
@@ -579,7 +614,8 @@ npm run typecheck   # tsc --noEmit, src/ and scripts/
 npm test            # the repo's own cases — parser + eval scoring, costs nothing
 npm run db:generate # drizzle-kit generate
 ```
-`npm test` runs the repo's own cases — the vitest-output parser behind `run_tests` and the
-eval scoring rules (`scripts/*.test.ts`, plain tsx scripts, no runner). It costs nothing and
-needs no credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
+`npm test` runs the repo's own cases — the vitest-output parser behind `run_tests`, the build
+planner's gating and parsing, the project-memory derivation, and the eval scoring rules
+(`scripts/*.test.ts`, plain tsx scripts, no runner). 119 cases, costing nothing and needing no
+credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
 covers `scripts/` too.

@@ -2198,11 +2198,15 @@ export async function runFastBuild(
     setImmediate(() => {
       void (async () => {
         try {
-          const allCode = Object.values(allFiles).join("\n")
-          const [newMemory, newManifest] = await Promise.all([
-            generateProjectMemory(allCode, projectMemory, prompt),
-            Promise.resolve(generateFileManifest(allFiles)),
-          ])
+          // Both derived from the files, neither a model call. generateProjectMemory
+          // used to dispatch Haiku and log "Could not resolve authentication
+          // method" on every build, because ANTHROPIC_API_KEY is not set here.
+          const newMemory = generateProjectMemory({
+            files: allFiles,
+            prompt,
+            existingMemory: projectMemory,
+          })
+          const newManifest = generateFileManifest(allFiles)
           try {
             await db.update(projects)
               .set({ projectMemory: newMemory, projectManifest: newManifest })
