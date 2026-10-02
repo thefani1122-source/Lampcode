@@ -409,13 +409,15 @@ const dockerfile = [
   // --legacy-peer-deps: React 19 conflicts with peer deps on some packages
   // (three.js ecosystem, particles, spline) that still declare react ^18.
   'RUN npm install --legacy-peer-deps',
-  // The image is built as root but RUN as `user` — the same fact that sent
-  // playwright's Chromium into /root/.cache. Everything above this line was
-  // therefore written root-owned, including node_modules, and `user` gets read
-  // access but not write. Vite has been getting away with that; vitest will
-  // not, because it writes a transform cache under node_modules before running
-  // a single test. Cheap either way, and it removes a whole class of
-  // "works as root, fails in the sandbox" failure.
+  // Belt and braces, NOT load-bearing — do not reason from its presence.
+  // The image is built as root but run as `user`, so everything above this line
+  // is written root-owned, and vitest needs to write a transform cache under
+  // node_modules. That looked like it needed fixing. It does not: E2B's own
+  // `[config]` phase ends every build with "Give 'user' ownership to
+  // /home/user", so ownership is already correct without this step — confirmed
+  // in the 2026-10-02 build log and by a live sandbox writing into
+  // node_modules. Kept because it costs one cached layer and states the
+  // requirement explicitly where the next person will look for it.
   'RUN chown -R user:user /home/user/app',
   // ── Internal tooling, deliberately OUTSIDE /home/user/app ─────────────────
   // Headless Chromium for the post-build render check (verifyBrowserRender in

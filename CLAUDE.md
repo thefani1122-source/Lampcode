@@ -443,16 +443,19 @@ holding the template's real `package.json`, `vitest.config.ts`, `vitest.setup.ts
   that project — mixed pass/fail, all-pass, no-test-files, a component-test failure — plus the
   ways a run yields no report at all. Fixtures live in `scripts/fixtures/vitest/`.
 
-**The template must be rebuilt for any of this to reach a sandbox** (`e2b-template/build.ts`),
-and then verified with `verify-template.ts` — a green `✅ Template built` has twice proved
-nothing here, and a failed build leaves every sandbox silently running the last good image.
-Until a sandbox has the new image, `run_tests` reports `unavailable` with "vitest is not
-installed in this sandbox", which is correct behaviour rather than a bug.
+**TEMPLATE REBUILT AND VERIFIED — 2026-10-02.** `lampcode-vite` was rebuilt (2m4s, 27 steps,
+zero errors, log read to its last line) and then checked in a live sandbox with
+`verify-template.ts`. All eleven checks passed, the ones that matter being: a logic test and a
+component test both pass with a parseable JSON report (`total=2 passed=2`), `tsc --noEmit` is
+clean over both, and Chromium still launches as `user` — so `check_page` did not regress.
+`run_tests` is live.
 
-Note for the rebuild: `/home/user/app` is now chowned to `user` after `npm install`. The image
-is built as root but run as `user` — the same fact that sent Chromium into `/root/.cache` — so
-node_modules was root-owned and read-only to the sandbox user. Vite got away with that; vitest
-would not, because it writes a transform cache there before running a single test.
+One correction to record, since it is the kind of thing that becomes folklore: a
+`chown -R user:user /home/user/app` was added to the template on the theory that node_modules
+was root-owned and unwritable by the sandbox user. **That theory was wrong.** E2B's own
+`[config]` phase ends every build with "Give 'user' ownership to /home/user", so ownership is
+already correct. The step is kept as an explicit statement of the requirement, but it is belt
+and braces — do not reason from its presence, and do not add more chowns on its model.
 
 ## Files are stored as they are written — 2026-10-02
 `persistFilesAsWritten` (`src/storage/project-files.ts`) is called from three places:
