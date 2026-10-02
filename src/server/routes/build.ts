@@ -1200,7 +1200,7 @@ export async function runFastBuild(
       const written = Object.entries(result.generatedFiles).map(([path, code]) => ({ path, code }));
       if (written.length > 0) {
         parsedFiles = written;
-        console.log(`[build] agentic mode produced ${written.length} file(s) via write_files`);
+        console.log(`[build] agentic mode produced ${written.length} file(s) via its tools`);
       } else if (result.toolCalls.length > 0) {
         // Tools were used and nothing was written: that is a decision, not a
         // failure. On an edit the model can read the project, find the change
@@ -1231,7 +1231,7 @@ export async function runFastBuild(
             "this model or endpoint does not do tool calling; the harness cannot work on it.",
         );
         console.log(
-          `[build] agentic mode produced 0 file(s) via write_files ` +
+          `[build] agentic mode produced 0 file(s) via its tools ` +
             `(toolCalls=${result.toolCalls.length}) — recovered ${parsedFiles.length} file(s) from the reply`,
         );
       }

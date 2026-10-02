@@ -188,7 +188,7 @@ GLM-5.3 and Kimi K3 each returned `toolCallsMade: 0` and all three were wrongly 
 
 **Still true:** a working preview is still not evidence the harness ran — `build.ts` falls
 back to fence parsing when `generatedFiles` is empty, and that path produces a working app
-too. Check `[build] agentic mode produced N file(s) via write_files` and the
+too. Check `[build] agentic mode produced N file(s) via its tools` and the
 `Gateway request: tools offered` line before concluding anything.
 
 **Known and NOT fixed — billing overstates agentic builds.** An agentic build resends the
