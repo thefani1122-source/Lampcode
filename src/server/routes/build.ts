@@ -1480,7 +1480,24 @@ export async function runFastBuild(
         const errors = await validateSyntax(filesToWrite).catch(() => []);
         let orphans: OrphanExport[] = [];
         try {
-          orphans = findOrphanExports(Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])));
+          // The orphan check needs the WHOLE project, not just this turn's
+          // writes. On an edit filesToWrite holds only what changed, so a
+          // component the model touched looks unimported purely because the
+          // file that imports it was not in the set — reported as "unwired
+          // components: Hero (src/components/Hero.tsx)" while Hero was plainly
+          // rendering on screen. Harmless-looking, but it also drove a repair
+          // dispatch at something that was never broken.
+          //
+          // This went unnoticed while edits rewrote whole files, because the
+          // importer usually came along for the ride. edit_file made the set
+          // small enough for it to fire almost every time.
+          //
+          // validateSyntax stays on filesToWrite alone — only new code needs
+          // checking, and re-parsing untouched files would be wasted work.
+          orphans = findOrphanExports({
+            ...existingFiles,
+            ...Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
+          });
         } catch {
           orphans = [];
         }
