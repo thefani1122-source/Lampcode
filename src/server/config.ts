@@ -117,10 +117,18 @@ const envSchema = z.object({
   // the string "false" (and "0") coerce to TRUE. Setting the var to "false" to
   // switch this off would have silently switched it on, with real money
   // attached. Only an explicit "true"/"1" enables it.
+  // Default flipped to TRUE on 2026-10-03, after 20 real builds across all
+  // three eval tiers: 20/20 built, 0 build failures, 0 harness errors, the turn
+  // cap never reached, and the core tier 11/11 on every check. The flag stays
+  // as a kill switch — set it to "false" and the fence-parsing path takes over
+  // — but the agentic harness is now what a build gets unless someone says
+  // otherwise. Only an explicit "false"/"0" disables it, parsed as a string for
+  // the same reason as before: z.coerce.boolean() reads "false" as true, so a
+  // var set to turn this OFF would have turned it on, with real money attached.
   AGENTIC_BUILD_ENABLED: z
     .string()
     .optional()
-    .transform((v) => v === "true" || v === "1")
+    .transform((v) => (v === undefined || v === "" ? true : !(v === "false" || v === "0")))
     .pipe(z.boolean()),
   // Hard ceiling on model turns inside one agentic build. The cost guard is
   // the real budget limit; this is the belt-and-braces stop so a model that

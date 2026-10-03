@@ -58,27 +58,56 @@ Line counts drift — re-check with `wc -l` before quoting them. Last measured 2
 | `src/billing/paddle.ts` | 267 | Paddle subscription + top-up application logic, webhook idempotency |
 | `e2b-template/template.ts` | — | Authoritative sandbox definition (55 npm + 9 pip packages) |
 
-## Two build architectures live side by side — READ THIS FIRST
-As of 2026-09-25 there are two paths through `runFastBuild`, chosen by one flag.
+## The harness is the default now — and "the pipeline" is NOT a separate block
+**`AGENTIC_BUILD_ENABLED` defaults to TRUE as of 2026-10-03.** The flag remains as a kill
+switch: set it to `"false"` and generation falls back to fence parsing. Justification is
+measurement, not preference — 20 real builds across all three eval tiers, 20/20 built, 0 build
+failures, 0 harness errors, the turn cap never reached, and the core tier 11/11 on every check.
 
-**Pipeline (default, `AGENTIC_BUILD_ENABLED` unset/false).** One generation dispatch, then
-six hardcoded repair loops (missing-files, entry-point, security, verifyPreview, typecheck,
-browser-render — each capped at ~2 attempts). The model emits ```filename fences, never sees
-the result of its own work, and every repair is `build.ts` noticing a problem and calling the
-model back with a narrow prompt. This is the path that shipped, and the one the owner wants
-gone — it is the reason the styling bug survived 3 months (no gate existed for "page renders
-unstyled") and the reason a parser bug surfaced as "The AI did not produce a valid App.tsx".
+**Harness (the default).** The model gets sandbox tools and drives: `write_files`, `edit_file`,
+`list_files`, `read_file`, `read_logs`, `check_page`, `check_types`, `run_tests`,
+`fetch_reference`. Turn count bounded by `AGENTIC_MAX_TURNS`; the real budget bound is the
+in-loop `costGuard`. Runs for new builds AND edits, on Anthropic or any OpenAI-compatible
+provider. Files come back via `DispatchResult.generatedFiles` instead of fence parsing, so
+every downstream gate is unchanged.
 
-**Harness (`AGENTIC_BUILD_ENABLED=true`).** The model gets sandbox tools and drives:
-`write_files`, `list_files`, `read_file`, `read_logs`, `check_page`, `check_types`. Turn count
-bounded by `AGENTIC_MAX_TURNS` (default 12); the real budget bound is the in-loop `costGuard`.
-Runs for new builds AND edits, on Anthropic or any OpenAI-compatible provider. Files come back
-via `DispatchResult.generatedFiles` instead of fence parsing, so every downstream gate is
-unchanged.
+### Correcting what this section used to say — the repair loops are SHARED
+This file previously described "six hardcoded repair loops" as belonging to the pipeline, and
+the agreed plan as deleting them once the harness was proven. **That description was wrong, and
+acting on it would have deleted working defence code.** Verified against `build.ts` on
+2026-10-03 — `agenticBuild` appears at exactly seven lines (943, 944, 1127, 1214, 1282, 1362,
+1735), and NONE of the repair loops is among them. They are bare blocks that run on both paths,
+gated on the build's shape rather than on the flag:
 
-**The plan: delete the pipeline once the harness is proven, not before.** Agreed order —
-harness must handle edits (done), then be exercised on real builds (NOT done), then the
-pipeline goes. Deleting first leaves no fallback for a thing that has never run once.
+| loop | line | gated on |
+|---|---|---|
+| missing fullstack files (one focused retry) | ~1439 | `isFullstackBuild` |
+| entry point present for a new build | ~1406 | new build, not the flag |
+| syntax + orphan-export | 1560 | nothing — always |
+| security | 1942 | nothing — always |
+| `verifyPreview` / backend crash | 2240 | nothing — always |
+| typecheck | 2316 | nothing — always |
+| browser render | 2428 | nothing — always |
+
+So an agentic build already runs all of them, after the agent has finished. They are a second,
+deterministic layer under the agent's own gates — and Finding 4 (`editor-undo` passed
+`check_page`, `check_types` and its own tests while shipping no persistence at all) is the
+standing evidence that the agent's self-assessment is not sufficient on its own.
+
+Only ONE thing is actually pipeline-only: the Sandpack file validation at line 1735, skipped
+for agentic builds because it asserts the model wrote `index.tsx` and `package.json`, which the
+template owns.
+
+**And the fence-parsing fallback at 1282 protects the AGENTIC path**, which is the opposite of
+how it reads from the old description. Its own comment: a model that ignores the write-files
+instruction "still writes perfectly good code, just in its reply", and reading only
+`generatedFiles` "threw all of it away and reported 'generation failed' over a build that had
+produced a whole app". Deleting it reintroduces a fixed bug.
+
+What a real removal would therefore be: not one excision, but retiring the deterministic layer
+loop by loop, each one only once the eval shows the agent's own gates catch what it caught. The
+`check_types`-called-on-3-of-10 gap and Finding 4 both say that day has not arrived. Nothing
+here is scheduled for deletion.
 
 ### Provider config — the env names lie, and it has already caused confusion
 `modal-gateway.ts` is **not Modal-specific**. It speaks any OpenAI-compatible

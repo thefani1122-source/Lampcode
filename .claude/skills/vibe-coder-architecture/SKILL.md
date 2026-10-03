@@ -1,6 +1,6 @@
 ---
 name: vibe-coder-architecture
-description: How Lampcode's backend is actually built — Node + Hono, Claude Sonnet 5 or any OpenAI-compatible endpoint, the agentic build harness and its sandbox tools, and the two build paths through runFastBuild. Use when architecting, extending or debugging the build pipeline, the agent loop, prompt construction, or how generated code reaches the preview. For the sandbox layer specifically, use sandbox-lifecycle instead. CLAUDE.md at the repo root is authoritative over this file.
+description: How Lampcode's backend is actually built — Node + Hono, Claude Sonnet 5 or any OpenAI-compatible endpoint, the agentic build harness and its sandbox tools, and the deterministic repair layer runFastBuild runs under it. Use when architecting, extending or debugging the build pipeline, the agent loop, prompt construction, or how generated code reaches the preview. For the sandbox layer specifically, use sandbox-lifecycle instead. CLAUDE.md at the repo root is authoritative over this file.
 ---
 
 # Lampcode architecture — the real one
@@ -40,20 +40,26 @@ So: short, pointed at CLAUDE.md, and easier to keep honest.
 | Realtime | Socket.IO (`src/websocket/server.ts`) |
 | Frontend | A separate repo, `vibe-coder-suite`: React 19 + Vite + TanStack **Router** (not Start) |
 
-## Two paths through `runFastBuild`, chosen by one flag
+## How a build runs — the harness, with a deterministic layer under it
 
-**Harness (`AGENTIC_BUILD_ENABLED=true`).** The model is given sandbox tools and
-drives its own loop: `write_files`, `edit_file`, `check_page`, `check_types`,
-`run_tests`, `list_files`, `read_file`, `read_logs`, `fetch_reference`. Files come
-back as `DispatchResult.generatedFiles`, so every downstream gate is unchanged.
-Bounded by `AGENTIC_MAX_TURNS` and, as the real budget, the in-loop `costGuard`.
-This is the path that works and the one being measured.
+**The harness is the default** (`AGENTIC_BUILD_ENABLED`, true unless explicitly
+set to `"false"`). The model is given sandbox tools and drives its own loop:
+`write_files`, `edit_file`, `check_page`, `check_types`, `run_tests`,
+`list_files`, `read_file`, `read_logs`, `fetch_reference`. Files come back as
+`DispatchResult.generatedFiles`. Bounded by `AGENTIC_MAX_TURNS` and, as the real
+budget, the in-loop `costGuard`.
 
-**Pipeline (the default when that flag is off).** One generation dispatch
-emitting ```filename fences, then six hardcoded repair loops in `build.ts`. The
-model never sees the result of its own work. This is the path that shipped, and
-the one the owner wants gone — but not before the harness is proven, because
-deleting it first leaves no fallback.
+**Underneath it, `build.ts` runs its own repair loops** — syntax/orphan-export,
+security, `verifyPreview`, typecheck, browser render, each capped at ~2 attempts.
+Do not read these as "the old pipeline". They are **not** gated on the agentic
+flag; they run on every build, after the agent has finished, as a second
+deterministic layer. An eval build has already passed all three of the agent's
+own gates while shipping a requirement it forgot, which is why the layer stays.
+
+With the flag off, generation degrades to parsing ```filename fences out of the
+reply. That same fence parsing is also the fallback **inside** the agentic path,
+for a model that writes code in its reply instead of calling the tool — see
+CLAUDE.md, which has the line-by-line account.
 
 ## The shape of a build
 
