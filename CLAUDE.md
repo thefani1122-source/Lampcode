@@ -19,10 +19,15 @@ This repo (`Lampcode`) is the **backend**. The frontend lives in a separate repo
 | DB | Supabase Postgres + Drizzle | `src/db/schema.ts` |
 | Realtime | Socket.IO | `src/websocket/server.ts` |
 | Frontend repo | React 19 + Vite + TanStack Router, Bun as package manager | `vibe-coder-suite/vite.config.ts`, `bun.lock` |
-### ⚠️ `.claude/skills/vibe-coder-architecture/SKILL.md` is STALE
-It claims Bun runtime, Claude Sonnet 4.5, and TanStack Start SSR. All three are wrong for the
-current code. When it conflicts with this file, **this file wins**. Fixing that skill is a
-pending task.
+### Skills — both accurate as of 2026-10-03
+`.claude/skills/vibe-coder-architecture/SKILL.md` was 592 lines describing a different product:
+Bun runtime with `Bun.serve` and `bun.lockb`, TanStack Start SSR, Claude Sonnet 4.5, a
+`start_cmd` baked into the E2B template (the exact opposite of the "No CMD in the template"
+rule below), and Lovable's `<lov-cmd>` tag format. **Rewritten to 92 lines** that match the code
+and point here. It mattered because a skill is not documentation you choose to read — its
+description triggered on nearly any architectural question in this repo, so the wrong stack went
+into the context ahead of the facts. When it conflicts with this file, **this file wins**.
+
 `.claude/skills/sandbox-lifecycle/SKILL.md` is accurate — follow it for anything sandbox-related.
 ## Architecture map
 ```
