@@ -811,6 +811,64 @@ testing, and it wrote none.
 | hard (post-classifier) | 5/5 | 3/5 | 1/5 | 2/5 | 5/5 | $1.456 |
 | core (post-all-fixes) | 11/11 | **11/11** | **11/11** | **11/11** | 9/11 | $2.774 |
 
+## TWO OWNER-REQUESTED BUILDS — and Finding 5, the sharpest one yet, 2026-10-03
+Two deliberately hard one-off builds through the production API, on Kimi K3, deploy `dea287f`.
+Not added to `scripts/eval/tasks.ts`: a task in that set is a fixed comparable measurement, and
+adding two is a decision about the eval set rather than a test run.
+
+| task | rounds | files | page | types | tests | cost | time |
+|---|---|---|---|---|---|---|---|
+| MERIDIAN — scroll-driven Three.js site | 17 | 18 | pass | pass | pass | $0.522 | 306s |
+| SCOUT — research agent, Python backend | 17 | 27 | pass | pass | pass | $0.639 | 593s |
+
+Both planned (18 planned → 18 written; 23 planned → 27 written). 17 rounds each, against a core
+tier mean of 5.3 — the prompts were harder and the loop scaled to them instead of stopping early.
+Turn cap never reached. SCOUT took the **Python path** unprompted by the classifier's keywords —
+FastAPI, a tool registry, SSE — the second real exercise of that route after `python-api`.
+
+Checked against the brief by hand, the way Finding 4 was. SCOUT met every stated requirement:
+registry with three tools and a docstring stating a fourth needs no loop change, `MAX_STEPS = 6`,
+stop reasons kept apart (`completed` / `failed` / `max_steps` / `tool_error`), SSE, citation chips
+with `scrollIntoView`, run persistence, retry, and tests for the planner and the registry.
+MERIDIAN met every one too — `MAX_DPR = 2`, `visibilitychange` pausing, `dispose()` on unmount,
+`prefers-reduced-motion` plus a toggle, per-chapter `fogDensity` from 0.012 to 0.048, four
+chapters of real copy, responsive via Tailwind breakpoints.
+
+### Finding 5 — all three gates passed and the headline feature was invisible
+MERIDIAN's whole point is the WebGL scene. In the preview it is **not visible at all**: the page
+is flat near-black behind the text. `check_page` passed, `check_types` passed, `run_tests` passed.
+
+It is not a Three.js failure and not a headless-WebGL limitation — both were ruled out by running
+the generated code locally against a real WebGL 2.0 context and screenshotting the canvas in
+isolation, which shows the points globe and particle field rendering correctly. The cause is one
+CSS declaration in `App.tsx`:
+
+```jsx
+<div className="relative min-h-screen bg-[#04080e] …">   // app shell
+  <OceanCanvas … />                                      // fixed inset-0 -z-10
+```
+
+The shell is `position: relative` with `z-index: auto`, so it is **not** a stacking context. The
+canvas wrapper's `-z-10` therefore resolves against the root, where negative-z-index children
+paint before positioned descendants — so the shell's own opaque background paints *over* the
+scene. Setting that one background to transparent at runtime makes the full scene appear.
+
+**Why this matters more than a CSS bug:** it is Finding 4's shape in the visual domain. The agent
+can ask "did it render", "does it compile" and "do my tests pass", and all three answer yes while
+the one thing the user asked for is painted over. `check_page` looks for a render and console
+errors; a uniformly flat page is neither. This is the same blind spot that let the unstyled-page
+bug survive three months.
+
+**Not fixed, and deliberately so** — the fix is a product decision, not a typo. The options are a
+prompt rule (a fixed full-bleed canvas means the shell must not carry an opaque background), or a
+gate with teeth: `check_page` already captures a frame, so it could fail a page whose pixels are
+near-uniform, which would also catch the blank-thumbnail case below. The second is the one that
+generalises, because it does not depend on the model remembering a rule.
+
+**Also reconfirmed:** the preview thumbnail capture still races the page. SCOUT's came back at
+exactly 4714 bytes — the known blank — so its screenshot had to be produced by running the
+generated code locally. 
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
