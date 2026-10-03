@@ -103,10 +103,21 @@ export interface StreamChunk {
   mcpToolCall?: { id: string; name: string; serverName: string; input: unknown; result: string; isError: boolean } | undefined;
   usage?:
     | {
+        /** TOTAL prompt tokens the provider billed for, cache included. The two
+         *  providers disagree about this and the difference is money:
+         *  OpenAI-compatible `prompt_tokens` already includes cached tokens,
+         *  while Anthropic's `input_tokens` EXCLUDES both cache reads and cache
+         *  writes and reports them separately. Each gateway normalises to this
+         *  total so computeUsage can treat the two fields below as subsets. */
         promptTokens: number;
         completionTokens: number;
-        /** Part of promptTokens the provider served from its own cache. */
+        /** Part of promptTokens the provider served from its own cache, billed
+         *  at roughly a tenth. */
         cachedPromptTokens?: number;
+        /** Part of promptTokens written INTO the cache on this call, which
+         *  Anthropic bills at 1.25x the normal input rate. Zero on providers
+         *  that do not charge separately for a cache write. */
+        cacheWriteTokens?: number;
       }
     | undefined;
   stopReason?: string | undefined;
@@ -274,6 +285,8 @@ export class ModelGateway {
     let currentBlockIndex = -1;
     let currentBlockType: string = "";
     let inputTokens = 0;
+    let cachedInputTokens = 0;
+    let cacheWriteTokens = 0;
     let outputTokens = 0;
     let stopReason: string | undefined;
 
@@ -281,7 +294,16 @@ export class ModelGateway {
       for await (const event of stream) {
         switch (event.type) {
           case "message_start":
-            inputTokens = event.message.usage?.input_tokens ?? 0;
+            // input_tokens is FRESH only — Anthropic reports cache reads and
+            // cache writes separately and excludes them from it. Summing here
+            // makes promptTokens the real total; without this, cache reads
+            // (most of an agentic build's input) were billed as free.
+            inputTokens =
+              (event.message.usage?.input_tokens ?? 0) +
+              (event.message.usage?.cache_read_input_tokens ?? 0) +
+              (event.message.usage?.cache_creation_input_tokens ?? 0);
+            cachedInputTokens = event.message.usage?.cache_read_input_tokens ?? 0;
+            cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? 0;
             break;
 
           case "content_block_start":
@@ -338,7 +360,12 @@ export class ModelGateway {
 
     yield {
       type: "usage",
-      usage: { promptTokens: inputTokens, completionTokens: outputTokens },
+      usage: {
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        cachedPromptTokens: cachedInputTokens,
+        cacheWriteTokens,
+      },
     };
     yield { type: "done", stopReason };
   }
@@ -403,6 +430,8 @@ export class ModelGateway {
     let currentBlockIndex = -1;
     let currentBlockType = "";
     let inputTokens = 0;
+    let cachedInputTokens = 0;
+    let cacheWriteTokens = 0;
     let outputTokens = 0;
     let stopReason: string | undefined;
 
@@ -410,7 +439,16 @@ export class ModelGateway {
       for await (const event of stream) {
         switch (event.type) {
           case "message_start":
-            inputTokens = event.message.usage?.input_tokens ?? 0;
+            // input_tokens is FRESH only — Anthropic reports cache reads and
+            // cache writes separately and excludes them from it. Summing here
+            // makes promptTokens the real total; without this, cache reads
+            // (most of an agentic build's input) were billed as free.
+            inputTokens =
+              (event.message.usage?.input_tokens ?? 0) +
+              (event.message.usage?.cache_read_input_tokens ?? 0) +
+              (event.message.usage?.cache_creation_input_tokens ?? 0);
+            cachedInputTokens = event.message.usage?.cache_read_input_tokens ?? 0;
+            cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? 0;
             break;
 
           case "content_block_start": {
@@ -492,7 +530,15 @@ export class ModelGateway {
       throw mapAnthropicError(err);
     }
 
-    yield { type: "usage", usage: { promptTokens: inputTokens, completionTokens: outputTokens } };
+    yield {
+      type: "usage",
+      usage: {
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        cachedPromptTokens: cachedInputTokens,
+        cacheWriteTokens,
+      },
+    };
     yield { type: "done", stopReason };
   }
 }

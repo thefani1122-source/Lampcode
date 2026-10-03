@@ -12,6 +12,11 @@ import { logger } from "../server/logger.js";
 // model has no explicit entry.
 const CACHED_INPUT_RATIO = 0.1;
 
+// What a provider charges to WRITE a prompt token into its cache. Anthropic
+// bills a cache write at 1.25x the normal input rate; providers that do not
+// charge separately report no write tokens, so this never applies to them.
+const CACHE_WRITE_RATIO = 1.25;
+
 const MODEL_PRICING: Record<
   string,
   { inputPerM: number; outputPerM: number; cachedInputPerM?: number }
@@ -26,13 +31,13 @@ const MODEL_PRICING: Record<
   // Kimi
   // Rates as shown on the Modal Shared Endpoint's own usage page
   // (prompt $3.00 / cached prompt $0.30 / completion $15.00 per MTok).
-  // Cached prompt is NOT modelled here: an agentic build resends the whole
-  // conversation each round, so most of its input tokens are a repeated prefix
-  // that the provider bills at the cached rate. Costing every input token at
-  // the full rate therefore OVERSTATES a multi-round build — confirmed against
-  // the provider's own dashboard, which read $0.42 across a day of builds while
-  // this put one build at $0.555. Fixing that needs the provider's cached-token
-  // count in the usage response, which this does not yet read.
+  // Cached prompt IS modelled now: modal-gateway reads
+  // `prompt_tokens_details.cached_tokens` and computeUsage bills it at
+  // CACHED_INPUT_RATIO, which for Kimi K3 works out at exactly its published
+  // $0.30. Before that, an agentic build — which resends the whole conversation
+  // each round — was costed as if every repeated prefix token were fresh, and
+  // overstated by several times: the provider dashboard read $0.42 across a day
+  // of builds while this put a single build at $0.555.
   "moonshotai/kimi-k3":          { inputPerM: 3.00,  outputPerM: 15.00 },
   "moonshotai/kimi-k2.7-code":   { inputPerM: 0.95,  outputPerM: 4.00  },
   "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
@@ -150,11 +155,16 @@ export class TokenTracker {
   /** Compute usage from raw token counts + model name. */
   computeUsage(
     model: string,
+    /** TOTAL prompt tokens, cache included. Both gateways normalise to this —
+     *  see the usage chunk in model-gateway.ts for why that needs saying. */
     inputTokens: number,
     outputTokens: number,
     /** Prompt tokens the provider served from ITS cache, as reported in the
      *  usage response. Counted inside inputTokens, billed far cheaper. */
     cachedInputTokens = 0,
+    /** Prompt tokens written INTO the provider's cache on this call. Also
+     *  inside inputTokens, but billed ABOVE the normal rate, not below. */
+    cacheWriteTokens = 0,
   ): TokenUsage {
     // Case-insensitive: model ids arrive from config and provider dashboards
     // with whatever casing they use there (e.g. "moonshotai/Kimi-K3"), and a
@@ -175,11 +185,13 @@ export class TokenTracker {
     // "ceiling" it had probably not reached. Only tokens the provider itself
     // reports as cached are discounted; anything unreported is billed in full.
     const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
-    const fresh = inputTokens - cached;
+    const written = Math.max(0, Math.min(cacheWriteTokens, inputTokens - cached));
+    const fresh = Math.max(0, inputTokens - cached - written);
     const cachedPerM = pricing.cachedInputPerM ?? pricing.inputPerM * CACHED_INPUT_RATIO;
     const costUsd =
       (fresh / 1_000_000) * pricing.inputPerM +
       (cached / 1_000_000) * cachedPerM +
+      (written / 1_000_000) * pricing.inputPerM * CACHE_WRITE_RATIO +
       (outputTokens / 1_000_000) * pricing.outputPerM;
 
     return {

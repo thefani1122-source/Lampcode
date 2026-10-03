@@ -459,6 +459,7 @@ export class AgentDispatcher {
     let turnsExhausted = false;
     let totalInputTokens = 0;
     let totalCachedInputTokens = 0;
+    let totalCacheWriteTokens = 0;
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
@@ -529,6 +530,7 @@ export class AgentDispatcher {
       lastRoundContent = streamResult.content;
       totalInputTokens += streamResult.inputTokens;
       totalCachedInputTokens += streamResult.cachedInputTokens;
+      totalCacheWriteTokens += streamResult.cacheWriteTokens;
       totalOutputTokens += streamResult.outputTokens;
       lastStopReason = streamResult.stopReason;
       allToolCalls.push(...streamResult.toolCalls);
@@ -548,6 +550,7 @@ export class AgentDispatcher {
             ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
             : model,
           streamResult.inputTokens, streamResult.outputTokens, streamResult.cachedInputTokens,
+          streamResult.cacheWriteTokens,
         ).costUsd;
         if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
           logger.warn(
@@ -663,6 +666,7 @@ export class AgentDispatcher {
       totalInputTokens,
       totalOutputTokens,
       totalCachedInputTokens,
+      totalCacheWriteTokens,
     );
     await this.tracker.complete(taskId, usage).catch((e) => {
       logger.warn({ err: e }, "Failed to record agent task completion");

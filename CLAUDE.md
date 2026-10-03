@@ -742,7 +742,16 @@ and always useful, and nothing in the prompt requires it.
    provider choice or be switched off while the key is absent. Neither: it needs no provider at
    all, because everything the old prompt asked a model to infer is already in the files. The
    log line is gone with it.
-2. **Billing overstates agentic builds** (cached prompt tokens — see above). Unfixed.
+2. ~~**Billing overstates agentic builds**~~ — **RESOLVED 2026-10-03**, and it turned out to be
+   wrong in BOTH directions, because the two providers' usage conventions are opposites.
+   OpenAI-compatible `prompt_tokens` INCLUDES cached tokens, so costing them all as fresh
+   **overstated** a multi-round build. Anthropic's `input_tokens` EXCLUDES cache reads and cache
+   writes and reports them separately, so reading only that field billed cache reads — most of
+   an agentic build's input — as **free**. Both gateways now normalise `promptTokens` to the
+   real total with `cachedPromptTokens` and `cacheWriteTokens` as subsets, and `computeUsage`
+   prices a cache read at a tenth and a cache WRITE at 1.25x (a premium, not a discount).
+   15 cases in `npm test` (`scripts/pricing.test.ts`) — it previously had none, despite being
+   the function behind the cost guard, the credits deducted, and any price set from `usage_usd`.
 3. **`AGENTIC_MAX_TURNS=40` and `MAX_BUILD_COST_USD=3.0`** were raised on Railway on 2026-10-01
    for a long-running test. Revisit before opening the product to real users.
 
