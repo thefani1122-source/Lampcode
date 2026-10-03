@@ -10,9 +10,12 @@
  * It costs real money. Every task is a real build: model tokens and an E2B
  * sandbox. Four smoke tasks is a pulse check; the full set is twenty builds.
  *
- *   EVAL_TOKEN=<supabase access token> \
- *   EVAL_BASE_URL=https://api.lampcode.app \
+ *   EVAL_EMAIL=you@example.com EVAL_PASSWORD=… EVAL_SUPABASE_ANON_KEY=… \
+ *   EVAL_BASE_URL=https://lampcode-production.up.railway.app \
  *     npx tsx scripts/eval/run.ts --tier smoke
+ *
+ * It signs in itself and refreshes the session, because a full run outlasts the
+ * one-hour life of a Supabase access token. See auth.ts.
  *
  * Flags:
  *   --tier smoke|core|hard   repeatable; default smoke
@@ -31,11 +34,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tasksFor, type EvalTask } from "./tasks.js";
 import { collectFiles, scoreChecks, type BuildOutcome, type FileEntry } from "./score.js";
+import { createTokenProvider, type TokenProvider } from "./auth.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const BASE_URL = (process.env["EVAL_BASE_URL"] ?? "http://localhost:3000").replace(/\/$/, "");
-const TOKEN = process.env["EVAL_TOKEN"] ?? "";
+// Created in main(), after --dry-run has had its chance to exit — a dry run
+// must not need credentials.
+let auth: TokenProvider | null = null;
 const RESULTS_DIR = join(process.cwd(), "eval-results");
 const POLL_INTERVAL_MS = 5_000;
 
@@ -92,7 +98,9 @@ function parseArgs(argv: string[]): Args {
 const HELP = `
 scripts/eval/run.ts — run the fixed eval set against a deployed Lampcode.
 
-  EVAL_TOKEN=<supabase access token>   required (an admin account while WAITLIST_MODE is on)
+  EVAL_EMAIL / EVAL_PASSWORD           the account that may build (admin, while WAITLIST_MODE is on)
+  EVAL_SUPABASE_ANON_KEY               the PUBLIC client key, as the frontend ships it
+  EVAL_TOKEN                           alternative to the above; expires in ~1h, no refresh
   EVAL_BASE_URL=<api base>             default http://localhost:3000
 
   --tier smoke|core|hard   repeatable; default smoke
@@ -146,7 +154,9 @@ async function api<T>(
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
-      authorization: `Bearer ${TOKEN}`,
+      // Asked for per request rather than captured once: a run can outlast a
+      // single token, and the provider refreshes behind this call.
+      authorization: `Bearer ${await auth!.token()}`,
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -274,16 +284,25 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!TOKEN) {
-    console.error(
-      "EVAL_TOKEN is not set. It's a Supabase access token for an account that can build —\n" +
-      "an admin account while WAITLIST_MODE is on. Sign in to the app and copy the access\n" +
-      "token from the Supabase session in browser storage.",
-    );
+  try {
+    auth = createTokenProvider(process.env);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 
-  console.log(`Running ${tasks.length} task(s) against ${BASE_URL}, concurrency ${args.concurrency}`);
+  // Fail here, before the first build is paid for, rather than on task one.
+  try {
+    await auth.token();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  console.log(
+    `Running ${tasks.length} task(s) against ${BASE_URL}, concurrency ${args.concurrency}\n` +
+    `Auth: ${auth.describe()}`,
+  );
   const results: TaskResult[] = [];
   const queue = [...tasks];
 

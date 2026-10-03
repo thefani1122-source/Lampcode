@@ -41,18 +41,32 @@ It spends real money. Every task is a real build: model tokens plus an E2B sandb
 Four smoke tasks is a pulse check; the full set is twenty builds.
 
 ```bash
-EVAL_TOKEN=<supabase access token> \
-EVAL_BASE_URL=https://<the deployed api> \
+EVAL_EMAIL=you@example.com \
+EVAL_PASSWORD=<your Lampcode password> \
+EVAL_SUPABASE_ANON_KEY=<the public client key> \
+EVAL_BASE_URL=https://lampcode-production.up.railway.app \
   npm run eval -- --tier smoke --label "baseline"
 
 npm run eval:report                     # the newest run
 npm run eval:report -- --diff eval-results/<old>.json eval-results/<new>.json
 ```
 
-`EVAL_TOKEN` is a Supabase access token for an account that is allowed to build —
-an **admin** account while `WAITLIST_MODE` is on, since `/api/build/fast` rejects
-everyone else. Sign in to the app and copy the token out of the Supabase session in
-browser storage. A 403 from `/fast` almost always means a non-admin token.
+The harness **signs in itself and refreshes the session** (`auth.ts`). That is not
+convenience — a Supabase access token lives about an hour, and the full twenty-task
+set is sixty minutes or more of real builds, so a fixed token expires partway
+through and every remaining task fails with a 401 that looks like a broken harness.
+
+The account has to be allowed to build: an **admin** account while `WAITLIST_MODE`
+is on, since `/api/build/fast` rejects everyone else. A 403 from `/fast` almost
+always means a non-admin account.
+
+`EVAL_SUPABASE_ANON_KEY` is the **public** client key — the same value the frontend
+bundle ships to every visitor, not a secret. It is in the frontend env as
+`VITE_SUPABASE_ANON_KEY`, or in the Supabase dashboard under API keys.
+`EVAL_SUPABASE_URL` defaults to this project's.
+
+`EVAL_TOKEN` still works as an override for a one-off run with a token from
+somewhere else, but it is never refreshed, so keep it to short runs.
 
 Nothing here reads the database, so it can be pointed at production or at a local
 `npm run dev` without a code change. Results land in `eval-results/`, which is

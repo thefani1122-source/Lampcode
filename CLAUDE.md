@@ -381,11 +381,19 @@ read `never` and `rounds` is 1 — it has no agent gates, so that is not a findi
 
 **`scripts/eval/`** is twenty fixed prompts (4 smoke, 11 core, 5 hard) run through the real
 HTTP API, scored against `build_outcome` plus the generated files. See its `README.md`. It
-spends real money — every task is a real build — and needs `EVAL_TOKEN` (an admin Supabase
-access token while `WAITLIST_MODE` is on) and `EVAL_BASE_URL`.
+spends real money — every task is a real build.
+
+**It signs in itself** (`scripts/eval/auth.ts`) from `EVAL_EMAIL` + `EVAL_PASSWORD` +
+`EVAL_SUPABASE_ANON_KEY` (the public client key the frontend already ships), and refreshes the
+session 5 minutes before expiry. That is not convenience: a Supabase access token lives about
+an hour and a full run is sixty minutes or more, so a hand-pasted token expires partway through
+and every remaining task fails with a 401 that reads like a broken harness. `EVAL_TOKEN` is
+still honoured as an override but is never refreshed. The account must be an admin while
+`WAITLIST_MODE` is on. `EVAL_BASE_URL` for production is
+`https://lampcode-production.up.railway.app`.
 
 ```bash
-npm run eval -- --tier smoke --label baseline   # --dry-run spends nothing
+npm run eval -- --tier smoke --label baseline   # --dry-run needs no credentials at all
 npm run eval:report                             # newest run
 npm run eval:report -- --diff old.json new.json
 npm test                                        # scoring rules + parsers, costs nothing
@@ -395,9 +403,16 @@ npm test                                        # scoring rules + parsers, costs
 task and set `retired: true` on the old one. `npm run typecheck` now also checks `scripts/`
 via `tsconfig.scripts.json`.
 
-**Not yet run against a real deployment.** The scoring, report, diff and error paths are
-exercised (`npm test`, synthetic runs, dry-run), but no eval has spent a build. The
-first real run is the next step and will need Modal or Anthropic credit.
+**Not yet run against a real deployment.** The scoring, report, diff, auth and error paths are
+exercised (`npm test`, synthetic runs, dry-run, and a live sign-in attempt against the real
+Supabase auth endpoint), but no eval has spent a build.
+
+**Which provider a run would use — confirmed from Railway on 2026-10-02.** Every recent build
+logged `[build] provider=modal (mode=openai)` with agentic mode on, and `ANTHROPIC_API_KEY` is
+not among the service's variables at all. So an eval run goes to Kimi K3 on the Modal shared
+endpoint and needs no Anthropic credit. Note that Modal **plan credits do not cover
+shared-endpoint usage** — it is billed per token, so what matters is that the payment method
+works, not the plan balance.
 
 ## The agent can run tests — `run_tests`, 2026-10-02
 `check_page` answers "did it render" and `check_types` answers "does it compile". Neither can
@@ -616,6 +631,6 @@ npm run db:generate # drizzle-kit generate
 ```
 `npm test` runs the repo's own cases — the vitest-output parser behind `run_tests`, the build
 planner's gating and parsing, the project-memory derivation, and the eval scoring rules
-(`scripts/*.test.ts`, plain tsx scripts, no runner). 119 cases, costing nothing and needing no
+(`scripts/*.test.ts`, plain tsx scripts, no runner). 136 cases, costing nothing and needing no
 credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
 covers `scripts/` too.
