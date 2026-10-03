@@ -137,10 +137,13 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === undefined || v === "" ? true : v === "true" || v === "1")
     .pipe(z.boolean()),
-  // How long a new build's prompt has to be before it earns a planning pass.
-  // 60 words is roughly the Atlas/ForgeFlow class of prompt — the ones that
-  // actually run long — while leaving "build me a todo app" alone.
-  BUILD_PLAN_MIN_WORDS: z.coerce.number().int().positive().default(60),
+  // A LOW bar that only screens out one-liners — not a complexity test.
+  // Measured on 2026-10-03: across the twenty eval prompts, word count cannot
+  // separate the tiers (hard 41-62, core 38-51, smoke 29-50 words overlap), and
+  // the old 60 let only 1 of 5 hard builds plan. 38 is where the smoke tier
+  // ends and core begins; shouldPlan's own signals force a plan for a terse but
+  // multi-screen or logic-heavy prompt regardless of this.
+  BUILD_PLAN_MIN_WORDS: z.coerce.number().int().positive().default(38),
 });
 
 const REQUIRED_VARS = [

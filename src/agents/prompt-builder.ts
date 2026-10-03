@@ -1637,7 +1637,11 @@ export class PromptBuilder {
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
         "check_page tells you something but not why, call read_logs.\n" +
-        "5. If the app has logic whose correctness you cannot see by reading it — a " +
+        "5. Call check_types. The dev server does NOT type-check — Vite strips types and " +
+        "serves the file, so a type error renders a perfectly normal-looking page and ships " +
+        "broken. check_page cannot see it. It costs one round; run it before you finish, " +
+        "every time, and fix what it reports.\n" +
+        "6. If the app has logic whose correctness you cannot see by reading it — a " +
         "reducer, a running total, a date or currency calculation, validation rules, a " +
         "formula evaluator, sorting or filtering with edge cases — put that logic in its " +
         "own module, write a test file beside it (src/lib/totals.test.ts), and call " +
@@ -1645,12 +1649,17 @@ export class PromptBuilder {
         "the one kind of bug neither check_page nor check_types can see. Skip this for an " +
         "app that is only layout and presentation; a test that restates the " +
         "implementation proves nothing and costs a round.\n" +
-        "6. Only then write your final reply — a short, plain summary of what you built " +
+        "7. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
-        "Never claim the app works without having called check_page and seen it pass. If a " +
-        "check reports that it could not run, that is NOT a pass — say so rather than " +
-        "assuming it was fine. If you cannot get it working, say so plainly and describe " +
-        "what is still wrong."
+        "Never claim the app works without having called check_page AND check_types and seen " +
+        "both pass. If a check reports that it could not run, that is NOT a pass — say so " +
+        "rather than assuming it was fine. If you cannot get it working, say so plainly and " +
+        "describe what is still wrong.\n" +
+        "Before you finish, re-read the request and check it off point by point. A build that " +
+        "renders, compiles and passes its own tests can still be missing something that was " +
+        "asked for — on 2026-10-03 a note editor did all three and shipped with no " +
+        "persistence at all, against a prompt that said the notes persist. None of the checks " +
+        "above can see a requirement you simply did not implement."
       : "";
 
     const manifestBlock = task.projectManifest

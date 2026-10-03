@@ -80,6 +80,84 @@ check(
   false,
 );
 
+// Measured 2026-10-03: word count cannot separate complexity — the eval tiers
+// overlap (hard 41-62, core 38-51, smoke 29-50). The old 60-word bar let only
+// 1 of 5 hard builds plan. So length is a low bar now, and these signals force
+// a plan for a prompt that is terse but structurally large.
+
+check(
+  "a terse prompt naming four views still plans",
+  shouldPlan({
+    prompt: "A CRM with four views behind a sidebar.",
+    hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  true,
+);
+check(
+  "a digit count works as well as a word",
+  shouldPlan({
+    prompt: "An app with 5 screens.", hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  true,
+);
+check(
+  "three distinct screen nouns plan without a count",
+  shouldPlan({
+    prompt: "Build a dashboard, a kanban and a settings area.",
+    hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  true,
+);
+check(
+  "two screen nouns are not enough on their own",
+  shouldPlan({
+    prompt: "A dashboard with a sidebar.", hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  false,
+);
+// The spreadsheet case: 53 words under the old bar, no plan, 3 files.
+check(
+  "a terse prompt with hard logic plans",
+  shouldPlan({
+    prompt: "A grid where a cell starting with = evaluates a formula.",
+    hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  true,
+);
+check(
+  "undo/redo counts as hard logic",
+  shouldPlan({
+    prompt: "A note editor with undo and redo.", hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  true,
+);
+// A genuine one-liner still must not pay for a plan.
+check(
+  "a trivial one-liner does not plan",
+  shouldPlan({
+    prompt: "Build a counter with plus and minus buttons.",
+    hasExistingCode: false, agenticBuild: true, minWords: 38,
+  }),
+  false,
+);
+// The exclusions still win over every signal above.
+check(
+  "an edit never plans even when it names four views",
+  shouldPlan({
+    prompt: "A CRM with four views and a formula evaluator.",
+    hasExistingCode: true, agenticBuild: true, minWords: 38,
+  }),
+  false,
+);
+check(
+  "the pipeline never plans even when it names four views",
+  shouldPlan({
+    prompt: "A CRM with four views and a formula evaluator.",
+    hasExistingCode: false, agenticBuild: false, minWords: 38,
+  }),
+  false,
+);
+
 // ── parsePlan ─────────────────────────────────────────────────────────────────
 
 const bare = parsePlan(JSON.stringify({

@@ -44,6 +44,21 @@ const PLAN_COST_CEILING_USD = 0.25;
  *
  * Pure and exported so the threshold is testable without spending a build.
  */
+/** A prompt that names several screens needs a layout decided up front, however
+ *  briefly it says so. Either an explicit count ("four views", "3 screens") or
+ *  three or more distinct screen nouns. */
+const VIEW_COUNT_RE =
+  /\b(two|three|four|five|six|seven|eight|[2-9]|1[0-2])\s+(views?|screens?|pages?|tabs?|sections?|steps?|panels?)\b/i;
+
+const SCREEN_NOUN_RE =
+  /\b(dashboard|kanban|pipeline|calendar|settings|inbox|timeline|gallery|board|wizard|checkout|cart|report|profile|admin|editor|preview|sidebar|detail.panel|data.table)\b/gi;
+
+/** Logic whose correctness is not visible by reading it. These are the builds
+ *  where the plan's other job matters — pulling that logic into its own module
+ *  with a sibling test, instead of burying it in a component. */
+const HARD_LOGIC_RE =
+  /\b(formula|evaluator|circular.reference|undo|redo|recurrenc|time.tracking|timer|invoice|tax|currency|proration|schedul|sort(?:ing)?.by|pagination|validation.rules?|reducer|conflict)\b/i;
+
 export function shouldPlan(opts: {
   prompt: string;
   hasExistingCode: boolean;
@@ -51,11 +66,34 @@ export function shouldPlan(opts: {
   minWords?: number;
 }): boolean {
   if (!config.BUILD_PLANNING_ENABLED) return false;
+  // An edit already has a layout — the project's own.
   if (opts.hasExistingCode) return false;
+  // The pipeline path never reads a plan.
   if (!opts.agenticBuild) return false;
 
-  const words = opts.prompt.trim().split(/\s+/).filter(Boolean).length;
-  return words >= (opts.minWords ?? config.BUILD_PLAN_MIN_WORDS);
+  const prompt = opts.prompt;
+  const words = prompt.trim().split(/\s+/).filter(Boolean).length;
+
+  // Measured 2026-10-03 across all twenty eval prompts: word count CANNOT
+  // separate complexity. editor-undo (hard) is 41 words, dashboard (core) 46,
+  // form-validation (smoke) 50 — the tiers overlap. The old 60 let only 1 of 5
+  // hard tasks plan, and the spreadsheet (53 words, a formula evaluator with
+  // circular-reference detection) wrote 3 files for want of a layout.
+  //
+  // So length is now a low bar rather than a complexity test — it only screens
+  // out one-liners — and two signals force a plan regardless of how terse the
+  // prompt is. The asymmetry justifies erring toward planning: an unnecessary
+  // plan costs about $0.05, while a missing one costs a 3-file spreadsheet or a
+  // one-file app that is expensive to edit for the rest of its life.
+  if (words >= (opts.minWords ?? config.BUILD_PLAN_MIN_WORDS)) return true;
+
+  if (VIEW_COUNT_RE.test(prompt)) return true;
+
+  SCREEN_NOUN_RE.lastIndex = 0;
+  const screens = new Set((prompt.match(SCREEN_NOUN_RE) ?? []).map((m) => m.toLowerCase()));
+  if (screens.size >= 3) return true;
+
+  return HARD_LOGIC_RE.test(prompt);
 }
 
 /**
