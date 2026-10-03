@@ -668,6 +668,69 @@ instruction NOT to build one read as an instruction to build one. Negations are 
 Atlas prompt from 2026-10-01, and the genuine-fullstack cases — so a future narrowing cannot
 quietly break what was already right.
 
+## HARD TIER — the first run where the whole roadmap was exercised, 2026-10-03
+Label `hard-after-classifier-fix`, five long builds on Kimi K3 after the classifier fix was
+deployed (`b678614`).
+
+| task | verdict | rounds | files | page | types | tests | cost | time |
+|---|---|---|---|---|---|---|---|---|
+| crm | pass | 10 | **22** | pass | never | pass | $0.565 | 204s |
+| project-tracker | pass | 7 | 10 | pass | pass | pass | $0.284 | 151s |
+| form-builder | pass | 5 | 8 | pass | never | pass | $0.269 | 119s |
+| spreadsheet | soft-fail | 8 | 3 | pass | never | pass | $0.151 | 70s |
+| editor-undo | soft-fail | 6 | 6 | pass | pass | pass | $0.187 | 101s |
+
+5/5 built, 3 passed every check, **0 build failures, 0 harness errors, turn cap never reached**.
+Mean 7.2 rounds, 129 s, $1.456 total. `check_page` 5/5. **`run_tests` 5/5 — every single hard
+build wrote tests and they passed.** `check_types` called on 2 of 5.
+
+**No one-file builds, on the tier designed to produce them.** Smallest was 3 files, largest 22.
+The habit that put four views, a kanban and a chart in one `App.tsx` for three months did not
+appear once.
+
+**Same-app before and after.** The 2026-10-01 "Atlas" build and today's `crm` are the same
+brief — a four-view CRM with a dashboard, client table, kanban and settings:
+
+| | Atlas, 10-01 | crm, 10-03 |
+|---|---|---|
+| files | **1** | **22** |
+| rounds | 8 | 10 |
+| credits | 841 | **508** |
+| tests | none | written and passing |
+
+Better structured AND cheaper.
+
+**Finding 3 — `BUILD_PLAN_MIN_WORDS=60` is mis-calibrated. Only 1 of 5 hard tasks planned.**
+
+```
+crm                62 words  plans=true
+project-tracker    55 words  plans=false
+form-builder       55 words  plans=false
+spreadsheet        53 words  plans=false
+editor-undo        41 words  plans=false
+```
+
+The tier whose whole purpose is long, complex builds mostly does not plan. `spreadsheet` — a
+formula evaluator with circular-reference detection — is unarguably complex and its prompt is
+53 words, so it got no plan and wrote 3 files, which is what its soft-fail is. `crm` cleared the
+bar by two words, planned 22 files and wrote exactly 22. One case is not causation, but the
+calibration is wrong independently of that: word count is a poor proxy for complexity. Not
+fixed. Options: drop the threshold, or gate on complexity signals (distinct views/features)
+rather than length.
+
+**Finding 4 — a build passed all three of the agent's own gates and still shipped a missing
+requirement.** `editor-undo` renders, type-checks, and its own tests pass — and it has **no
+persistence at all**. No `localStorage`, no `setItem`, no `JSON.stringify`; confirmed by reading
+all six generated files. The prompt said "Notes persist". Close the tab and the work is gone.
+
+This is the clearest justification for the eval existing. `check_page` sees a page, `check_types`
+sees types, `run_tests` sees the tests the agent chose to write — none of them can see a
+requirement the agent simply forgot. Only an outside check comparing the brief to the output
+catches it.
+
+**`check_types` remains the standing gap:** called on 3 of the 10 builds run today. It is cheap
+and always useful, and nothing in the prompt requires it.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
