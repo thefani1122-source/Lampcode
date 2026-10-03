@@ -444,16 +444,18 @@ pricing-page      frontend   db=none      auth=false
 form-validation   fullstack  db=supabase  auth=true    ← "signup"/"password"
 ```
 
-`\bpersist(?:ence|ent)?\b` matches "Tasks **persist** across reloads", which in practice means
+`\bpersist(?:ence|ent)?\b` matched "Tasks **persist** across reloads", which in practice means
 localStorage, and a three-step signup *form* (pure UI) drew a database and auth. Half the smoke
-set is affected. Worse, the preview Supabase project is **paused**, so those builds' persistence
-cannot actually work — `todo` shipped `db/schema.sql` + a Hono backend and no working storage.
-Not fixed; raise before launch.
+set was affected. Worse, the preview Supabase project is **paused**, so those builds' persistence
+could not actually work — `todo` shipped `db/schema.sql` + a Hono backend and no working storage.
+**FIXED 2026-10-03 — see "The classifier no longer guesses fullstack from one word" below.**
 
-**Finding 2 — the `todo` soft-fail is partly the check's fault.** `mustContain: localStorage`
-asserts a mechanism, and the build persisted via a backend instead. The underlying problem is
-Finding 1, not the build. If that check is loosened, say so in the task set and treat the
-baseline above as superseded for that row.
+**Finding 2 — the `todo` soft-fail was partly the check's fault.** `mustContain: localStorage`
+asserted a mechanism, and the build persisted via a backend instead. **FIXED**: the eight
+persistence checks now use a shared `PERSISTS` pattern that accepts localStorage, sessionStorage,
+IndexedDB, a Supabase client, or a `fetch("/api/…")` call — any real mechanism — while a build
+that stores nothing still fails. Verified on the shapes the real builds produced. The `todo` row
+of the baseline above is therefore superseded: under the current checks that build would pass.
 
 **Reproducing it:** the run is in `eval-results/` (gitignored, local to whoever ran it). Keep
 the numbers above as the comparison point; `npm run eval:report -- --diff` needs both files, so
@@ -632,6 +634,40 @@ once would be possible and is not built.
 44 cases in `npm test`, the most important being the round trip: build N's memory must be
 readable by build N+1, and the cap must drop the OLDEST entry, never the newest.
 
+## The classifier no longer guesses fullstack from one word — 2026-10-03
+`classifyBuild` decides whether a build gets a Hono backend and a Supabase schema, from the
+prompt alone. It was ONE regex alternation mixing three unrelated kinds of signal, and the first
+eval run measured the cost: half the smoke set asked for a browser-only app and got a database
+it could not use, because the preview Supabase project is paused.
+
+Split into named signals:
+- **`SERVER_DATA_RE`** — things that genuinely need another machine: a named database, a backend
+  framework, an API, multi-user, real-time, payments, file uploads, cloud sync.
+- **`AUTH_RE`** — identity. Real auth needs a server; the WORD does not.
+- **`AUTH_AS_UI_RE`** — "a login *page*", "a signup *form*" is interface, not a system. This is
+  what stopped a three-step signup form from drawing auth scaffolding it never used.
+- **`CLIENT_ONLY_RE`** — localStorage, "no backend", "frontend-only", mock data. An explicit
+  browser-side instruction beats a soft inference; a named database still wins over it, because
+  "store it in Supabase and cache in localStorage" really is fullstack.
+- A bare **`persist`** is no longer a server signal at all. "Save to database" and "real
+  database" already catch the case where the user means otherwise.
+
+**3D / animation keywords were removed from the decision entirely.** They used to force
+fullstack, with the stated reason of routing the build to E2B where Three.js and Spline are
+pre-installed — but `wantsE2BPreview` in build.ts is hardcoded `true`, so every build goes to
+E2B regardless. By the end all those keywords did was give a Three.js landing page a Supabase
+schema.
+
+**One bug the cases caught in the fix itself:** "no backend" contains the word `backend`, so an
+instruction NOT to build one read as an instruction to build one. Negations are stripped
+("no/without a/doesn't need a" + backend/server/database/api) before server signals are matched.
+
+`reason` now says which signal fired, since it is what you read during triage.
+
+44 cases in `npm test` (`scripts/classifier.test.ts`), including all twenty eval prompts, the
+Atlas prompt from 2026-10-01, and the genuine-fullstack cases — so a future narrowing cannot
+quietly break what was already right.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
@@ -683,6 +719,6 @@ npm run db:generate # drizzle-kit generate
 ```
 `npm test` runs the repo's own cases — the vitest-output parser behind `run_tests`, the build
 planner's gating and parsing, the project-memory derivation, and the eval scoring rules
-(`scripts/*.test.ts`, plain tsx scripts, no runner). 136 cases, costing nothing and needing no
+(`scripts/*.test.ts`, plain tsx scripts, no runner). 180 cases, costing nothing and needing no
 credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
 covers `scripts/` too.

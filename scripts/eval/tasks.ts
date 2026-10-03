@@ -48,6 +48,20 @@ export type EvalTask = {
   retired?: boolean;
 };
 
+/**
+ * "This app persists its data" as a BEHAVIOUR rather than one mechanism.
+ *
+ * These checks used to demand the literal string `localStorage`. The first real
+ * eval run (2026-10-03) soft-failed the `todo` build for missing it — and the
+ * build had persisted perfectly well, through a Hono backend and a SQL schema,
+ * because the classifier had escalated it to fullstack. The build was wrong for
+ * other reasons, but the check was wrong too: it asserted how, when the prompt
+ * only ever asked that data survive a reload.
+ *
+ * Any of these counts. A build that stores nothing matches none of them.
+ */
+const PERSISTS = /localStorage|sessionStorage|indexedDB|idb|from ["']@?supabase|\.from\(["']|fetch\(["'`]\/api|axios|useQuery|createClient/;
+
 export const EVAL_TASKS: EvalTask[] = [
   // ── smoke: cheap, unambiguous, run these when you just need a pulse ───────
   {
@@ -57,7 +71,7 @@ export const EVAL_TASKS: EvalTask[] = [
     prompt:
       "Build a counter app. One number, an increment and a decrement button, and a reset. " +
       "The count survives a page reload. Center it on the page with large type.",
-    mustContain: ["localStorage"],
+    mustContain: [PERSISTS],
   },
   {
     id: "todo",
@@ -66,7 +80,7 @@ export const EVAL_TASKS: EvalTask[] = [
     prompt:
       "Build a todo list. Add a task, mark it done, delete it, and filter by all / active / " +
       "done. Tasks persist across reloads. Show an empty state when there are no tasks.",
-    mustContain: ["localStorage", /filter/i],
+    mustContain: [PERSISTS, /filter/i],
     minFiles: 2,
   },
   {
@@ -101,7 +115,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "Build a kanban board with four columns (Backlog, In Progress, Review, Done). Cards can " +
       "be dragged between columns and reordered within one. A card has a title, description, " +
       "assignee and priority. Add and delete cards. State persists across reloads.",
-    mustContain: ["localStorage", /drag|dnd|onDrop/i],
+    mustContain: [PERSISTS, /drag|dnd|onDrop/i],
     minFiles: 3,
   },
   {
@@ -135,7 +149,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "Build a month-view calendar. Navigate between months, click a day to add an event with " +
       "a title and time, click an event to edit or delete it. Today is highlighted. Events " +
       "persist across reloads. Days with events show a count.",
-    mustContain: ["localStorage"],
+    mustContain: [PERSISTS],
     minFiles: 3,
   },
   {
@@ -227,7 +241,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "pipeline of deals by stage, and settings. All data persists in localStorage with " +
       "validation on every form, empty states everywhere, Escape closes any panel, and the " +
       "whole thing works down to 390px.",
-    mustContain: ["localStorage", /Escape/],
+    mustContain: [PERSISTS, /Escape/],
     minFiles: 6,
     maxLinesPerFile: 500,
   },
@@ -240,7 +254,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "and a timer can run on one task at a time and keeps counting while you navigate. Views " +
       "for board, list and a per-project report of estimated versus actual. Everything " +
       "persists, including a timer that was running when the page was closed.",
-    mustContain: ["localStorage"],
+    mustContain: [PERSISTS],
     minFiles: 6,
     maxLinesPerFile: 500,
   },
@@ -266,7 +280,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "and a cell starting with = evaluates a formula supporting cell references, + - * / and " +
       "SUM over a range. A formula showing a circular reference reports an error instead of " +
       "hanging. Contents persist across reloads.",
-    mustContain: ["localStorage", /SUM/],
+    mustContain: [PERSISTS, /SUM/],
     minFiles: 4,
     maxLinesPerFile: 500,
     // The clearest case in the set for a test: formula evaluation with a
@@ -282,7 +296,7 @@ export const EVAL_TASKS: EvalTask[] = [
       "Build a note editor with a sidebar of notes, markdown preview beside the editor, and " +
       "undo/redo with Cmd+Z and Cmd+Shift+Z that is per-note and survives switching notes. " +
       "Notes persist, are searchable by content, and show a word count and last-edited time.",
-    mustContain: ["localStorage", /undo/i],
+    mustContain: [PERSISTS, /undo/i],
     minFiles: 5,
     maxLinesPerFile: 500,
   },
