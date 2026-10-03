@@ -403,9 +403,61 @@ npm test                                        # scoring rules + parsers, costs
 task and set `retired: true` on the old one. `npm run typecheck` now also checks `scripts/`
 via `tsconfig.scripts.json`.
 
-**Not yet run against a real deployment.** The scoring, report, diff, auth and error paths are
-exercised (`npm test`, synthetic runs, dry-run, and a live sign-in attempt against the real
-Supabase auth endpoint), but no eval has spent a build.
+## FIRST REAL EVAL RUN — smoke tier on Kimi K3, 2026-10-03
+Label `kimi-baseline`. Four builds against production, provider=modal (mode=openai),
+`AGENTIC_BUILD_ENABLED=true`. **This is the baseline every later change gets diffed against.**
+
+| task | verdict | rounds | files | page | types | tests | cost | time |
+|---|---|---|---|---|---|---|---|---|
+| counter | pass | 3 | 1 | pass | never | never | $0.060 | 30s |
+| todo | soft-fail | 9 | 7 | pass | never | never | $0.162 | 67s |
+| pricing-page | pass | 5 | 3 | pass | never | never | $0.125 | 60s |
+| form-validation | pass | 8 | 15 | pass | **pass** | **pass** | $0.278 | 104s |
+
+4/4 built, 3 passed every check, 0 build failures, 0 harness errors. Mean 6.3 rounds, 65 s,
+$0.626 total by our own (overstated) reckoning. Turn cap never reached.
+Tool mix: `edit_file`×8, `check_page`×6, `write_files`×5, `read_file`×2, `list_files`×2,
+`read_logs`×1, `run_tests`×1, `check_types`×1.
+
+**`check_page` passed on all four — the first time it has ever worked in production.** The
+capability that three separate bugs kept structurally broken for three weeks is confirmed live
+on the rebuilt template.
+
+**`run_tests` and `check_types` also work live**, on `form-validation` — the one task with
+logic whose correctness is not visible by reading it. 15 files, tests written, tests run,
+types checked, all passing. The other three never called either, and that is the prompt working
+as designed rather than neglect: they are presentation-heavy, and the instruction explicitly
+says to skip tests for those. `check_types` being skipped on 3 of 4 is the weaker half of that —
+it is cheap and always useful — but it is not something the prompt demands.
+
+**`edit_file` is being used, not merely offered.** The `todo` build called it six times:
+write once, `check_page`, `read_logs`, then six surgical repairs. That is the write-look-repair
+loop running on the tool added on 2026-10-01, instead of rewriting whole files.
+
+**Finding 1 — the classifier escalates browser-only prompts to fullstack+DB on single
+keywords.** Measured on the smoke set:
+
+```
+counter           frontend   db=none      auth=false
+todo              fullstack  db=supabase  auth=false   ← the word "persist"
+pricing-page      frontend   db=none      auth=false
+form-validation   fullstack  db=supabase  auth=true    ← "signup"/"password"
+```
+
+`\bpersist(?:ence|ent)?\b` matches "Tasks **persist** across reloads", which in practice means
+localStorage, and a three-step signup *form* (pure UI) drew a database and auth. Half the smoke
+set is affected. Worse, the preview Supabase project is **paused**, so those builds' persistence
+cannot actually work — `todo` shipped `db/schema.sql` + a Hono backend and no working storage.
+Not fixed; raise before launch.
+
+**Finding 2 — the `todo` soft-fail is partly the check's fault.** `mustContain: localStorage`
+asserts a mechanism, and the build persisted via a backend instead. The underlying problem is
+Finding 1, not the build. If that check is loosened, say so in the task set and treat the
+baseline above as superseded for that row.
+
+**Reproducing it:** the run is in `eval-results/` (gitignored, local to whoever ran it). Keep
+the numbers above as the comparison point; `npm run eval:report -- --diff` needs both files, so
+a later run can only be diffed against a locally held baseline.
 
 **Which provider a run would use — confirmed from Railway on 2026-10-02.** Every recent build
 logged `[build] provider=modal (mode=openai)` with agentic mode on, and `ANTHROPIC_API_KEY` is
