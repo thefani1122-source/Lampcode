@@ -736,6 +736,52 @@ catches it.
 **`check_types` remains the standing gap:** called on 3 of the 10 builds run today. It is cheap
 and always useful, and nothing in the prompt requires it.
 
+## CORE TIER — 11/11, and the three fixes confirmed on real builds, 2026-10-03
+Label `core-after-all-fixes`, against deploy `371c960` (planning recalibration + the
+`check_types` step + the billing fix all live).
+
+| task | rounds | files | page | types | tests | cost | time |
+|---|---|---|---|---|---|---|---|
+| kanban | 6 | 10 | pass | pass | pass | $0.263 | 165s |
+| dashboard | 6 | 17 | pass | pass | pass | $0.364 | 192s |
+| data-table | 5 | 10 | pass | pass | pass | $0.276 | 193s |
+| calendar | 3 | 12 | pass | pass | pass | $0.200 | 166s |
+| chat-ui | 5 | 10 | pass | pass | pass | $0.186 | 141s |
+| file-explorer | 5 | 12 | pass | pass | pass | $0.233 | 140s |
+| settings-tabs | 7 | 14 | pass | pass | pass | $0.247 | 203s |
+| wizard-state | 10 | 21 | pass | pass | pass | $0.447 | 198s |
+| search-filter | 3 | 10 | pass | pass | pass | $0.160 | 99s |
+| theme-system | 3 | 20 | pass | pass | never | $0.181 | 116s |
+| python-api | 5 | 9 | pass | pass | never | $0.216 | 97s |
+
+**11/11 built, 11/11 passed every check, 0 soft-fails, 0 failures, 0 harness errors.** Mean
+5.3 rounds, 155 s, $2.774. Turn cap never reached. No one-file builds; mean 13 files.
+
+**All three of the morning's fixes are confirmed by measurement, not argument:**
+
+| | before | after |
+|---|---|---|
+| builds that planned | 0 of 11 core (60-word bar) | **11 of 11**, mean 12.1 planned files |
+| `check_types` called | 3 of 10 builds that day | **11 of 11, all pass** |
+| genuine fullstack still detected | — | `python-api` kept its FastAPI backend (`src/server/main.py`, 92 L, + `requirements.txt`, `db/schema.sql`) |
+
+The `check_types` number is the sharpest: it went from a third of builds to all of them by
+adding one numbered step with the reason attached — Vite does not type-check, so a type error
+renders a normal-looking page and ships. Stating the consequence changed the behaviour where
+mentioning the tool had not.
+
+`run_tests` was skipped on two: `theme-system` (a component gallery — presentation, which the
+prompt says to skip) and `python-api`. The second is a mild gap: a CRUD API has logic worth
+testing, and it wrote none.
+
+**Today's three runs together — 20 builds, $4.86, zero build failures and zero harness errors.**
+
+| tier | built | all checks held | planned | types pass | tests pass | spend |
+|---|---|---|---|---|---|---|
+| smoke (pre-fix) | 4/4 | 3/4 | 0/4 | 1/4 | 1/4 | $0.626 |
+| hard (post-classifier) | 5/5 | 3/5 | 1/5 | 2/5 | 5/5 | $1.456 |
+| core (post-all-fixes) | 11/11 | **11/11** | **11/11** | **11/11** | 9/11 | $2.774 |
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
