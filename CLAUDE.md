@@ -1063,11 +1063,28 @@ pull requests, all closed.
 the way the frontend does — the eval harness is HTTP-only and could therefore only ever have
 proven the timeout-deny. The prompt arrived with the right payload
 (`github.create_repository`, `{name, description, private:false}`), was approved, and
-`github__create_repository: 1` appears in `buildOutcome.toolCalls`. The call reached GitHub and
-GitHub refused it: `403 "Resource not accessible by personal access token"`. So the product's
-path is proven along its whole length and the remaining limit is the TOKEN'S SCOPES — a
-fine-grained PAT cannot create repositories without Administration: write; a classic token
-needs `repo`/`public_repo`.
+`github__create_repository: 1` appears in `buildOutcome.toolCalls`.
+
+The first attempt reached GitHub and GitHub refused it —
+`403 "Resource not accessible by personal access token"` — which is the fine-grained-PAT
+symptom, not a product failure. **Re-run with a classic token carrying `repo` + `workflow`:
+both writes succeeded.** Two approval prompts fired in one build (`create_repository`, then
+`create_or_update_file`), both were approved over the socket, both executed, and the result was
+confirmed OUTSIDE the product by cloning the repository: it exists, it is public, it contains
+`README.md` with exactly the requested line, and commit `4d0eda8` ("Add README.md via GitHub
+MCP integration") is authored by the owner's account.
+
+So the full chain is proven: model asks for a destructive tool → the build blocks → the user
+approves over the websocket → the MCP call executes → the change lands on GitHub.
+
+**Token guidance, learned the hard way.** Use a CLASSIC token. A fine-grained one must enumerate
+the repositories it may touch, and a repository that does not exist yet cannot be enumerated —
+so "create a repo, then push to it" is structurally awkward there, and creating one at all needs
+account-level Administration: write. Classic needs `repo` (covers create/read/write/push/PRs)
+plus `workflow` if generated apps carry `.github/workflows/` files, since a push containing one
+is rejected without it. Do NOT grant `delete_repo`. Classic `repo` does reach every repository
+the user owns, and the mitigation is the approval gate above, which is now measured rather than
+assumed.
 
 Again the model reported it honestly rather than claiming success: *"The GitHub
 create-repository call was made and was approved, but GitHub rejected it … The repository was
