@@ -551,35 +551,79 @@ const MAX_EXTRA_DEPS = 12;
  * and npm's install syntax accepts URLs, git refs and local paths, none of
  * which should be reachable from here.
  */
+/**
+ * Bare package specifiers imported by the generated source.
+ *
+ * Reading the model's package.json was the only way a package got installed,
+ * and on 2026-10-04 that proved too fragile to rely on: three builds imported
+ * react-router-dom — which the prompt now asks for on any multi-view app — and
+ * not one of them emitted a package.json to declare it. Vite then failed with
+ * "Failed to resolve import", the preview never came up, and the app was dead
+ * on arrival.
+ *
+ * So the declaration is no longer load-bearing. What the code actually imports
+ * is the truth, and it is right there in the files we are about to write.
+ *
+ * Relative paths, the @/ alias and node: builtins are not packages. A scoped
+ * name keeps two segments (@scope/pkg); everything else keeps one, so
+ * "react-dom/client" resolves to the "react-dom" package.
+ */
+export function importedPackages(files: Record<string, string>): string[] {
+  const found = new Set<string>();
+  const SPEC_RE = /(?:^|[\s;])(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.])import\s*\(\s*['"]([^'"]+)['"]\s*\)|(?:^|[^\w.])require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+  for (const [path, code] of Object.entries(files)) {
+    if (!/\.(tsx?|jsx?|mts|mjs)$/.test(path)) continue;
+    for (const m of code.matchAll(SPEC_RE)) {
+      const spec = m[1] ?? m[2] ?? m[3];
+      if (!spec) continue;
+      if (spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("@/")) continue;
+      if (spec.startsWith("node:")) continue;
+      const parts = spec.split("/");
+      const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+      if (name && NPM_NAME_RE.test(name)) found.add(name);
+    }
+  }
+  return [...found];
+}
+
 async function installExtraDependencies(
   sandbox: Sandbox,
   files: Record<string, string>,
   log: PreviewLogCallback,
 ): Promise<void> {
+  // Two sources, union'd: what the model DECLARED, and what its code actually
+  // IMPORTS. The second exists because the first is routinely absent — see
+  // importedPackages. Either alone misses real cases, so take both.
+  const declaredNames: string[] = [];
   const declared = files["package.json"];
-  if (!declared) return;
-
-  let wanted: Record<string, string>;
-  try {
-    const parsed = JSON.parse(declared) as { dependencies?: Record<string, string> };
-    wanted = parsed.dependencies ?? {};
-  } catch {
-    log("Generated package.json is not valid JSON — skipping dependency install");
-    return;
+  if (declared) {
+    try {
+      const parsed = JSON.parse(declared) as { dependencies?: Record<string, string> };
+      declaredNames.push(...Object.keys(parsed.dependencies ?? {}));
+    } catch {
+      log("Generated package.json is not valid JSON — using its imports instead");
+    }
   }
+  const wantedNames = [...new Set([...declaredNames, ...importedPackages(files)])];
+  if (wantedNames.length === 0) return;
 
   let already: Record<string, string> = {};
   try {
     const baked = JSON.parse(await sandbox.files.read(`${PROJECT_DIR}/package.json`)) as {
       dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
-    already = baked.dependencies ?? {};
+    // devDependencies count as installed. vitest, jsdom and testing-library all
+    // live there, and a test file importing vitest would otherwise look like a
+    // missing package on every single build that writes one.
+    already = { ...baked.dependencies, ...baked.devDependencies };
   } catch {
     // Can't tell what's installed — installing everything the app asks for is
     // still better than installing nothing, and npm no-ops what's present.
   }
 
-  const missing = Object.keys(wanted).filter((n) => !(n in already));
+  const missing = wantedNames.filter((n) => !(n in already));
   const valid = missing.filter((n) => NPM_NAME_RE.test(n));
   const rejected = missing.filter((n) => !NPM_NAME_RE.test(n));
   if (rejected.length > 0) {
