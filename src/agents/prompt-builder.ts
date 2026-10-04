@@ -1725,7 +1725,13 @@ export class PromptBuilder {
         "— only when the answer changes what you build and you genuinely cannot settle it " +
         "yourself, like which of two workflows the app is for. Never for permission to carry " +
         "on, never to confirm what you already know, never more than once in a build if you " +
-        "can help it. Most builds should finish without asking anything. When you do ask, " +
+        "can help it. Most builds should finish without asking anything. " +
+        "ONE EXCEPTION, and it overrides the rarity rule completely: if the person ASKED to " +
+        "be consulted — \"ask me before you decide\", \"check with me first\", \"I haven't " +
+        "decided X\" — then you MUST call ask_user and wait. Deciding it yourself and " +
+        "mentioning it in the summary is not the same thing and is not acceptable there; they " +
+        "told you they wanted the choice. This holds even when a plan already names one " +
+        "option: the plan did not consult them either. When you do ask, " +
         "give two to four concrete options, mark the one you would pick as recommended and " +
         "say why in its description, and write them so a person who does not code can " +
         "choose. If no answer comes back, pick the sensible option yourself and say in your " +

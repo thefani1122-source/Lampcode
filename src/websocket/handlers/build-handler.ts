@@ -98,6 +98,18 @@ async function replayBuffer(socket: BuildSocket, sessionId: string): Promise<num
     return 0;
   }
   if (buffered.length > 0) {
+    // Tell the client to drop whatever it has before the replay lands. A tab
+    // that refreshes MID-BUILD restores its own sessionStorage snapshot and
+    // then receives this buffer on top of it, which showed the agent's
+    // thinking and replies twice — reported on 2026-10-04. build:history
+    // already does exactly this for a FINISHED session; the mid-build path
+    // simply never had an equivalent.
+    // Same escape hatch settleFinishedSession uses for build:history — these
+    // client-facing names are not in the typed server-event map.
+    (socket.emit.bind(socket) as (event: string, data: unknown) => boolean)(
+      "build:replay_start",
+      { sessionId, count: buffered.length },
+    );
     for (const raw of buffered) {
       try {
         const event = JSON.parse(raw);
