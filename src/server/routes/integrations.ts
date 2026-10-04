@@ -678,10 +678,20 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       }
 
       const provider = getMcpProvider(row.providerSlug);
-      if (!provider?.supportsRealMCP) continue;
+      if (!provider) {
+        logger.warn({ userId, slug: row.providerSlug }, "[mcp] connected provider is not in the registry — skipped");
+        continue;
+      }
+      if (!provider.supportsRealMCP) {
+        logger.info({ userId, slug: row.providerSlug }, "[mcp] provider is REST-only, not an MCP server — skipped");
+        continue;
+      }
 
       const url = resolveServerUrl(provider, creds);
-      if (!url) continue;
+      if (!url) {
+        logger.warn({ userId, slug: row.providerSlug }, "[mcp] could not resolve a server URL — skipped");
+        continue;
+      }
 
       // mcp_url: token is embedded in the URL — no separate authorization_token
       if (provider.authType === "mcp_url") {
@@ -693,7 +703,16 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       const tokenKey =
         provider.credentialFields.find((f) => f.type === "password")?.key ?? "api_key";
       const authToken = creds[tokenKey] ?? "";
-      if (!authToken) continue;
+      if (!authToken) {
+        // The silent version of this cost a full diagnostic cycle: the row was
+        // present, decryption worked, and the server still never reached a
+        // build. Names only — never the value.
+        logger.warn(
+          { userId, slug: row.providerSlug, expectedKey: tokenKey, storedKeys: Object.keys(creds) },
+          "[mcp] no credential under the expected key — skipped",
+        );
+        continue;
+      }
 
       servers.push({ slug: row.providerSlug, name: provider.name, url, authToken });
     } catch (err) {
@@ -701,6 +720,10 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
     }
   }
 
+  logger.info(
+    { userId, resolved: servers.map((s) => s.slug), rows: rows.length },
+    "[mcp] connected servers resolved for this request",
+  );
   return servers;
 }
 
