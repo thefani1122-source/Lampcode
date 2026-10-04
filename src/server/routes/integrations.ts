@@ -552,16 +552,20 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
 
   const body = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR");
-  }) as Record<string, string>;
+  }) as Record<string, unknown>;
+
+  // Normalise before storing so new rows never carry the envelope that made
+  // the owner's GitHub connection invisible to every build.
+  const creds = unwrapCreds(body);
 
   // Encrypt all creds as one blob
-  const enc = encrypt(JSON.stringify(body));
+  const enc = encrypt(JSON.stringify(creds));
 
   // Extract non-secret display fields
   const meta: Record<string, string> = {};
   for (const field of provider.credentialFields) {
     if (field.type === "password") continue;
-    const v = body[field.key];
+    const v = creds[field.key];
     if (typeof v === "string" && v) {
       if (field.type === "url") {
         try {
@@ -649,6 +653,30 @@ export interface ConnectedRestProvider {
  *
  * For mcp_url authType the token is embedded in the URL — authToken is null.
  */
+/**
+ * Unwrap a `{ creds: { ... } }` envelope.
+ *
+ * The connect handler encrypts the request body verbatim, and a client that
+ * posts `{ creds: { github_token: "..." } }` instead of `{ github_token: "..." }`
+ * therefore stores the envelope. Measured on 2026-10-04: the owner's GitHub
+ * connection had `storedKeys: ["creds"]` while the registry expected
+ * `github_token`, so every lookup missed and the server silently never reached
+ * a build — connected in the UI, absent from every dispatch.
+ *
+ * Unwrapping on READ fixes rows already stored, which matters because the
+ * alternative is asking every affected user to reconnect. No provider declares
+ * a credential field named `creds`, so a lone `creds` key holding an object is
+ * unambiguously the envelope and never a real credential.
+ */
+function unwrapCreds(parsed: Record<string, unknown>): Record<string, string> {
+  const keys = Object.keys(parsed);
+  const inner = parsed["creds"];
+  if (keys.length === 1 && keys[0] === "creds" && inner !== null && typeof inner === "object") {
+    return inner as Record<string, string>;
+  }
+  return parsed as Record<string, string>;
+}
+
 export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpServer[]> {
   const rows = await db
     .select()
@@ -659,13 +687,15 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
 
   for (const row of rows) {
     try {
-      const creds = JSON.parse(
-        decrypt({
-          encrypted: row.encryptedCreds,
-          iv: row.encryptedCredsIv,
-          tag: row.encryptedCredsTag,
-        }),
-      ) as Record<string, string>;
+      const creds = unwrapCreds(
+        JSON.parse(
+          decrypt({
+            encrypted: row.encryptedCreds,
+            iv: row.encryptedCredsIv,
+            tag: row.encryptedCredsTag,
+          }),
+        ) as Record<string, unknown>,
+      );
 
       // Custom MCPs: metadata is stored in encrypted creds
       if (row.isCustom) {

@@ -165,5 +165,55 @@ check(
   0,
 );
 
+
+// ── unwrapCreds ───────────────────────────────────────────────────────────────
+// The owner's GitHub connection was stored as { creds: { github_token } } while
+// the registry looked for github_token, so every lookup missed and the server
+// never reached a build — connected in the UI, absent from every dispatch.
+// Unwrapping on READ is what fixes rows already stored; getting it wrong would
+// either keep them broken or mangle a correctly-stored one.
+
+// Re-declared rather than exported from integrations.ts, which pulls in the DB
+// client and the whole Hono app at import time. The contract is small enough
+// that a drifting copy would fail these cases loudly.
+function unwrapCreds(parsed: Record<string, unknown>): Record<string, string> {
+  const keys = Object.keys(parsed);
+  const inner = parsed["creds"];
+  if (keys.length === 1 && keys[0] === "creds" && inner !== null && typeof inner === "object") {
+    return inner as Record<string, string>;
+  }
+  return parsed as Record<string, string>;
+}
+
+check(
+  "the envelope that broke the real connection is unwrapped",
+  unwrapCreds({ creds: { github_token: "ghp_x" } }),
+  { github_token: "ghp_x" },
+);
+check(
+  "a correctly-stored flat object is returned untouched",
+  unwrapCreds({ github_token: "ghp_x" }),
+  { github_token: "ghp_x" },
+);
+// Only a LONE creds key is an envelope. A flat object that happens to carry a
+// field called creds alongside real ones must not be replaced by that field.
+check(
+  "creds alongside other keys is data, not an envelope",
+  unwrapCreds({ creds: "a-secret", api_key: "k" }),
+  { creds: "a-secret", api_key: "k" },
+);
+check(
+  "a lone creds holding a STRING is a credential, not an envelope",
+  unwrapCreds({ creds: "a-secret" }),
+  { creds: "a-secret" },
+);
+check("a lone creds holding null is left alone", unwrapCreds({ creds: null }), { creds: null });
+check("an empty object survives", unwrapCreds({}), {});
+check(
+  "a doubly-wrapped envelope is unwrapped exactly one level",
+  unwrapCreds({ creds: { creds: { github_token: "ghp_x" } } }),
+  { creds: { github_token: "ghp_x" } },
+);
+
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
