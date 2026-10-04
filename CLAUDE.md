@@ -926,6 +926,63 @@ which looks exactly like prompt-vs-reality drift. It is not — `framer-motion` 
 dependency of `motion` v11 and is present in `node_modules`, so the import resolves. Checked by
 installing the pinned version and listing the tree. Left alone.
 
+## Routing, extra packages, and two GSAP facts — 2026-10-04
+Four things found while answering "what stacks does Lampcode actually have".
+
+**1. No router was installed, and no build has ever had URLs.** Neither `react-router-dom`
+nor `@tanstack/react-router` is in `template.ts`, so every multi-view app the product has ever
+produced switches views with a `useState`. No URL, so the back button does nothing, a refresh
+returns the user to the start, and no view can be linked or bookmarked. The four-view CRM and
+every dashboard are built this way. The prompt now requires real routing for any app with more
+than one view.
+
+**2. The model CAN bring a package, and the prompt was effectively telling it not to.**
+`installExtraDependencies` (`e2b-service.ts:554`) reads the dependencies out of the model's
+generated `package.json` and installs them BEFORE the dev server starts — up to
+`MAX_EXTRA_DEPS` (12), registry names only, validated against `NPM_NAME_RE` so a URL or git ref
+cannot get through. It exists precisely because `package.json` is in `BAKED_FILES` and a
+declared `recharts` was being silently dropped. But the manifest block read "AVAILABLE IN THIS
+SANDBOX … plus EXACTLY the DB/auth libraries named below", which any model reads as a closed
+set — so the install path almost never fired. The manifest now says the list is what is already
+installed, not a hard limit, and states the declare-it-in-package.json contract. This is what
+makes the routing rule deliverable with **no template rebuild**.
+
+**3. Live drift, now fixed: the prompt imported a package that does not exist here.** The GSAP
+block told the model `import { useGSAP } from "@gsap/react"`. `@gsap/react` is a SEPARATE
+package — not in `template.ts`, and not a dependency of `gsap` (checked by installing the
+pinned range and listing the tree). Every GSAP build following the prompt would have failed to
+resolve that import. Replaced with `gsap.context()` inside `useLayoutEffect` with
+`ctx.revert()` cleanup, which needs only `gsap`, plus a pinned/scrubbed timeline example since
+that is the backbone of a scroll-driven site.
+
+**4. Every GSAP plugin is free now, and we were using one of six.** `"gsap": "^3.12.5"`
+resolves to **3.15.0**, whose package ships `ScrollTrigger`, `ScrollSmoother`, `SplitText`,
+`MorphSVGPlugin`, `Flip` and `Observer` — the former Club plugins, free since 3.13. Verified by
+installing the range and listing the files. The prompt mentioned only ScrollTrigger; all six are
+now listed with what each is for.
+
+**Follow-up when the template is next rebuilt:** bake `react-router-dom` in, so routing costs no
+per-build install. Until then it goes through the runtime path, which adds seconds and can fail
+on a registry hiccup.
+
+## Next.js: the template was never built, and its definition is 10 days stale
+Recorded because "there is a Next.js template" is true and misleading. `template-nextjs.ts` and
+`build-nextjs.ts` exist, dated 2026-09-23 — before every October fix. The image has **none** of
+`.lampcode-tools`, playwright, `check-render.mjs`, `PLAYWRIGHT_BROWSERS_PATH` or vitest, so a
+Next.js build would have `check_page`, `check_types` and `run_tests` all **unavailable**, and
+none of three/gsap/motion/Radix/tsparticles either.
+
+`classifyBuild` pins `framework` to `"react"` on purpose and its comment is explicit:
+`NEXTJS_TEMPLATE_ID` being set in production is **not** a safe signal to re-enable on, because
+it points at no real template. `selectTemplate` still returns `process.env["NEXTJS_TEMPLATE_ID"]
+?? TEMPLATE_ID`, so flipping the classifier back on without building the image first yields a
+sandbox that cannot boot: `npm run dev` with no Next.js, and a readiness poll on :3000 while
+Vite serves :5173.
+
+Activating it is: port the October fixes into `template-nextjs.ts`, add the 3D/animation/Radix
+set, build it, verify in a live sandbox the way `verify-template.ts` does, then re-enable
+detection. Blocked on `E2B_API_KEY`, which is not in the repo's `.env`.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based

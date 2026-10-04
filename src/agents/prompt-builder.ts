@@ -197,6 +197,12 @@ not an excuse for a loud layout.
 ━━ CODE RULES — NON-NEGOTIABLE ━━
 - ALL buttons must do something — no dead buttons anywhere
 - ALL navigation links must show different content — no repeated views
+- ROUTING: any app with more than one view gets REAL URL routing, not a useState
+  switch. Declare react-router-dom in package.json dependencies (it installs before
+  the dev server starts) and give every view its own path. A useState "currentView"
+  has no URL, so the browser back button does nothing, a refresh throws the user
+  back to the start, and no view can be linked or bookmarked. Keep useState for
+  genuine UI state — an open modal, a selected tab inside one view.
 - NO placeholder "coming soon" sections
 - Complete, realistic mock data — not "Item 1", "Item 2"
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
@@ -1075,28 +1081,46 @@ Modal/drawer:
 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
 
 ━━ GSAP (for scroll timelines + complex sequences) ━━
-import { useRef } from "react"
-import { useGSAP } from "@gsap/react"
+Use gsap.context() inside useLayoutEffect. Do NOT import "@gsap/react" — that is a
+SEPARATE package and it is not installed; useGSAP would fail to resolve. The pattern
+below needs only "gsap", which is installed.
+
+import { useLayoutEffect, useRef } from "react"
 import gsap from "gsap"
 import { ScrollTrigger } from "gsap/ScrollTrigger"
 gsap.registerPlugin(ScrollTrigger)
 
-Scroll-triggered entrance:
-const ref = useRef(null)
-useGSAP(() => {
-  gsap.from(ref.current, {
-    opacity: 0, y: 40, duration: 0.7, ease: "power3.out",
-    scrollTrigger: { trigger: ref.current, start: "top 80%" }
-  })
+Scroll-triggered entrance (ctx.revert() cleans up every tween AND its ScrollTrigger):
+const root = useRef<HTMLDivElement>(null)
+useLayoutEffect(() => {
+  const ctx = gsap.context(() => {
+    gsap.from(".reveal", {
+      opacity: 0, y: 40, duration: 0.7, ease: "power3.out",
+      scrollTrigger: { trigger: ".reveal", start: "top 80%" }
+    })
+    gsap.from(".card-item", {
+      opacity: 0, y: 30, stagger: 0.1, duration: 0.5,
+      scrollTrigger: { trigger: ".cards-container", start: "top 75%" }
+    })
+  }, root)
+  return () => ctx.revert()
 }, [])
+// …then <div ref={root}> around the animated section.
 
-Stagger on scroll:
-useGSAP(() => {
-  gsap.from(".card-item", {
-    opacity: 0, y: 30, stagger: 0.1, duration: 0.5,
-    scrollTrigger: { trigger: ".cards-container", start: "top 75%" }
-  })
-}, [])
+Pinned / scrubbed sequence (the backbone of a scroll-driven site):
+gsap.timeline({ scrollTrigger: {
+  trigger: ".chapter", start: "top top", end: "+=1200", scrub: 1, pin: true,
+}}).to(".layer", { yPercent: -30 }).to(".title", { opacity: 0 }, "<")
+
+Every GSAP plugin is free as of GSAP 3.13 and ships in the installed package — import
+them from "gsap/<Name>" and registerPlugin, same as ScrollTrigger:
+  ScrollTrigger   scroll-driven animation, pinning, scrubbing
+  ScrollSmoother  smooth scrolling (requires ScrollTrigger; do not combine with Lenis)
+  SplitText       split headings into chars/words/lines for stagger reveals
+  Flip            animate an element between two layouts/positions
+  Observer        unified wheel/touch/pointer input without wiring listeners
+  MorphSVGPlugin  morph one SVG path into another
+Respect prefers-reduced-motion: skip the animation and set the end state directly.
 
 ━━ LENIS (smooth scrolling — add to root component) ━━
 import Lenis from "lenis"
@@ -1320,7 +1344,16 @@ async function buildNpmManifest(): Promise<string> {
     npmManifestCache =
       `AVAILABLE IN THIS SANDBOX (pre-installed — use freely, no install step needed):\n` +
       `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.` +
-      testLine;
+      testLine +
+      `\n\nBRINGING ONE MORE PACKAGE: the list above is what is already installed, not a ` +
+      `hard limit. If the app genuinely needs a library that is not there — a router, a ` +
+      `charting library, a date library — declare it in the dependencies of a generated ` +
+      `package.json and it is installed BEFORE the dev server starts. Up to 12 extra ` +
+      `packages, npm registry names only (no URLs, git refs or local paths). Prefer what ` +
+      `is pre-installed, because that costs nothing and cannot fail; reach for an extra ` +
+      `package when the alternative is hand-rolling something a standard library does ` +
+      `better. Declaring it is required — importing a package you did not declare will ` +
+      `fail to resolve in the browser.`;
   } catch (err) {
     // template.ts unreadable — fail safe to the old static list rather than
     // emitting an empty/broken instruction block.
