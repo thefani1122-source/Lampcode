@@ -358,8 +358,25 @@ export class AgentDispatcher {
       for (const s of mcpServers) {
         mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
       }
-      const { toolsets, report } = await classifyMcpServers(mcpServers);
+      const { toolsets, report, failures } = await classifyMcpServers(mcpServers);
       mcpToolsets = toolsets;
+      // A connected server that refuses auth or cannot be reached contributes
+      // zero tools, which is correct (fail closed) and completely invisible —
+      // the build just quietly has no GitHub. Measured 2026-10-04: a stored
+      // GitHub PAT came back "unauthorized: AuthenticateToken authentication
+      // failed" and the only trace was a log line nobody was reading. Tell the
+      // user, with the reason, so it reads as "reconnect your token" rather
+      // than "the feature does not work".
+      for (const f of failures) {
+        try {
+          getWebSocketServer().emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message:
+              `Your connected ${f.serverSlug} integration could not be reached, so its tools ` +
+              `are unavailable for this build (${f.message}). Reconnect it and try again.`,
+          });
+        } catch { /* ws not available — the log line above still carries it */ }
+      }
       const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
       writeProxyDefs = writeProxies.toolDefs;
       writeProxyRegistry = writeProxies.registry;

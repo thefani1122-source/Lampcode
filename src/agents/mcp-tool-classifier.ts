@@ -51,12 +51,25 @@ export interface McpToolsetConfig {
   configs: Record<string, { enabled: boolean }>;
 }
 
+export interface McpDiscoveryFailure {
+  serverSlug: string;
+  /** The transport/server error, for the build log the user actually reads. */
+  message: string;
+}
+
 export interface McpClassificationResult {
   toolsets: McpToolsetConfig[];
   report: ClassifiedTool[];
+  /** Servers that are connected but could not be reached or refused auth.
+   *  Surfaced to the user: "connected" in the UI plus zero tools in the build
+   *  is exactly the kind of silent nothing this codebase keeps paying for. */
+  failures: McpDiscoveryFailure[];
 }
 
-async function discoverServerTools(server: ActiveMcpServer): Promise<ClassifiedTool[]> {
+async function discoverServerTools(
+  server: ActiveMcpServer,
+  failures: McpDiscoveryFailure[],
+): Promise<ClassifiedTool[]> {
   const client = new Client({ name: "lampcode-discovery", version: "1.0.0" });
   const headers: Record<string, string> = {};
   if (server.authToken) headers["Authorization"] = `Bearer ${server.authToken}`;
@@ -101,6 +114,10 @@ async function discoverServerTools(server: ActiveMcpServer): Promise<ClassifiedT
       { server: server.slug, err: err instanceof Error ? err.message : String(err) },
       "[mcp-tool-classifier] tool discovery failed — server's tools denied by default (fail closed)",
     );
+    failures.push({
+      serverSlug: server.slug,
+      message: err instanceof Error ? err.message : String(err),
+    });
     return [];
   } finally {
     await client.close().catch(() => undefined);
@@ -115,7 +132,8 @@ async function discoverServerTools(server: ActiveMcpServer): Promise<ClassifiedT
  * so a flaky server degrades to "unavailable this build," never to "open."
  */
 export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<McpClassificationResult> {
-  const perServer = await Promise.all(servers.map((s) => discoverServerTools(s)));
+  const failures: McpDiscoveryFailure[] = [];
+  const perServer = await Promise.all(servers.map((s) => discoverServerTools(s, failures)));
   const report = perServer.flat();
 
   const toolsets: McpToolsetConfig[] = servers.map((server) => {
@@ -131,7 +149,7 @@ export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<Mc
     };
   });
 
-  return { toolsets, report };
+  return { toolsets, report, failures };
 }
 
 /**
