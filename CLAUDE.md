@@ -1040,10 +1040,45 @@ a destructive tool never appearing in the read set, the two sets being disjoint,
 tool being in neither, a null `authToken` surviving so it cannot become an empty Bearer header,
 and a tool whose server is no longer connected being dropped.
 
-**NOT yet verified against a real connected server.** The classification, naming, registry and
-wiring are covered by cases and by typecheck; no build has actually called a GitHub or Railway
-MCP tool. That needs a connected account, and it is the next thing to check — watch for
-`readToolCount` in the `MCP tool classification for this dispatch` log line.
+### VERIFIED END TO END on a real GitHub account — 2026-10-04
+Both halves now, on `provider=modal`, against the live GitHub MCP server.
+
+**Read path.** A build logged `resolved: ["github"]`, `readToolCount: 28`,
+`writeProxyCount: 18`, and the model called `github__list_issues` twice unprompted.
+Classification split the server's 46 tools correctly and automatically: `list_issues`,
+`get_file_contents`, `list_commits`, `search_code`, `get_me` … allowed as
+`annotation-read-only`; `create_repository`, `push_files`, `create_branch`,
+`create_pull_request`, `merge_pull_request`, `delete_file`, `fork_repository` … all
+`deny(annotation-destructive)` and therefore approval-gated. Everything the owner wants from a
+vibe coder — make a repo, push, open and merge a PR, edit a file — is present, and on the
+correct side of the gate without anyone enumerating them.
+
+**The model did not invent data.** Told to fetch the repo's real issues and to say so if it
+could not, it called `list_issues` for OPEN and CLOSED, got nothing, and wrote
+`ISSUES: GitHubIssue[] = []` with a comment stating the repository genuinely has none.
+Independently confirmed: `open_issues_count: 0`, and the seven items the API returns are all
+pull requests, all closed.
+
+**Write path, including approval.** Tested with a Socket.IO client that joins the session room
+the way the frontend does — the eval harness is HTTP-only and could therefore only ever have
+proven the timeout-deny. The prompt arrived with the right payload
+(`github.create_repository`, `{name, description, private:false}`), was approved, and
+`github__create_repository: 1` appears in `buildOutcome.toolCalls`. The call reached GitHub and
+GitHub refused it: `403 "Resource not accessible by personal access token"`. So the product's
+path is proven along its whole length and the remaining limit is the TOKEN'S SCOPES — a
+fine-grained PAT cannot create repositories without Administration: write; a classic token
+needs `repo`/`public_repo`.
+
+Again the model reported it honestly rather than claiming success: *"The GitHub
+create-repository call was made and was approved, but GitHub rejected it … The repository was
+NOT created, so no URL exists. Nothing is being pretended to have worked."*
+
+**The test harness approves exactly one named tool** and denies everything else, so a model
+reaching for an unrelated destructive tool cannot have it merely because a test is running.
+
+**What this cost to find:** four layers, each only visible by running it — MCP forcing Anthropic,
+`build.ts` emptying the server list, the creds envelope, and an expired token. None of them is
+visible by reading the code.
 
 ## The MCP catalogue is built — and unreachable on the provider we actually run (SUPERSEDED — see above)
 Relevant to any plan involving GitHub, deploys or reading logs agentically, so recorded before
