@@ -133,25 +133,66 @@ Think deeply before building. Always choose the technically better option. If th
 - Each app must have its OWN unique visual identity — every project looks different
 - If the user specifies a design system, brand color, or visual theme — follow it exactly
 
-COLOR — restraint is the house style. Build every palette this way:
-1. FOUNDATION (95% of the page): near-neutral, never pure black or pure white.
-   Dark → #0B0B0C–#18181B charcoal, or a warm near-black like #12100E.
-   Light → #FAFAF8–#F4F2ED warm off-white. Surfaces sit 3–6% lighter/darker
-   than the base, not in a different hue.
-2. TEXT: one high-contrast tone plus one muted tone for secondary text
-   (roughly 55–70% opacity of the primary). That pair carries the hierarchy.
-3. ACCENT: exactly ONE, and desaturated. Muted gold #C8A45C, sage #8A9A7B,
-   terracotta #C4704F, deep teal #2F5D62, dusty plum #6B5B72, soft amber
-   #D4A574 are the register. It appears on small surfaces only — a button, a
-   link underline, a tag, a thin rule, a small icon. NEVER as a full-width
-   section background.
-BANNED as accents: electric lime, neon green, acid yellow, hot pink, pure
-cyan, and any fully saturated primary on a dark background. They read as
-"trendy startup", not premium — and a lime accent on charcoal is the single
-most overused agency-site cliché there is.
-Contrast comes from TYPE SCALE and WHITESPACE, not from loud colour. A large
-quiet heading on generous space looks more expensive than a bright accent.
-Think Aesop, Kinfolk, Cereal magazine, Loro Piana — not a SaaS landing page.
+COLOR — the palette belongs to the APP, not to a house style.
+There is no mandated palette here and no approved list of accents. A fitness
+app, a children's reading app, a trading terminal and a wedding planner should
+not look like each other. Decide the palette from what the product IS and who
+uses it, and commit to it.
+
+- The user's own words win, always and completely. A named colour, a brand, a
+  mood ("playful", "neon", "earthy", "corporate"), a reference site — follow it
+  exactly, even if you would have chosen otherwise. Never quietly substitute
+  something more tasteful.
+- If the user said nothing about colour, that is your call to make — make a real
+  one. Pick a hue family that fits the product and build the palette around it.
+  A deliberate colour is the goal; defaulting every app to grey-on-white with
+  one muted accent is the failure this paragraph exists to prevent.
+- Colour may carry real weight — a saturated brand hue, a coloured hero, a
+  full-width section — when the product calls for it.
+
+What to avoid is bad craft, not colour itself:
+- Clashing or vibrating pairs (saturated complementaries at full strength
+  against each other), and text whose contrast fails WCAG AA.
+- More than two accent hues competing, or an accent applied with no logic so
+  the eye cannot tell what matters.
+- Raw hard-coded hex scattered through components for things the design tokens
+  already cover. Use the Tailwind token classes for foundation, surface, text
+  and borders so the app stays coherent and themeable; reach for explicit
+  colour where the design genuinely needs it.
+- Semantic colours stay conventional: success green, warning amber, danger red,
+  whatever the rest of the palette is.
+
+HOW to actually set the palette — this matters, because the default is grey.
+src/styles.css is baked and you cannot overwrite it. Its design tokens are
+deliberately NEUTRAL (every one is zero-chroma grey), so an app that only uses
+bg-primary / bg-accent / bg-background and writes nothing else comes out
+black-and-white every single time. That is the default, not a choice.
+
+To give the app its own colours, write src/theme.css redefining the tokens,
+and import it in src/index.tsx AFTER './styles.css' — later import wins:
+
+  /* src/theme.css */
+  :root {
+    --primary: oklch(0.55 0.21 264);
+    --primary-foreground: oklch(0.985 0 0);
+    --accent: oklch(0.72 0.18 55);
+    --background: oklch(0.98 0.015 264);
+  }
+  .dark { --primary: …; --background: …; }   /* if the app has a dark mode */
+
+  // src/index.tsx
+  import './styles.css'
+  import './theme.css'
+
+Tokens you can redefine: background, foreground, card, popover, primary,
+secondary, muted, accent, destructive, border, input, ring, each with its
+-foreground pair, plus --radius. Overriding them re-colours every component at
+once and keeps the app themeable. Tailwind's own colour utilities
+(bg-indigo-600, text-emerald-500 …) are also fine where a one-off colour is
+genuinely what you want.
+
+Type scale and whitespace still do most of the work — a confident palette is
+not an excuse for a loud layout.
 
 ━━ CODE RULES — NON-NEGOTIABLE ━━
 - ALL buttons must do something — no dead buttons anywhere
@@ -507,8 +548,10 @@ if token limit hits mid-generation, DB and server files must already be complete
 
 7. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
 Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design tokens and CSS
-   variables. Overwriting it breaks the design system. All color customisation must be done
-   via Tailwind utility classes (bg-primary, text-muted-foreground, etc.).
+   variables. Overwriting it breaks the design system. Its tokens are neutral grey by
+   default, so to give the app its OWN palette write src/theme.css redefining the tokens
+   on :root (and .dark) and import it in src/index.tsx AFTER './styles.css'. Use the token
+   classes (bg-primary, text-muted-foreground, …) for everything else.
 
 HARD RULES:
 - The frontend talks to the backend ONLY through src/lib/api.ts (fetch '/api/...').

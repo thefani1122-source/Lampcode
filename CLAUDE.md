@@ -886,6 +886,46 @@ Not done — flagged as the remaining step.
 exactly 4714 bytes — the known blank — so its screenshot had to be produced by running the
 generated code locally. 
 
+## Why every build came out black and white — 2026-10-04
+The owner's observation, and it was right: every app looked monochrome. Two causes, and the
+mechanical one is the bigger.
+
+**1. The baked tokens are literally greyscale.** Every variable in the template's `styles.css`
+is `oklch(L 0 0)` — zero chroma. `--primary` is near-black, `--accent` near-white; only
+`--destructive` has any hue. `styles.css` is in `BAKED_FILES`, so the model cannot overwrite it,
+and the prompt told it "all color customisation must be done via Tailwind utility classes
+(bg-primary, text-muted-foreground, …)". Those classes resolve through exactly those grey
+tokens. An agent following the house component patterns obediently produced a black-and-white
+app every single time — that was the default, not a choice the model made.
+
+**2. The prompt mandated a single house style** for every app: a near-neutral foundation at
+"95% of the page", "ACCENT: exactly ONE, and desaturated" with six fixed hex values as "the
+register", a BANNED list, and "Think Aesop, Kinfolk, Cereal magazine, Loro Piana". It also
+contradicted the two lines directly above it — "Choose colors that MATCH the app's purpose" and
+"Each app must have its OWN unique visual identity" — and the mandate won.
+
+**Both fixed.** The COLOR block now says the palette belongs to the app, not to a house style:
+the user's own words win absolutely; if they said nothing, the model must still make a real
+choice rather than defaulting to grey; colour may carry weight. What is forbidden is bad craft —
+vibrating pairs, contrast below WCAG AA, more than two competing accents, raw hex where tokens
+belong — not colour itself. Semantic colours stay conventional.
+
+**And the mechanism is now stated**, because the prompt rule alone would not have been enough
+against grey tokens: write `src/theme.css` redefining the tokens on `:root` (and `.dark`) and
+import it in `src/index.tsx` AFTER `./styles.css`. **Verified by running it, not by reasoning:**
+the template's real `STYLES_CSS` was extracted verbatim into a Vite + Tailwind v4 project with
+such an override, and the computed styles came back `oklch(0.55 0.21 264)` for `bg-primary`,
+`oklch(0.72 0.18 55)` for `bg-accent` — the override reaches the utilities, because
+`@theme inline` maps `--color-primary: var(--primary)` and inlines the var reference. Without
+it those would have read `oklch(0.205 0 0)`. No template rebuild needed; `src/theme.css` is not
+a baked file.
+
+**A correct no-op, recorded so it is not re-investigated:** the prompt tells the model to
+`import { motion } from "framer-motion"` while the template installs `"motion": "^11.11.0"`,
+which looks exactly like prompt-vs-reality drift. It is not — `framer-motion` ships as a
+dependency of `motion` v11 and is present in `node_modules`, so the import resolves. Checked by
+installing the pinned version and listing the tree. Left alone.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
