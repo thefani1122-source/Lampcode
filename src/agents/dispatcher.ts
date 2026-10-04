@@ -26,6 +26,7 @@ import {
 import {
   classifyMcpServers,
   buildWriteProxyDefinitions,
+  buildReadToolDefinitions,
   type McpToolsetConfig,
   type WriteProxyRegistry,
 } from "./mcp-tool-classifier.js";
@@ -303,12 +304,20 @@ export class AgentDispatcher {
     tier: 1 | 2,
   ): Promise<DispatchResult> {
     const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers, restProviders } = options;
-    // "modal" only holds when there's no MCP connector need this dispatch —
-    // the Modal gateway has no MCP-connector equivalent, so a free-tier user
-    // with connected MCP servers still gets Anthropic for those dispatches
-    // rather than silently losing MCP tool access.
-    const effectiveProvider: "anthropic" | "modal" =
-      options.provider === "modal" && !(mcpServers && mcpServers.length > 0) ? "modal" : "anthropic";
+    // MCP no longer forces Anthropic. It used to: the OpenAI-compatible gateway
+    // has no MCP-connector equivalent, so a dispatch with connected servers was
+    // sent to Anthropic to avoid silently losing MCP tool access. In practice
+    // that traded one silent failure for a worse one — ANTHROPIC_API_KEY is not
+    // set on the service, every build runs provider=modal, so connecting ANY MCP
+    // server routed the build to a provider with no credentials. The catalogue
+    // (GitHub, Vercel, Railway and 19 more) was unreachable in exactly the case
+    // it was meant for.
+    //
+    // Instead, read-only MCP tools are now offered to the OpenAI-compatible
+    // gateway as ordinary function tools and executed on our side (see
+    // buildReadToolDefinitions + callMcpTool). Writes keep going through the
+    // approval-gated proxies, which already worked this way on both gateways.
+    const effectiveProvider: "anthropic" | "modal" = options.provider === "modal" ? "modal" : "anthropic";
     // Defaults to "build" rather than left null — every dispatch is billing-
     // relevant, and the 5 existing fix loops that predate this field (and
     // any future caller that forgets to set it) should still land in a real,
@@ -343,6 +352,8 @@ export class AgentDispatcher {
     let mcpToolsets: McpToolsetConfig[] = [];
     let writeProxyDefs: typeof TOOL_DEFINITIONS = [];
     let writeProxyRegistry: WriteProxyRegistry = new Map();
+    let readToolDefs: typeof TOOL_DEFINITIONS = [];
+    let readMcpRegistry: WriteProxyRegistry = new Map();
     if (enableTools && mcpServers && mcpServers.length > 0) {
       for (const s of mcpServers) {
         mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
@@ -352,12 +363,22 @@ export class AgentDispatcher {
       const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
       writeProxyDefs = writeProxies.toolDefs;
       writeProxyRegistry = writeProxies.registry;
+      // Read-only tools need explicit definitions ONLY where the gateway cannot
+      // run them itself. Anthropic's connector executes them server-side from
+      // mcpToolsets, so offering them again there would duplicate every tool.
+      if (effectiveProvider === "modal") {
+        const readTools = buildReadToolDefinitions(report, mcpServers);
+        readToolDefs = readTools.toolDefs;
+        readMcpRegistry = readTools.registry;
+      }
       logger.info(
         {
           sessionId,
           agentType,
+          provider: effectiveProvider,
           classification: report.map((r) => `${r.serverSlug}.${r.toolName}=${r.allowed ? "allow" : "deny"}(${r.reason})`),
           writeProxyCount: writeProxyDefs.length,
+          readToolCount: readToolDefs.length,
         },
         "MCP tool classification for this dispatch",
       );
@@ -488,7 +509,7 @@ export class AgentDispatcher {
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
-          ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
+          ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
           : undefined,
         ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
       };
@@ -610,6 +631,7 @@ export class AgentDispatcher {
           contextFiles,
           sessionId,
           writeMcpRegistry: writeProxyRegistry,
+          readMcpRegistry,
           writeDenied,
           toolCallId: tc.id,
           ...(agenticBuild

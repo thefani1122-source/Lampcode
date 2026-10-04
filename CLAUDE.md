@@ -994,7 +994,58 @@ Lesson worth keeping: a capability the code supports and the prompt forbids is i
 a build is run and its log is read. `installExtraDependencies` has existed for a while and
 almost certainly never fired.
 
-## The MCP catalogue is built — and unreachable on the provider we actually run
+## MCP now works on the OpenAI-compatible provider — 2026-10-04
+The section below described the catalogue as unreachable. **That is fixed**; it is kept because
+the diagnosis is still the reason the design looks the way it does.
+
+Three changes, and the third was the one that actually gated it:
+
+**1. MCP no longer switches provider.** `dispatcher.ts` used to resolve `modal && !mcpServers`,
+so any connected server forced the dispatch to Anthropic. It now stays on whatever the plan
+chose.
+
+**2. Read-only tools are offered as ordinary functions and executed here.**
+`buildReadToolDefinitions` (mcp-tool-classifier.ts) mirrors `buildWriteProxyDefinitions` for
+tools the classifier marked `allowed`, with the same `serverSlug__toolName` naming. It does NOT
+re-decide allow/deny — it reuses `allowed` exactly as `classifyMcpServers` computed it, so both
+gateways permit an identical set and the classification cannot drift between them. The defs are
+built only when `effectiveProvider === "modal"`; on Anthropic the connector still runs these
+server-side and offering them again would duplicate every tool.
+
+The executor was extracted to `src/mcp/call-tool.ts` and is now shared: reads and writes take
+the same transport, timeout and error shape, so a fix to one is a fix to both. It never throws —
+a tool failure is something the model should see and work around, not something that kills a
+build whose code is already written.
+
+**Safety is unchanged, and that was the point.** Writes still go through the approval-gated
+proxies. Ambiguous tools (`name-pattern-no-match`) remain blocked on both paths — neither
+readable nor proxyable, because a proxy would turn "we do not know what this does" into an
+approvable action. Discovery failure still contributes nothing, so a flaky server is
+unavailable, never open. `executeTool` checks `writeMcpRegistry` BEFORE `readMcpRegistry`, so a
+name in both can only cost an extra approval prompt, never skip one.
+
+**3. `build.ts` was emptying the list, and this was the real gate.**
+`const mcpServers = provider === "modal" ? [] : [...]` — on every build, since every build runs
+`provider=modal`. The two changes above would have done nothing without this. User-connected
+servers now flow through on both providers.
+
+`internalMcpServers` (Firecrawl, Exa) stays out of the Modal path **on purpose, as a cost
+decision rather than a capability one**: those two attach to EVERY build, and each attached
+server costs a discovery round trip plus its full tool list in every round's context. A
+user-connected server is one the user asked for; these would be charged to builds that never use
+them.
+
+14 cases in `npm test` (`scripts/mcp-tools.test.ts`), weighted toward the safety boundary —
+a destructive tool never appearing in the read set, the two sets being disjoint, an ambiguous
+tool being in neither, a null `authToken` surviving so it cannot become an empty Bearer header,
+and a tool whose server is no longer connected being dropped.
+
+**NOT yet verified against a real connected server.** The classification, naming, registry and
+wiring are covered by cases and by typecheck; no build has actually called a GitHub or Railway
+MCP tool. That needs a connected account, and it is the next thing to check — watch for
+`readToolCount` in the `MCP tool classification for this dispatch` log line.
+
+## The MCP catalogue is built — and unreachable on the provider we actually run (SUPERSEDED — see above)
 Relevant to any plan involving GitHub, deploys or reading logs agentically, so recorded before
 that work is scoped.
 

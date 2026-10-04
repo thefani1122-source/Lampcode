@@ -1190,7 +1190,21 @@ export async function runFastBuild(
         ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
         : []),
     ];
-    const mcpServers = provider === "modal" ? [] : [...userMcpServers, ...internalMcpServers];
+    // User-connected servers now reach Modal builds too. The old guard emptied
+    // this for Modal because MCP forced the dispatch onto Anthropic, so a user
+    // who connected GitHub got a build on a provider with no credentials rather
+    // than GitHub tools. The dispatcher no longer switches provider on MCP —
+    // read-only tools are offered as ordinary functions and executed our side,
+    // writes still go through the approval-gated proxies — so the guard would
+    // now only be hiding the servers the user deliberately connected.
+    //
+    // internalMcpServers stays out of the Modal path on purpose, and that is a
+    // cost decision rather than a capability one: Firecrawl and Exa attach to
+    // EVERY build, and each attached server costs a tool-discovery round trip
+    // plus its whole tool list in every round's context. A user-connected
+    // server is one the user asked for; these two would be charged to builds
+    // that never use them. Revisit if web access becomes a default need.
+    const mcpServers = [...userMcpServers, ...(provider === "modal" ? [] : internalMcpServers)];
 
     const result = await dispatcher.dispatch({
       agentType: "frontend",

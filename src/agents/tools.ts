@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "fs/promises";
 import { join } from "path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ToolDefinition } from "./model-gateway.js";
 import { parseSkillFrontmatter, ALL_SKILL_NAMES } from "./prompt-builder.js";
 import { logger } from "../server/logger.js";
@@ -22,6 +20,7 @@ import {
 } from "../preview/e2b-service.js";
 import { persistFilesAsWritten } from "../storage/project-files.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
+import { callMcpTool } from "../mcp/call-tool.js";
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
@@ -256,8 +255,6 @@ const SKILLS_DIR = join(process.cwd(), "src", "skills");
 // traversal even though ALL_SKILL_NAMES already constrains what's meaningful.
 const KNOWN_SKILL_NAMES = new Set<string>(ALL_SKILL_NAMES);
 
-// How long to wait for a callTool() response after the user approves.
-const CALL_TOOL_TIMEOUT_MS = 30_000;
 
 export interface ToolExecutionContext {
   /** Same set already inlined into the user message by buildContextBlock() —
@@ -268,6 +265,12 @@ export interface ToolExecutionContext {
   /** Registry of write-proxy tool names → MCP execution metadata.
    *  Populated by dispatcher from classifier results when enableTools is true. */
   writeMcpRegistry?: WriteProxyRegistry | undefined;
+  /** Registry of READ-ONLY MCP tool names → execution metadata. Only populated
+   *  on gateways that cannot reach MCP themselves (the OpenAI-compatible path);
+   *  on Anthropic the connector runs these server-side and this stays empty.
+   *  Checked AFTER writeMcpRegistry so a name present in both can never bypass
+   *  the approval gate — see executeTool. */
+  readMcpRegistry?: WriteProxyRegistry | undefined;
   /** Shared flag: set to true after any write-proxy in this turn is denied.
    *  Subsequent write-proxy calls in the same turn auto-deny without prompting,
    *  preventing partial execution of a multi-step write sequence. */
@@ -811,43 +814,15 @@ export async function executeTool(
       return "Action denied: the write action was not approved by the user.";
     }
 
-    // User approved — execute via a fresh MCP client (not the discovery client).
-    const client = new Client({ name: "lampcode-write-proxy", version: "1.0.0" });
-    const headers: Record<string, string> = {};
-    if (meta.authToken !== null) headers["Authorization"] = `Bearer ${meta.authToken}`;
-    const transport = new StreamableHTTPClientTransport(new URL(meta.serverUrl), {
-      requestInit: { headers },
-    });
+    // User approved — execute it.
+    return callMcpTool(meta, args, "lampcode-write-proxy");
+  }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await client.connect(transport as any);
-
-      const callTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("callTool timed out")), CALL_TOOL_TIMEOUT_MS),
-      );
-      const callResult = await Promise.race([
-        client.callTool({ name: meta.mcpToolName, arguments: args }),
-        callTimeout,
-      ]);
-
-      const blocks = callResult.content as Array<{ type: string; text?: string }>;
-      const text = blocks.map((b) => b.text ?? `[${b.type}]`).join("\n");
-
-      if (callResult.isError) {
-        logger.warn({ toolName: meta.mcpToolName, serverSlug: meta.serverSlug, text }, "[tools] Write-proxy callTool returned isError");
-        return `Error from ${meta.serverSlug}: ${text}`;
-      }
-      return text || "(tool returned no content)";
-    } catch (err) {
-      logger.warn(
-        { err: err instanceof Error ? err.message : String(err), toolName: meta.mcpToolName, serverSlug: meta.serverSlug },
-        "[tools] Write-proxy callTool failed",
-      );
-      return `Error: could not execute ${meta.mcpToolName} on ${meta.serverSlug}: ${err instanceof Error ? err.message : String(err)}`;
-    } finally {
-      await client.close().catch(() => undefined);
-    }
+  // Read-only MCP tools, on a gateway that cannot run them itself. Deliberately
+  // AFTER the write branch: if a name somehow appeared in both registries the
+  // write path claims it first, so this can never become a way around approval.
+  if (ctx.readMcpRegistry?.has(name)) {
+    return callMcpTool(ctx.readMcpRegistry.get(name)!, args, "lampcode-mcp-read");
   }
 
   return `Error: unknown tool "${name}".`;

@@ -135,6 +135,57 @@ export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<Mc
 }
 
 /**
+ * The read half of the same idea, for gateways that cannot reach MCP themselves.
+ *
+ * Anthropic's connector executes read-only tools server-side, so on that path
+ * the enabled `mcp_toolset` config above IS the wiring and nothing else is
+ * needed. An OpenAI-compatible endpoint has no MCP concept at all — it only
+ * knows function tools — so on that path a read tool that is "enabled" is
+ * enabled for nobody. These definitions are what make it callable: the same
+ * tools the toolset would have permitted, offered as ordinary functions and
+ * executed by us.
+ *
+ * The allow/deny decision is NOT re-made here. It reuses `allowed` exactly as
+ * classifyMcpServers computed it, so the two gateways permit the identical set
+ * and a change to the classification cannot drift between them. A tool whose
+ * discovery failed never appears in the report at all, so it stays blocked.
+ */
+export function buildReadToolDefinitions(
+  report: ClassifiedTool[],
+  servers: ActiveMcpServer[],
+): { toolDefs: ToolDefinition[]; registry: WriteProxyRegistry } {
+  const serversBySlug = new Map(servers.map((s) => [s.slug, s]));
+  const toolDefs: ToolDefinition[] = [];
+  const registry: WriteProxyRegistry = new Map();
+
+  for (const t of report) {
+    if (!t.allowed) continue;
+    const server = serversBySlug.get(t.serverSlug);
+    if (!server) continue;
+
+    // Same serverSlug__tool naming as the write proxies, for the same reason
+    // (collisions across servers) and so one lookup covers both registries.
+    const toolName = `${t.serverSlug}__${t.toolName}`;
+    registry.set(toolName, {
+      serverSlug: t.serverSlug,
+      serverUrl: server.url,
+      authToken: server.authToken,
+      mcpToolName: t.toolName,
+    });
+    toolDefs.push({
+      name: toolName,
+      description: `Read-only. Run ${t.toolName} on the connected ${t.serverSlug} service.`,
+      input_schema: {
+        type: "object",
+        ...(t.inputSchema ?? {}),
+      },
+    });
+  }
+
+  return { toolDefs, registry };
+}
+
+/**
  * From classifier results, build Anthropic ToolDefinitions and a registry for
  * every explicitly-annotated write tool (reason "annotation-destructive").
  * Ambiguous tools (name-pattern-no-match, discovery-failed) are NOT included —
