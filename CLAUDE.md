@@ -859,11 +859,28 @@ the one thing the user asked for is painted over. `check_page` looks for a rende
 errors; a uniformly flat page is neither. This is the same blind spot that let the unstyled-page
 bug survive three months.
 
-**Not fixed, and deliberately so** — the fix is a product decision, not a typo. The options are a
-prompt rule (a fixed full-bleed canvas means the shell must not carry an opaque background), or a
-gate with teeth: `check_page` already captures a frame, so it could fail a page whose pixels are
-near-uniform, which would also catch the blank-thumbnail case below. The second is the one that
-generalises, because it does not depend on the model remembering a rule.
+**FIXED 2026-10-04 — prompt rule, plus the gate that was keeping it from being delivered.**
+
+1. `ANIMATION_DEFAULT_INSTRUCTION` (`prompt-builder.ts`) now carries a FULL-BLEED BACKGROUND
+   LAYERS block: the trap stated outright (a `position:relative` shell with no `z-index` is not
+   a stacking context, so `-z-10` resolves against the root and paints below the shell), the
+   wrong pattern, and the right one — background on the canvas layer, content lifted with
+   `relative z-10`, never a background on the shell.
+2. **`isAnimationBuild` was the bigger half.** That block is gated on it, and its regex matched
+   motion words only — `three\.?js`, `webgl`, `r3f`, `react.three` were absent, so "a landing
+   page with a Three.js globe" matched NOTHING and got no 3D guidance at all. The build that
+   most needs the stacking-context warning was the one structurally unable to receive it.
+   MERIDIAN only squeaked in on "particle field" and "camera animation". Now added, with cases
+   confirming it still stays quiet on "a pricing page with three tiers" and a plain CRUD prompt.
+
+**Correcting what this section said yesterday:** a near-uniform-frame gate would NOT have caught
+this. MERIDIAN's page was not uniform — the headline, the depth gauge and the motion toggle were
+all visible and correct; only the canvas was covered. That check catches a BLANK page (the 4714-byte
+thumbnail), which is a different bug. A gate that would catch this one has to compare the composite
+against the canvas's own contribution — screenshot, hide the canvas layer, screenshot again, and
+fail when the two are identical. That is precise and cheap, and it needs a TEMPLATE REBUILD,
+because `check-render.mjs` is baked into the image (`template.ts:453`), not written at runtime.
+Not done — flagged as the remaining step.
 
 **Also reconfirmed:** the preview thumbnail capture still races the page. SCOUT's came back at
 exactly 4714 bytes — the known blank — so its screenshot had to be produced by running the

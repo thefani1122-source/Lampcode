@@ -476,7 +476,12 @@ function isAgentBuild(prompt: string): boolean {
 }
 
 function isAnimationBuild(prompt: string): boolean {
-  return /\b(animat(?:ed|ion)|3d.website|3d.character|3d.scene|parallax|scroll.reveal|scroll.animation|landing.page.with.animation|animated.portfolio|interactive.3d|motion.design|gsap|framer.motion|lottie|spline|particle|hero.animation)\b/i.test(prompt);
+  // three.js/webgl/r3f are here because the block this gates carries the
+  // full-bleed-canvas rule, and a prompt can ask for a WebGL scene without
+  // using any of the motion words — "a landing page with a Three.js globe"
+  // matched nothing, so the one build that most needs the stacking-context
+  // warning was the one that never saw it.
+  return /\b(animat(?:ed|ion)|3d.website|3d.character|3d.scene|parallax|scroll.reveal|scroll.animation|landing.page.with.animation|animated.portfolio|interactive.3d|motion.design|gsap|framer.motion|lottie|spline|particle|hero.animation|three\.?js|webgl|r3f|react.three)\b/i.test(prompt);
 }
 
 // ── Full-stack detection ──────────────────────────────────────────────────────

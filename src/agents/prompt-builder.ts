@@ -1084,6 +1084,29 @@ import { OrbitControls, Sphere, MeshDistortMaterial } from "@react-three/drei"
 import Spline from "@splinetool/react-spline"
 <Spline scene="https://prod.spline.design/[scene-id]/scene.splinecode" />
 
+━━ FULL-BLEED BACKGROUND LAYERS (canvas, Three.js, particles) — GET THIS RIGHT ━━
+A fixed full-viewport layer behind the content is the standard way to put a canvas
+behind a page. Done wrong it renders perfectly and is INVISIBLE, and nothing reports
+it: the page loads, the console is clean, types check, tests pass.
+
+The trap: an app shell with position:relative and no z-index is NOT a stacking context,
+so a child at -z-10 resolves against the ROOT — where it paints BEFORE the shell. The
+shell's own opaque background then covers the canvas completely.
+
+NEVER — the canvas is painted, then hidden by the shell's background:
+  <div className="relative min-h-screen bg-[#04080e]">   {/* opaque shell */}
+    <div className="fixed inset-0 -z-10"><canvas /></div> {/* painted under it */}
+
+DO — keep the background ON the layer and lift the content above it:
+  <div className="relative min-h-screen">                 {/* NO background here */}
+    <div className="fixed inset-0 z-0 bg-[#04080e]"><canvas /></div>
+    <main className="relative z-10"> … </main>
+
+Rule: whichever element owns the page background must NOT sit above the canvas. Either
+the background lives on the canvas layer itself, or the shell has no background at all.
+If you write a fixed full-bleed canvas, check the page after and confirm you can SEE it —
+a dark flat page is what this bug looks like.
+
 ━━ ABSOLUTE RULES ━━
 - NEVER: style={{ animation: "..." }} — use Tailwind animate-* or Framer Motion
 - NEVER: style={{ transform: "translateX(20px)" }} for static values — use Tailwind translate-*
