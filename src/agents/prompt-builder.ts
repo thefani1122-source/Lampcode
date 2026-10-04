@@ -1721,6 +1721,15 @@ export class PromptBuilder {
         "reason for a broken page is.\n" +
         "- fetch_reference(url): opens a page the user linked and returns its palette, " +
         "fonts, heading sizes and section order.\n" +
+        "- ask_user(question, options?): pauses the build and asks the person. Use it RARELY " +
+        "— only when the answer changes what you build and you genuinely cannot settle it " +
+        "yourself, like which of two workflows the app is for. Never for permission to carry " +
+        "on, never to confirm what you already know, never more than once in a build if you " +
+        "can help it. Most builds should finish without asking anything. When you do ask, " +
+        "give two to four concrete options, mark the one you would pick as recommended and " +
+        "say why in its description, and write them so a person who does not code can " +
+        "choose. If no answer comes back, pick the sensible option yourself and say in your " +
+        "summary which assumption you made.\n" +
         "Work like an engineer, not a code generator:\n" +
         "0. If the user gave you a URL to work from, call fetch_reference on it BEFORE " +
         "designing anything. Without it you are inventing a page you have never seen. What " +

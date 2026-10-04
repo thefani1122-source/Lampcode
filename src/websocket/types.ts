@@ -163,6 +163,9 @@ export interface BuildClientEvents {
   join_session: (sessionId: string, ack: (joined: boolean) => void) => void;
   leave_session: (sessionId: string) => void;
   "build:write_action_decision": (payload: { toolCallId: string; sessionId: string; approved: boolean }) => void;
+  /** The user's reply to an ask_user question. The build is blocked until this
+   *  arrives or ANSWER_TIMEOUT_MS elapses. */
+  "build:answer": (payload: { toolCallId: string; sessionId: string; answer: string }) => void;
 }
 
 // ── Project namespace events ──────────────────────────────────────────────────

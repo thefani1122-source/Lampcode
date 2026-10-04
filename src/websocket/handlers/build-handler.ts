@@ -18,6 +18,7 @@ import {
   type SocketData,
 } from "../types.js";
 import { resolveApproval, sweepBySession } from "../../agents/pending-approvals.js";
+import { resolveAnswer, sweepAnswersBySession } from "../../agents/pending-answers.js";
 
 type BuildNamespace = Namespace<BuildClientEvents, BuildServerEvents, object, SocketData>;
 type BuildSocket = Socket<BuildClientEvents, BuildServerEvents, object, SocketData>;
@@ -380,6 +381,28 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       }
     });
 
+    // The user's answer to an ask_user question. Same ownership proof as the
+    // write decision above: the socket must be in the session's room, and
+    // resolveAnswer re-checks the stored sessionId. An answer steers what gets
+    // built, so it is not something a stray toolCallId should be able to set.
+    socket.on("build:answer", (payload) => {
+      const { toolCallId, sessionId: sid, answer } = payload;
+      if (!socket.rooms.has(sid)) {
+        logger.warn(
+          { socketId: socket.id, userId, toolCallId, sid },
+          "Answer rejected — socket not in session room",
+        );
+        return;
+      }
+      if (typeof answer !== "string" || answer.trim().length === 0) return;
+      if (!resolveAnswer(toolCallId, sid, answer.trim())) {
+        logger.warn(
+          { socketId: socket.id, userId, toolCallId, sid },
+          "Answer: unknown or already-expired toolCallId",
+        );
+      }
+    });
+
     socket.on("disconnect", (reason) => {
       logger.info({ socketId: socket.id, userId, reason }, "Build WS disconnected");
 
@@ -390,6 +413,9 @@ export function registerBuildHandlers(nsp: BuildNamespace): void {
       // the user is gone and can't respond; waiting would leave executeTool()
       // blocked until the 120 s timeout fires naturally.
       sweepBySession(sessionId);
+      // Same reasoning for questions: the person is gone and cannot answer,
+      // so release the build now instead of holding it for ten minutes.
+      sweepAnswersBySession(sessionId);
 
       // Pause this project's preview sandbox after a grace period.
       void resolveProjectId(sessionId).then((projectId) => {

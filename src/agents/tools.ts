@@ -5,6 +5,7 @@ import type { ToolDefinition } from "./model-gateway.js";
 import { parseSkillFrontmatter, ALL_SKILL_NAMES } from "./prompt-builder.js";
 import { logger } from "../server/logger.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
+import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import {
   writeFilesToSandbox,
@@ -92,6 +93,52 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // outside with fixed if-statements. Each one delegates to an e2b-service export
 // that the existing fix loops already use, so nothing new touches the sandbox.
 export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
+  {
+    name: "ask_user",
+    description:
+      "Ask the person a question and WAIT for their answer. The build pauses until they " +
+      "reply. Use it ONLY when the answer would change what you build and you cannot settle " +
+      "it yourself — a genuine fork in the product, like which of two workflows the app is " +
+      "for, or whether data should live only in the browser. Do NOT use it for anything you " +
+      "can decide with ordinary judgement, for permission to continue, or to confirm " +
+      "something you already know; asking costs the person their attention and most builds " +
+      "should finish without a single question. Offer concrete options whenever you can, " +
+      "mark the one you would pick as recommended, and write every option so somebody who " +
+      "does not code can choose between them. Their reply comes back as the tool result.",
+    input_schema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "The question, in plain language. One question, not several at once.",
+        },
+        options: {
+          type: "array",
+          description:
+            "Two to four concrete choices. Omit entirely when the answer is genuinely " +
+            "open-ended and the person should type it.",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "A short name for the choice." },
+              description: {
+                type: "string",
+                description: "What this choice means for their app, in non-technical terms.",
+              },
+              recommended: {
+                type: "boolean",
+                description:
+                  "True on AT MOST ONE option — the one you would pick. Say why in its " +
+                  "description, so the person is agreeing with a reason rather than guessing.",
+              },
+            },
+            required: ["label"],
+          },
+        },
+      },
+      required: ["question"],
+    },
+  },
   {
     name: "write_files",
     description:
@@ -816,6 +863,61 @@ export async function executeTool(
 
     // User approved — execute it.
     return callMcpTool(meta, args, "lampcode-write-proxy");
+  }
+
+  if (name === "ask_user") {
+    const question = typeof args["question"] === "string" ? args["question"].trim() : "";
+    if (!question) return "Error: ask_user needs a question.";
+    const sessionId = ctx.sessionId;
+    const toolCallId = ctx.toolCallId;
+    // Same precondition as the write proxies: with no session to ask through,
+    // there is nobody to answer, and inventing one would defeat the tool.
+    if (!sessionId || !toolCallId) {
+      return "Could not ask: no live session. Decide it yourself and say which assumption you made.";
+    }
+
+    const rawOptions = Array.isArray(args["options"]) ? args["options"] : [];
+    const options = rawOptions
+      .filter((o): o is Record<string, unknown> => typeof o === "object" && o !== null)
+      .map((o) => ({
+        label: String(o["label"] ?? ""),
+        description: typeof o["description"] === "string" ? o["description"] : "",
+        recommended: o["recommended"] === true,
+      }))
+      .filter((o) => o.label.length > 0)
+      .slice(0, 4);
+
+    const pending = createPendingAnswer(toolCallId, sessionId);
+    try {
+      getWebSocketServer().emitToRoom(sessionId, "build:question_asked", {
+        toolCallId,
+        question,
+        options,
+        timeoutMs: ANSWER_TIMEOUT_MS,
+        sessionId,
+      });
+    } catch {
+      // No websocket means the prompt never reaches anyone. Resolve the entry
+      // rather than leaving it in the Map, and tell the model to proceed.
+      resolveAnswer(toolCallId, sessionId, "");
+      return "Could not ask: no live session. Decide it yourself and say which assumption you made.";
+    }
+
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => {
+        resolveAnswer(toolCallId, sessionId, "");
+        resolve(null);
+      }, ANSWER_TIMEOUT_MS),
+    );
+    const answer = await Promise.race([pending, timeout]);
+
+    if (answer === null || answer === "") {
+      return (
+        "No answer — the person did not reply in time. Do NOT ask again. Pick the most " +
+        "reasonable option yourself, build it, and state in your summary which assumption you made."
+      );
+    }
+    return `The person answered: ${answer}`;
   }
 
   // Read-only MCP tools, on a gateway that cannot run them itself. Deliberately
