@@ -456,7 +456,9 @@ API ROUTES EXAMPLE — src/server/routes/api.ts:
   })
 
 mongoose (+ mongodb driver bundled) is pre-installed. MONGODB_URI is injected by
-the preview env — do NOT generate .env or package.json. The frontend always
+the preview env — do NOT generate .env. (A package.json holding only a
+"dependencies" object is allowed, and is how you add a package; see HARD RULES.)
+The frontend always
 calls same-origin /api (no VITE_API_URL). connectDB() must run at the start of
 every route (idempotent) so the lazy connection is established.`,
 };
@@ -564,8 +566,14 @@ HARD RULES:
   Never put a hardcoded http://localhost or external URL — always relative '/api'.
 - The backend listens on Number(process.env.PORT) || 3001. Never hardcode another port.
 - Every file COMPLETE and non-empty. Backend routes must never throw uncaught.
-- Do NOT emit package.json, vite.config.ts, tsconfig.json, index.html, or .env —
-  the environment provides them and injects the DB env per the DATABASE section.
+- Do NOT emit vite.config.ts, tsconfig.json, index.html, or .env — the environment
+  provides them and injects the DB env per the DATABASE section.
+- package.json: the environment's own is authoritative for scripts and config, so
+  anything you put there is ignored EXCEPT one thing — a "dependencies" object. That
+  IS read, and every package in it is installed before the dev server starts. So to
+  use a library that is not pre-installed (react-router-dom, a charting or date
+  library), emit a package.json containing just that dependencies object. It is the
+  only supported way to add one; nothing else about the file takes effect.
 
 PRODUCTION CODE STANDARDS:
 - Generate production-ready code only — no experimental patterns, no deprecated APIs
@@ -741,7 +749,7 @@ ADDITIONAL FILES — generate these AFTER the base files:
     > Test on the published URL after deploying.
     \`\`\`
 
-(@supabase/supabase-js is already installed in the preview — do NOT edit package.json.)
+(@supabase/supabase-js is already installed in the preview — no package.json entry needed for it.)
 
 APP.TSX — integrate auth WITHOUT a hard login wall:
 - Import AuthProvider + useAuthContext from './components/AuthProvider', Login from './components/Login'.
@@ -881,7 +889,8 @@ HARD RULES:
 - Client Components ("use client") must use fetch('/api/...') — never import DB client.
 - The DB client (per DATABASE section) is server-only — only import in Server Components
   or Route Handlers, never in "use client" components.
-- Do NOT emit package.json or .env — the environment provides them.
+- Do NOT emit .env — the environment provides it. A package.json is read for its
+  "dependencies" only; that is how you add a package that is not pre-installed.
 - Do NOT generate src/index.tsx, src/App.tsx, or src/styles.css — this is Next.js App Router, not React/Vite.
 - Port is 3000 (next dev default) — do NOT hardcode another port.
 
@@ -951,7 +960,8 @@ HARD RULES:
 - Client-rendered code must use TanStack Router loaders (which call server functions)
   to get data — never import DB client in client components.
 - Do NOT generate a Hono server or src/server/ directory.
-- Do NOT emit package.json or .env — the environment provides them.
+- Do NOT emit .env — the environment provides it. A package.json is read for its
+  "dependencies" only; that is how you add a package that is not pre-installed.
 - For mutations: use createServerFn({ method: 'POST' }) and call it from a form or button handler.
 
 ALLOWED IMPORTS: react, react-dom, @tanstack/start, @tanstack/react-router, plus EXACTLY

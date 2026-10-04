@@ -965,6 +965,62 @@ now listed with what each is for.
 per-build install. Until then it goes through the runtime path, which adds seconds and can fail
 on a registry hiccup.
 
+## FERNWOOD — the colour and routing changes verified on a real build, 2026-10-04
+One build against deploy `7505db4`, prompt deliberately silent about colour. Plant care
+tracker, four views. 8 rounds, 17 files, planned 14, `check_page`/`check_types`/`run_tests`
+all pass, $0.406, 629 s.
+
+**The palette fix works, and works the way it was meant to.** The model wrote
+`src/theme.css` and imported it after `./styles.css`, with a green palette —
+`--primary: oklch(0.45 0.11 155)`, hue 155, real chroma — for a *plant* app, plus a full
+`.dark` block. Not grey, and not an arbitrary colour either: it matched the product.
+
+**Routing happened, but NOT the way the prompt asked, and the build log said why in the
+model's own words:** *"react-router-dom isn't in the sandbox deps and package.json can't be
+edited, so I'll implement a small history-based router (pushState + popstate)"*. It wrote a
+competent `router.tsx` — context, `pushState`, `popstate`, scroll reset, a `Link` — so URLs
+and the back button work. But the reason it hand-rolled one is that **the prompt contradicted
+itself**: the npm manifest said "declare it in package.json and it is installed", while the
+HARD RULES said "Do NOT emit package.json", in four separate places. The model obeyed the
+prohibition, which is the right call when instructions conflict.
+
+**Reconciled.** The rule now states what is actually true: the environment's package.json is
+authoritative for scripts and config and anything you write there is ignored EXCEPT a
+`dependencies` object, which IS read and installed before the dev server starts — and that is
+the only supported way to add a package. Fixed in all four places; a grep for the old
+prohibition returns nothing.
+
+Lesson worth keeping: a capability the code supports and the prompt forbids is invisible until
+a build is run and its log is read. `installExtraDependencies` has existed for a while and
+almost certainly never fired.
+
+## The MCP catalogue is built — and unreachable on the provider we actually run
+Relevant to any plan involving GitHub, deploys or reading logs agentically, so recorded before
+that work is scoped.
+
+`src/mcp/registry.ts` already carries 22 servers, **GitHub, Vercel and Railway among them**
+(GitHub via `https://api.githubcopilot.com/mcp/`, described as "Create repos, manage issues,
+open pull requests"). `integrations.ts` has the connect endpoints. So the catalogue is not the
+missing piece.
+
+The missing piece is the provider. `modal-gateway.ts` has **no MCP support at all**, and
+`dispatcher.ts:311` resolves the gateway as:
+
+```ts
+options.provider === "modal" && !(mcpServers && mcpServers.length > 0) ? "modal" : "anthropic"
+```
+
+So connecting ANY MCP server forces the build onto Anthropic — and `ANTHROPIC_API_KEY` is not
+among the Railway service's variables. Every build today runs `provider=modal`. **A user who
+connects the GitHub MCP today does not get GitHub tools; they get a build that routes to a
+provider with no credentials.**
+
+That makes the whole "agentic GitHub + deploy + logs" direction gated on one choice, not on
+feature work: either put Anthropic credit behind it, or teach `modal-gateway.ts` to speak MCP
+(the OpenAI-compatible surface has no MCP concept, so this means calling the MCP servers from
+our side and exposing them as ordinary function tools — the same shape the agentic build tools
+already use). Not started; raised so it is decided before anything is built on top.
+
 ## Next.js: the template was never built, and its definition is 10 days stale
 Recorded because "there is a Next.js template" is true and misleading. `template-nextjs.ts` and
 `build-nextjs.ts` exist, dated 2026-09-23 — before every October fix. The image has **none** of
