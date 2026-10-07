@@ -145,6 +145,26 @@ function summarize(run: Run): void {
     console.log(`fully verified     ${clean.length}/${audited.length}` +
       `  unverified requirements ${totalUnverified}`);
   }
+  // Churn and dead code are REPORTED, never scored. Nobody knows what a
+  // healthy net-lines figure is yet, and the dead-code analysis is textual —
+  // failing a build on either would be setting a threshold before measuring.
+  const churned = withOutcome.filter((t) => t.outcome?.churn !== undefined);
+  if (churned.length > 0) {
+    const added = churned.reduce((s, t) => s + (t.outcome?.churn?.added ?? 0), 0);
+    const removed = churned.reduce((s, t) => s + (t.outcome?.churn?.removed ?? 0), 0);
+    const edits = churned.reduce((s, t) => s + (t.outcome?.churn?.edited ?? 0), 0);
+    console.log(`lines +${added} -${removed}  net ${added - removed >= 0 ? "+" : ""}${added - removed}` +
+      `  (${edits} surgical edit(s) across ${churned.length} build(s))`);
+  }
+  const scanned = withOutcome.filter((t) => t.outcome?.deadCode !== undefined);
+  if (scanned.length > 0) {
+    const d = (k: "unusedImports" | "unreferencedExports" | "neverRendered") =>
+      scanned.reduce((s, t) => s + (t.outcome?.deadCode?.[k] ?? 0), 0);
+    const asked = scanned.filter((t) => t.outcome?.deadCodeCalled === true).length;
+    console.log(`dead code          imports ${d("unusedImports")}` +
+      `  exports ${d("unreferencedExports")}  unrendered ${d("neverRendered")}` +
+      `  (agent asked on ${asked}/${scanned.length})`);
+  }
   console.log(`one-file builds    ${count((t) => t.fileCount === 1)}`);
   console.log(`mean wall clock    ${mean(r.map((t) => t.wallClockSec)).toFixed(0)}s`);
   const spend = withOutcome.reduce((s, t) => s + t.outcome!.costUsd, 0);

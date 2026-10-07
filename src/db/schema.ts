@@ -205,6 +205,19 @@ export type BuildOutcome = {
    *  unplanned ones instead of the question being settled by opinion. */
   planned: boolean;
   plannedFiles: number;
+  /** How much code the build added and removed. `filesWritten` counted FILES
+   *  and nothing counted SIZE, so "do repeated edits grow a project without
+   *  cutting anything?" was not a question the data could answer — and the
+   *  owner had observed exactly that behaviour. On an edit, `removed` near zero
+   *  while `added` climbs is an edit bolting a new path on beside the old one.
+   *  Absent on builds from before it existed. */
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number };
+  /** What is left unreachable in the delivered files, measured deterministically
+   *  at the end of every build — not only when the model asked. Separate from
+   *  `deadCodeCalled`, which records whether it asked, because a model that
+   *  never looks and a project that is genuinely clean are different facts. */
+  deadCode?: { unusedImports: number; unreferencedExports: number; neverRendered: number };
+  deadCodeCalled?: boolean;
   /** The outside check: what the user asked for, and which of it this build can
    *  actually prove. Lives inside build_outcome rather than in a column of its
    *  own so no migration is needed; the trade-off is that it is persisted when

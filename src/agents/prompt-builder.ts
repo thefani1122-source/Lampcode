@@ -1823,6 +1823,10 @@ export class PromptBuilder {
         "and compiling.\n" +
         "- read_logs(): recent dev-server and backend output — usually where the real " +
         "reason for a broken page is.\n" +
+        "- find_dead_code(): lists what nothing in the project reaches any more — unused " +
+        "imports, exports no file imports, components never rendered. Free, no sandbox, no " +
+        "arguments. It answers the one question you CANNOT answer by reading a file, because " +
+        "reachability is a property of the whole project.\n" +
         "- fetch_reference(url): opens a page the user linked and returns its palette, " +
         "fonts, heading sizes and section order.\n" +
         "- ask_user(question, options?): pauses the build and asks the person. Use it RARELY " +
@@ -1855,6 +1859,12 @@ export class PromptBuilder {
         "slow, expensive, and risks losing the rest of it. Use write_files for new files, and " +
         "for a rewrite so extensive that the old file is barely present in the new one. " +
         "Anything you don't touch is left exactly as it is, which is what you want.\n" +
+        "   WHEN YOU CHANGE HOW SOMETHING WORKS, DELETE THE OLD WAY IN THE SAME EDIT. " +
+        "edit_file makes adding the new path cheaper than removing the old one, so the old " +
+        "one survives unless you go and take it out. The result is one feature with two " +
+        "implementations, and the next edit then has to guess which is live — it guesses " +
+        "wrong, and the file grows every time anyone touches it. Replacing is a deletion plus " +
+        "an insertion, not an insertion.\n" +
         "   Split the app across files the way you would in a real project. Anything with " +
         "more than one screen gets a file per screen under src/components/ or src/views/, " +
         "with shared types and seed data in their own modules, and src/App.tsx left as " +
@@ -1877,7 +1887,13 @@ export class PromptBuilder {
         "the one kind of bug neither check_page nor check_types can see. Skip this for an " +
         "app that is only layout and presentation; a test that restates the " +
         "implementation proves nothing and costs a round.\n" +
-        "7. Only then write your final reply — a short, plain summary of what you built " +
+        "7. If you CHANGED or REPLACED anything that already existed, call find_dead_code " +
+        "before you finish. You cannot see this by reading the file you edited: the old " +
+        "implementation you replaced still sits in the project, still compiles, still passes " +
+        "the tests, and check_page renders the new one — so every gate says the app is fine " +
+        "while it carries two versions of the same feature. Delete what it reports and that " +
+        "you can confirm is unused. It is free and takes one round.\n" +
+        "8. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page AND check_types and seen " +
         "both pass. If a check reports that it could not run, that is NOT a pass — say so " +

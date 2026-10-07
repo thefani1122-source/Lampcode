@@ -27,6 +27,15 @@ export type BuildOutcome = {
    *  see, so the eval has to read this to know whether the audit is doing
    *  anything — the alternative is judging it by argument again. */
   unverifiedCount?: number;
+  /** Lines added/removed and how the writes split. Reported by the eval, NOT
+   *  scored: there is no right number here yet, and the point of recording it
+   *  is to find out what normal looks like before anyone sets a threshold. */
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number };
+  /** Unreachable code in the delivered files. Also report-only, and
+   *  deliberately: the analysis is textual, so turning a finding into a failed
+   *  check would make the eval fail builds over a regex's opinion. */
+  deadCode?: { unusedImports: number; unreferencedExports: number; neverRendered: number };
+  deadCodeCalled?: boolean;
   costUsd: number;
   durationMs: number;
 };

@@ -172,6 +172,14 @@ export interface DispatchResult {
     writesAfterCheckTypes?: number;
     writesAfterCheckTests?: number;
   };
+  /** Lines added and removed across this dispatch, and how the writes split
+   *  between new files, whole-file replacements and surgical edits. `removed`
+   *  near zero while `added` climbs is an edit bolting a new path on beside the
+   *  old one, which is the shape that makes a project grow forever. */
+  churn: { added: number; removed: number; created: number; replaced: number; edited: number };
+  /** What find_dead_code reported, if the model called it. `called: false`
+   *  means it never asked — a different fact from "it asked and found none". */
+  deadCode: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number };
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -524,6 +532,8 @@ export class AgentDispatcher {
     // Shared across every tool call in this dispatch, so the counters above
     // count the whole build rather than one round.
     const writeCounter = { value: 0 };
+    const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0 };
+    const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
 
     // Agentic builds need many more turns than a context-gathering tool call —
     // the model is writing, looking at the result and repairing, which is
@@ -670,6 +680,8 @@ export class AgentDispatcher {
                 projectFiles: options.projectFiles,
                 gateResults,
                 writeCounter,
+                churn,
+                deadCode,
               }
             : {}),
         }).catch(
@@ -751,6 +763,8 @@ export class AgentDispatcher {
       turnsExhausted,
       rounds: roundsUsed,
       gateResults,
+      churn,
+      deadCode,
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,

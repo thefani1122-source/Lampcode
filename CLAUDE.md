@@ -1269,6 +1269,98 @@ labelled `(STALE — N write(s) landed after it)` rather than as a clean pass.
 **Live-only on the frontend:** the workspace has never read `build_outcome`, so a reload after
 a finished build loses the card although the audit is stored. Not built.
 
+## CODE BLOAT: measured, and the one question a program can answer — 2026-10-07
+The owner named two problems: AI skips a lot when reviewing large code, and AI code GROWS —
+300 lines for a simple app, and repeated edits add new behaviour without cutting the old.
+These are the free, deterministic half of the answer. Done first on purpose: the costly
+model-pass half cannot be judged until there are numbers to judge it against.
+
+### Why edits grow a project — the mechanism, not the vibe
+`edit_file(old → new)` is **additive by nature**. The cheapest way to satisfy "add X" is to
+insert X; removing the path X replaced requires knowing what just became unreachable, and
+**the model cannot know that** — reachability is a whole-program property and an edit sees one
+file. So the old implementation stays. One feature then has two implementations, both compile,
+both pass the tests, `check_page` renders the new one, and **every gate says the app is fine**
+while the next edit has to guess which is live.
+
+And nothing measured it: `BuildOutcome` recorded `filesWritten` — a count of FILES, never of
+SIZE — so "do edits bloat?" was not a question the data could answer. Unmeasured, unmanaged;
+the same pattern as every other finding in this file.
+
+**1. Churn is now recorded.** `noteChurn` in `tools.ts` at the two sites that hold both
+versions: `edit_file` (exact — the replaced span out, the new text in) and `write_files` (whole
+old file out, whole new file in, which is literally what that tool does, so the NET is the
+figure that means anything there). `BuildOutcome.churn` carries `added`, `removed`, `created`,
+`replaced`, `edited`. **`removed` near zero while `added` climbs is the signature** of an edit
+bolting a new path on beside the old one.
+
+**2. `src/verify/dead-code.ts` + a `find_dead_code` tool.** Deliberately NOT a model pass: this
+is the one question in the area that a program answers exactly and a language model cannot
+answer at all. Free, no sandbox, no arguments — it reads the file set the build already holds,
+so it works on a cold sandbox and in the early rounds. Three rules, each picked for being hard
+to get wrong: an import whose identifier appears nowhere else in its file; a NAMED export no
+other file mentions; and that second rule where the symbol is a component, reported separately
+as `never-rendered` because it is usually a view an edit replaced and left behind.
+
+**It is advisory and never a gate, and that is a deliberate asymmetry.** The analysis is
+textual, not a TypeScript program, and the response to a dead-code finding is DELETING code —
+the most expensive thing to be wrong about. So every rule under-reports: default exports are
+out of scope entirely (a default import can be renamed at the import site, so proving one
+unreferenced needs module resolution, and being wrong deletes an entry point); entry files are
+exempt (the framework consumes those); test files COUNT AS REFERENCES, so a symbol used only by
+its own test is left alone, because deleting it also deletes a passing test.
+
+**Precision measured on real output, not asserted.** Run over the two projects downloaded
+earlier today — LEDGER (14 files) and the `editor-undo` notes app (22 files), 36 files whose
+code had already been read by hand: **one finding, zero false positives.** The finding is
+`MonthSummary` in LEDGER's `src/lib/summary.ts`, exported and appearing nowhere outside its own
+file — confirmed by grep, so the `export` keyword there is genuinely unnecessary. 25 cases in
+`npm test`, most of them asserting that something which LOOKS dead is left alone.
+
+**3. The prompt, with the consequence attached** — the pattern that moved `check_types` from
+3/10 builds to 11/11, which worked where merely naming the tool had not. Two additions:
+a replace contract inside the write step ("when you change how something works, delete the old
+way in the same edit … replacing is a deletion plus an insertion, not an insertion"), and a
+numbered step 7 that states the failure outright — the old implementation still compiles, still
+passes the tests, and check_page renders the new one, so every gate passes over two versions of
+one feature.
+
+**Reported, NOT scored.** The eval prints churn and the dead-code tally and fails nothing on
+either. Nobody knows what a healthy net-lines figure looks like yet, and failing a build over a
+regex's opinion would be setting a threshold before taking a measurement. `deadCodeCalled`
+records whether the model ASKED, kept apart from what the scan found — a model that never looks
+and a project that is genuinely clean are different facts.
+
+### The 300-lines-for-a-simple-app half is largely SELF-INFLICTED
+`APP_TYPE_EXPANSIONS` in `prompt-builder.ts` tells the model, for a "todo", to add priority
+badges, filter tabs, sort controls, a count display, empty states, a keyboard shortcut and 4–5
+seed tasks. **We are asking for the 300 lines.** Not changed yet, and a line budget would be the
+wrong fix — it would make the model compress into unreadable code. The right signal is scope
+creep against the user's actual words, and the completion audit already extracts those, so
+`requirements = 5, shipped = 12` is computable. Deliberately deferred rather than bolted onto
+the audit dispatch: that pass was just hardened against a false positive, and adding a second
+objective to it is the same attention-dilution that makes big reviews skip things.
+
+### Review at scale — diagnosed, not built
+Why a model skips on a big PR, and none of it is the context window (a big PR fits):
+1. **Effort per unit, not capacity.** Roughly fixed effort per response, so per-file attention
+   falls as file count rises, and the output is a plausible SUMMARY that reads like a review.
+2. **No ground truth for coverage.** The reviewer picks its own scope AND reports its own
+   coverage, so "I reviewed the PR" is unfalsifiable. This is the completion problem again.
+3. **No definition of what to look for**, so it defaults to generic advice about naming.
+4. **The cost shape is wrong** if you send N files × full context, when most of a repo is
+   irrelevant to a diff and free tools answer most of the questions.
+
+The agreed design is the completion audit's spine with different checks: enumerate the units in
+CODE (`git diff` hunks / AST — so coverage is countable and `unreviewed` is a first-class state,
+exactly like `unverified`); a free deterministic pre-pass (tsc, this dead-code analyser,
+file-size thresholds, changed-file-without-a-test); risk-rank by change size × blast radius ×
+missing tests; then one small dispatch per unit carrying only that unit and its importers from
+an import graph, so attention stays high and cost is LINEAR; every finding quote-corroborated
+the way `parseVerdicts` already does; and honest partial coverage when the budget runs out
+("12 units deep, 35 cheap only") rather than fake full coverage. Estimated $0.50–1.00 for a
+50-hunk PR. The failure catalogue is this file's own measured findings. **Not built.**
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based

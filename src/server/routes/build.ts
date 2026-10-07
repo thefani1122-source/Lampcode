@@ -48,6 +48,7 @@ import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTr
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
+import { findDeadCode, tallyDeadCode } from "../../verify/dead-code.js";
 import {
   shouldAudit,
   extractCriteria,
@@ -1279,6 +1280,8 @@ export async function runFastBuild(
       staleCheckTests: result.gateResults.writesAfterCheckTests ?? 0,
       planned: buildPlan !== null,
       plannedFiles: buildPlan?.files.length ?? 0,
+      churn: result.churn,
+      deadCodeCalled: result.deadCode.called,
       costUsd: result.costUsd + planCostUsd,
       durationMs: Date.now() - buildStartedMs,
     };
@@ -2689,12 +2692,30 @@ export async function runFastBuild(
       });
     }
 
+    // ── Dead code in what is actually being delivered ───────────────────────
+    // Measured here rather than only when the model called find_dead_code, and
+    // for the same reason build_outcome exists at all: a number nobody records
+    // cannot answer a question later. It costs nothing — no model call, no
+    // sandbox — and it runs over the final set, after every repair loop, so it
+    // describes what the user gets. Advisory only: the analysis is textual, so
+    // it reports and never blocks a build.
+    const deadFindings = findDeadCode(allFiles);
+    const deadTally = tallyDeadCode(deadFindings);
+    if (deadFindings.length > 0) {
+      console.log(
+        `[build] dead code session=${sessionId} unusedImports=${deadTally.unusedImports} ` +
+        `unreferencedExports=${deadTally.unreferencedExports} neverRendered=${deadTally.neverRendered} ` +
+        `modelAsked=${result.deadCode.called}`,
+      );
+    }
+
     // Close out the evidence record: file count from what was actually written
     // to disk (the fence-parsing path writes files the dispatch never reported),
     // and cost across every dispatch this build made, not just the first.
     const outcome: BuildOutcome = {
       ...outcomeDraft,
       filesWritten: writtenPaths.length,
+      deadCode: deadTally,
       ...(completionAudit
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),

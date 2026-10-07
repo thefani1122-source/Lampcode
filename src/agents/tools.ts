@@ -7,6 +7,7 @@ import { logger } from "../server/logger.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
+import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import {
   writeFilesToSandbox,
   verifyBrowserRender,
@@ -199,6 +200,20 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "find_dead_code",
+    description:
+      "List everything in the project that nothing else reaches: imports that are never " +
+      "used, exports that no other file imports, and components that are never rendered.\n" +
+      "Call this after you CHANGE how something works, before you say you are done. " +
+      "Replacing a feature leaves the old implementation behind unless you delete it, and " +
+      "you cannot see that from one file — reachability is a property of the whole project, " +
+      "which is why this is a tool and not something to reason about. Two implementations of " +
+      "one feature means the next edit has to guess which one is live.\n" +
+      "It is free, needs no sandbox, and takes no arguments. The analysis is textual rather " +
+      "than a compiler, so confirm anything surprising with read_file before deleting it.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "check_page",
     description:
       "Open the running app in a real headless browser and report what actually rendered, " +
@@ -364,6 +379,43 @@ export interface ToolExecutionContext {
   /** Monotonic count of write_files/edit_file calls this build. Only meaningful
    *  relative to itself — it exists to date the gate results above. */
   writeCounter?: { value: number } | undefined;
+  /** How much code this build added and removed. Until now a build recorded
+   *  `filesWritten` and nothing about SIZE, so "do repeated edits grow the
+   *  project without cutting anything?" was not a question the data could
+   *  answer — and an unmeasured problem stays unmanaged. `removed` staying near
+   *  zero while `added` climbs is the signature of an edit that bolts a new
+   *  path on beside the old one. */
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number } | undefined;
+  /** What find_dead_code reported, and whether the model called it at all.
+   *  `called: false` is its own fact — the same distinction build_outcome keeps
+   *  between a gate that failed and a gate nobody ran. */
+  deadCode?: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number } | undefined;
+}
+
+function lineCount(text: string): number {
+  if (text === "") return 0;
+  return text.split("\n").length;
+}
+
+/**
+ * Record the size of one change.
+ *
+ * For `edit_file` this is exact: the replaced text out, the new text in. For
+ * `write_files` on an existing file it counts the whole old file as removed and
+ * the whole new one as added, which is literally what that tool does — it
+ * replaces the file — so the useful figure there is the NET, not either side.
+ */
+function noteChurn(
+  ctx: ToolExecutionContext,
+  before: string,
+  after: string,
+  kind: "created" | "replaced" | "edited",
+): void {
+  const c = ctx.churn;
+  if (!c) return;
+  c.removed += lineCount(before);
+  c.added += lineCount(after);
+  c[kind] += 1;
 }
 
 /**
@@ -427,8 +479,32 @@ export async function executeTool(
     name === "list_files" ||
     name === "read_file" ||
     name === "read_logs" ||
+    name === "find_dead_code" ||
     name === "fetch_reference"
   ) {
+    // Handled before the sandbox check on purpose: this one reads the file set
+    // this build already holds, so it works on a cold sandbox and costs
+    // nothing. Requiring a projectId would make it unavailable in exactly the
+    // early rounds where the model is deciding what to keep.
+    if (name === "find_dead_code") {
+      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      if (Object.keys(files).length === 0) {
+        return (
+          "There are no files to analyse yet. Call this after you have written or changed " +
+          "code, not before."
+        );
+      }
+      const findings = findDeadCode(files);
+      if (ctx.deadCode) {
+        const t = tallyDeadCode(findings);
+        ctx.deadCode.unusedImports = t.unusedImports;
+        ctx.deadCode.unreferencedExports = t.unreferencedExports;
+        ctx.deadCode.neverRendered = t.neverRendered;
+        ctx.deadCode.called = true;
+      }
+      return formatDeadCode(findings);
+    }
+
     const projectId = ctx.projectId;
     if (!projectId) return "Error: no project sandbox is attached to this build.";
 
@@ -490,6 +566,14 @@ export async function executeTool(
           `For custom CSS, create your own stylesheet — e.g. src/app.css — and import it from ` +
           `src/App.tsx. It will be picked up normally. Do not put it in src/styles.css.`
         );
+      }
+
+      // Measured before the merge, while the previous content is still
+      // reachable. A path this build has not seen before counts as created
+      // rather than replaced, so a new project does not read as churn.
+      for (const [path, content] of Object.entries(files)) {
+        const before = (ctx.generatedFiles ?? {})[path] ?? (ctx.projectFiles ?? {})[path];
+        noteChurn(ctx, before ?? "", content, before === undefined ? "created" : "replaced");
       }
 
       if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
@@ -618,6 +702,10 @@ export async function executeTool(
       // be used to edit. Verified: replacing with "[$&]" writes "[1]" the
       // naive way and "[$&]" this way.
       const updated = current.replace(oldString, () => newString);
+      // Exact here, unlike write_files: only the replaced span changed, so this
+      // is the one measurement that cleanly answers whether an edit removed
+      // anything or only added.
+      noteChurn(ctx, oldString, newString, "edited");
       if (ctx.generatedFiles) ctx.generatedFiles[path] = updated;
 
       // Write the WHOLE project, as write_files does: the sandbox may be a fresh
