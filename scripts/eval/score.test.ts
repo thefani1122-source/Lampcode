@@ -198,6 +198,28 @@ expectChecks(
   scoreChecks(task({}), [f("src/App.tsx", "a")], outcome({ checkPage: "never" })),
   [],
 );
+// The outside check. Separate from the gate findings on purpose: a gate
+// failure means something ran and complained, while an unverified requirement
+// means nothing in the build covers what the user asked for — the state that
+// let editor-undo pass every gate with no persistence in it.
+expectChecks(
+  "an unverified requirement is a finding",
+  scoreChecks(task({}), [f("src/App.tsx", "a")], outcome({ unverifiedCount: 2 })),
+  ["2 requirement(s) from the prompt are unverified"],
+);
+expectChecks(
+  "zero unverified is not a finding",
+  scoreChecks(task({}), [f("src/App.tsx", "a")], outcome({ unverifiedCount: 0 })),
+  [],
+);
+// Rows written before the audit existed have no such key, and reading one must
+// not invent a finding — the eval has to be able to read its own history.
+expectChecks(
+  "an outcome from before the audit existed scores nothing for it",
+  scoreChecks(task({}), [f("src/App.tsx", "a")], outcome({})),
+  [],
+);
+
 expectChecks(
   "turnsExhausted is a finding",
   scoreChecks(task({}), [f("src/App.tsx", "a")], outcome({ turnsExhausted: true })),

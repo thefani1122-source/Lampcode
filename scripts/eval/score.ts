@@ -22,6 +22,11 @@ export type BuildOutcome = {
   /** Also optional: rows written before the planning pass existed have neither. */
   planned?: boolean;
   plannedFiles?: number;
+  /** The outside check's headline, absent on rows from before it existed. A
+   *  requirement nothing covers is the failure the agent's own gates cannot
+   *  see, so the eval has to read this to know whether the audit is doing
+   *  anything — the alternative is judging it by argument again. */
+  unverifiedCount?: number;
   costUsd: number;
   durationMs: number;
 };
@@ -88,6 +93,15 @@ export function scoreChecks(task: EvalTask, files: FileEntry[], outcome: BuildOu
     if (outcome.checkTests === "fail") failed.push("the agent's own run_tests ended on a failure");
     if (outcome.checkTests === "unavailable") failed.push("run_tests could not run (vitest in the sandbox)");
     if (outcome.turnsExhausted) failed.push("ran out of turns while still working");
+    // Reported as its own finding rather than folded into the gate failures
+    // above: those say a check ran and complained, this says NOTHING in the
+    // build covers something the user asked for. Collapsing the two would lose
+    // the only signal that separates "checked and fine" from "never checked".
+    if (outcome.unverifiedCount !== undefined && outcome.unverifiedCount > 0) {
+      failed.push(
+        `${outcome.unverifiedCount} requirement(s) from the prompt are unverified — nothing in the build proves them`,
+      );
+    }
   }
   return failed;
 }

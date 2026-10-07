@@ -115,6 +115,45 @@ export type BuildPlan = {
   outOfScope?: string[];
 };
 
+/**
+ * One checkable claim taken out of the user's own prompt, by a pass that never
+ * writes code — see `src/verify/completion-audit.ts` for why the extraction
+ * reads the RAW prompt and not the plan.
+ */
+export type AcceptanceCriterion = {
+  /** R1, R2 … Renumbered by the parser, never taken from the model. */
+  id: string;
+  /** The requirement in the user's terms, not the builder's. */
+  text: string;
+  kind: "visual" | "behaviour" | "data" | "logic";
+};
+
+/** `unverified` is NOT a soft pass. It means nothing in the build covers the
+ *  requirement — the state that produced Finding 4, where every gate passed
+ *  over an app with no persistence because the missing feature produced
+ *  neither code nor a test to fail. */
+export type CriterionStatus = "proven" | "contradicted" | "unverified";
+
+export type CriterionVerdict = {
+  id: string;
+  status: CriterionStatus;
+  /** Where the evidence is — a generated file path, or a gate name. Empty for
+   *  anything not proven. Checked against the real file list, so an invented
+   *  citation cannot carry a verdict. */
+  evidence: string;
+  /** One line, shown to the user for anything not proven. */
+  note: string;
+};
+
+export type CompletionAudit = {
+  criteria: AcceptanceCriterion[];
+  verdicts: CriterionVerdict[];
+  proven: number;
+  contradicted: number;
+  unverified: number;
+  costUsd: number;
+};
+
 export type VerifyCheck = {
   name: string;
   passed: boolean;
@@ -166,6 +205,17 @@ export type BuildOutcome = {
    *  unplanned ones instead of the question being settled by opinion. */
   planned: boolean;
   plannedFiles: number;
+  /** The outside check: what the user asked for, and which of it this build can
+   *  actually prove. Lives inside build_outcome rather than in a column of its
+   *  own so no migration is needed; the trade-off is that it is persisted when
+   *  the outcome is (build end, or the failure handler) rather than up front
+   *  like the plan. Absent on builds from before it existed, and on builds
+   *  where COMPLETION_AUDIT_ENABLED is off. */
+  completionAudit?: CompletionAudit;
+  /** The headline number, lifted out so a query can find the builds that
+   *  shipped something unproven without unpacking the audit. "Done" means this
+   *  is 0 — not that no check failed. */
+  unverifiedCount?: number;
   costUsd: number;
   durationMs: number;
 };

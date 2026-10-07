@@ -11,6 +11,7 @@ import {
   agentTasks,
   type BuildOutcome,
   type BuildPlan,
+  type CompletionAudit,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -47,6 +48,13 @@ import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTr
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
+import {
+  shouldAudit,
+  extractCriteria,
+  auditCompletion,
+  unverifiedAudit,
+  formatAuditForUser,
+} from "../../verify/completion-audit.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1160,6 +1168,20 @@ export async function runFastBuild(
         });
       }
     }
+
+    // ── Completion audit, pass 1 of 2: the user's own words ─────────────────
+    // Started here and awaited at the very end, so its latency hides behind the
+    // build rather than adding to it.
+    //
+    // It reads `prompt` — the RAW request. Not the expanded prompt and not the
+    // plan, both of which are already OUR interpretation of it. An audit built
+    // from the builder's interpretation agrees with the builder's blind spots
+    // by construction, which is how `editor-undo` passed every gate while
+    // shipping no persistence at all.
+    const criteriaPromise = shouldAudit()
+      ? extractCriteria({ dispatcher, prompt, sessionId, userId, projectId, provider })
+          .catch(() => ({ criteria: [], costUsd: 0, reason: "extraction threw" }))
+      : Promise.resolve({ criteria: [], costUsd: 0, reason: "disabled" });
 
     // Fetched unconditionally now — there's no upfront keyword gate deciding
     // whether this build might need a connected service; the model decides
@@ -2605,12 +2627,77 @@ export async function runFastBuild(
     const creditsUsed = Math.ceil(result.costUsd * 1_000);
     const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
 
+    // ── Completion audit, pass 2 of 2: did it do what was asked? ────────────
+    // Runs last, over the final file set — after every repair loop, so it is
+    // auditing what the user will actually get rather than a mid-build state.
+    //
+    // Everything above this line is the agent checking its own work: each gate
+    // is a question the agent chose to ask about work it chose to do, so a
+    // requirement it never understood produced no code AND no test, and nothing
+    // failed. This compares the user's words against the delivered files, and
+    // keeps `unverified` apart from `fail` — nothing else in the build can tell
+    // the difference between "checked and fine" and "never checked".
+    const extracted = await criteriaPromise;
+    let completionAudit: CompletionAudit | null = null;
+    if (extracted.criteria.length > 0) {
+      // A gate verdict is only evidence about the code that existed when it
+      // ran, so a stale one is handed over labelled rather than quietly
+      // counted — see staleCheckPage in BuildOutcome.
+      const gateText = (
+        verdict: string,
+        staleWrites: number,
+      ): string => (staleWrites > 0 ? `${verdict} (STALE — ${staleWrites} write(s) landed after it)` : verdict);
+
+      if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+        // Honest rather than optimistic: the budget stopped the audit, so
+        // nothing is proven. Recording a clean sheet here would hide exactly
+        // the builds most likely to be incomplete.
+        completionAudit = unverifiedAudit(
+          extracted.criteria,
+          "the build reached its cost ceiling before the audit could run",
+        );
+      } else {
+        completionAudit = await auditCompletion({
+          dispatcher,
+          criteria: extracted.criteria,
+          files: allFiles,
+          gates: {
+            checkPage: gateText(result.gateResults.checkPage ?? "never", result.gateResults.writesAfterCheckPage ?? 0),
+            checkTypes: gateText(result.gateResults.checkTypes ?? "never", result.gateResults.writesAfterCheckTypes ?? 0),
+            checkTests: gateText(result.gateResults.checkTests ?? "never", result.gateResults.writesAfterCheckTests ?? 0),
+          },
+          sessionId, userId, projectId, provider,
+        });
+      }
+
+      cumulativeCostUsd += extracted.costUsd + completionAudit.costUsd;
+      console.log(
+        `[build] audit session=${sessionId} proven=${completionAudit.proven} ` +
+        `unverified=${completionAudit.unverified} contradicted=${completionAudit.contradicted} ` +
+        `of=${completionAudit.criteria.length}`,
+      );
+
+      // Said in the chat, not only stored. A number in a jsonb column that the
+      // user never sees would leave the product still claiming "done" over an
+      // unproven requirement, which is the behaviour being fixed.
+      for (const line of formatAuditForUser(completionAudit)) {
+        server?.thinking(sessionId, { text: line, sessionId });
+      }
+      server?.emitToRoom(sessionId, "build:completion_audit", {
+        sessionId,
+        audit: completionAudit,
+      });
+    }
+
     // Close out the evidence record: file count from what was actually written
     // to disk (the fence-parsing path writes files the dispatch never reported),
     // and cost across every dispatch this build made, not just the first.
     const outcome: BuildOutcome = {
       ...outcomeDraft,
       filesWritten: writtenPaths.length,
+      ...(completionAudit
+        ? { completionAudit, unverifiedCount: completionAudit.unverified }
+        : {}),
       costUsd: cumulativeCostUsd,
       durationMs: Date.now() - buildStartedMs,
     };

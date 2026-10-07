@@ -9,6 +9,12 @@ import { logger } from "../server/logger.js";
 // these same bare names.
 export const MODEL_TIERS = {
   planning:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  // The two completion-audit passes. Neither writes code: one reads the user's
+  // prompt, the other reads the finished project and reports what is not
+  // covered. Kept as their own types so their prompts cannot be confused with
+  // a builder's, which is the entire reason the audit is independent.
+  acceptance: ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  audit:      ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   frontend:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   backend:    ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   db:         ["claude-sonnet-5", "claude-sonnet-4-6"] as const,

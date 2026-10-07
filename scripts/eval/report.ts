@@ -134,6 +134,17 @@ function summarize(run: Run): void {
         ? `  mean planned files ${mean(planned.map((t) => t.outcome?.plannedFiles ?? 0)).toFixed(1)}`
         : ""));
   }
+  // The outside check, reported on its own line because it answers a different
+  // question from every gate above it: not "did a check complain" but "is there
+  // anything in this build that proves what the user asked for". A run where
+  // every gate passes and this is non-zero is the exact shape of Finding 4.
+  const audited = withOutcome.filter((t) => t.outcome?.unverifiedCount !== undefined);
+  if (audited.length > 0) {
+    const clean = audited.filter((t) => (t.outcome?.unverifiedCount ?? 0) === 0);
+    const totalUnverified = audited.reduce((s, t) => s + (t.outcome?.unverifiedCount ?? 0), 0);
+    console.log(`fully verified     ${clean.length}/${audited.length}` +
+      `  unverified requirements ${totalUnverified}`);
+  }
   console.log(`one-file builds    ${count((t) => t.fileCount === 1)}`);
   console.log(`mean wall clock    ${mean(r.map((t) => t.wallClockSec)).toFixed(0)}s`);
   const spend = withOutcome.reduce((s, t) => s + t.outcome!.costUsd, 0);

@@ -152,6 +152,16 @@ const envSchema = z.object({
   // ends and core begins; shouldPlan's own signals force a plan for a terse but
   // multi-screen or logic-heavy prompt regardless of this.
   BUILD_PLAN_MIN_WORDS: z.coerce.number().int().positive().default(38),
+  // The outside check on whether the build did what was asked — two cheap
+  // dispatches that cannot write a file (src/verify/completion-audit.ts).
+  // Same explicit-string parsing as the two flags above, same reason.
+  // A kill switch with no size threshold: a six-file build missed a stated
+  // requirement (Finding 4), so "small" is not a reason to skip the audit.
+  COMPLETION_AUDIT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === undefined || v === "" ? true : v === "true" || v === "1")
+    .pipe(z.boolean()),
 });
 
 const REQUIRED_VARS = [
