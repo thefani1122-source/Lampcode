@@ -1563,11 +1563,38 @@ up.** That is the cheapest finding in this entire file.
 verdict describes code the build changed seven times afterwards. The counter fired non-zero
 for the second time and far harder than the first.
 
-**The review could not run: `Modal rate limit exceeded`.** The review session failed 25 s in,
-immediately after a 19-round build. One retry with a 20 s wait per throttled unit is now in
-`reviewProject` — the review fires one dispatch per file in quick succession, which is the
-shape providers throttle, and without it a mid-review throttle turns every remaining unit into
-`unreviewed`. **So `review_code` has still not been exercised against a real model.**
+**The review could not run: `Modal rate limit exceeded`** — twice, at 25 s and 27 s, and the
+second time `build_outcome` was NULL, meaning the very first dispatch never returned. Chasing
+that turned up a bug that has nothing to do with reviews and affects every build:
+
+### Finding 9 — a 429 killed any build in under half a minute
+`RATE_LIMIT` is in `FALLBACK_CODES`, so the dispatcher moves to the next tier — and waited
+`Math.min(retryAfterMs, 10_000)`, **capping a delay the provider had set to 60 s at ten
+seconds**. On Anthropic that cap is harmless, because tier 2 is a different model. On the
+OpenAI-compatible path **both tiers resolve to the same endpoint**: the model name comes from
+`LLM_MODEL_NAME`, not from `MODEL_TIERS`. So the "fallback" was a retry against the same
+throttled endpoint, 10 s into a 60 s window, and after two tiers the build threw. That is the
+25 s. **Every user build that met a 429 died inside half a minute instead of waiting it out**,
+and because it failed before the first dispatch returned, it recorded no outcome to diagnose
+from.
+
+Fixed: `fallbackDelayMs` honours the provider's `retryAfterMs` for `RATE_LIMIT` (bounded at
+65 s) and keeps the short cap for `MODEL_DOWN` and `UNKNOWN`, where the next tier really is a
+different model and stalling buys nothing. It lives in `src/agents/retry-policy.ts` — its own
+module with NO imports, because the cases for it first imported `dispatcher.ts` and `npm test`
+started printing a Redis warning: a suite that needs no credentials had begun pulling config,
+Redis and the model clients in to check one arithmetic rule. Same lesson as `review-units.ts`
+copying the baked-file list. 6 cases.
+
+One retry with a 20 s wait per throttled unit is also now in `reviewProject`: the review fires
+one dispatch per file in quick succession, which is the shape providers throttle, and without
+it a mid-review throttle turns every remaining unit into `unreviewed`.
+
+**`review_code` has still not been exercised against a real model.** Both attempts died on the
+provider limit before reaching it, and the limit did not clear between attempts 25 minutes
+apart — so it is not the 60 s window but something longer, after a day of heavy use. The fix
+above is in place for when it clears; the per-unit dispatch and the `review` prompt remain
+unproven.
 
 370 cases in `npm test`; ROTA's three findings are all kept as regressions.
 

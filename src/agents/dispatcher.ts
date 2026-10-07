@@ -34,6 +34,7 @@ import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import { config } from "../server/config.js";
 import { deductUsage } from "../build/credits.js";
+import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
 
@@ -193,16 +194,6 @@ export interface DispatchResult {
   costUsd: number;
 }
 
-// Errors that allow falling back to the next tier.
-// UNKNOWN is included so a nonexistent model ID (HTTP 400) falls through
-// to the next tier rather than crashing the build immediately.
-const FALLBACK_CODES = new Set(["RATE_LIMIT", "MODEL_DOWN", "UNKNOWN"] as const);
-type FallbackCode = "RATE_LIMIT" | "MODEL_DOWN" | "UNKNOWN";
-
-function isFallbackCode(code: string): code is FallbackCode {
-  return FALLBACK_CODES.has(code as FallbackCode);
-}
-
 // ── AgentDispatcher ───────────────────────────────────────────────────────────
 
 export class AgentDispatcher {
@@ -251,12 +242,12 @@ export class AgentDispatcher {
           isFallbackCode(err.code) &&
           tier < tiers.length
         ) {
-          const delay = err.retryAfterMs ?? 2_000;
+          const delay = fallbackDelayMs(err.code, err.retryAfterMs);
           logger.warn(
-            { agentType: parsed.agentType, model, tier, nextTier: tier + 1, delay },
+            { agentType: parsed.agentType, model, tier, nextTier: tier + 1, delay, code: err.code },
             "Model fallback triggered",
           );
-          await sleep(Math.min(delay, 10_000));
+          await sleep(delay);
           lastError = err;
           continue;
         }
