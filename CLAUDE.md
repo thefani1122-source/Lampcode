@@ -1310,12 +1310,41 @@ unreferenced needs module resolution, and being wrong deletes an entry point); e
 exempt (the framework consumes those); test files COUNT AS REFERENCES, so a symbol used only by
 its own test is left alone, because deleting it also deletes a passing test.
 
-**Precision measured on real output, not asserted.** Run over the two projects downloaded
-earlier today — LEDGER (14 files) and the `editor-undo` notes app (22 files), 36 files whose
-code had already been read by hand: **one finding, zero false positives.** The finding is
-`MonthSummary` in LEDGER's `src/lib/summary.ts`, exported and appearing nowhere outside its own
-file — confirmed by grep, so the `export` keyword there is genuinely unnecessary. 25 cases in
-`npm test`, most of them asserting that something which LOOKS dead is left alone.
+### Precision — and the correction that the first measurement was too small
+The first probe ran over the two projects downloaded earlier today, LEDGER (14 files) and the
+`editor-undo` notes app (22 files): one finding, zero false positives. **Generalising from that
+to "precision is good" was premature, and pointing the analyser at THIS repo proved it.**
+
+On `src/` it reported `findDeadCode`, `CompletionAudit`, `requireAuth` and about twenty others
+as unused imports while every one of them was plainly in use. Cause: `stripComments` matched
+block comments with a non-greedy regex across the whole file, and a **glob inside a string** —
+a double-star, slash, star — carries a block-comment opener. The regex treated it as one and
+closed it at the next genuine terminator, **deleting 45% of `build.ts`**: 154,668 characters
+down to 85,224. Every identifier used in the deleted region then read as unused. Nothing in
+36 files of generated app code contained such a string, which is exactly why a small clean
+sample is not evidence.
+
+**Fixed** by replacing both regexes with a character scanner that tracks string state (`'`,
+`"`, backticks, backslash escapes). It does not try to recognise regex literals, and does not
+need to: outside a string `/*` can only be a comment, because `a / *b` is not valid
+JavaScript. After the fix the same three identifiers count 2 occurrences each (import + use),
+and the five remaining unused-import findings were each confirmed by grep to appear exactly
+ONCE in their file — so they are real.
+
+Two more things that probe caught:
+- The 40-finding cap was truncating the SCAN, so the recorded tally understated a large
+  project — 12 unused imports reported under the cap versus 31 once the scan ran to
+  completion. Counting and reporting are now separate.
+- 28 of the `unreferenced-export` findings on `src/` alone dropped to 9 when `scripts/` was
+  included. That was the probe's fault, not the analyser's: it was given half a project.
+  Worth knowing, because it is the failure mode to expect if this is ever pointed at a subset.
+
+31 cases in `npm test`, the glob-in-a-string trap kept as a regression, and most of the rest
+asserting that something which LOOKS dead is left alone.
+
+**The one genuine finding on generated output** remains `MonthSummary` in LEDGER's
+`src/lib/summary.ts` — exported, and appearing nowhere outside its own file (confirmed by
+grep), so the `export` keyword there is unnecessary.
 
 **3. The prompt, with the consequence attached** — the pattern that moved `check_types` from
 3/10 builds to 11/11, which worked where merely naming the tool had not. Two additions:

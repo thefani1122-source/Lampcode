@@ -88,6 +88,57 @@ check(
   true,
 );
 
+// ── The regression that mattered, measured 2026-10-07 ────────────────────────
+// Run over this repo's own build.ts, the regex version of stripComments deleted
+// 45% of the file — 154,668 characters down to 85,224 — and then reported
+// findDeadCode, CompletionAudit and requireAuth as unused imports while all
+// three were in use. A glob inside a STRING carries a block-comment opener, the
+// regex treated it as one, and everything up to the next real terminator went
+// with it. A 36-file sample of generated app code contained no such string, so
+// nothing caught it until the analyser was pointed at a real backend.
+const GLOB_TRAP = `const pattern = "src/**/*.ts"
+import { keepMe } from "./x"
+export const use = keepMe()
+`;
+ok(
+  "stripComments: a glob in a string does not open a comment",
+  stripComments(GLOB_TRAP).includes("keepMe()"),
+);
+check(
+  "a glob in a string no longer makes a used import look unused",
+  kinds({ "src/a.ts": GLOB_TRAP }).filter((k) => k.startsWith("unused-import")),
+  [],
+);
+
+// The same shape with a genuine block comment after it: the comment must still
+// go, and the code between must not.
+const stripped = stripComments(
+  `const g = "**/*.ts"
+const live = 1
+/* a real comment */
+const alsoLive = 2
+`,
+);
+ok("stripComments: a real block comment after a glob is still removed",
+  !stripped.includes("a real comment"));
+ok("stripComments: code between a glob and a real comment survives",
+  stripped.includes("const live = 1") && stripped.includes("const alsoLive = 2"));
+
+// Line comments inside strings are the same trap one character smaller.
+ok(
+  "stripComments: a // inside a string does not start a comment",
+  stripComments(`const s = "a//b"
+const after = 1`).includes("const after = 1"),
+);
+
+// An escaped quote must not end the string early, or everything after it is
+// read as code and the next quote re-enters string state out of phase.
+ok(
+  "stripComments: an escaped quote does not end the string",
+  stripComments(`const s = "he said \\"/*\\" ok"
+const after = 1`).includes("const after = 1"),
+);
+
 // ── unused imports ───────────────────────────────────────────────────────────
 
 check(

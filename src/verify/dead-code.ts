@@ -31,9 +31,13 @@ export type DeadCodeFinding = {
   detail: string;
 };
 
-/** Cap, so a large project reports a readable list rather than a flood. The
- *  point is to start a cleanup, not to enumerate every last line. */
-const MAX_FINDINGS = 40;
+/** Cap on what the TOOL PRINTS, not on what is found. The point of the cap is a
+ *  readable list, and it used to truncate the scan itself — which silently
+ *  truncated the recorded tally with it, so a large project's numbers came out
+ *  lower than the truth. Measured: 91 files of this repo reported 12 unused
+ *  imports under the old cap and 31 once the scan ran to completion. Counting
+ *  and reporting are now separate. */
+const MAX_REPORTED = 40;
 
 /** Files whose exports are consumed by the framework rather than by project
  *  code, so "nothing imports it" is the normal state and not a finding. */
@@ -61,16 +65,70 @@ function normalise(path: string): string {
 /**
  * Remove comments so a name mentioned in a comment does not count as a use.
  *
- * Block comments first, then line comments — and the line-comment pattern
- * requires the `//` not to be preceded by `:`, so `https://…` inside a string
- * survives. Strings are deliberately NOT stripped: a symbol named inside a
- * string is rare, and leaving them in can only cause a missed finding, which
- * is the safe direction here.
+ * This is a character scanner rather than a pair of regexes, and the reason is
+ * a measured failure rather than tidiness. The regex version matched block
+ * comments non-greedily across the whole file, and run over this repo's own
+ * `build.ts` it deleted **45% of the file** — 154,668 characters down to
+ * 85,224 — then reported `findDeadCode`, `CompletionAudit` and `requireAuth`
+ * as unused imports while all three were plainly in use.
+ *
+ * The cause: a glob inside a STRING, such as a double-star followed by a slash
+ * and a star, contains a block-comment opener. The regex treated it as one and
+ * closed it at the next genuine comment terminator, swallowing every line in
+ * between. Nothing in a 36-file sample of generated app code happened to
+ * contain such a string, so the bug stayed invisible until the analyser was
+ * pointed at a real backend.
+ *
+ * So the scanner tracks string state. It handles `'`, `"` and backticks with
+ * backslash escapes, line comments and block comments. It deliberately does
+ * NOT try to recognise regex literals: outside a string, `/*` can only be a
+ * comment, because `a / *b` is not valid JavaScript — and a regex literal
+ * cannot contain an unescaped `//` or `/*` either, since the first `/` would
+ * end it. Template-literal interpolations are treated as part of the string, so
+ * an identifier used only inside `${…}` is not counted — a missed finding,
+ * which is the safe direction.
  */
 export function stripComments(code: string): string {
-  return code
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:/])\/\/[^\n]*/g, "$1");
+  let out = "";
+  let i = 0;
+  const n = code.length;
+  while (i < n) {
+    const c = code[i] as string;
+    const next = i + 1 < n ? code[i + 1] : "";
+
+    if (c === "/" && next === "/") {
+      while (i < n && code[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < n && !(code[i] === "*" && code[i + 1] === "/")) i++;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      // Kept verbatim: a name inside a string can only cause a missed finding,
+      // and the point of tracking strings here is to stop their contents being
+      // mistaken for comment delimiters.
+      out += c;
+      i++;
+      while (i < n) {
+        const ch = code[i] as string;
+        out += ch;
+        i++;
+        if (ch === "\\") {
+          if (i < n) { out += code[i]; i++; }
+          continue;
+        }
+        if (ch === c) break;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 function escapeRe(s: string): string {
@@ -208,7 +266,6 @@ export function findDeadCode(files: Record<string, string>): DeadCodeFinding[] {
         symbol: local,
         detail: `imported from "${source}" and never used in this file — delete the import`,
       });
-      if (findings.length >= MAX_FINDINGS) return findings;
     }
   }
 
@@ -253,7 +310,6 @@ export function findDeadCode(files: Record<string, string>): DeadCodeFinding[] {
               detail: "exported but no other file imports it",
             },
       );
-      if (findings.length >= MAX_FINDINGS) return findings;
     }
   }
 
@@ -285,10 +341,14 @@ export function formatDeadCode(findings: DeadCodeFinding[]): string {
   if (findings.length === 0) {
     return "No unused imports and no unreachable exports found. Nothing to clean up.";
   }
+  const shown = findings.slice(0, MAX_REPORTED);
   const lines = [
     `${findings.length} thing(s) in this project are not reachable from anything else:`,
     "",
-    ...findings.map((f) => `- ${f.path} — ${f.symbol}: ${f.detail}`),
+    ...shown.map((f) => `- ${f.path} — ${f.symbol}: ${f.detail}`),
+    ...(findings.length > shown.length
+      ? ["", `… and ${findings.length - shown.length} more, not listed.`]
+      : []),
     "",
     "This analysis is textual, not a compiler, so confirm each one with read_file before " +
     "deleting it. An unused import is almost always safe to remove. An unreferenced export " +
