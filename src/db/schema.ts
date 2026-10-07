@@ -153,6 +153,14 @@ export type BuildOutcome = {
    *  tests. Kept apart from "pass" on purpose — an agent that writes no tests
    *  and is told they passed has proof of correctness it never earned. */
   checkTests: "pass" | "fail" | "unavailable" | "none" | "never";
+  /** A gate verdict is only evidence about the code that existed when it ran.
+   *  These count the writes that landed AFTER each gate, so a non-zero value
+   *  means the verdict above describes code the build no longer has. Measured
+   *  2026-10-04: a build wrote, checked the page, wrote again, and reported
+   *  "renders without errors" about the version it had looked at. */
+  staleCheckPage?: number;
+  staleCheckTypes?: number;
+  staleCheckTests?: number;
   /** Whether a planning pass ran and produced a usable plan, and how many
    *  files it planned. Recorded so the eval can compare planned builds against
    *  unplanned ones instead of the question being settled by opinion. */

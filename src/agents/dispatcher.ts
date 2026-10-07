@@ -166,6 +166,11 @@ export interface DispatchResult {
     checkPage?: GateOutcome;
     checkTypes?: GateOutcome;
     checkTests?: TestGateOutcome;
+    /** Writes since each gate ran. Non-zero means that verdict is about code
+     *  the build no longer has — see noteWrite in tools.ts. */
+    writesAfterCheckPage?: number;
+    writesAfterCheckTypes?: number;
+    writesAfterCheckTests?: number;
   };
   outputPath: string;
   durationMs: number;
@@ -512,7 +517,13 @@ export class AgentDispatcher {
       checkPage?: GateOutcome;
       checkTypes?: GateOutcome;
       checkTests?: TestGateOutcome;
+      writesAfterCheckPage?: number;
+      writesAfterCheckTypes?: number;
+      writesAfterCheckTests?: number;
     } = {};
+    // Shared across every tool call in this dispatch, so the counters above
+    // count the whole build rather than one round.
+    const writeCounter = { value: 0 };
 
     // Agentic builds need many more turns than a context-gathering tool call —
     // the model is writing, looking at the result and repairing, which is
@@ -658,6 +669,7 @@ export class AgentDispatcher {
                 onLog: options.onSandboxLog,
                 projectFiles: options.projectFiles,
                 gateResults,
+                writeCounter,
               }
             : {}),
         }).catch(

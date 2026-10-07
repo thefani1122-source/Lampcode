@@ -1779,6 +1779,13 @@ export class PromptBuilder {
         "both pass. If a check reports that it could not run, that is NOT a pass — say so " +
         "rather than assuming it was fine. If you cannot get it working, say so plainly and " +
         "describe what is still wrong.\n" +
+        "A CHECK ONLY DESCRIBES THE CODE THAT EXISTED WHEN IT RAN. If you have written or " +
+        "edited any file since the last check_page, that result is STALE and you may not " +
+        "report it — run the checks AGAIN, as the last thing you do before your final reply. " +
+        "This is not a formality: on 2026-10-04 a build wrote files, ran check_page, wrote " +
+        "more files, and told the user the page was rendering without errors while the " +
+        "shipped version showed a full-screen Vite error. The check was honest; it was just " +
+        "about a version that no longer existed.\n" +
         "Before you finish, re-read the request and check it off point by point. A build that " +
         "renders, compiles and passes its own tests can still be missing something that was " +
         "asked for — on 2026-10-03 a note editor did all three and shipped with no " +

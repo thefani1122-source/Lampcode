@@ -154,6 +154,20 @@ async function main(): Promise<void> {
     const checkRender = await run(`ls -1 ${TOOLS_DIR}/check-render.mjs 2>&1`)
     report('check-render.mjs is present', !checkRender.out.includes('No such file'), checkRender.out.trim())
 
+    // Presence is not the same as currency. A template build that fails leaves
+    // every sandbox running the LAST GOOD image, so "the file is there" can be
+    // true of a script months out of date — which is exactly how check_page
+    // stayed broken for three weeks. Assert the behaviour this version is
+    // supposed to have, not merely the filename.
+    const renderSrc = await run(`cat ${TOOLS_DIR}/check-render.mjs`)
+    const hasOverlayCheck =
+      renderSrc.out.includes('vite-error-overlay') && renderSrc.out.includes('&& !overlay')
+    report(
+      'check-render.mjs detects the Vite error overlay',
+      hasOverlayCheck,
+      hasOverlayCheck ? 'overlay detection present' : 'STALE IMAGE — overlay detection missing',
+    )
+
     // 7. The Python backend path, which is a user-facing feature.
     const py = await run('python3 -c "import fastapi, uvicorn; print(fastapi.__version__)" 2>&1')
     report('python backend deps are installed', /^\d+\./.test(py.out.trim()), py.out.trim())

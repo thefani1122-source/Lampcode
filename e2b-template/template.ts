@@ -324,7 +324,26 @@ try {
       const root = document.getElementById("root")
       return !!root && root.children.length > 0
     })
-    result = { ok: errors.length === 0 && rootHasChildren, blank: !rootHasChildren, errors }
+    // Vite's error overlay is a CUSTOM ELEMENT appended to document.body, not
+    // a child of #root, and a module-resolution failure never reaches the
+    // console as an error — so neither of the two checks above can see it.
+    // Measured 2026-10-04: three builds shipped with a full-screen
+    // "Failed to resolve import" overlay while the agent reported the page
+    // rendering without errors. Reading its own message text matters as much
+    // as detecting it: that is the one string that says what to fix.
+    const overlay = await page.evaluate(() => {
+      const el = document.querySelector("vite-error-overlay")
+      if (!el) return null
+      const text = (el.shadowRoot ? el.shadowRoot.textContent : el.textContent) || ""
+      return text.replace(/\\s+/g, " ").trim().slice(0, 500)
+    })
+    if (overlay) errors.push("Vite error overlay: " + overlay)
+    result = {
+      ok: errors.length === 0 && rootHasChildren && !overlay,
+      blank: !rootHasChildren,
+      overlay: overlay || undefined,
+      errors,
+    }
   } finally {
     await browser.close()
   }

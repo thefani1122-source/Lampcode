@@ -346,8 +346,41 @@ export interface ToolExecutionContext {
    *  evidence beyond status = success. Last call wins — the model is expected
    *  to check, fix, and check again, and the final state is the real one. */
   gateResults?:
-    | { checkPage?: GateOutcome; checkTypes?: GateOutcome; checkTests?: TestGateOutcome }
+    | {
+        checkPage?: GateOutcome;
+        checkTypes?: GateOutcome;
+        checkTests?: TestGateOutcome;
+        /** Files written since the last gate call, per gate. A gate is only
+         *  evidence about the code that existed when it ran: on 2026-10-04 a
+         *  build wrote, called check_page, wrote again, and then reported "the
+         *  page renders without errors" — true of the code it looked at, false
+         *  of the code it shipped. Non-zero means the verdict above is STALE
+         *  and should not be read as proof. */
+        writesAfterCheckPage?: number;
+        writesAfterCheckTypes?: number;
+        writesAfterCheckTests?: number;
+      }
     | undefined;
+  /** Monotonic count of write_files/edit_file calls this build. Only meaningful
+   *  relative to itself — it exists to date the gate results above. */
+  writeCounter?: { value: number } | undefined;
+}
+
+/**
+ * Record that the project changed, which dates every gate verdict held so far.
+ *
+ * A gate is only evidence about the code that existed when it ran. On
+ * 2026-10-04 a build wrote files, called check_page, wrote more files, and then
+ * told the user "the page renders without errors" — true of what it looked at,
+ * false of what it shipped, and nothing anywhere could tell the two apart.
+ */
+function noteWrite(ctx: ToolExecutionContext): void {
+  if (ctx.writeCounter) ctx.writeCounter.value += 1;
+  const g = ctx.gateResults;
+  if (!g) return;
+  if (g.checkPage) g.writesAfterCheckPage = (g.writesAfterCheckPage ?? 0) + 1;
+  if (g.checkTypes) g.writesAfterCheckTypes = (g.writesAfterCheckTypes ?? 0) + 1;
+  if (g.checkTests) g.writesAfterCheckTests = (g.writesAfterCheckTests ?? 0) + 1;
 }
 
 /** Execute one tool call and return the text to send back as its tool_result. */
@@ -400,6 +433,7 @@ export async function executeTool(
     if (!projectId) return "Error: no project sandbox is attached to this build.";
 
     if (name === "write_files") {
+      noteWrite(ctx);
       const raw = Array.isArray(args["files"]) ? (args["files"] as unknown[]) : [];
       const files: Record<string, string> = {};
       for (const entry of raw) {
@@ -517,6 +551,7 @@ export async function executeTool(
       e instanceof Error && e.message.includes("no live sandbox");
 
     if (name === "edit_file") {
+      noteWrite(ctx);
       const path = typeof args["path"] === "string" ? args["path"].trim() : "";
       const oldString = typeof args["old_string"] === "string" ? args["old_string"] : "";
       const newString = typeof args["new_string"] === "string" ? args["new_string"] : "";
@@ -700,14 +735,14 @@ export async function executeTool(
         // the browser never opened it is how an agent ships a blank app while
         // believing it verified one.
         if (unavailable) {
-          if (ctx.gateResults) ctx.gateResults.checkPage = "unavailable";
+          if (ctx.gateResults) ctx.gateResults.checkPage = "unavailable", ctx.gateResults.writesAfterCheckPage = 0;
           return "The page check could not run (the sandbox did not respond). Nothing was verified — do not treat this as a pass.";
         }
         if (ok || issues.length === 0) {
-          if (ctx.gateResults) ctx.gateResults.checkPage = "pass";
+          if (ctx.gateResults) ctx.gateResults.checkPage = "pass", ctx.gateResults.writesAfterCheckPage = 0;
           return "The page rendered successfully with no console errors.";
         }
-        if (ctx.gateResults) ctx.gateResults.checkPage = "fail";
+        if (ctx.gateResults) ctx.gateResults.checkPage = "fail", ctx.gateResults.writesAfterCheckPage = 0;
         return (
           `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}\n` +
           `Call read_logs if you need the dev server's own account of what happened.`
@@ -721,6 +756,7 @@ export async function executeTool(
       try {
         const run = await runTests(projectId);
         if (ctx.gateResults) {
+          ctx.gateResults.writesAfterCheckTests = 0;
           ctx.gateResults.checkTests =
             run.outcome === "passed" ? "pass"
             : run.outcome === "failed" ? "fail"
@@ -762,14 +798,14 @@ export async function executeTool(
     try {
       const { ok, issues, unavailable } = await runTypeCheck(projectId);
       if (unavailable) {
-        if (ctx.gateResults) ctx.gateResults.checkTypes = "unavailable";
+        if (ctx.gateResults) ctx.gateResults.checkTypes = "unavailable", ctx.gateResults.writesAfterCheckTypes = 0;
         return "The type check could not run (tsc was unreachable in the sandbox). Nothing was verified — do not treat this as a pass.";
       }
       if (ok || issues.length === 0) {
-        if (ctx.gateResults) ctx.gateResults.checkTypes = "pass";
+        if (ctx.gateResults) ctx.gateResults.checkTypes = "pass", ctx.gateResults.writesAfterCheckTypes = 0;
         return "No type errors.";
       }
-      if (ctx.gateResults) ctx.gateResults.checkTypes = "fail";
+      if (ctx.gateResults) ctx.gateResults.checkTypes = "fail", ctx.gateResults.writesAfterCheckTypes = 0;
       return `Type errors:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
     } catch (err) {
       return `Error running the type check: ${err instanceof Error ? err.message : String(err)}`;
