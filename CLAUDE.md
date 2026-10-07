@@ -1200,6 +1200,75 @@ when they state a consequence (`check_types` went 3/10 → 11/11 that way), but 
 declaring done is in the weights, so the counter must increment on its own rather than ask the
 model to confess.
 
+## THE COMPLETION AUDIT — built, and measured on two real builds, 2026-10-07
+`src/verify/completion-audit.ts`. Two dispatches that cannot write a file:
+`acceptance` turns the RAW prompt into checkable requirements, `audit` reads the finished
+code and returns `proven` / `contradicted` / `unverified` per requirement with a cited file.
+Both are their own agent types so their prompts cannot be confused with a builder's. Stored
+in `build_outcome.completionAudit` with `unverifiedCount` lifted out; shown in the chat and
+as a card in the workspace; scored by the eval as its own finding.
+
+Why it is not just another gate: the agent is author AND examiner, and the exam derives from
+the same understanding that wrote the code, so a requirement it never understood produces no
+implementation AND no test and nothing fails. The audit's content comes from the user's own
+words instead.
+
+**Run 1 — LEDGER** (expense tracker, 3 views, deploy `8c8305e`). 7 rounds, 14 files,
+page/types/tests all pass, $0.541, 228 s. **8 criteria extracted, 8 proven**, audit cost
+$0.060. Every citation was checked BY HAND against the downloaded files, including the three
+requirements that usually go missing: `MAX_ENTRIES = 200` with oldest-dropped-by-`createdAt`
+and a test; an Escape listener attached only while the dialog is open (and it genuinely is the
+only dialog); and `useState<Expense[]>(loadExpenses)` — a real load, not just a save. The
+extractor kept the number "200" in the requirement text, which is the detail that makes such a
+requirement checkable at all.
+
+**Run 2 — `editor-undo`** (the eval task that produced Finding 4), label `audit-gap-test`.
+8 rounds, 22 files, `check_page` pass, `check_types` pass, `run_tests` pass, the eval's own
+`mustContain` checks pass, verdict `pass`, $0.465. 9 criteria: 8 proven, **1 contradicted**.
+
+### Finding 6 — the audit's one non-proven verdict was WRONG, and convincingly so
+It reported that `NotesView` named-imported `Preview` while `Preview.tsx` "only has
+`export default`", that the prop names disagreed (`note` vs `html`), and that
+`markdownToHtml` "is never called anywhere in the app". **All three are false.** Checked in
+the delivered files: `export function Preview({ note }: { note: Note })` — a named export,
+the prop matches, and `markdownToHtml` is called inside `Preview.tsx` itself.
+
+So on the one build where the audit said anything other than "proven", it was a false alarm —
+and the user would have been shown **NOT DONE over working code**. That is its own kind of
+damage: an outside check that cries wolf gets ignored, and then it is worth nothing when it is
+right. Note also that the claim was self-refuting against evidence already in hand — a named
+import of a default-only export does not type-check, and `check_types` had passed.
+
+**FIXED — a complaint must now quote the line it is complaining about**, copied verbatim from
+the file it cites, and `parseVerdicts` looks that quote up in the real content (whitespace
+normalised, minimum 12 characters, and it must be in the cited file, not merely somewhere in
+the project). A quote that is not found downgrades the verdict to `unverified` while KEEPING
+the reported text, so the user sees "nobody has shown this works" rather than either a false
+accusation or silence. This is the same move that makes `proven` trustworthy — check the
+model's claim against something it does not control — applied in the other direction. The
+auditor prompt now states the lookup and its consequence outright, and says that if you cannot
+copy a line showing the problem, you have not found the problem.
+
+The false positive is kept as a regression case. 48 cases in `npm test`.
+
+### What is proven and what is not — stated plainly
+- Proven: extraction from the raw prompt; the auditor citing real files; citations that are
+  truthful (verified by hand on 8 of 8 LEDGER verdicts); the storage, the chat lines, the
+  frontend card, the eval finding; and that a build the agent's three gates all pass can still
+  draw a non-proven verdict.
+- **NOT proven: that the audit catches a real missing requirement.** Both builds genuinely met
+  their briefs, so the one gap-shaped verdict it produced was wrong rather than right. Until a
+  build that actually drops a requirement is audited, the gap-detection claim is untested.
+
+### The staleness counter fired non-zero for the first time
+`editor-undo` recorded `staleCheckPage: 1, staleCheckTypes: 1` — a write landed after each of
+those gates, so both verdicts describe code the build no longer had. Yesterday's entry said
+that path was wired but unobserved; it is now observed. The audit is handed each gate's verdict
+labelled `(STALE — N write(s) landed after it)` rather than as a clean pass.
+
+**Live-only on the frontend:** the workspace has never read `build_outcome`, so a reload after
+a finished build loses the card although the audit is stored. Not built.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based

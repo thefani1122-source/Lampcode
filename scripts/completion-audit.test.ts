@@ -176,12 +176,109 @@ check(
   "proven",
 );
 
-// contradicted is a complaint, not a claim of evidence — downgrading it for
-// want of a file path would bury the strongest finding the audit can produce.
+// ── contradicted has to be corroborated ─────────────────────────────────────
+// Measured on a real build, 2026-10-07: the auditor reported in precise detail
+// that NotesView named-imported a component which "only has export default",
+// that the prop names disagreed, and that markdownToHtml was never called. All
+// three were false. The file has a named export, the prop matches, and the
+// function is called inside it — and check_page, check_types and run_tests had
+// all passed. Nothing could tell that verdict apart from a real one, and the
+// user would have been shown "NOT DONE" over working code.
+//
+// So a complaint must quote the line it is complaining about, and the quote is
+// looked up in the real file. These cases are that false positive, kept as a
+// regression.
+const PROJECT = {
+  "src/App.tsx": "export default function App() { return null }",
+  "src/components/Preview.tsx":
+    "import { markdownToHtml } from '../lib/markdown'\nexport function Preview({ note }: { note: Note }) {\n  const html = markdownToHtml(note.content)\n  return <div>{html}</div>\n}",
+  "src/lib/storage.ts": "export const loadNotes = () => JSON.parse(localStorage.getItem('n') ?? '[]')",
+};
+const P_CRITERIA: AcceptanceCriterion[] = [
+  { id: "R1", text: "Shows a markdown preview beside the editor", kind: "visual" },
+];
+
 check(
-  "parseVerdicts: contradicted survives without evidence",
-  parseVerdicts('{"verdicts":[{"id":"R1","status":"contradicted","evidence":"","note":"plain useState"}]}', CRITERIA, PATHS)[0],
-  { id: "R1", status: "contradicted", evidence: "", note: "plain useState" },
+  "parseVerdicts: the real false positive is downgraded, not shown as NOT DONE",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","quote":"export default function Preview","note":"only has export default, so the named import fails"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+
+check(
+  "parseVerdicts: a contradicted claim whose quote IS in the file stands",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","quote":"export function Preview({ note }: { note: Note })","note":"renders the raw string, not parsed markdown"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "contradicted",
+);
+
+// The model retypes what it read; it will not reproduce indentation or line
+// wrapping, so matching has to ignore whitespace or the check rejects honest
+// complaints and the feature is useless.
+check(
+  "parseVerdicts: a quote matches across reflowed whitespace",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","quote":"const html  =   markdownToHtml(note.content)","note":"x"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "contradicted",
+);
+
+check(
+  "parseVerdicts: contradicted with no quote at all is downgraded",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","note":"feels wrong"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+
+// A quote short enough to appear in any file proves nothing — "}" would pass.
+check(
+  "parseVerdicts: a too-short quote does not corroborate",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","quote":"return","note":"x"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+
+check(
+  "parseVerdicts: a quote found in a DIFFERENT file than the one cited does not count",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","quote":"export const loadNotes = () => JSON.parse","note":"x"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+
+// The downgrade keeps the complaint visible: something made the auditor stop,
+// and the user should see that nobody has shown this works.
+ok(
+  "parseVerdicts: a downgraded complaint still carries what was reported",
+  (parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/components/Preview.tsx","note":"only has export default"}]}',
+    P_CRITERIA,
+    PROJECT,
+  )[0]?.note ?? "").includes("only has export default"),
+);
+
+// Paths-only callers (every stored run from before contents were passed, and
+// the cases above) cannot corroborate anything, and must fail safe.
+check(
+  "parseVerdicts: with paths only, a contradicted claim cannot be corroborated",
+  parseVerdicts('{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/App.tsx","quote":"whatever it says here"}]}', CRITERIA, PATHS)[0]?.status,
+  "unverified",
 );
 
 check(

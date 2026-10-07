@@ -65,6 +65,25 @@ const GATE_EVIDENCE = new Set(["check_page", "check_types", "run_tests"]);
 
 const VALID_KINDS = new Set(["visual", "behaviour", "data", "logic"]);
 
+/** Shortest quote that can corroborate a complaint. Below this, "}" or "note"
+ *  would match almost any file and the check would be theatre. */
+const MIN_QUOTE_CHARS = 12;
+
+/** Split an evidence string into the bare paths/gate names it cites, tolerating
+ *  "src/a.ts:42", a leading "./" and several separated by commas. */
+function citations(evidence: string): string[] {
+  return evidence
+    .split(/[,;]/)
+    .map((s) => s.trim().replace(/^\.?\//, "").split(/[:#\s]/)[0] ?? "")
+    .filter((s) => s !== "");
+}
+
+/** Collapse whitespace so a quote matches code that differs only in wrapping or
+ *  indentation — the model retypes what it read and will not reproduce spacing. */
+function normalise(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /**
  * Pull the criteria out of whatever the extractor returned.
  *
@@ -136,10 +155,16 @@ export function parseCriteria(raw: string): AcceptanceCriterion[] {
 export function parseVerdicts(
   raw: string,
   criteria: AcceptanceCriterion[],
-  knownPaths: string[],
+  /** Either the paths alone, or path → content. Content is what lets a
+   *  `contradicted` claim be corroborated; without it, every such claim is
+   *  unquotable and therefore downgraded, which is the safe direction. */
+  project: string[] | Record<string, string>,
 ): CriterionVerdict[] {
-  const known = new Set(knownPaths.map((p) => p.replace(/^\.?\//, "")));
-  const byId = new Map<string, { status: string; evidence: string; note: string }>();
+  const fileContents: Record<string, string> = Array.isArray(project)
+    ? Object.fromEntries(project.map((p) => [p.replace(/^\.?\//, ""), ""]))
+    : Object.fromEntries(Object.entries(project).map(([p, c]) => [p.replace(/^\.?\//, ""), c]));
+  const known = new Set(Object.keys(fileContents));
+  const byId = new Map<string, { status: string; evidence: string; note: string; quote: string }>();
 
   const text = raw.trim();
   const start = text.indexOf("{");
@@ -158,6 +183,7 @@ export function parseVerdicts(
             status: typeof e["status"] === "string" ? e["status"].trim().toLowerCase() : "",
             evidence: typeof e["evidence"] === "string" ? e["evidence"].trim() : "",
             note: typeof e["note"] === "string" ? e["note"].trim() : "",
+            quote: typeof e["quote"] === "string" ? e["quote"] : "",
           });
         }
       }
@@ -179,21 +205,51 @@ export function parseVerdicts(
     }
 
     if (found.status === "contradicted") {
+      // A complaint has to be corroborated, or it is just an opinion with a
+      // confident voice. Measured 2026-10-07 on the `editor-undo` build: the
+      // auditor reported, in precise detail, that NotesView did a named import
+      // of a component that "only has export default", that the prop names
+      // disagreed, and that markdownToHtml was never called. All three were
+      // false — the file has a named export, the prop matches, and the function
+      // is called inside it. Nothing in the pipeline could tell that verdict
+      // apart from a real one, and it would have been shown to the user as
+      // "NOT DONE" over working code.
+      //
+      // So contradicted now needs a verbatim quote from a cited file, and the
+      // quote is looked up in the real content. The auditor cannot invent an
+      // `export default` that is not there. This is the same move that makes
+      // `proven` trustworthy — the model's claim is checked against something
+      // it does not control — applied to the other direction.
+      const citedFiles = citations(found.evidence).filter((s) => known.has(s));
+      const quote = normalise(found.quote);
+      const corroborated =
+        quote.length >= MIN_QUOTE_CHARS &&
+        citedFiles.some((p) => normalise(fileContents[p] ?? "").includes(quote));
+      if (corroborated) {
+        return {
+          id: c.id,
+          status: "contradicted" as CriterionStatus,
+          evidence: found.evidence,
+          note: found.note || "the code does the opposite of what was asked",
+        };
+      }
+      // Downgraded, not discarded: something still made the auditor stop here,
+      // and the user should see that nobody has shown this works. Saying "not
+      // done" on an unquotable claim is what must not happen.
       return {
         id: c.id,
-        status: "contradicted" as CriterionStatus,
+        status: "unverified" as CriterionStatus,
         evidence: found.evidence,
-        note: found.note || "the code does the opposite of what was asked",
+        note: found.note
+          ? `reported as broken, but the claim could not be confirmed against the code — ${found.note}`
+          : "reported as broken, but the claim could not be confirmed against the code",
       };
     }
 
     if (found.status === "proven") {
       // A citation that cannot be checked is not a citation. One cited file
       // that really exists is enough; the auditor is allowed to list several.
-      const cited = found.evidence
-        .split(/[,;]/)
-        .map((s) => s.trim().replace(/^\.?\//, "").split(/[:#\s]/)[0] ?? "")
-        .filter((s) => s !== "");
+      const cited = citations(found.evidence);
       const checkable = cited.some((s) => known.has(s) || GATE_EVIDENCE.has(s));
       if (checkable) {
         return {
@@ -419,7 +475,9 @@ export async function auditCompletion(opts: {
       costGuard: { cumulativeUsd: 0, maxUsd: AUDIT_COST_CEILING_USD },
     });
 
-    const verdicts = parseVerdicts(result.finalContent || result.content, criteria, paths);
+    // Contents, not just paths: a `contradicted` verdict is only accepted when
+    // its quote is found in the file it cites, and that lookup needs the code.
+    const verdicts = parseVerdicts(result.finalContent || result.content, criteria, opts.files);
     return { criteria, verdicts, ...tallyVerdicts(verdicts), costUsd: result.costUsd };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

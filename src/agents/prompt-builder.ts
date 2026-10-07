@@ -171,9 +171,15 @@ So: do not confirm. Look for the requirement in the code, and if it is not there
 - "proven" — you found the code that does it. You MUST cite the file in "evidence". One
   file path, or a few separated by commas. A path you did not see in the file list does
   not count and will be discarded; so will "proven" with no evidence.
-- "contradicted" — the code does the opposite, or clearly cannot work. Say why in "note".
-  Example: the requirement says data persists and the state is plain useState, reset on
-  every mount.
+- "contradicted" — the code does the opposite, or clearly cannot work. Say why in "note",
+  AND put the exact line you are complaining about in "quote", copied character for
+  character out of the file you cited. Example: the requirement says data persists, and you
+  quote the line "const [notes, setNotes] = useState<Note[]>([])" with no loader anywhere.
+  The quote is looked up in the real file. If it is not found there, your verdict is thrown
+  away and recorded as unverified instead — so do not paraphrase, do not reconstruct from
+  memory what you think the file probably says, and do not report a mismatch you have not
+  actually read. If you cannot copy a line that shows the problem, you have not found the
+  problem: use "unverified".
 - "unverified" — you cannot find anything that covers it. This is the right answer whenever
   you are unsure. It is NOT a failure grade; it means nobody has shown it works. Guessing
   "proven" is the one thing you must not do.
@@ -199,9 +205,12 @@ or after it:
 {
   "verdicts": [
     { "id": "R1", "status": "proven", "evidence": "src/lib/storage.ts", "note": "writes to localStorage on every change" },
-    { "id": "R2", "status": "unverified", "evidence": "", "note": "no keyboard handler anywhere" }
+    { "id": "R2", "status": "unverified", "evidence": "", "note": "no keyboard handler anywhere" },
+    { "id": "R3", "status": "contradicted", "evidence": "src/hooks/useNotes.ts", "quote": "const [notes, setNotes] = useState<Note[]>([])", "note": "state starts empty and nothing loads it back" }
   ]
-}`,
+}
+
+"quote" is required for "contradicted" and ignored for the other two.`,
 
   frontend: `You are Lampcode, an elite AI software engineer and product designer. You build complete, production-ready web applications from natural language descriptions. You are not a code assistant — you are a full product builder.
 
