@@ -1370,6 +1370,45 @@ creep against the user's actual words, and the completion audit already extracts
 the audit dispatch: that pass was just hardened against a false positive, and adding a second
 objective to it is the same attention-dilution that makes big reviews skip things.
 
+### THE FIRST FOLLOW-UP EDIT THROUGH THE HARNESS — 2026-10-07
+Listed above since 09-28 as "not yet exercised". It is now. One edit against the LEDGER
+project built earlier the same day, deploy `0533d35`: *"in the monthly summary view, replace
+the per-category totals list with a horizontal bar chart — one bar per category, widest first,
+with the amount at the end of each bar. Keep the existing colours."* The prompt says nothing
+about deleting the old implementation **on purpose** — asking for it would be doing the new
+prompt rule's job inside the test.
+
+3 rounds, `edit_file` ×1, `check_page` pass, `check_types` pass, `run_tests` never (correct —
+this is presentation), audit 5/5 proven, $0.394, 74 s.
+
+| | |
+|---|---|
+| churn | **added 25, removed 23, edited 1** — net +2 |
+| dead code | 0 unused imports, 0 never-rendered, 1 unreferenced export |
+| `deadCodeCalled` | **false** |
+
+**The churn measurement is accurate, verified against the real diff.** The before and after
+projects were both downloaded and compared: `diff` reports 23 lines out and 25 in, in one file.
+The counter said 23 and 25.
+
+**The edit replaced rather than accumulated**, unprompted. The old stacked label-above-bar
+markup is gone, not left beside the new horizontal row — confirmed by reading the diff, not by
+asking the model. Net +2 lines for a real feature change.
+
+**And it preserved every untouched file**, which is the other half of what "not yet exercised"
+covered: `diff -rq` across the whole project reports exactly one file different
+(`src/views/Summary.tsx`), plus a `.preview` sandbox artifact. Nothing else moved.
+
+The 1 unreferenced export is `MonthSummary`, which pre-dates this edit — so the end-of-build
+scan works independently of the model, which was the reason for running it unconditionally.
+
+**The gap, stated plainly: `find_dead_code` was NOT called.** The model changed how something
+works and did not ask, so prompt step 7 did not fire on its first outing. One build is not a
+measurement — `check_types` also started at 3 of 10 before the consequence-stating wording
+moved it to 11 of 11 — but it is the number to watch. Note also that this edit was an EASY case
+for that tool: the replacement happened inside one JSX block, and the failure the tool exists
+for is a whole component or module left orphaned. A harder edit is needed to test it properly.
+
 ### Review at scale — diagnosed, not built
 Why a model skips on a big PR, and none of it is the context window (a big PR fits):
 1. **Effort per unit, not capacity.** Roughly fixed effort per response, so per-file attention
