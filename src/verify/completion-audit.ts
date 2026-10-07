@@ -1,6 +1,6 @@
 import { AgentDispatcher } from "../agents/dispatcher.js";
 import { config } from "../server/config.js";
-import { citations, quoteIsInCitedFile } from "./corroborate.js";
+import { citations, quoteIsInCitedFile, symbolIsAbsentFromCitedFile } from "./corroborate.js";
 import { logger } from "../server/logger.js";
 import type {
   AcceptanceCriterion,
@@ -147,7 +147,10 @@ export function parseVerdicts(
     ? Object.fromEntries(project.map((p) => [p.replace(/^\.?\//, ""), ""]))
     : Object.fromEntries(Object.entries(project).map(([p, c]) => [p.replace(/^\.?\//, ""), c]));
   const known = new Set(Object.keys(fileContents));
-  const byId = new Map<string, { status: string; evidence: string; note: string; quote: string }>();
+  const byId = new Map<
+    string,
+    { status: string; evidence: string; note: string; quote: string; missing: string }
+  >();
 
   const text = raw.trim();
   const start = text.indexOf("{");
@@ -167,6 +170,7 @@ export function parseVerdicts(
             evidence: typeof e["evidence"] === "string" ? e["evidence"].trim() : "",
             note: typeof e["note"] === "string" ? e["note"].trim() : "",
             quote: typeof e["quote"] === "string" ? e["quote"] : "",
+            missing: typeof e["missing"] === "string" ? e["missing"] : "",
           });
         }
       }
@@ -203,7 +207,13 @@ export function parseVerdicts(
       // `export default` that is not there. This is the same move that makes
       // `proven` trustworthy — the model's claim is checked against something
       // it does not control — applied to the other direction.
-      if (quoteIsInCitedFile(found.quote, found.evidence, fileContents)) {
+      // Either a line that IS there, or a symbol that is NOT. The second half
+      // was added after the ROTA build, where every true finding was an absence
+      // and the quote rule threw four of them away.
+      if (
+        quoteIsInCitedFile(found.quote, found.evidence, fileContents) ||
+        symbolIsAbsentFromCitedFile(found.missing, found.evidence, fileContents)
+      ) {
         return {
           id: c.id,
           status: "contradicted" as CriterionStatus,

@@ -1490,6 +1490,87 @@ regressions. **No review has been run against a real model yet** — the enumera
 pre-pass, corroboration and report are covered by cases and by the probes above; the per-unit
 dispatch and the `review` prompt are not.
 
+## ROTA — THE AUDIT CAUGHT A REAL MISSING FEATURE, 2026-10-07
+The thing listed above as the audit's one unproven claim. It is proven now, and by the
+clearest case so far.
+
+A deliberately hard build against deploy `43c0c36`: a staff shift planner, four views, a rule
+engine enforcing overlap / 40-hour cap / 11-hour rest / 35-hour overtime flag, shifts crossing
+midnight, tests for three named edge cases. 19 rounds, **21 files**, planned 17, $1.074, 498 s.
+
+| | |
+|---|---|
+| `check_page` | **pass** |
+| `check_types` | **pass** (`staleCheckTypes: 7`) |
+| `run_tests` | **pass** — three test files |
+| churn | added 1360, removed 124, created 20, replaced 2, edited 8 |
+| audit | **11 proven, 3 contradicted, 4 unverified of 18** |
+
+**Every gate passed and the app does not contain the feature.** `src/App.tsx` imports exactly
+five things — React, react-router-dom, lucide icons and `ShiftForm` — and has two routes,
+`/` and `/shifts/new`. `WeekGrid.tsx`, `StaffList.tsx`, `RulesPage.tsx`, `ConflictsReport.tsx`
+and `RosterProvider` are **never imported by anything**. Verified by hand on the downloaded
+files, not inferred: `grep` for all five across the project returns nothing outside their own
+directories. The rule engine is written and its tests pass; nothing calls it from a page the
+user can reach. The shipped app is a dashboard saying "No shifts scheduled" and a form.
+
+The gates were all honest. The two routed pages render, the project type-checks, and the rule
+engine's own tests pass — because tests import modules directly, which is precisely why a
+passing suite says nothing about whether a feature is wired into the app.
+
+**The audit said so, specifically and correctly**, naming `App.tsx` and each unmounted
+component. That is the gap-detection claim this file has carried as untested since the audit
+was built, and unlike Finding 6 the verdict was right.
+
+### Finding 7 — the quote rule was discarding the findings that matter most
+All seven non-proven verdicts were the same true finding, and **four were downgraded to
+`unverified`** by the corroboration rule. Correctly, by its own logic: they assert an ABSENCE —
+"App.tsx never imports WeekGrid" — and **you cannot quote a line that is not there.** So the
+guard added that morning to stop false accusations was, by construction, throwing away the
+shape that a forgotten requirement actually takes.
+
+**Fixed.** A `contradicted` verdict may now be corroborated EITHER by a quote that is in the
+cited file OR by `missing`: one identifier the auditor says is absent, confirmed by checking it
+really is. An absence is exactly as checkable as a presence, only inverted, and a model cannot
+fabricate an absence the file contradicts. It must be a single identifier — a phrase like "any
+routing for the views" is unverifiable and gets no credit, or a model could corroborate
+anything by being vague enough. Cases cover all four directions.
+
+### Finding 8 — the dead-code analyser could not see four orphaned views
+It reported 1 unused import and 3 unreferenced exports, and **none of the four dead views**,
+because all four are `export default` — which it skips by design, since proving a default
+export unreferenced needs module resolution and being wrong deletes an entry point.
+
+**Fixed with a check that needs no resolution at all.** The review's import graph has already
+resolved every specifier, so "no file in this project imports this FILE" is a fact about the
+graph rather than a guess about a symbol. `prePass` now reports `orphan-file`, excluding entry
+files and test files. On ROTA it flags all four views **plus `src/state/rosterState.ts`, a
+duplicate of `rosterState.tsx`** — two implementations of one thing, which is the bloat pattern
+from the other half of this work. Eleven free findings in total, no model call:
+
+```
+[orphan-file] src/views/WeekGrid.tsx  ConflictsReport.tsx  RulesPage.tsx  StaffList.tsx
+[orphan-file] src/state/rosterState.ts
+[untested-logic] src/state/rosterStateImpl.tsx   src/lib/storage.ts
+[dead-code] src/lib/rules.ts ×2   shiftTime.ts   weeklyTotals.ts
+```
+
+**The free pre-pass alone would have told the user the four views they asked for are not wired
+up.** That is the cheapest finding in this entire file.
+
+### Two more things this run measured
+**`staleCheckTypes: 7`.** Seven writes landed after the last `check_types`, so that passing
+verdict describes code the build changed seven times afterwards. The counter fired non-zero
+for the second time and far harder than the first.
+
+**The review could not run: `Modal rate limit exceeded`.** The review session failed 25 s in,
+immediately after a 19-round build. One retry with a 20 s wait per throttled unit is now in
+`reviewProject` — the review fires one dispatch per file in quick succession, which is the
+shape providers throttle, and without it a mid-review throttle turns every remaining unit into
+`unreviewed`. **So `review_code` has still not been exercised against a real model.**
+
+370 cases in `npm test`; ROTA's three findings are all kept as regressions.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based

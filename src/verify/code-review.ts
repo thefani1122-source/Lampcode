@@ -84,6 +84,15 @@ export type ReviewResult = {
 
 const VALID_SEVERITY = new Set<ReviewSeverity>(["bug", "risk", "smell"]);
 
+/** How long to wait before retrying one throttled unit. Long enough to clear a
+ *  per-minute window, short enough that a review does not stall. */
+const RATE_LIMIT_WAIT_MS = 20_000;
+
+function isRateLimit(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /rate.?limit|429|too many requests/i.test(message);
+}
+
 /**
  * Parse one unit's reply, keeping only claims that can be checked.
  *
@@ -217,7 +226,13 @@ export async function reviewProject(opts: ReviewOptions): Promise<ReviewResult> 
 
     const unitPrePass = allPrePass.filter((f) => f.path === unit.path);
     try {
-      const result = await opts.dispatcher.dispatch({
+      // One retry on a rate limit, then give up on this unit. The review fires
+      // one dispatch per file in quick succession, which is exactly the shape
+      // providers throttle — measured 2026-10-07: a review started straight
+      // after a 19-round build and the provider answered "rate limit
+      // exceeded". Without this, a throttle in the middle of a review turns
+      // every remaining unit into `unreviewed`.
+      const dispatchUnit = () => opts.dispatcher.dispatch({
         agentType: "review",
         usageCategory: "build",
         provider: opts.provider,
@@ -230,6 +245,15 @@ export async function reviewProject(opts: ReviewOptions): Promise<ReviewResult> 
         projectId: opts.projectId,
         costGuard: { cumulativeUsd: costUsd, maxUsd: maxCost },
       });
+      let result;
+      try {
+        result = await dispatchUnit();
+      } catch (err) {
+        if (!isRateLimit(err)) throw err;
+        logger.info({ sessionId: opts.sessionId, path: unit.path }, "[review] rate limited — waiting");
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_WAIT_MS));
+        result = await dispatchUnit();
+      }
       costUsd += result.costUsd;
       const parsed = parseFindings(result.finalContent || result.content, opts.files);
       findings.push(...parsed.findings);

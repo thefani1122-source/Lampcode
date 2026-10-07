@@ -231,6 +231,62 @@ check(
   "contradicted",
 );
 
+// ── an absence is as checkable as a presence ────────────────────────────────
+// Measured on the ROTA build, 2026-10-07: every one of the audit's seven
+// non-proven verdicts was the same TRUE finding — App.tsx imports none of the
+// four views the user asked for — and the quote rule downgraded four of them.
+// Correctly by its own logic: they assert an absence, and you cannot quote a
+// line that is not there. So the rule was discarding exactly the class of
+// finding that matters most, because "X is missing" is what a forgotten
+// requirement looks like.
+const ABSENCE_PROJECT = {
+  "src/App.tsx": "import ShiftForm from './components/ShiftForm'\nexport default function App() { return <ShiftForm /> }",
+  "src/views/ConflictsReport.tsx": "export default function ConflictsReport() { return <ul /> }",
+};
+const ABSENCE_CRITERIA: AcceptanceCriterion[] = [
+  { id: "R1", text: "The conflicts report lists every violation", kind: "visual" },
+];
+
+check(
+  "parseVerdicts: a verified absence corroborates a contradicted verdict",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/App.tsx","missing":"ConflictsReport","note":"written but never routed"}]}',
+    ABSENCE_CRITERIA,
+    ABSENCE_PROJECT,
+  )[0]?.status,
+  "contradicted",
+);
+// A model cannot fabricate an absence the file contradicts.
+check(
+  "parseVerdicts: claiming something is missing when it IS there is downgraded",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/App.tsx","missing":"ShiftForm","note":"never imported"}]}',
+    ABSENCE_CRITERIA,
+    ABSENCE_PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+// A phrase is not checkable, and allowing one would let a model corroborate
+// anything by describing it vaguely enough.
+check(
+  "parseVerdicts: a phrase rather than an identifier does not corroborate",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/App.tsx","missing":"any routing for the views","note":"x"}]}',
+    ABSENCE_CRITERIA,
+    ABSENCE_PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+check(
+  "parseVerdicts: an absence claim about a file that is not in the set proves nothing",
+  parseVerdicts(
+    '{"verdicts":[{"id":"R1","status":"contradicted","evidence":"src/Nope.tsx","missing":"ConflictsReport","note":"x"}]}',
+    ABSENCE_CRITERIA,
+    ABSENCE_PROJECT,
+  )[0]?.status,
+  "unverified",
+);
+
 check(
   "parseVerdicts: contradicted with no quote at all is downgraded",
   parseVerdicts(

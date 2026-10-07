@@ -48,6 +48,44 @@ export function normaliseWhitespace(text: string): string {
 }
 
 /**
+ * Is a symbol the claim says is MISSING really absent from the file it cites?
+ *
+ * This exists because of a measured gap. On the ROTA build, 2026-10-07, the
+ * audit's seven non-proven verdicts were all the same true finding — App.tsx
+ * imports none of the four views the user asked for, so the whole feature is
+ * unreachable — and the quote rule DOWNGRADED four of them. Correctly, by its
+ * own logic: they assert an absence, and **you cannot quote a line that is not
+ * there.** So the rule was discarding exactly the class of finding that matters
+ * most, because "X is missing" is what a forgotten requirement looks like.
+ *
+ * An absence is just as checkable as a presence, only inverted: the model names
+ * the symbol it says is not in the file, and this confirms it really is not.
+ * A model cannot fabricate an absence that the file contradicts.
+ *
+ * The symbol must look like an identifier. A sentence ("any routing for the
+ * views") is not checkable and gets no credit — otherwise a model could
+ * corroborate anything by describing it vaguely enough.
+ */
+export function symbolIsAbsentFromCitedFile(
+  symbol: string,
+  evidence: string,
+  files: Record<string, string>,
+): boolean {
+  const name = symbol.trim();
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return false;
+  const known = new Set(Object.keys(files).map((p) => p.replace(/^\.?\//, "")));
+  for (const cited of citations(evidence)) {
+    if (!known.has(cited)) continue;
+    const content = files[cited] ?? files[`./${cited}`] ?? "";
+    // The file has to EXIST and not mention it. An unknown file proves nothing.
+    if (!new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(content)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Is this quote really in one of the files it cites?
  *
  * Deliberately strict about WHICH file: a quote found somewhere else in the

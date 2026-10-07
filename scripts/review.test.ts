@@ -246,6 +246,47 @@ check(
   check("every file e2b-service bakes is in review-units' copy", missing, []);
 }
 
+// ── the orphan-file check, and why it exists ────────────────────────────────
+// Measured on the ROTA build, 2026-10-07: it wrote WeekGrid, StaffList,
+// RulesPage and ConflictsReport — the four views the user asked for — and
+// App.tsx imported none of them. check_page, check_types and run_tests all
+// passed, because the two pages that ARE routed render fine and the rule
+// engine's own tests pass. The feature simply was not in the shipped app.
+//
+// The dead-code analyser could not see it: all four views are `export default`,
+// which it skips on purpose. This check needs no symbol resolution at all —
+// the graph already resolved every specifier, so "no file imports this file" is
+// a fact about the graph.
+const ORPHANED = {
+  "src/App.tsx": `import ShiftForm from "./components/ShiftForm"\nexport default function App() { return <ShiftForm /> }`,
+  "src/components/ShiftForm.tsx": `export default function ShiftForm() { return (<form />) }`,
+  "src/views/WeekGrid.tsx": `export default function WeekGrid() { return (<table />) }`,
+  "src/views/ConflictsReport.tsx": `export default function ConflictsReport() { return (<ul />) }`,
+};
+check(
+  "a whole file nothing imports is reported, even with only a default export",
+  prePass(ORPHANED).filter((f) => f.kind === "orphan-file").map((f) => f.path).sort(),
+  ["src/views/ConflictsReport.tsx", "src/views/WeekGrid.tsx"],
+);
+// App.tsx and index.tsx are reached by the framework, not by project code.
+check(
+  "an entry file is never called an orphan",
+  prePass(ORPHANED).filter((f) => f.kind === "orphan-file" && f.path === "src/App.tsx"),
+  [],
+);
+check(
+  "an imported file is not an orphan",
+  prePass(ORPHANED).filter((f) => f.path === "src/components/ShiftForm.tsx" && f.kind === "orphan-file"),
+  [],
+);
+// A test file is run by vitest, not imported by the app.
+check(
+  "a test file is never called an orphan",
+  prePass({ ...ORPHANED, "src/lib/x.test.ts": `it("x", () => {})` })
+    .filter((f) => f.kind === "orphan-file" && f.path.includes(".test.")),
+  [],
+);
+
 // ── finding corroboration ────────────────────────────────────────────────────
 
 const FILES = {

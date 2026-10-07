@@ -44,12 +44,23 @@ export type ReviewUnit = {
  *  it, run the tests, see what is big. */
 export type PrePassFinding = {
   path: string;
-  kind: "broken-import" | "oversized-file" | "untested-logic" | "dead-code";
+  kind: "broken-import" | "oversized-file" | "untested-logic" | "dead-code" | "orphan-file";
   detail: string;
 };
 
 const CODE_EXT_RE = /\.(tsx?|jsx?|mts|mjs)$/;
 const TEST_FILE_RE = /\.(test|spec)\.[tj]sx?$/;
+
+/** Files the framework reaches rather than project code. Nothing importing
+ *  these is the normal state, not a finding. */
+const ENTRY_FILES = new Set([
+  "src/index.tsx",
+  "src/index.ts",
+  "src/main.tsx",
+  "src/main.ts",
+  "src/App.tsx",
+  "vitest.setup.ts",
+]);
 
 /** Past this, a file is doing too much to review as one unit — and it is also
  *  the size at which an edit starts rewriting things it did not mean to. Chosen
@@ -308,6 +319,35 @@ export function prePass(
         detail: `exports logic that ${unit.importedBy.length} file(s) depend on, with no sibling test`,
       });
     }
+  }
+
+  // ── A whole FILE that nothing imports ──────────────────────────────────────
+  // Measured on the ROTA build, 2026-10-07: it wrote WeekGrid, StaffList,
+  // RulesPage and ConflictsReport — the four views the user asked for — and
+  // App.tsx imported none of them. `check_page`, `check_types` and `run_tests`
+  // all passed, because the two pages that ARE routed render fine and the rule
+  // engine's own tests pass. The shipped app simply did not contain the
+  // feature.
+  //
+  // The dead-code analyser could not see it: all four views are
+  // `export default`, which it skips on purpose because proving a default
+  // export unreferenced needs module resolution. This check does not need any
+  // — the import graph already resolved every specifier, so "no file imports
+  // this file" is a fact about the graph rather than a guess about a symbol.
+  // It is the single highest-value free finding there is: an entire feature
+  // written and not wired up.
+  for (const [path] of Object.entries(g.importedBy)) {
+    if (!CODE_EXT_RE.test(path)) continue;
+    if (TEST_FILE_RE.test(path)) continue;
+    if (ENTRY_FILES.has(path)) continue;
+    if ((g.importedBy[path] ?? []).length > 0) continue;
+    out.push({
+      path,
+      kind: "orphan-file",
+      detail:
+        "no file in this project imports it, so nothing it contains can run — either wire it " +
+        "up or delete it",
+    });
   }
 
   for (const d of findDeadCode(files)) {

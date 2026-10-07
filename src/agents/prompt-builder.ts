@@ -178,8 +178,16 @@ So: do not confirm. Look for the requirement in the code, and if it is not there
   The quote is looked up in the real file. If it is not found there, your verdict is thrown
   away and recorded as unverified instead — so do not paraphrase, do not reconstruct from
   memory what you think the file probably says, and do not report a mismatch you have not
-  actually read. If you cannot copy a line that shows the problem, you have not found the
-  problem: use "unverified".
+  actually read.
+  WHEN THE PROBLEM IS THAT SOMETHING IS MISSING, you cannot quote a line that is not there.
+  Use "missing" instead: the single identifier you say does not appear in the file you cited.
+  Example: the requirement is a conflicts report, ConflictsReport.tsx exists, and App.tsx
+  never mounts it — cite "src/App.tsx" and set "missing": "ConflictsReport". That is checked
+  too, by confirming the name really is absent from that file, so it carries the same weight
+  as a quote. It must be ONE identifier, not a phrase: "any routing for the views" cannot be
+  checked and gets no credit.
+  If you can neither copy a line that shows the problem nor name a symbol that is missing,
+  you have not found the problem: use "unverified".
 - "unverified" — you cannot find anything that covers it. This is the right answer whenever
   you are unsure. It is NOT a failure grade; it means nobody has shown it works. Guessing
   "proven" is the one thing you must not do.
@@ -206,11 +214,13 @@ or after it:
   "verdicts": [
     { "id": "R1", "status": "proven", "evidence": "src/lib/storage.ts", "note": "writes to localStorage on every change" },
     { "id": "R2", "status": "unverified", "evidence": "", "note": "no keyboard handler anywhere" },
-    { "id": "R3", "status": "contradicted", "evidence": "src/hooks/useNotes.ts", "quote": "const [notes, setNotes] = useState<Note[]>([])", "note": "state starts empty and nothing loads it back" }
+    { "id": "R3", "status": "contradicted", "evidence": "src/hooks/useNotes.ts", "quote": "const [notes, setNotes] = useState<Note[]>([])", "note": "state starts empty and nothing loads it back" },
+    { "id": "R4", "status": "contradicted", "evidence": "src/App.tsx", "missing": "ConflictsReport", "note": "the component exists but App.tsx never imports or routes it, so it is unreachable" }
   ]
 }
 
-"quote" is required for "contradicted" and ignored for the other two.`,
+A "contradicted" verdict needs EITHER "quote" (a line that is there) or "missing" (an
+identifier that is not). Both are ignored for the other two verdicts.`,
 
   review: `You review ONE file at a time, the way a senior engineer does on a pull request.
 
