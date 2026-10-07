@@ -1142,6 +1142,64 @@ Activating it is: port the October fixes into `template-nextjs.ts`, add the 3D/a
 set, build it, verify in a live sandbox the way `verify-template.ts` does, then re-enable
 detection. Blocked on `E2B_API_KEY`, which is not in the repo's `.env`.
 
+## The import-install fix, verified — and what "done" is still missing, 2026-10-07
+`ORCHARD`, a three-view reading list, against deploy `7fb6dfa`. 4 rounds, 12 files,
+`check_page`/`check_types`/`run_tests` all pass, $0.359.
+
+**The fix is confirmed by the model repeating the exact behaviour that broke three builds.**
+It imported `react-router-dom` and emitted **no package.json again** — and this time the page
+rendered. So the install no longer depends on the model remembering to declare anything;
+`importedPackages` reads what the code actually imports. Prompt-level instruction had already
+failed at this twice, which is why it was replaced with a mechanism rather than firmer wording.
+
+**Staleness is wired and reads honestly.** `staleCheckPage/Types/Tests` are all 0, which is
+correct for this build — one `write_files`, then all three gates, nothing written afterwards.
+That proves the field populates and that a clean build reports clean. **It does NOT prove the
+detection fires**: no build has yet written something after checking, so the non-zero path is
+unobserved. Until one does, treat the counter as wired-but-unexercised.
+
+**Template rebuilt 2026-10-07** (4m23s) with the Vite-error-overlay check in `check-render.mjs`,
+verified in a live sandbox — eleven checks pass, and the baked script was read back to confirm
+it carries the new detection. `verify-template.ts` now asserts that behaviour rather than the
+filename, because a failed build silently leaves the last good image in place, which is how
+`check_page` stayed broken for three weeks.
+
+### The completion problem, stated properly — the next thing to build
+Five symptoms the owner named (no independent ground truth, local correctness vs global
+completeness, the agent writing its own exam, tests proving only what happened, completion
+bias) are ONE structural fact:
+
+> The agent is both the author and the examiner, and the exam is derived from the same
+> understanding that produced the code.
+
+If the understanding missed "notes persist", the code has no persistence, no persistence test
+is written, every test passes, and the agent honestly believes it is done. **No test failed
+because the missing feature produced no test.** That is Finding 4 exactly, and it is why
+self-review cannot fix it: a blind spot cannot audit itself.
+
+So an independent signal must come from somewhere whose CONTENT did not come from the agent's
+understanding. There are four such sources: the user's own words (parsed by a pass that never
+writes code, and from the RAW prompt — a plan is already the builder's interpretation and
+repeats its blind spot), reality (the browser, the test runner, the type checker — which
+Lampcode already has, but which only answer the questions they are asked), an adversarial pass
+whose objective is to find the gap rather than finish, and the user (`ask_user`).
+
+**And the completion signal is not "all checks pass".** It is: every requirement mapped to a
+check that ran AFTER the last write, with three states kept apart — `proven`, `contradicted`,
+and **`unverified`** (nothing covers it). The third is the one no tool reports today, and
+"done" should mean `unverified = 0`, not `failures = 0`. Those are different claims and users
+hear the second as the first.
+
+Next, in order: requirement extraction from the raw prompt by a non-building pass, stored as
+R1..Rn; evidence mapping from each gate and test file to the requirements it covers; and
+`unverified` surfaced to the user as a first-class result. The staleness work above is the
+foundation — a check that cannot date itself cannot be evidence.
+
+One measured reason to keep the audit in CODE rather than the prompt: prompts do move behaviour
+when they state a consequence (`check_types` went 3/10 → 11/11 that way), but the pull toward
+declaring done is in the weights, so the counter must increment on its own rather than ask the
+model to confess.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
