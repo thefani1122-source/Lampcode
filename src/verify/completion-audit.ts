@@ -1,5 +1,6 @@
 import { AgentDispatcher } from "../agents/dispatcher.js";
 import { config } from "../server/config.js";
+import { citations, quoteIsInCitedFile } from "./corroborate.js";
 import { logger } from "../server/logger.js";
 import type {
   AcceptanceCriterion,
@@ -65,24 +66,6 @@ const GATE_EVIDENCE = new Set(["check_page", "check_types", "run_tests"]);
 
 const VALID_KINDS = new Set(["visual", "behaviour", "data", "logic"]);
 
-/** Shortest quote that can corroborate a complaint. Below this, "}" or "note"
- *  would match almost any file and the check would be theatre. */
-const MIN_QUOTE_CHARS = 12;
-
-/** Split an evidence string into the bare paths/gate names it cites, tolerating
- *  "src/a.ts:42", a leading "./" and several separated by commas. */
-function citations(evidence: string): string[] {
-  return evidence
-    .split(/[,;]/)
-    .map((s) => s.trim().replace(/^\.?\//, "").split(/[:#\s]/)[0] ?? "")
-    .filter((s) => s !== "");
-}
-
-/** Collapse whitespace so a quote matches code that differs only in wrapping or
- *  indentation — the model retypes what it read and will not reproduce spacing. */
-function normalise(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 /**
  * Pull the criteria out of whatever the extractor returned.
@@ -220,12 +203,7 @@ export function parseVerdicts(
       // `export default` that is not there. This is the same move that makes
       // `proven` trustworthy — the model's claim is checked against something
       // it does not control — applied to the other direction.
-      const citedFiles = citations(found.evidence).filter((s) => known.has(s));
-      const quote = normalise(found.quote);
-      const corroborated =
-        quote.length >= MIN_QUOTE_CHARS &&
-        citedFiles.some((p) => normalise(fileContents[p] ?? "").includes(quote));
-      if (corroborated) {
+      if (quoteIsInCitedFile(found.quote, found.evidence, fileContents)) {
         return {
           id: c.id,
           status: "contradicted" as CriterionStatus,

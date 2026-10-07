@@ -247,6 +247,11 @@ export function findDeadCode(files: Record<string, string>): DeadCodeFinding[] {
   for (const [rawPath, content] of Object.entries(files)) {
     const path = normalise(rawPath);
     if (!isCode(path)) continue;
+    // Guard against a malformed entry rather than trusting the type. This is
+    // advisory analysis that runs at the end of EVERY build — throwing here
+    // would turn a cosmetic report into a failed build, which is the one thing
+    // it must never do.
+    if (typeof content !== "string") continue;
     code[path] = stripComments(content);
   }
 

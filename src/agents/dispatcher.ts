@@ -180,6 +180,12 @@ export interface DispatchResult {
   /** What find_dead_code reported, if the model called it. `called: false`
    *  means it never asked — a different fact from "it asked and found none". */
   deadCode: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number };
+  /** What review_code did, if the model called it. `deep` out of `total` is the
+   *  figure that makes a review's coverage checkable instead of asserted. */
+  review: {
+    called: boolean; deep: number; total: number; unreviewed: number;
+    findings: number; dropped: number; costUsd: number;
+  };
   outputPath: string;
   durationMs: number;
   inputTokens: number;
@@ -534,6 +540,9 @@ export class AgentDispatcher {
     const writeCounter = { value: 0 };
     const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0 };
     const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
+    const review = {
+      called: false, deep: 0, total: 0, unreviewed: 0, findings: 0, dropped: 0, costUsd: 0,
+    };
 
     // Agentic builds need many more turns than a context-gathering tool call —
     // the model is writing, looking at the result and repairing, which is
@@ -682,6 +691,14 @@ export class AgentDispatcher {
                 writeCounter,
                 churn,
                 deadCode,
+                review,
+                // review_code runs a model of its own, so it needs the
+                // dispatcher and the identity to bill against. Not a recursion
+                // risk: the review dispatch offers NO tools, so it cannot reach
+                // review_code again.
+                dispatcher: this,
+                userId: options.userId,
+                provider: effectiveProvider,
               }
             : {}),
         }).catch(
@@ -765,6 +782,7 @@ export class AgentDispatcher {
       gateResults,
       churn,
       deadCode,
+      review,
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,

@@ -8,6 +8,8 @@ import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./p
 import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
+import { reviewProject, formatReview } from "../verify/code-review.js";
+import type { AgentDispatcher } from "./dispatcher.js";
 import {
   writeFilesToSandbox,
   verifyBrowserRender,
@@ -214,6 +216,32 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "review_code",
+    description:
+      "Review the whole project the way a senior engineer reviews a pull request, and report " +
+      "what is wrong with COVERAGE stated — how many files got a real look and how many did " +
+      "not.\n" +
+      "Call this when the person asks for a review, or asks you to find bugs in code that " +
+      "already exists. Do NOT call it on your own fresh work: check_page, check_types and " +
+      "run_tests answer that faster and for far less.\n" +
+      "It reads every file, ranks them by how many other files depend on them and whether " +
+      "anything tests them, then looks at them ONE AT A TIME — which is why it finds things a " +
+      "single pass over forty files does not. It costs real money and takes a while, so call " +
+      "it once and act on what it reports.",
+    input_schema: {
+      type: "object",
+      properties: {
+        max_files: {
+          type: "number",
+          description:
+            "How many files to look at in depth, riskiest first. Omit for the default. The " +
+            "report always states how many were skipped.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "check_page",
     description:
       "Open the running app in a real headless browser and report what actually rendered, " +
@@ -390,6 +418,18 @@ export interface ToolExecutionContext {
    *  `called: false` is its own fact — the same distinction build_outcome keeps
    *  between a gate that failed and a gate nobody ran. */
   deadCode?: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number } | undefined;
+  /** What review_code did, so a review's COVERAGE is recorded and not merely
+   *  printed into the conversation. `deep` versus `total` is the number that
+   *  makes "I reviewed it" checkable. */
+  review?: {
+    called: boolean; deep: number; total: number; unreviewed: number;
+    findings: number; dropped: number; costUsd: number;
+  } | undefined;
+  /** Needed only by review_code, which is the one tool that dispatches a model
+   *  of its own. Absent on any path that cannot pay for it. */
+  dispatcher?: AgentDispatcher | undefined;
+  userId?: string | undefined;
+  provider?: "anthropic" | "modal" | undefined;
 }
 
 function lineCount(text: string): number {
@@ -480,6 +520,7 @@ export async function executeTool(
     name === "read_file" ||
     name === "read_logs" ||
     name === "find_dead_code" ||
+    name === "review_code" ||
     name === "fetch_reference"
   ) {
     // Handled before the sandbox check on purpose: this one reads the file set
@@ -503,6 +544,44 @@ export async function executeTool(
         ctx.deadCode.called = true;
       }
       return formatDeadCode(findings);
+    }
+
+    // Also before the sandbox check: the review reads the file set, not the
+    // running app. It is the one tool here that costs real money, so it needs
+    // the dispatcher and the identity to bill against, and it refuses rather
+    // than silently doing nothing when either is missing.
+    if (name === "review_code") {
+      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      if (Object.keys(files).length === 0) {
+        return "There is no code to review yet.";
+      }
+      if (!ctx.dispatcher || !ctx.userId) {
+        return "Error: the review pass is not available in this build.";
+      }
+      const maxUnits = typeof args["max_files"] === "number" && args["max_files"] > 0
+        ? Math.min(Math.floor(args["max_files"]), 60)
+        : undefined;
+      const result = await reviewProject({
+        dispatcher: ctx.dispatcher,
+        files,
+        sessionId: ctx.sessionId ?? "",
+        userId: ctx.userId,
+        projectId: ctx.projectId ?? "",
+        provider: ctx.provider ?? "modal",
+        ...(maxUnits === undefined ? {} : { maxUnits }),
+        onProgress: (done, total, path) =>
+          ctx.onLog?.(`Reviewing ${done}/${total}: ${path}`),
+      });
+      if (ctx.review) {
+        ctx.review.called = true;
+        ctx.review.deep = result.coverage.deep;
+        ctx.review.total = result.coverage.total;
+        ctx.review.unreviewed = result.coverage.unreviewed;
+        ctx.review.findings = result.findings.length;
+        ctx.review.dropped = result.droppedUncorroborated;
+        ctx.review.costUsd = result.costUsd;
+      }
+      return formatReview(result);
     }
 
     const projectId = ctx.projectId;

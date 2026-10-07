@@ -15,6 +15,9 @@ export const MODEL_TIERS = {
   // a builder's, which is the entire reason the audit is independent.
   acceptance: ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   audit:      ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  // One dispatch per file under review, so this runs many times per review and
+  // its input is deliberately small — see src/verify/code-review.ts.
+  review:     ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   frontend:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   backend:    ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   db:         ["claude-sonnet-5", "claude-sonnet-4-6"] as const,

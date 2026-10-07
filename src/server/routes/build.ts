@@ -1282,15 +1282,30 @@ export async function runFastBuild(
       plannedFiles: buildPlan?.files.length ?? 0,
       churn: result.churn,
       deadCodeCalled: result.deadCode.called,
-      costUsd: result.costUsd + planCostUsd,
+      ...(result.review.called
+        ? {
+            review: {
+              deep: result.review.deep,
+              total: result.review.total,
+              unreviewed: result.review.unreviewed,
+              findings: result.review.findings,
+              dropped: result.review.dropped,
+              costUsd: result.review.costUsd,
+            },
+          }
+        : {}),
+      costUsd: result.costUsd + planCostUsd + result.review.costUsd,
       durationMs: Date.now() - buildStartedMs,
     };
 
+    // review_code dispatches a model per file, inside the main dispatch's tool
+    // loop, so its spend is not in result.costUsd and would otherwise be
+    // invisible. A review that cost more than the build must not look free.
     // Running spend across this build's dispatches. The main dispatch above
     // always fires regardless of cost — there is nothing to check it against yet.
     // The planning pass counts: it is a model call this build paid for, and
     // leaving it out would understate every planned build's cost.
-    let cumulativeCostUsd = result.costUsd + planCostUsd;
+    let cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd;
 
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {

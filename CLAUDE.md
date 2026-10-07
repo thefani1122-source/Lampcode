@@ -1409,7 +1409,7 @@ moved it to 11 of 11 — but it is the number to watch. Note also that this edit
 for that tool: the replacement happened inside one JSX block, and the failure the tool exists
 for is a whole component or module left orphaned. A harder edit is needed to test it properly.
 
-### Review at scale — diagnosed, not built
+### REVIEW AT SCALE — the spine is built, 2026-10-07
 Why a model skips on a big PR, and none of it is the context window (a big PR fits):
 1. **Effort per unit, not capacity.** Roughly fixed effort per response, so per-file attention
    falls as file count rises, and the output is a plausible SUMMARY that reads like a review.
@@ -1427,7 +1427,68 @@ missing tests; then one small dispatch per unit carrying only that unit and its 
 an import graph, so attention stays high and cost is LINEAR; every finding quote-corroborated
 the way `parseVerdicts` already does; and honest partial coverage when the budget runs out
 ("12 units deep, 35 cheap only") rather than fake full coverage. Estimated $0.50–1.00 for a
-50-hunk PR. The failure catalogue is this file's own measured findings. **Not built.**
+50-hunk PR. The failure catalogue is this file's own measured findings.
+
+**Built, in four files.** `src/verify/import-graph.ts` resolves every relative, `@/`-aliased
+and extensionless specifier to a real path and inverts it into a fan-in map.
+`src/verify/review-units.ts` turns a project into risk-ranked units and runs the free pre-pass.
+`src/verify/code-review.ts` is the model half — one dispatch per unit, coverage accounting,
+quote corroboration, budget. `src/verify/corroborate.ts` holds the quote check, now SHARED with
+the completion audit rather than copied: two copies would drift and the weaker one becomes the
+way through, the same argument as `src/mcp/call-tool.ts`.
+
+Offered as `review_code(max_files?)`, handled before the sandbox check because it reads the
+file set rather than the running app. The prompt says to use it when the person asks for a
+review and NOT on the agent's own fresh work, where the three gates answer the same question
+for far less. Its spend is added to `cumulativeCostUsd` — it dispatches per file inside the main
+tool loop, so it is not in `result.costUsd` and a review would otherwise look free.
+
+**Coverage is recorded, not asserted.** `BuildOutcome.review` carries `deep`, `total`,
+`unreviewed`, `findings`, `dropped`, `costUsd`, and `formatReview` states coverage in its FIRST
+line — because "no problems found" over a project where four of forty files got a real look is
+the claim this exists to make impossible to state by accident. A unit whose dispatch failed is
+`unreviewed`, kept apart from `cheapOnly`: the direct analogue of `unverified`.
+
+**A finding whose quote is not in the file it cites is DROPPED and counted** — not downgraded,
+which is where this differs from the audit on purpose. There, an uncorroborated complaint still
+told the user "nobody has shown this works". Here the unit was reviewed either way, so an
+unquotable finding is pure noise, and noise is what makes a review get ignored. The count is
+surfaced: a high `dropped` means the reviewer is hallucinating and the review should not be
+trusted.
+
+#### Three false positives, each found by running it on real output
+The spine was probed against the two downloaded projects (37 files) after each change, and
+every round caught something that reading the code would not have:
+
+1. **Template-owned files are not in the generated set.** The first broken-import rule reported
+   `./styles.css` and `./lib/utils` as unresolvable in BOTH projects. Both are real — the E2B
+   template writes them, and they are in `BAKED_FILES` so the model cannot overwrite them. The
+   generated file set is never the whole project. Assets and template-owned paths are now
+   excluded.
+2. **Fan-in ranked `src/types.ts` first in both projects.** Fan-in measures the blast radius of
+   a BEHAVIOUR change, and a type-only module has no behaviour however many files import its
+   shapes — so the first and most expensive dispatch was going to the lowest-yield file in the
+   project. Type-only modules are now ranked by size alone.
+3. **`export const CATEGORIES = [...]` was called "untested logic".** A const holding a literal
+   is data; nobody writes a test for a list of category names, and a finding like that teaches
+   the reader to skim the rest. Logic now means a function or class, or a const initialised to
+   one.
+
+After all three, every remaining finding on those projects is genuine: the two state hooks and
+both `storage.ts` modules export real logic that other files depend on with no sibling test,
+plus the known dead `MonthSummary` export.
+
+**One coupling deliberately avoided.** `review-units.ts` COPIES the template-owned list instead
+of importing `isTemplateOwnedFile` — measured, that import pulls config, Redis and the E2B SDK
+and made the module hang when loaded outside the server process. The drift risk is covered by a
+case that reads `e2b-service.ts` as TEXT and asserts every path in its `BAKED_FILES` appears in
+the copy. **That guard caught two missing paths on its first run** (`lib/utils.ts`,
+`lib/queryClient.ts` — the Next.js root-level variants), which is exactly why it exists.
+
+43 cases in `npm test` (`scripts/review.test.ts`), all three false positives kept as
+regressions. **No review has been run against a real model yet** — the enumeration, ranking,
+pre-pass, corroboration and report are covered by cases and by the probes above; the per-unit
+dispatch and the `review` prompt are not.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED

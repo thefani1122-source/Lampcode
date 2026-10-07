@@ -218,6 +218,15 @@ export type BuildOutcome = {
    *  never looks and a project that is genuinely clean are different facts. */
   deadCode?: { unusedImports: number; unreferencedExports: number; neverRendered: number };
   deadCodeCalled?: boolean;
+  /** What a `review_code` call did, when one happened. `deep` out of `total` is
+   *  the point: a review that looked at four of forty files is not a review of
+   *  the project, and before this nothing recorded the difference. `dropped`
+   *  counts claims thrown away because the line they quoted was not in the file
+   *  they named — a high number means the reviewer was hallucinating. */
+  review?: {
+    deep: number; total: number; unreviewed: number;
+    findings: number; dropped: number; costUsd: number;
+  };
   /** The outside check: what the user asked for, and which of it this build can
    *  actually prove. Lives inside build_outcome rather than in a column of its
    *  own so no migration is needed; the trade-off is that it is persisted when
