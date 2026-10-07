@@ -1287,6 +1287,21 @@ a finished build loses the card although the audit is stored. Not built.
    the function behind the cost guard, the credits deducted, and any price set from `usage_usd`.
 3. **`AGENTIC_MAX_TURNS=40` and `MAX_BUILD_COST_USD=3.0`** were raised on Railway on 2026-10-01
    for a long-running test. Revisit before opening the product to real users.
+4. **The audit needs its own probe set — AGREED 2026-10-07, not built.** The one thing the
+   completion audit has not shown is that it catches a REAL missing requirement, and waiting for
+   a build to drop one is not a test you can run: you cannot make the model forget on demand.
+   So mutate known-good output instead and keep the criteria fixed. Five mutations, each one a
+   failure this repo has actually measured: strip the persistence (Finding 4); put an opaque
+   background on an ancestor of the canvas (Finding 5); leave a keydown handler defined but
+   never attached; delete a numeric cap while leaving everything around it (LEDGER R8); remove a
+   conditional-warning branch (LEDGER R6). Run the UNMUTATED originals too — that half measures
+   precision, which is what Finding 6 was, and a recall number alone would hide it.
+   LEDGER's files and its 8 hand-verified verdicts are the natural first fixture.
+   ~$0.06 per audit dispatch, so the whole set is well under a dollar and needs NO build.
+   **Blocked on one thing:** it needs LLM credentials locally. The repo's `.env` holds only
+   `E2B_API_KEY`, and Railway's API redacts variable values, so this could not be run on
+   2026-10-07. `MODAL_PROXY_TOKEN` + `MODAL_ENDPOINT_URL` + `MODAL_MODEL_NAME` in a local `.env`
+   unblocks it.
 
 ## Things that will bite you
 1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are both
