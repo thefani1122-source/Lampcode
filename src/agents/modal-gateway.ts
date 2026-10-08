@@ -175,6 +175,13 @@ export function parseRetryAfter(header: string | null | undefined, nowMs = Date.
 const BILLING_RE =
   /payment method|spend limit|credit|billing|insufficient funds|quota exceeded|subscription/i;
 
+/** A 401/403 body describing an ACCOUNT that is not cleared yet, rather than a
+ *  bad credential. A new AWS account answers every Bedrock call this way while
+ *  it is under review. Narrow on purpose: calling a genuinely revoked key
+ *  "pending" would have the reader wait for something that never clears. */
+const ACCOUNT_PENDING_RE =
+  /being verified|account verification|pending activation|not yet activated|under review/i;
+
 /**
  * Map fetch/HTTP failures to our GatewayError codes — same codes
  * model-gateway.ts uses.
@@ -196,9 +203,18 @@ export function mapModalError(
 ): GatewayError {
   const detail = message.trim().slice(0, 300);
   if (status === 401 || status === 403) {
+    // A 403 is not always a bad credential. A brand-new AWS account answers
+    // every Bedrock call with "Your account is currently being verified" —
+    // measured 2026-10-08, where the key, the URL and the model id were all
+    // correct and only the ACCOUNT was on hold. Naming the token as the
+    // culprit sends the reader to regenerate a key that was never wrong, so
+    // the holds that clear by themselves are called out separately.
+    const pending = ACCOUNT_PENDING_RE.test(detail);
     return new GatewayError(
       "INVALID_KEY",
-      `Modal rejected the proxy token (HTTP ${status})${detail ? `: ${detail}` : ""}`,
+      pending
+        ? `The provider accepted the request but the ACCOUNT is not cleared for it yet — this is not a bad key and not a code problem (HTTP ${status}): ${detail}`
+        : `The provider rejected the credential (HTTP ${status})${detail ? `: ${detail}` : ""}`,
     );
   }
   if (status === 429) {

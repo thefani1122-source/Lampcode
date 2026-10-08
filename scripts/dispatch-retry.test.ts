@@ -97,6 +97,38 @@ check(
   45_000,
 );
 
+// ── a 403 is not always a bad credential ────────────────────────────────────
+// The real body, captured from Amazon Bedrock on 2026-10-08. The URL, the API
+// key and the model id were ALL correct; only the AWS account was on hold.
+const REAL_PENDING_BODY =
+  '{"error":{"message":"Your account is currently being verified. Verification normally takes less than 2 hours. Until your account is verified, you may not have access to this operation."}}';
+
+ok(
+  "an account-verification 403 says the ACCOUNT is not cleared, not that the key is bad",
+  mapModalError(403, REAL_PENDING_BODY).message.includes("ACCOUNT is not cleared"),
+);
+ok(
+  "and says outright that it is not a code problem, so nobody re-debugs the gateway",
+  mapModalError(403, REAL_PENDING_BODY).message.includes("not a code problem"),
+);
+ok(
+  "and keeps AWS's own wording, including how long it normally takes",
+  mapModalError(403, REAL_PENDING_BODY).message.includes("less than 2 hours"),
+);
+
+// The error in the other direction is worse: a revoked key called "pending"
+// has the reader waiting for something that will never clear.
+ok(
+  "a genuinely rejected credential is still named as the credential",
+  mapModalError(401, '{"error":"The security token included in the request is invalid"}')
+    .message.includes("rejected the credential"),
+);
+check(
+  "either way it stays INVALID_KEY — only the wording changes",
+  mapModalError(403, REAL_PENDING_BODY).code,
+  "INVALID_KEY",
+);
+
 // Every branch keeps the provider's message now. It used to be deleted on
 // exactly the two that most need it.
 ok(
