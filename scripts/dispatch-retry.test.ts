@@ -11,9 +11,10 @@
  */
 
 import { fallbackDelayMs } from "../src/agents/retry-policy.js";
-import { parseRetryAfter } from "../src/agents/modal-gateway.js";
+import { parseRetryAfter, mapModalError } from "../src/agents/modal-gateway.js";
 
 let failures = 0;
+const ok = (name: string, cond: boolean) => check(name, cond, true);
 function check(name: string, got: unknown, want: unknown): void {
   if (JSON.stringify(got) === JSON.stringify(want)) {
     console.log(`✔ ${name}`);
@@ -56,6 +57,56 @@ check("an empty header yields nothing", parseRetryAfter("", NOW), undefined);
 check("nonsense yields nothing rather than NaN", parseRetryAfter("soon", NOW), undefined);
 // A float is not a valid Retry-After and must not be half-read as 1 second.
 check("a non-integer is rejected", parseRetryAfter("1.5", NOW), undefined);
+
+// ── a 429 about money is not a rate limit ───────────────────────────────────
+// The real body, captured from Modal on 2026-10-08 after four runs had each
+// waited and failed without ever showing it:
+const REAL_BILLING_BODY =
+  '{"error":"Plan credits cannot be applied to shared endpoint usage. Add a payment method or increase your spend limit"}';
+
+check(
+  "a billing 429 is PAYMENT_REQUIRED, which is not retryable",
+  mapModalError(429, REAL_BILLING_BODY).code,
+  "PAYMENT_REQUIRED",
+);
+// The whole point of the reclassification: no wait, because waiting cannot help.
+check(
+  "a billing 429 carries no retry delay",
+  mapModalError(429, REAL_BILLING_BODY).retryAfterMs,
+  undefined,
+);
+ok(
+  "a billing 429 keeps the provider's own words, so the owner knows what to do",
+  mapModalError(429, REAL_BILLING_BODY).message.includes("Add a payment method"),
+);
+ok(
+  "and says plainly that it is not load",
+  mapModalError(429, REAL_BILLING_BODY).message.includes("not load"),
+);
+
+// A genuine throttle must still be retryable — misreading one as unpayable
+// would stop a build that waiting would fix.
+check(
+  "a real throttle stays RATE_LIMIT",
+  mapModalError(429, '{"error":"Too many requests, slow down"}').code,
+  "RATE_LIMIT",
+);
+check(
+  "a real throttle still honours Retry-After",
+  mapModalError(429, "too many requests", "45").retryAfterMs,
+  45_000,
+);
+
+// Every branch keeps the provider's message now. It used to be deleted on
+// exactly the two that most need it.
+ok(
+  "a 401 reports what the provider said, not a guess about the token",
+  mapModalError(401, '{"error":"token revoked"}').message.includes("token revoked"),
+);
+ok(
+  "a 503 reports what the provider said",
+  mapModalError(503, "upstream overloaded").message.includes("upstream overloaded"),
+);
 
 console.log(failures === 0 ? "\nAll dispatch-retry cases passed." : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

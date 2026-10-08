@@ -150,6 +150,12 @@ export function parseRetryAfter(header: string | null | undefined, nowMs = Date.
   return delta > 0 ? delta : 0;
 }
 
+/** A 429 body that is about billing rather than load. Deliberately narrow —
+ *  these are the words providers actually use for money — because misreading a
+ *  genuine throttle as unpayable would stop a build that waiting would fix. */
+const BILLING_RE =
+  /payment method|spend limit|credit|billing|insufficient funds|quota exceeded|subscription/i;
+
 /**
  * Map fetch/HTTP failures to our GatewayError codes — same codes
  * model-gateway.ts uses.
@@ -164,7 +170,7 @@ export function parseRetryAfter(header: string | null | undefined, nowMs = Date.
  * already in hand and deleted. An error that hides the provider's reason costs
  * hours of guessing.
  */
-function mapModalError(
+export function mapModalError(
   status: number | undefined,
   message: string,
   retryAfter?: string | null,
@@ -177,6 +183,25 @@ function mapModalError(
     );
   }
   if (status === 429) {
+    // A 429 whose body is about MONEY is not a rate limit, and treating it as
+    // one is strictly harmful: it can never clear by waiting, so every retry is
+    // spent and the real cause stays hidden. Measured on 2026-10-08 — four runs
+    // over more than an hour, each waiting and failing, until the body was
+    // finally surfaced and read:
+    //
+    //   {"error":"Plan credits cannot be applied to shared endpoint usage.
+    //             Add a payment method or increase your spend limit"}
+    //
+    // That is the note already in CLAUDE.md — Modal plan credits do not cover
+    // shared-endpoint usage — arriving as an HTTP status that means something
+    // else. PAYMENT_REQUIRED is NOT in FALLBACK_CODES, so this now fails in one
+    // second with the provider's own words instead of 75 s of pointless waiting.
+    if (BILLING_RE.test(detail)) {
+      return new GatewayError(
+        "PAYMENT_REQUIRED",
+        `The model provider refused the request for billing reasons, not load: ${detail}`,
+      );
+    }
     return new GatewayError(
       "RATE_LIMIT",
       `Modal rate limit exceeded${detail ? `: ${detail}` : ""}`,

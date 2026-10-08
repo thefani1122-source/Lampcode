@@ -1634,12 +1634,41 @@ would have meant "retry immediately" on a header we did not understand. Every HT
 carries a weekday or month name, so a letter is now required before `Date.parse` is tried.
 8 cases.
 
-384 cases in `npm test`; ROTA's three findings are all kept as regressions.
+### THE ACTUAL CAUSE — it was never a rate limit, 2026-10-08
+Finding 10's fix paid for itself on the very first failure after it deployed. Modal's own body,
+surfaced for the first time:
 
-**Still unproven, and now blocked rather than untested:** `review_code` against a real model.
-The deterministic half — enumeration, ranking, the free pre-pass, corroboration, the report —
-is verified by cases and by probes against two real projects. The per-unit dispatch and the
-`review` prompt need one run, which needs the provider back.
+```
+Modal rate limit exceeded: {"error":"Plan credits cannot be applied to shared endpoint
+usage. Add a payment method or increase your spend limit"}
+```
+
+**It is a BILLING refusal wearing a 429.** Four runs across more than an hour each waited and
+retried something that can never clear by waiting, and the sentence saying so was being deleted
+on the way past every single time. This is the note already in this file — *Modal plan credits
+do not cover shared-endpoint usage* — arriving as an HTTP status that means something else.
+
+**What unblocks the product: add a payment method on Modal, or raise the spend limit.** Nothing
+in this repo needs changing for builds to work again.
+
+### Finding 11 — a 429 about money must fail fast, not retry
+Mapping it to `RATE_LIMIT` was strictly harmful: it cannot clear, so every retry is spent and
+the real cause stays hidden. `PAYMENT_REQUIRED` was **already in `GatewayErrorCode`** and is
+NOT in `FALLBACK_CODES`, so a billing 429 now fails in about a second, carrying the provider's
+own words and stating plainly that it is not load — instead of 75 s of pointless waiting and a
+message that sends the reader looking for a traffic problem.
+
+`BILLING_RE` is deliberately narrow (payment method, spend limit, credit, billing, insufficient
+funds, quota exceeded, subscription) because the error in the other direction is worse:
+misreading a genuine throttle as unpayable would stop a build that waiting would have fixed.
+Cases cover both sides, using the real captured body.
+
+392 cases in `npm test`; ROTA's three findings are all kept as regressions.
+
+**Still unproven, and blocked on BILLING rather than on code:** `review_code` against a real
+model. Its deterministic half — enumeration, ranking, the free pre-pass, corroboration, the
+report — is verified by cases and by probes against two real projects. The per-unit dispatch
+and the `review` prompt need one run, and that needs the Modal payment method in place.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
