@@ -53,6 +53,13 @@ const MODEL_PRICING: Record<
   "moonshotai.kimi-k3":          { inputPerM: 3.00,  outputPerM: 15.00 },
   "us.moonshotai.kimi-k3":       { inputPerM: 3.30,  outputPerM: 16.50 }, // US CRIS
   "in.moonshotai.kimi-k3":       { inputPerM: 3.30,  outputPerM: 16.50 }, // IN CRIS
+  // K2.5 is what this account can actually reach — K3 answers "not available
+  // for this account" on Bedrock (confirmed in the console playground, not
+  // just through our API). Rates are REGION-SPECIFIC and this row is Sydney,
+  // the region configured: US regions are $0.60/$3.00 and several others
+  // $0.72/$3.60, so moving region without moving this row misprices the build.
+  // K2.5 has no Geo or Global inference profile at all, hence the bare id.
+  "moonshotai.kimi-k2.5":        { inputPerM: 0.618, outputPerM: 3.09  }, // ap-southeast-2
   "moonshotai/kimi-k2.7-code":   { inputPerM: 0.95,  outputPerM: 4.00  },
   "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
   "moonshotai/kimi-k2":          { inputPerM: 0.60,  outputPerM: 2.50  },
