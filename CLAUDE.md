@@ -1593,7 +1593,11 @@ it a mid-review throttle turns every remaining unit into `unreviewed`.
 **`review_code` has still not been exercised against a real model** — and chasing why turned
 up something far more important than the review.
 
-### THE PRODUCT IS CURRENTLY DOWN — Modal is refusing this account, 2026-10-08
+### Modal refused this account, 2026-10-08 (SUPERSEDED — the provider is Bedrock now)
+Kept because the diagnosis is still how Findings 9–11 came about, and because the billing shape
+described here is the reason the provider was switched at all. For where things actually stand,
+read "MOVED OFF MODAL TO AMAZON BEDROCK" below.
+
 A third review attempt failed the same way, but at **75 s instead of 25 s**, which confirms
 Finding 9's fix by timing: it honoured the 65 s wait instead of capping at 10 s. Then the
 decisive probe — the eval's SMALLEST task, `counter`, one file, previously $0.060 and 30 s:
@@ -1665,10 +1669,104 @@ Cases cover both sides, using the real captured body.
 
 392 cases in `npm test`; ROTA's three findings are all kept as regressions.
 
-**Still unproven, and blocked on BILLING rather than on code:** `review_code` against a real
-model. Its deterministic half — enumeration, ranking, the free pre-pass, corroboration, the
-report — is verified by cases and by probes against two real projects. The per-unit dispatch
-and the `review` prompt need one run, and that needs the Modal payment method in place.
+**Still unproven, and blocked on the PROVIDER rather than on code:** `review_code` against a
+real model. Its deterministic half — enumeration, ranking, the free pre-pass, corroboration,
+the report — is verified by cases and by probes against two real projects. The per-unit
+dispatch and the `review` prompt need one run, and no provider has served one since.
+
+## MOVED OFF MODAL TO AMAZON BEDROCK — 2026-10-08
+Modal's refusal above cannot clear by waiting, so the provider was switched. Bedrock reached
+by the SAME gateway, with no new code path: `modal-gateway.ts` already speaks any
+OpenAI-compatible `/v1/chat/completions`, and Bedrock serves exactly that.
+
+**The live config (Railway).** `LLM_ENDPOINT_URL` must end at `/openai`, because the gateway
+appends `/v1/chat/completions` itself and Bedrock's documented path is
+`/openai/v1/chat/completions`:
+
+```
+LLM_ENDPOINT_URL=https://bedrock-runtime.ap-southeast-2.amazonaws.com/openai
+LLM_API_KEY=<long-term Bedrock API key — starts "ABSK", 132 chars, REGION-SPECIFIC>
+LLM_MODEL_NAME=global.moonshotai.kimi-k3
+MODAL_REASONING_EFFORT=off
+LLM_PROVIDER_MODE=openai
+```
+
+The `MODAL_*` trio is REMOVED. `LLM_* ?? MODAL_*` means the new names win anyway, but a stale
+Modal URL in the dashboard invites exactly the wrong conclusion, and a later missing `LLM_` var
+would fall back to a dead endpoint instead of failing.
+
+`MODAL_REASONING_EFFORT=off` is not optional here. The default `"low"` sends a non-standard
+`reasoning_effort` field, tuned for GLM-5.3, to a provider that never asked for it.
+
+**Pricing needed a row, and the miss would have been silent.** `MODEL_PRICING` is an exact
+lookup on `LLM_MODEL_NAME`, and on Bedrock that value is `global.moonshotai.kimi-k3`, which
+does not match `moonshotai/kimi-k3`. A miss falls to `DEFAULT_PRICING` ($1.00/$4.00) with only
+a warning — every build costed at about a THIRD of its real price, taking the
+`MAX_BUILD_COST_USD` guard and the user's deducted credits down with it. All three CRIS
+profile ids are rows now. Bedrock's published cache rates are exactly `CACHED_INPUT_RATIO`
+(1/10) and `CACHE_WRITE_RATIO` (1.25x) of the base, so `computeUsage` is unchanged.
+
+### Finding 12 — a wrong URL path arrived as HTTP 200, and the stream parser ate it
+Three rounds were lost to a log line that said the opposite of the truth. Every build reported
+`toolCallsMade: 0`, whose message reads *"this model or endpoint does not do tool calling"* —
+so the suspicion went to the model. The real sequence:
+
+1. The endpoint URL was missing its `/openai` segment, so every request hit a route Bedrock
+   does not serve.
+2. AWS answered `{"Output":{"__type":"com.amazon.coral.service#UnknownOperationException"}}`
+   — **with HTTP 200**, so `mapModalError` never fired.
+3. The SSE loop reads only lines beginning `data:`, so a plain JSON body yielded NOTHING. The
+   tell was `[stream] loop done: totalChunks=2 contentChunks=0 stopReason=undefined`, the 2
+   being the generator's OWN trailing `usage`/`done` chunks. **totalChunks=2 means zero events
+   parsed**, and that number is now the first thing to read on an empty reply.
+
+Fixed in `958add5`: the gateway branches on content-type and parses the whole-completion shape,
+and BOTH paths now log the body when nothing parses. That logging found the cause on its very
+first run, having been added on a hypothesis that turned out to be wrong in its specifics —
+which is the argument for keeping the provider's bytes rather than for any particular guess.
+
+**A path can be probed with NO credential**, and this is worth remembering: a wrong path
+returns the Coral envelope, while the right one returns a normal OpenAI-shaped 401. That
+distinguished the two in seconds, against the live endpoint, with a junk token.
+
+### Finding 13 — a 403 that is not about the credential
+`mapModalError` called every 401/403 *"Modal rejected the proxy token"*. On a new AWS account
+the 403 body was "Your account is currently being verified" — the key, the URL and the model id
+were all correct and only the ACCOUNT was on hold. Naming the token sends the reader to
+regenerate a key that was never wrong. `ACCOUNT_PENDING_RE` now says so, and says outright that
+it is not a code problem; narrow on purpose, since calling a revoked key "pending" would have
+someone waiting for something that never clears. `b17cc6f`, 6 cases on the captured body.
+
+### Where it actually stands — BLOCKED ON AWS, not on code
+Every layer we control is verified by a real run. What remains is account-level and only the
+owner can move it:
+
+| | |
+|---|---|
+| account verification hold | **cleared by itself** |
+| URL / key format / model resolution | **proven** — requests now reach model-level errors |
+| `moonshotai.kimi-k3` | **403 "not available for this account"** — needs model access |
+| `openai.gpt-oss-120b-1:0` | access GRANTED, but **429 "Too many tokens per day"** |
+
+The gpt-oss probe is the proof the integration works: it cleared access control and reached a
+QUOTA error, which cannot happen unless auth, URL and model resolution all succeeded.
+
+**The quota is the bigger blocker and it is a known new-account trap.** That 429 arrived on an
+account that had spent **$0.000**. Several AWS re:Post threads report the same: applied Bedrock
+quotas sitting at **0** against defaults in the billions, often marked "not adjustable" so the
+self-service increase is unavailable. The reported remedy is an **Account and billing support
+case** asking for verification / quota correction — not a Service Quotas request.
+
+**Do NOT settle for gpt-oss-120b as the model.** Its `bedrock-runtime` feature table omits
+**client-side tool calling**, which the harness cannot work without; it is listed only under
+`bedrock-mantle`. Kimi K3's card lists it on `bedrock-runtime`. Switching to gpt-oss to dodge
+the access problem would produce a genuine `toolCalls: 0` and restart this whole diagnosis from
+the beginning.
+
+**STILL UNPROVEN: tool calling on Bedrock has never once succeeded.** Every `toolCalls: 0`
+recorded today was Finding 12's transport bug, so none of it is evidence either way. The model
+card says K3 supports it and the request now has the right shape — but the first green build is
+what will settle it, and nothing should be built on the assumption until then.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
