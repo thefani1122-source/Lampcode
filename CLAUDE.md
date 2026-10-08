@@ -1590,13 +1590,56 @@ One retry with a 20 s wait per throttled unit is also now in `reviewProject`: th
 one dispatch per file in quick succession, which is the shape providers throttle, and without
 it a mid-review throttle turns every remaining unit into `unreviewed`.
 
-**`review_code` has still not been exercised against a real model.** Both attempts died on the
-provider limit before reaching it, and the limit did not clear between attempts 25 minutes
-apart — so it is not the 60 s window but something longer, after a day of heavy use. The fix
-above is in place for when it clears; the per-unit dispatch and the `review` prompt remain
-unproven.
+**`review_code` has still not been exercised against a real model** — and chasing why turned
+up something far more important than the review.
 
-370 cases in `npm test`; ROTA's three findings are all kept as regressions.
+### THE PRODUCT IS CURRENTLY DOWN — Modal is refusing this account, 2026-10-08
+A third review attempt failed the same way, but at **75 s instead of 25 s**, which confirms
+Finding 9's fix by timing: it honoured the 65 s wait instead of capping at 10 s. Then the
+decisive probe — the eval's SMALLEST task, `counter`, one file, previously $0.060 and 30 s:
+
+```
+✘ counter fail (72s, 0 files) — Modal rate limit exceeded
+model spend: $0.000
+```
+
+**So this is not a review problem at all.** Every build fails, down to a one-file counter,
+with nothing reaching the model. The Modal shared endpoint is refusing this account outright,
+and it stayed refused across more than an hour and four separate runs. While that holds, no
+user build can succeed.
+
+What the owner needs to check, since none of it is visible from here: the **Modal dashboard's
+shared-endpoint usage and billing**. Remember that **plan credits do not cover shared-endpoint
+usage** — it is billed per token — so a lapsed payment method or a spend cap looks exactly
+like a rate limit. Today's load is a plausible trigger: the ROTA build alone was 19 rounds plus
+a plan, an extraction and an audit.
+
+### Finding 10 — the gateway was deleting the provider's own explanation
+Diagnosing the above was harder than it should have been, because `mapModalError` **threw the
+response body away on exactly the two branches that most need it**: a 429 became the fixed
+string `"Modal rate limit exceeded"` and a 401 became `"Invalid Modal proxy token"`, while the
+body — already read and in hand at the call site — was discarded. So a spend cap, a concurrency
+throttle and a revoked token were indistinguishable, and the text saying which was deleted on
+the way past.
+
+Fixed: every branch now carries the provider's message (truncated to 300 chars), and the 429
+honours the **`Retry-After` header** instead of hardcoding 60 s. That guess is wrong in both
+directions — a per-second throttle clears far sooner, and an hourly quota does not clear at
+all, so waiting 60 s and retrying merely burns the attempt, which is what happened four times
+today.
+
+`parseRetryAfter` takes seconds or an HTTP date. One of its own cases caught a bug in it:
+`Date.parse` is permissive enough to read `"1.5"` as a date in the past, which clamped to 0 and
+would have meant "retry immediately" on a header we did not understand. Every HTTP-date form
+carries a weekday or month name, so a letter is now required before `Date.parse` is tried.
+8 cases.
+
+384 cases in `npm test`; ROTA's three findings are all kept as regressions.
+
+**Still unproven, and now blocked rather than untested:** `review_code` against a real model.
+The deterministic half — enumeration, ranking, the free pre-pass, corroboration, the report —
+is verified by cases and by probes against two real projects. The per-unit dispatch and the
+`review` prompt need one run, which needs the provider back.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED

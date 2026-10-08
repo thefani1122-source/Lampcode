@@ -122,12 +122,71 @@ function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
   return out;
 }
 
-/** Map fetch/HTTP failures to our GatewayError codes — same codes model-gateway.ts uses. */
-function mapModalError(status: number | undefined, message: string): GatewayError {
-  if (status === 401 || status === 403) return new GatewayError("INVALID_KEY", "Invalid Modal proxy token");
-  if (status === 429) return new GatewayError("RATE_LIMIT", "Modal rate limit exceeded", 60_000);
-  if (status !== undefined && status >= 500) return new GatewayError("MODEL_DOWN", `Modal endpoint unavailable (${status})`);
-  if (status !== undefined) return new GatewayError("UNKNOWN", `HTTP ${status}: ${message.slice(0, 200)}`);
+/**
+ * How long a 429 says to wait, from the standard header.
+ *
+ * `Retry-After` is either a number of seconds or an HTTP date. Honouring it
+ * matters because the hardcoded 60 s guess is wrong in both directions: a
+ * per-second throttle clears far sooner, and a quota that resets hourly does
+ * not clear at all — so waiting 60 s and retrying just burns the attempt. On
+ * 2026-10-08 this account was refused for over an hour and three separate runs
+ * each waited 60 s and died, with nothing anywhere saying how long to wait.
+ *
+ * Exported for its own cases. Returns undefined when the header is absent or
+ * unparseable, and the caller keeps its default.
+ */
+export function parseRetryAfter(header: string | null | undefined, nowMs = Date.now()): number | undefined {
+  if (!header) return undefined;
+  const raw = header.trim();
+  if (/^\d+$/.test(raw)) return Number(raw) * 1_000;
+  // Date.parse is permissive enough to accept junk — it reads "1.5" as a date
+  // and yields a time in the past, which would then clamp to 0 and mean "retry
+  // immediately" on a header we did not understand. Every HTTP-date form
+  // carries a weekday or month name, so requiring a letter is a sound guard.
+  if (!/[A-Za-z]/.test(raw)) return undefined;
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) return undefined;
+  const delta = at - nowMs;
+  return delta > 0 ? delta : 0;
+}
+
+/**
+ * Map fetch/HTTP failures to our GatewayError codes — same codes
+ * model-gateway.ts uses.
+ *
+ * The provider's own message is kept on every branch now. It used to be
+ * discarded on exactly the two that most need it: a 429 became the fixed string
+ * "Modal rate limit exceeded" and a 401 became "Invalid Modal proxy token",
+ * with the response body thrown away. So when the endpoint refused this
+ * account for over an hour on 2026-10-08 — every build, down to a one-file
+ * counter, failing with no spend — there was no way to tell a spend cap from a
+ * concurrency throttle from a revoked token, and the body saying which was
+ * already in hand and deleted. An error that hides the provider's reason costs
+ * hours of guessing.
+ */
+function mapModalError(
+  status: number | undefined,
+  message: string,
+  retryAfter?: string | null,
+): GatewayError {
+  const detail = message.trim().slice(0, 300);
+  if (status === 401 || status === 403) {
+    return new GatewayError(
+      "INVALID_KEY",
+      `Modal rejected the proxy token (HTTP ${status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  if (status === 429) {
+    return new GatewayError(
+      "RATE_LIMIT",
+      `Modal rate limit exceeded${detail ? `: ${detail}` : ""}`,
+      parseRetryAfter(retryAfter) ?? 60_000,
+    );
+  }
+  if (status !== undefined && status >= 500) {
+    return new GatewayError("MODEL_DOWN", `Modal endpoint unavailable (${status})${detail ? `: ${detail}` : ""}`);
+  }
+  if (status !== undefined) return new GatewayError("UNKNOWN", `HTTP ${status}: ${detail}`);
   return new GatewayError("NETWORK", message);
 }
 
@@ -224,7 +283,11 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   if (!response.ok || !response.body) {
     clearTimeout(timeout);
     const text = await response.text().catch(() => "");
-    throw mapModalError(response.status, text || response.statusText);
+    throw mapModalError(
+      response.status,
+      text || response.statusText,
+      response.headers.get("retry-after"),
+    );
   }
 
   // Per-index tool-call accumulation (OpenAI streams tool_calls as deltas

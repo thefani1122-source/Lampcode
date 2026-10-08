@@ -11,6 +11,7 @@
  */
 
 import { fallbackDelayMs } from "../src/agents/retry-policy.js";
+import { parseRetryAfter } from "../src/agents/modal-gateway.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -32,6 +33,29 @@ check("a rate limit with no hint falls back to the default", fallbackDelayMs("RA
 check("a down model keeps the short cap", fallbackDelayMs("MODEL_DOWN", 60_000), 10_000);
 check("an unknown error keeps the short cap", fallbackDelayMs("UNKNOWN", 60_000), 10_000);
 check("a short hint is honoured as given", fallbackDelayMs("MODEL_DOWN", 1_500), 1_500);
+
+// ── Retry-After ─────────────────────────────────────────────────────────────
+// The hardcoded 60 s guess is wrong in both directions: a per-second throttle
+// clears far sooner, and an hourly quota does not clear at all, so waiting 60 s
+// and retrying just burns the attempt. Measured 2026-10-08: this account was
+// refused for over an hour and three separate runs each waited and died with
+// nothing saying how long to wait.
+const NOW = Date.parse("2026-10-08T03:00:00Z");
+
+check("seconds are read as seconds", parseRetryAfter("30", NOW), 30_000);
+check("zero seconds is honoured, not treated as absent", parseRetryAfter("0", NOW), 0);
+check(
+  "an HTTP date becomes the remaining milliseconds",
+  parseRetryAfter("Thu, 08 Oct 2026 03:01:40 GMT", NOW),
+  100_000,
+);
+// A date already in the past means "retry now", not "wait a negative time".
+check("a past date clamps to zero", parseRetryAfter("Thu, 08 Oct 2026 02:00:00 GMT", NOW), 0);
+check("an absent header yields nothing so the caller keeps its default", parseRetryAfter(null, NOW), undefined);
+check("an empty header yields nothing", parseRetryAfter("", NOW), undefined);
+check("nonsense yields nothing rather than NaN", parseRetryAfter("soon", NOW), undefined);
+// A float is not a valid Retry-After and must not be half-read as 1 second.
+check("a non-integer is rejected", parseRetryAfter("1.5", NOW), undefined);
 
 console.log(failures === 0 ? "\nAll dispatch-retry cases passed." : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
