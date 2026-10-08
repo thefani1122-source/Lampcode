@@ -1745,8 +1745,16 @@ owner can move it:
 |---|---|
 | account verification hold | **cleared by itself** |
 | URL / key format / model resolution | **proven** — requests now reach model-level errors |
-| `moonshotai.kimi-k3` | **403 "not available for this account"** — needs model access |
+| `moonshotai.kimi-k3` | **403 "not available for this account"** — NOT a toggle, see below |
 | `openai.gpt-oss-120b-1:0` | access GRANTED, but **429 "Too many tokens per day"** |
+
+**There is no "enable this model" step any more, and looking for one wastes time.** AWS retired
+the Model Access page in 2025 — serverless models in a Region are auto-enabled and
+`PutFoundationModelEntitlement` is gone. The console's model catalog page for Kimi K3 in
+`ap-southeast-2` shows the model, lists `function calling` among its capabilities, and offers
+only "Open in playground": no request-access control exists to click. So the 403 is an
+account-level entitlement or quota matter of the same family as the gpt-oss 429, not something
+a setting fixes.
 
 The gpt-oss probe is the proof the integration works: it cleared access control and reached a
 QUOTA error, which cannot happen unless auth, URL and model resolution all succeeded.
