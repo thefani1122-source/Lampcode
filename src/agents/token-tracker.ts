@@ -39,6 +39,20 @@ const MODEL_PRICING: Record<
   // overstated by several times: the provider dashboard read $0.42 across a day
   // of builds while this put a single build at $0.555.
   "moonshotai/kimi-k3":          { inputPerM: 3.00,  outputPerM: 15.00 },
+  // The SAME model on Amazon Bedrock, keyed by its inference-profile ids.
+  // The lookup below is an exact match on LLM_MODEL_NAME, and on Bedrock that
+  // value is "global.moonshotai.kimi-k3", not "moonshotai/kimi-k3" — a miss
+  // falls to DEFAULT_PRICING ($1.00/$4.00) with only a warning, so every build
+  // would be costed at roughly a third of its real price. That understates the
+  // MAX_BUILD_COST_USD guard and the credits deducted, in silence. This is the
+  // same wrong-row failure as the 2026-09-28 modelUsed bug, one layer along.
+  // Bedrock's published cache rates are exactly CACHED_INPUT_RATIO (1/10) and
+  // CACHE_WRITE_RATIO (1.25x) of these, so no explicit cachedInputPerM is
+  // needed — checked against the model card, not assumed.
+  "global.moonshotai.kimi-k3":   { inputPerM: 3.00,  outputPerM: 15.00 }, // Global CRIS
+  "moonshotai.kimi-k3":          { inputPerM: 3.00,  outputPerM: 15.00 },
+  "us.moonshotai.kimi-k3":       { inputPerM: 3.30,  outputPerM: 16.50 }, // US CRIS
+  "in.moonshotai.kimi-k3":       { inputPerM: 3.30,  outputPerM: 16.50 }, // IN CRIS
   "moonshotai/kimi-k2.7-code":   { inputPerM: 0.95,  outputPerM: 4.00  },
   "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
   "moonshotai/kimi-k2":          { inputPerM: 0.60,  outputPerM: 2.50  },
