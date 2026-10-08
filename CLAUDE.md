@@ -1684,12 +1684,17 @@ appends `/v1/chat/completions` itself and Bedrock's documented path is
 `/openai/v1/chat/completions`:
 
 ```
-LLM_ENDPOINT_URL=https://bedrock-runtime.ap-southeast-2.amazonaws.com/openai
+LLM_ENDPOINT_URL=https://bedrock-mantle.ap-southeast-2.api.aws
 LLM_API_KEY=<long-term Bedrock API key — starts "ABSK", 132 chars, REGION-SPECIFIC>
-LLM_MODEL_NAME=global.moonshotai.kimi-k3
+LLM_MODEL_NAME=moonshotai.kimi-k2.5
 MODAL_REASONING_EFFORT=off
 LLM_PROVIDER_MODE=openai
 ```
+
+**The endpoint's path differs between the two Bedrock surfaces, and the gateway appends
+`/v1/chat/completions` to whatever you set.** `bedrock-mantle` serves `/v1/chat/completions`,
+so its URL ends at the host. `bedrock-runtime` serves `/openai/v1/chat/completions`, so ITS
+url would have to end at `/openai` — getting that wrong cost three rounds (Finding 12).
 
 The `MODAL_*` trio is REMOVED. `LLM_* ?? MODAL_*` means the new names win anyway, but a stale
 Modal URL in the dashboard invites exactly the wrong conclusion, and a later missing `LLM_` var
@@ -1737,7 +1742,64 @@ regenerate a key that was never wrong. `ACCOUNT_PENDING_RE` now says so, and say
 it is not a code problem; narrow on purpose, since calling a revoked key "pending" would have
 someone waiting for something that never clears. `b17cc6f`, 6 cases on the captured body.
 
-### Where it actually stands — BLOCKED ON AWS, not on code
+### IT WORKS — first green build on Bedrock, 2026-10-08
+`counter` **passed**: 9 rounds, 1 file, 109 s, **$0.046**, audit `proven=7 unverified=0
+contradicted=0`. The log lines that matter, because they are the ones that had never once
+appeared:
+
+```
+[stream] loop done: totalChunks=5 contentChunks=2 stopReason=tool_use
+[build] agentic mode produced 1 file(s) via its tools
+```
+
+**`stopReason=tool_use`, repeatedly, and files "via its tools" rather than the fence
+fallback — tool calling on Bedrock is confirmed by a real build.** Every `toolCalls: 0`
+recorded earlier was Finding 12's transport bug, so none of it was evidence about the model.
+`totalChunks` now reads 5 / 12 / 31; the `=2` signature is gone.
+
+**The working config is K2.5 on bedrock-MANTLE, not K3 on bedrock-runtime:**
+
+```
+LLM_ENDPOINT_URL=https://bedrock-mantle.ap-southeast-2.api.aws   # mantle is /v1, NOT /openai/v1
+LLM_MODEL_NAME=moonshotai.kimi-k2.5                              # no prefix: K2.5 has no Geo/Global profile
+```
+
+### Finding 14 — the two Bedrock endpoints have SEPARATE quotas, and that is the whole fix
+Two account-level walls were hit, and the owner separated them by testing both models in the
+console playground — which is the right instrument, because it removes our code, our key and
+our URL from the question entirely:
+
+| model | playground | meaning |
+|---|---|---|
+| `moonshotai.kimi-k3` | `AccessDeniedException` | not entitled to this account at all |
+| `moonshotai.kimi-k2.5` | `ThrottlingException`, "Too many tokens per day" | entitled; quota exhausted |
+| `openai.gpt-oss-120b-1:0` | same throttle | entitled; quota exhausted |
+
+So K2.5 was the model to use. But its **own card lists client-side tool calling only under
+`bedrock-mantle`**, not under `bedrock-runtime` — so the switch to mantle was made for tool
+calling. It fixed the quota as a side effect, and that is the reusable fact: AWS's own Chat
+Completions page says *"Each endpoint has its own per-model token quotas"*, with separate
+quota pages for runtime and mantle. **A new account's runtime quota sitting at 0 therefore
+says nothing about mantle**, and the throttle that looked like a hard account-wide wall was
+one endpoint's pool.
+
+The gpt-oss probe still earned its keep: reaching a QUOTA error proved auth, URL and model
+resolution were all correct while K3 was still returning AccessDenied.
+
+**A route can be probed with no credential** — `bedrock-mantle.ap-southeast-2.api.aws/v1/chat/completions`
+answered a junk token with a clean OpenAI-shaped `401 invalid_api_key`, confirming the region
+serves mantle before anything was reconfigured. Same trick as Finding 12.
+
+**Cost: K2.5 in Sydney is $0.618 / $3.09 per MTok** against K3's $3.00 / $15.00 — about five
+times cheaper, and the `counter` build came in at $0.046 against $0.060 on Modal. Rates are
+REGION-SPECIFIC (US $0.60/$3.00, several others $0.72/$3.60), so moving region without moving
+the `MODEL_PRICING` row misprices every build.
+
+**K3 remains unavailable** and would need AWS Sales. Nothing depends on it: the eval baseline
+was measured on K3 via Modal, so the numbers below are not directly comparable to a K2.5 run,
+and a fresh baseline should be taken before any prompt change is judged against them.
+
+### What was blocking it — superseded by the above, kept for the diagnosis
 Every layer we control is verified by a real run. What remains is account-level and only the
 owner can move it:
 
@@ -1771,10 +1833,9 @@ case** asking for verification / quota correction — not a Service Quotas reque
 the access problem would produce a genuine `toolCalls: 0` and restart this whole diagnosis from
 the beginning.
 
-**STILL UNPROVEN: tool calling on Bedrock has never once succeeded.** Every `toolCalls: 0`
-recorded today was Finding 12's transport bug, so none of it is evidence either way. The model
-card says K3 supports it and the request now has the right shape — but the first green build is
-what will settle it, and nothing should be built on the assumption until then.
+~~**STILL UNPROVEN: tool calling on Bedrock has never once succeeded.**~~ **PROVEN** — see the
+green build above. What settled it was moving to K2.5 on `bedrock-mantle`, not anything about
+K3.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
