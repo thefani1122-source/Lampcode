@@ -55,6 +55,25 @@ interface OpenAiStreamEvent {
   } | null;
 }
 
+/**
+ * A WHOLE Chat Completion in one object — what a server returns when it does
+ * not honour `stream: true`. Same fields as the deltas above, assembled.
+ */
+interface OpenAiCompletionResponse {
+  choices?: {
+    message?: {
+      content?: string | null;
+      tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[];
+    } | null;
+    finish_reason?: string | null;
+  }[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number } | null;
+  } | null;
+}
+
 // ── Message / tool translation ──────────────────────────────────────────────
 
 /** Anthropic ToolDefinition.input_schema and OpenAI's function.parameters are
@@ -315,6 +334,73 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     );
   }
 
+  // NOT every OpenAI-compatible server honours `stream: true`. One that does
+  // not answers with a single JSON completion, and the SSE loop below reads
+  // ONLY lines beginning "data:" — so such a body yields nothing at all, and
+  // the build fails with an empty reply and no stated reason. Measured against
+  // Amazon Bedrock's OpenAI-compatible endpoint on 2026-10-08: every dispatch
+  // logged `totalChunks=2 contentChunks=0 stopReason=undefined`, the 2 being
+  // this generator's own trailing usage/done. It read as "the model does not
+  // support tool calling" when the model had in fact answered normally.
+  //
+  // This is the same failure as discarding the body on an error status (see
+  // mapModalError): the provider replied, and we threw the reply away. Handle
+  // the non-streamed shape rather than requiring every provider to stream.
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    clearTimeout(timeout);
+    const raw = await response.text().catch(() => "");
+    let whole: OpenAiCompletionResponse;
+    try {
+      whole = JSON.parse(raw) as OpenAiCompletionResponse;
+    } catch {
+      // Keep the body. A 200 we cannot read is still the provider telling us
+      // something, and the previous behaviour was to say nothing at all.
+      throw new GatewayError(
+        "UNKNOWN",
+        `Endpoint returned a non-SSE body (content-type: ${contentType || "none"}) that is not JSON: ${raw.slice(0, 300)}`,
+      );
+    }
+
+    const only = whole.choices?.[0];
+    const message = only?.message;
+    if (message?.content) yield { type: "content", content: message.content };
+
+    let emitted = false;
+    for (const tc of message?.tool_calls ?? []) {
+      if (tc.id && tc.function?.name) {
+        emitted = true;
+        yield {
+          type: "tool_call",
+          toolCall: { id: tc.id, name: tc.function.name, arguments: tc.function.arguments ?? "" },
+        };
+      }
+    }
+
+    if (!message?.content && !emitted) {
+      logger.warn(
+        { contentType, body: raw.slice(0, 500) },
+        "Non-streamed reply carried neither content nor tool calls — body kept so this is diagnosable",
+      );
+    }
+
+    yield {
+      type: "usage",
+      usage: {
+        promptTokens: whole.usage?.prompt_tokens ?? 0,
+        completionTokens: whole.usage?.completion_tokens ?? 0,
+        cachedPromptTokens: whole.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      },
+    };
+    // Same reasoning as the streamed path: real tool calls on the wire beat
+    // whatever finish_reason the server reports.
+    yield {
+      type: "done",
+      stopReason: emitted ? "tool_use" : toAnthropicStopReason(only?.finish_reason ?? undefined),
+    };
+    return;
+  }
+
   // Per-index tool-call accumulation (OpenAI streams tool_calls as deltas
   // keyed by index; id/name arrive on the first delta for that index, args
   // arrive incrementally) — same accumulation pattern model-gateway.ts uses
@@ -328,12 +414,19 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  // A stream that parses to nothing is indistinguishable from a model that
+  // said nothing, and the two call for opposite fixes. Keep enough of the raw
+  // body to tell them apart, bounded so a long stream cannot grow it.
+  let sawEvent = false;
+  let rawPrefix = "";
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      const text = decoder.decode(value, { stream: true });
+      if (rawPrefix.length < 500) rawPrefix += text.slice(0, 500 - rawPrefix.length);
+      buffer += text;
 
       let newlineIdx: number;
       while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
@@ -356,6 +449,8 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
           cachedInputTokens =
             event.usage.prompt_tokens_details?.cached_tokens ?? cachedInputTokens;
         }
+
+        sawEvent = true;
 
         const choice = event.choices?.[0];
         if (!choice) continue;
@@ -383,6 +478,13 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     throw mapModalError(undefined, err instanceof Error ? err.message : String(err));
   } finally {
     clearTimeout(timeout);
+  }
+
+  if (!sawEvent) {
+    logger.warn(
+      { contentType, body: rawPrefix },
+      "Stream declared itself SSE but no event parsed out of it — body kept so this is diagnosable",
+    );
   }
 
   // Flush accumulated tool calls once the stream ends — mirrors
