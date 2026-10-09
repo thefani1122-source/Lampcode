@@ -1799,6 +1799,71 @@ the `MODEL_PRICING` row misprices every build.
 was measured on K3 via Modal, so the numbers below are not directly comparable to a K2.5 run,
 and a fresh baseline should be taken before any prompt change is judged against them.
 
+### K2.5 BASELINE — smoke tier, 2026-10-09. Cheaper, and MEASURABLY WEAKER
+Label `k25-mantle-baseline`. The first comparable run on the new provider, against the
+`kimi-baseline` smoke run of 2026-10-03 (K3 via Modal).
+
+| task | K3 / Modal | K2.5 / Bedrock |
+|---|---|---|
+| counter | **pass** 3r 1f $0.060 | **soft-fail** 9r 3f $0.041 |
+| todo | soft-fail 9r 7f $0.162 | soft-fail 14r 3f $0.086 |
+| pricing-page | **pass** 5r 3f $0.125 | **soft-fail** 3r 1f $0.028 |
+| form-validation | pass 8r 15f $0.278 | pass 5r 10f $0.061 |
+| **all checks held** | **3/4** | **1/4** |
+| spend | $0.626 | **$0.216** |
+
+**4/4 built, 0 build failures, 0 harness errors, turn cap never reached** — the plumbing is
+sound. `check_page` 4/4 and `check_types` 4/4, both perfect. So the drop is NOT infrastructure.
+
+**It is the model.** Two tasks that passed on K3 now fail, and the failures are the shape that
+matters most for this product: `counter` and `todo` BOTH miss the `PERSISTS` pattern entirely —
+no localStorage, no backend, nothing — on prompts that ask for persistence. `todo` also drew an
+`unverified` requirement from the completion audit. `pricing-page` collapsed from 3 files to 1.
+A vibe coder whose apps forget their data on reload is a real product problem, not a scoring
+quibble.
+
+**And it is inconsistent run to run.** The same `counter` task PASSED on K2.5 the previous day
+(9 rounds, 1 file, $0.046, audit 7/7) and soft-failed here with 3 files. One run is not a
+measurement on this model.
+
+Cost is the one clear win: **a third of K3's spend**, and mean rounds went UP (6.3 → 7.8), so it
+is not winning by doing less. `run_tests` went unused on 3 of 4, against 1 of 4 before.
+
+**What this means for the choice.** K2.5 works and is cheap, but the prompt and every number in
+this file were tuned and measured on K3. Options, in the order worth trying: pursue K3 through
+AWS Sales (it is the model the harness was built around); or try other tool-calling models on
+`bedrock-mantle` and baseline them the same way; or accept K2.5 and re-tune the prompt against
+THIS baseline rather than the K3 one. Do not compare a future change to the 10-03 numbers —
+compare it to the table above.
+
+### Finding 15 — the build socket gave up after seventeen seconds
+Reported as "I tested and got no response". The build had in fact SUCCEEDED: 8 rounds, 3 files,
+`check_page` pass, `check_types` pass, audit `unverified=0`, $0.119. What the owner saw was a
+frozen screen.
+
+```
+14:45:23  build starts
+14:46:35  Build WS disconnected  reason="transport close"
+14:47:28  [storage] persisted 1 file(s)        ← the build carried on
+          … rounds 5,6,7,8 → success
+```
+
+`createBuildSocket` set `reconnectionAttempts: 5`, which with its 1s/5s backoff is about
+**seventeen seconds** before socket.io gives up PERMANENTLY. A build runs for minutes. The
+global socket in the same file already used `Infinity`, so the 5 was accidental.
+
+**The backend was never at fault, and neither was Redis.** `replayBuffer` and
+`settleFinishedSession` already replay everything missed on rejoin — there was simply no
+reconnect for them to fire on. Fixed in the frontend (`5a8da54`): `Infinity`, plus a toast on a
+non-deliberate disconnect saying the build is still running, and one on reconnect saying it is
+catching up.
+
+**Correcting this file:** the Redis section above says build events are not buffered because
+Redis is dead. **Redis has been alive since 2026-09-29** — verified 2026-10-09: the service
+reads `SUCCESS`, Lampcode logs `[redis] connected` and `Socket.IO Redis adapter attached`
+repeatedly, and there is not one `ECONNRESET`. Buffering works. Rate limiting should therefore
+be re-checked too rather than assumed off.
+
 ### What was blocking it — superseded by the above, kept for the diagnosis
 Every layer we control is verified by a real run. What remains is account-level and only the
 owner can move it:
