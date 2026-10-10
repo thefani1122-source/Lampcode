@@ -220,7 +220,16 @@ export type BuildOutcome = {
    *  at the end of every build — not only when the model asked. Separate from
    *  `deadCodeCalled`, which records whether it asked, because a model that
    *  never looks and a project that is genuinely clean are different facts. */
-  deadCode?: { unusedImports: number; unreferencedExports: number; neverRendered: number };
+  deadCode?: {
+    unusedImports: number;
+    unreferencedExports: number;
+    neverRendered: number;
+    /** A generated stylesheet no file imports. Optional because outcomes stored
+     *  before 2026-10-10 do not carry it — absent and zero are different facts.
+     *  Non-zero usually means a written `theme.css` was never wired in, so the
+     *  app silently kept the template's greyscale tokens. */
+    orphanStylesheets?: number;
+  };
   deadCodeCalled?: boolean;
   /** What a `review_code` call did, when one happened. `deep` out of `total` is
    *  the point: a review that looked at four of forty files is not a review of

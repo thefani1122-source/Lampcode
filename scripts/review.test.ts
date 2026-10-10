@@ -244,6 +244,25 @@ check(
   ok("the drift guard actually found BAKED_FILES", authoritative.length > 5);
   const missing = authoritative.filter((p) => !templateOwnsFile(p));
   check("every file e2b-service bakes is in review-units' copy", missing, []);
+
+  // Same file, read the same way and for the same reason — importing it hangs.
+  //
+  // selectTemplate must NOT route a build to NEXTJS_TEMPLATE_ID or
+  // TANSTACK_TEMPLATE_ID. Both are set on Railway and both name REAL E2B
+  // templates that boot, which is what makes this quiet instead of loud: they
+  // were last built 2026-09-09 and carry none of .lampcode-tools, playwright,
+  // check-render.mjs or vitest, so a build sent there loses check_page,
+  // check_types and run_tests at once with nothing reporting why.
+  const selector = /export function selectTemplate\([\s\S]*?\n}/.exec(src)?.[0] ?? "";
+  ok("the guard actually found selectTemplate", selector.length > 50);
+  ok(
+    "selectTemplate never returns a framework template id",
+    !/return\s+(process\.env\[|configured)/.test(selector),
+  );
+  ok(
+    "selectTemplate still mentions the vars, so the warning is not silently dropped",
+    selector.includes("NEXTJS_TEMPLATE_ID") && selector.includes("TANSTACK_TEMPLATE_ID"),
+  );
 }
 
 // ── the orphan-file check, and why it exists ────────────────────────────────

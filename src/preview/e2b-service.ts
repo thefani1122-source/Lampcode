@@ -55,25 +55,48 @@ const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
 /**
  * Returns the E2B sandbox template ID for the given fullstack framework.
  *
- * TODO: Next.js and TanStack Start each need their own E2B template:
- *   - nextjs: run `next dev` on :3000, bake Next.js + node_modules
- *   - tanstack: run `vinxi dev` on :3000 (or whatever @tanstack/start uses), bake deps
- * Once those templates are built, replace the TEMPLATE_ID fallback here with the
- * real template IDs (set via Railway env vars NEXTJS_TEMPLATE_ID, TANSTACK_TEMPLATE_ID).
- * Until then, Next.js and TanStack builds use the React template — generated code
- * will be correct but the preview will show the React scaffold instead.
+ * It ALWAYS returns the React/Vite template, and deliberately ignores
+ * NEXTJS_TEMPLATE_ID / TANSTACK_TEMPLATE_ID even when they are set — which on
+ * Railway they are, as of 2026-10-10.
+ *
+ * The reason is the opposite of what it looks like. `lampcode-nextjs` and
+ * `lampcode-tanstack` are REAL templates on the E2B account (15 and 13 builds)
+ * and they boot fine, which is exactly what makes routing to them dangerous
+ * rather than merely broken. Both were last built on 2026-09-09, before every
+ * October fix, and `template-nextjs.ts` contains NONE of `.lampcode-tools`,
+ * playwright, `check-render.mjs`, `PLAYWRIGHT_BROWSERS_PATH` or vitest — the
+ * live `template.ts` has all five. A build routed there loses `check_page`,
+ * `check_types` AND `run_tests` in one step, silently: the sandbox comes up,
+ * the app renders, and all three gates report `unavailable` with nothing
+ * anywhere saying why. A template that fails to boot is loud; this is not.
+ *
+ * It is also very unlikely such a build is genuinely Next.js. `classifyBuild`
+ * pins `framework` to "react" for new builds, so the only route to another
+ * value is `detectFrameworkFromFiles` on an EDIT — and the project it is
+ * inspecting was itself produced on this Vite template, so an `app/layout.tsx`
+ * in it is a stray file rather than a Next.js app. Returning the Vite template
+ * is therefore the correct answer for that project, not just the safe one.
+ *
+ * To re-enable: port the October fixes into `template-nextjs.ts` (tools dir,
+ * playwright + browser path, check-render.mjs, vitest and its config), rebuild,
+ * verify in a live sandbox the way `e2b-template/verify-template.ts` does, and
+ * only then read the env vars here again.
  */
 export function selectTemplate(framework: FullstackFramework): string {
-  switch (framework) {
-    case "nextjs":
-      // TODO: build a Next.js E2B template (next dev on :3000) and set NEXTJS_TEMPLATE_ID
-      return process.env["NEXTJS_TEMPLATE_ID"] ?? TEMPLATE_ID;
-    case "tanstack":
-      // TODO: build a TanStack Start E2B template (vinxi dev on :3000) and set TANSTACK_TEMPLATE_ID
-      return process.env["TANSTACK_TEMPLATE_ID"] ?? TEMPLATE_ID;
-    default:
-      return TEMPLATE_ID;
+  if (framework === "nextjs" || framework === "tanstack") {
+    const configured = process.env[
+      framework === "nextjs" ? "NEXTJS_TEMPLATE_ID" : "TANSTACK_TEMPLATE_ID"
+    ];
+    if (configured) {
+      console.warn(
+        `[e2b] ${framework} template id is configured (${configured}) but IGNORED — ` +
+        `that image predates the October fixes and has no check_page/check_types/run_tests. ` +
+        `Using ${TEMPLATE_ID}. See selectTemplate() for how to re-enable.`,
+      );
+    }
+    return TEMPLATE_ID;
   }
+  return TEMPLATE_ID;
 }
 
 // E2B sandbox snapshots (created on pause) expire after 30 days. We key the

@@ -21,7 +21,11 @@
  * few lines; a wrongly reported live one costs a working app.
  */
 
-export type DeadCodeKind = "unused-import" | "unreferenced-export" | "never-rendered";
+export type DeadCodeKind =
+  | "unused-import"
+  | "unreferenced-export"
+  | "never-rendered"
+  | "orphan-stylesheet";
 
 export type DeadCodeFinding = {
   kind: DeadCodeKind;
@@ -318,6 +322,48 @@ export function findDeadCode(files: Record<string, string>): DeadCodeFinding[] {
     }
   }
 
+  // ── 4. A stylesheet nothing imports ────────────────────────────────────────
+  // Measured on the ASTERISK build, 2026-10-10. The model wrote a correct
+  // `src/theme.css` — real oklch values, hue 264, a full .dark block — and then
+  // never imported it, while ELEVEN of its files rendered through `bg-primary`
+  // and `text-muted-foreground`. Those classes resolve through the template's
+  // baked tokens, which are `oklch(L 0 0)`, i.e. greyscale. So the palette was
+  // written, paid for, and did nothing: the app shipped black and white with
+  // colour only where a Tailwind colour class was used directly.
+  //
+  // None of the three gates can see this. The page renders, CSS is not typed so
+  // `check_types` passes, the tests pass, and the completion audit called the
+  // build 18/18 proven because a palette nobody asked for in words is not an
+  // extracted requirement. It is exactly the 2026-10-04 black-and-white bug
+  // arriving through a different door — the prompt fix told the model to write
+  // the file AND wire it, and it did half.
+  //
+  // A program answers this exactly, which is the test for belonging in this
+  // module: either some file names the stylesheet or none does. Rules are
+  // narrow for the usual reason — the response to a finding is editing code:
+  // only generated stylesheets are considered (the template's own `styles.css`
+  // is baked and imported by the template, and is not in this file set), and a
+  // mention anywhere in any file counts as wiring, so a non-standard import
+  // cannot be reported as dead.
+  const STYLESHEET_RE = /\.(css|scss|sass|less)$/;
+  for (const path of Object.keys(files)) {
+    if (!STYLESHEET_RE.test(path)) continue;
+    const base = path.split("/").pop() ?? path;
+    const referenced = Object.entries(files).some(
+      ([p, content]) => p !== path && content.includes(base),
+    );
+    if (referenced) continue;
+    findings.push({
+      kind: "orphan-stylesheet",
+      path,
+      symbol: base,
+      detail:
+        `written but no file imports it, so none of its rules apply — if it redefines design ` +
+        `tokens, import it in src/index.tsx AFTER "./styles.css" or the app keeps the ` +
+        `template's greyscale defaults`,
+    });
+  }
+
   return findings;
 }
 
@@ -327,16 +373,19 @@ export function tallyDeadCode(findings: DeadCodeFinding[]): {
   unusedImports: number;
   unreferencedExports: number;
   neverRendered: number;
+  orphanStylesheets: number;
 } {
   let unusedImports = 0;
   let unreferencedExports = 0;
   let neverRendered = 0;
+  let orphanStylesheets = 0;
   for (const f of findings) {
     if (f.kind === "unused-import") unusedImports += 1;
     else if (f.kind === "never-rendered") neverRendered += 1;
+    else if (f.kind === "orphan-stylesheet") orphanStylesheets += 1;
     else unreferencedExports += 1;
   }
-  return { unusedImports, unreferencedExports, neverRendered };
+  return { unusedImports, unreferencedExports, neverRendered, orphanStylesheets };
 }
 
 /** The tool's reply. Phrased as a report with the reason attached, because a

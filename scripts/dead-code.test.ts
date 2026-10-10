@@ -247,9 +247,23 @@ check(
   [],
 );
 
+// A non-code file is never parsed for symbols — no imports, no exports, no
+// component rules. Since 2026-10-10 a stylesheet nothing imports is reported as
+// an orphan (the ASTERISK theme.css case below), so the stylesheet is taken out
+// of this fixture rather than the assertion being weakened: SQL still yields
+// nothing at all, and the symbol rules still do not look inside CSS.
 check(
-  "non-code files are ignored entirely",
-  kinds({ "src/theme.css": `:root { --primary: red }`, "db/schema.sql": `CREATE TABLE t (id int)` }),
+  "non-code files are not parsed for symbols",
+  kinds({ "db/schema.sql": `CREATE TABLE t (id int)` }),
+  [],
+);
+
+check(
+  "a stylesheet is not mined for symbols even when it is wired up",
+  kinds({
+    "src/theme.css": `:root { --primary: red }`,
+    "src/index.tsx": `import "./theme.css";`,
+  }),
   [],
 );
 
@@ -258,12 +272,12 @@ check("an empty project yields nothing", findDeadCode({}), []);
 // ── tally and formatting ─────────────────────────────────────────────────────
 
 check(
-  "tallyDeadCode separates the three kinds",
+  "tallyDeadCode separates the kinds",
   tallyDeadCode(findDeadCode(PROJECT)),
   // Two unreferenced exports: util.ts's `orphan`, and other.ts's `z`, which
   // nothing imports either. The second was not noticed when this fixture was
   // written and the analyser found it — which is the job.
-  { unusedImports: 0, unreferencedExports: 2, neverRendered: 1 },
+  { unusedImports: 0, unreferencedExports: 2, neverRendered: 1, orphanStylesheets: 0 },
 );
 
 ok(
@@ -279,3 +293,73 @@ ok("formatDeadCode tells the model to confirm first", report.includes("read_file
 
 console.log(failures === 0 ? "\nAll dead-code cases passed." : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
+
+// ── orphan stylesheets ───────────────────────────────────────────────────────
+// Measured on ASTERISK, 2026-10-10: a correct src/theme.css was written and
+// never imported, while 11 files rendered through bg-primary / text-muted-
+// foreground — which resolve through the template's GREYSCALE baked tokens. The
+// palette was written, paid for and did nothing, and all three gates passed.
+
+check(
+  "a stylesheet nobody imports is reported",
+  kinds({
+    "src/theme.css": ":root { --primary: oklch(0.45 0.11 155); }",
+    "src/index.tsx": `import App from "./App";`,
+  }),
+  ["orphan-stylesheet:src/theme.css:theme.css"],
+);
+
+check(
+  "a stylesheet that IS imported is left alone",
+  kinds({
+    "src/theme.css": ":root { --primary: oklch(0.45 0.11 155); }",
+    "src/index.tsx": `import "./styles.css";\nimport "./theme.css";\nimport App from "./App";`,
+  }),
+  [],
+);
+
+// Wiring can be non-standard — a side-effect import, an alias, a @import from
+// another sheet. Any mention counts, because the response to this finding is
+// editing code and a false positive would delete a working palette.
+check(
+  "an @import from another stylesheet counts as wiring",
+  kinds({
+    "src/theme.css": ":root { --primary: oklch(0.45 0.11 155); }",
+    "src/extra.css": `@import "./theme.css";`,
+    "src/index.tsx": `import "./extra.css";`,
+  }).filter((k) => k.startsWith("orphan-stylesheet")),
+  [],
+);
+
+check(
+  "an aliased import counts as wiring",
+  kinds({
+    "src/theme.css": ":root { --primary: oklch(0.45 0.11 155); }",
+    "src/index.tsx": `import "@/theme.css";`,
+  }).filter((k) => k.startsWith("orphan-stylesheet")),
+  [],
+);
+
+check(
+  "scss and less are covered too",
+  kinds({ "src/brand.scss": "$x: 1;", "src/index.tsx": "export {};" })
+    .filter((k) => k.startsWith("orphan-stylesheet")),
+  ["orphan-stylesheet:src/brand.scss:brand.scss"],
+);
+
+check(
+  "a project with no stylesheets reports nothing",
+  kinds({ "src/index.tsx": "export {};" }).filter((k) => k.startsWith("orphan-stylesheet")),
+  [],
+);
+
+{
+  const t = tallyDeadCode(
+    findDeadCode({
+      "src/theme.css": ":root{}",
+      "src/index.tsx": `import App from "./App";`,
+    }),
+  );
+  check("the tally counts orphan stylesheets separately", t.orphanStylesheets, 1);
+  check("an orphan stylesheet is not counted as an unreferenced export", t.unreferencedExports, 0);
+}

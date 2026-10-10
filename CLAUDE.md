@@ -2103,6 +2103,116 @@ passing verdicts describe code that changed twice afterwards; and the free dead-
 never called despite R14 being a pure numeric cap and R11/R12 being validation logic — the
 standing `check_types`-shaped gap, now in the test tool.
 
+## CLEARING THE REMAINING LIST — and Finding 21, found by doing it, 2026-10-10
+The owner asked for everything outstanding to be worked through. Three items closed, one
+measured and left alone, one newly found, and two still genuinely blocked.
+
+### The Next.js template landmine was REAL but the diagnosis above was WRONG
+This file said `NEXTJS_TEMPLATE_ID` "points at no real template". **It does not.** Asking E2B
+directly: `lampcode-nextjs` exists with **15 builds** and `lampcode-tanstack` with **13**, both
+last built 2026-09-09. Both are set on Railway. So the risk is not a sandbox that cannot boot —
+it is the opposite, and worse for being quiet: those images BOOT.
+
+`template-nextjs.ts` contains **zero** occurrences of `.lampcode-tools`, `playwright`,
+`check-render`, `PLAYWRIGHT_BROWSERS_PATH` or `vitest`; the live `template.ts` has 8/7/3/2/12.
+A build routed there loses `check_page`, `check_types` AND `run_tests` in one step, and all
+three report `unavailable` with nothing saying why. A template that fails to boot is loud; this
+is silent, which is the failure mode this file keeps re-learning.
+
+**Reachability:** `classifyBuild` pins `framework` to "react" for new builds, so the only route
+is `detectFrameworkFromFiles` on an EDIT — it returns "nextjs" for `app/layout.tsx` or
+`next.config.js`. Any project it inspects was itself built on the Vite template, so such a file
+is a stray, not a Next.js app. **Fixed in code rather than in the dashboard**: `selectTemplate`
+now always returns the Vite template and warns loudly if either var is set, with the re-enable
+steps in the comment. A code guard holds whatever the dashboard says, and returning the Vite
+template is the CORRECT answer for those projects, not merely the safe one. Guarded by cases
+that read `e2b-service.ts` as TEXT — importing it pulls config, Redis and the E2B SDK and hangs,
+the same reason `review-units.ts` copies the baked-file list.
+
+### Rate limiting is verified working — the launch item is closed
+Checked against production rather than reasoned about. The fail-open path calls `next()` without
+setting headers, so the headers' PRESENCE is the proof:
+
+```
+x-ratelimit-limit: 100  remaining: 99
+                        remaining: 98
+                        remaining: 97
+```
+
+Redis-backed counting is live (100 req / 60 s, `app.use("*")`). **Spoofing was tested too**, and
+defeated: with a forged `X-Forwarded-For: 1.2.3.4` the counter continued the existing sequence
+instead of resetting to a fresh bucket, because Railway appends the real client IP last and
+`getClientIp` takes the last hop. The 2026-09-29 note that rate limiting is "entirely off" is
+superseded — that was true only while Redis was dead.
+
+### `AGENTIC_MAX_TURNS` / `MAX_BUILD_COST_USD` — measured, and NO change is the answer
+Parked item 3 says to revisit before launch, with the implication of lowering them. The ASTERISK
+build settles it in the opposite direction:
+
+| | |
+|---|---|
+| rounds | **40 of 40 — `turnsExhausted: true`** |
+| cost | **$0.120 of $3.00 — 4% of the ceiling** |
+
+The turn cap is BINDING and the cost ceiling is nowhere near. Lowering the cap to its default of
+12 would have cut a three-view app at round 12 and shipped it unfinished — M2.5 needs MORE rounds
+than K3 did (core-tier mean 5.3), because it is cheaper per round rather than better. Leave both.
+The thing to watch is the opposite risk: 40 may be too LOW for a larger app on this model.
+
+### Finding 21 — the palette was written, paid for, and never wired up
+Found while checking whether the review build had damaged anything. It had not — but ASTERISK
+has `src/theme.css` with a real oklch palette (hue 264, full `.dark` block) and **no file in the
+project imports it**, while ELEVEN of its files render through `bg-primary` and
+`text-muted-foreground`. Those classes resolve through the template's baked tokens, which are
+`oklch(L 0 0)` — greyscale. So the app shipped black and white, with colour only where a Tailwind
+colour class was used directly. The thumbnail shows exactly that: coloured book swatches and
+badges, and a monochrome shell.
+
+This is the 2026-10-04 black-and-white bug arriving through a different door. The fix that day
+told the model to write `theme.css` AND import it after `./styles.css`; it did half, and
+**nothing could tell**: the page renders, CSS is not typed so `check_types` passes, the tests
+pass, and the completion audit returned 18/18 proven because a palette the user never asked for
+in words is not an extracted requirement.
+
+**Fixed as a free deterministic check**, which is the test for belonging in `dead-code.ts`:
+either some file names the stylesheet or none does, and a program answers that exactly.
+`orphan-stylesheet` is reported for any generated `.css/.scss/.sass/.less` that no other file
+mentions, and counted in `build_outcome.deadCode.orphanStylesheets` (optional in the type, so
+outcomes stored before today read as absent rather than zero — different facts). Narrow for the
+usual reason: ANY mention in ANY file counts as wiring, so an aliased import, a side-effect
+import or an `@import` from another sheet cannot be reported as dead. Template-owned `styles.css`
+is not in the generated set at all.
+
+**Verified against the real project, not only fixtures:** run over ASTERISK's 19 files it
+reports `[orphan-stylesheet] frontend/src/theme.css` plus the two findings already known there,
+and nothing else.
+
+### Finding 22 — `review_code` was offered and the model did not call it
+The first attempt ever to exercise it against a real model. An EDIT on ASTERISK asking in plain
+words for a review and for no code changes. Result: `rounds: 1`, **`toolCalls: {}`** — not one
+tool call — and `review: undefined`.
+
+It was NOT our wiring. The gateway log for that round reads `agenticBuild: true` with
+`review_code` present in `toolsSent`. The model simply answered from the files already in its
+edit prompt and stopped. So `review_code` remains **unexercised**, and now for a reason worth
+recording: on M2.5 the tool is offered and ignored.
+
+One observation from the same log, offered as a hypothesis rather than a finding: **60 tools are
+sent every round, 46 of them GitHub MCP**, with the build's own tools last. The owner's connected
+GitHub server attaches to every build on this account. It is not a sufficient explanation —
+ASTERISK used `edit_file` 13 times with the identical 60-tool list — but a review request is
+exactly the case where the relevant tool is rare and far down the list. Worth testing by running
+one review with that server disconnected before concluding anything about the model.
+
+### Still blocked, and on one thing each
+- **The audit probe set** (parked item 4). An earlier note in this session said it was unblocked
+  because credentials were now available. **That was wrong** — what is available is the eval's
+  API login (`EVAL_EMAIL`/`EVAL_PASSWORD`), which drives builds over HTTP. The probe set calls
+  `auditCompletion` directly and needs `LLM_API_KEY` + `LLM_ENDPOINT_URL` + `LLM_MODEL_NAME`
+  locally, and Railway redacts variable values. One paste unblocks it; nothing else does.
+- **Findings 16 and 19** still need a build whose backend crashes or whose typecheck fails after
+  delivery, which cannot be ordered on demand.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
