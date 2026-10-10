@@ -2012,19 +2012,40 @@ and `npm test` — the main gate and 438 free cases — had never blocked a merg
 typecheck, cases and build on every push and PR, plus an advisory `npm audit --omit=dev`. No
 secrets, no sandbox, no model dispatch.
 
-**That one existing workflow is itself wrong and was left alone.** `e2b-template.yml` triggers on
-`e2b.Dockerfile` — an orphan this file already says never to edit — builds a template named
-`lampcode-react` rather than the live `lampcode-vite`, and bakes a `--cmd`, which is the exact
-double-Vite port race listed under "Things that will bite you". It is dead rather than harmful,
-so deleting it is the owner's call, not a drive-by.
+**`e2b-template.yml` was deleted, after checking it had never worked.** It triggered on
+`e2b.Dockerfile` — an orphan this file already says never to edit — built a template named
+`lampcode-react` rather than the live `lampcode-vite`, and baked a `--cmd`, which is the exact
+double-Vite port race listed under "Things that will bite you". The deciding evidence was its
+run history rather than a reading of the file: **8 runs, 8 failures, 0 successes, all on one day
+in June 2026**, nothing since. Its only live reference was a stale comment.
 
-**Dependencies: 23 advisories down to 7.** `npm audit fix` within semver (`hono` 4.12.19 →
-4.13.13, plus `tar`, `undici`, `ws`, `@hono/node-server`), cleared both criticals and all nine
-highs; typecheck, 438 cases and the tsup build all pass on it. The hono advisories that actually
-applied here are the two CORS ones; the rest are Lambda, Windows `serve-static` and `hono/jsx`
-paths this product does not use. The remaining 7 are all devDependencies behind `esbuild`
-(tsup/tsx/drizzle-kit) and need `--force` major upgrades — **not taken**, and the advisory is a
-Windows dev-server file read that reaches neither production nor the bundle.
+That comment is fixed too. `e2b-service.ts` pointed the reader at "e2b.Dockerfile / e2b.toml"
+for the template definition, i.e. straight into the trap listed first under "Things that will
+bite you". It now names `e2b-template/template.ts` and `build.ts` and says the Dockerfiles are
+orphans.
+
+**The new CI ran on its own first commit and passed** (`0593315`), so the gates are live rather
+than merely committed.
+
+**Dependencies: 23 advisories down to ZERO.** `npm audit fix` within semver (`hono` 4.12.19 →
+4.13.13, plus `tar`, `undici`, `ws`, `@hono/node-server`) cleared both criticals and all nine
+highs. The hono advisories that actually applied here are the two CORS ones; the rest are
+Lambda, Windows `serve-static` and `hono/jsx` paths this product does not use.
+
+The last 7 looked like they needed `--force` major upgrades of tsup/tsx/drizzle-kit. **They did
+not, and `--force` cannot even run here** — it exits `EOVERRIDE`, because `esbuild` is a DIRECT
+dependency pinned to `0.28.0` *and* an `overrides` entry, and npm will not override a direct
+dependency. All seven were one transitive `esbuild`, so the fix was a **patch bump of both
+pins** to `0.28.2`. No major upgrade, no breakage: typecheck, 438 cases and the tsup build all
+pass, and `npm audit` now reads 0.
+
+Worth keeping: `--force` failing is not evidence that a fix needs a major version. Read what it
+refused and why — here it named the conflict, and the real change was two characters.
+
+`npm run db:generate` fails locally with *"Interactive prompts require a TTY"*. That is NOT the
+esbuild bump — drizzle-kit parses `drizzle.config.ts` through esbuild successfully and then
+stops at an enum-rename prompt it cannot show in a non-interactive shell. Pre-existing, and it
+means a schema diff needs a real terminal.
 
 ### What is NOT done
 - **The monolith split** (`build.ts` 3244 lines, `prompt-builder.ts` 2232, `e2b-service.ts`

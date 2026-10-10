@@ -41,9 +41,14 @@ const TOOLS_ENV = `PLAYWRIGHT_BROWSERS_PATH=${TOOLS_DIR}/browsers`;
 // mid-use; idle sandboxes are paused on WS disconnect well before this.
 const SANDBOX_TIMEOUT_MS = Number(process.env["SANDBOX_RUN_TIMEOUT_MS"] ?? 60 * 60 * 1000); // 1 hour
 
-// Custom template (see e2b.Dockerfile / e2b.toml) that pre-installs Node,
-// frontend deps, and a baseline Vite/React scaffold. Falls back to the stock
-// "base" template if no custom template has been built/configured yet.
+// Custom template that pre-installs Node, frontend deps, and a baseline
+// Vite/React scaffold.
+//
+// Defined in `e2b-template/template.ts` and built by `e2b-template/build.ts`
+// via Template.build(). NOT by either e2b.Dockerfile — both are orphans, and
+// this comment used to point at them, which is the trap it now warns about:
+// editing a Dockerfile here has no effect on the live image.
+//
 // Railway Env Var: E2B_TEMPLATE_ID=lampcode-vite
 const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
 
