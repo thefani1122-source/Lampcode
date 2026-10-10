@@ -1976,12 +1976,20 @@ in the one module whose entire purpose is that coverage is recorded rather than 
 tells the reviewer outright that it is seeing part of a file and must not speak for the rest.
 
 ### Finding 20 — the criteria cap dropped requirements silently
-`MAX_CRITERIA = 18` broke out of the extraction loop with no record. ROTA extracted exactly 18,
-i.e. it sat on the cap, so it very likely lost requirements — and `unverified === 0` then reads
-as "everything you asked for is covered" over a prompt whose later requirements were never
-looked at. `parseCriteria` now takes an optional stats out-param (optional so every existing
-case keeps its signature), counts only genuinely new criteria past the cap, and the count rides
-through to `build_outcome` as `completionAudit.criteriaDropped`.
+`MAX_CRITERIA = 18` broke out of the extraction loop with no record, so a prompt whose later
+requirements were never looked at still reported `unverified === 0`, which reads as "everything
+you asked for is covered". `parseCriteria` now takes an optional stats out-param (optional so
+every existing case keeps its signature), counts only genuinely new criteria past the cap, and
+the count rides through to `build_outcome` as `completionAudit.criteriaDropped`.
+
+**Correcting this entry's own first draft**, which said ROTA's exactly-18 meant it "very likely
+lost requirements": the acceptance prompt itself says **"Between 2 and 18 requirements"**
+(`prompt-builder.ts`). So a model returning 18 on a dense prompt is OBEYING the instruction, not
+being truncated by the cap — the two numbers agree, and `MAX_CRITERIA` is a backstop against a
+model that ignores the instruction rather than the thing shaping normal output. That is also why
+the counter stays at 0 on a prompt with far more than 18 requirements in it. Whether 18 is the
+right ceiling for a dense brief is a calibration question of the same family as Finding 3's
+`BUILD_PLAN_MIN_WORDS`, and is **not** answered here.
 
 ### The two claims that were WRONG — and why implementing them would have hurt
 **"`proven` is not fail-closed."** It already is, and has been. `parseVerdicts` requires a
@@ -2053,9 +2061,47 @@ means a schema diff needs a real terminal.
   behaviour-preserving refactor of the least-covered code in the repo, every October finding
   above lives in `build.ts`, and the cases that exist cover the pure modules rather than the
   orchestrator. It wants its own session and a plan, not the tail of a bug-fix pass.
-- **None of the six fixes has been exercised by a real build.** Typecheck, 438 cases and the
-  build all pass; Finding 16's persist path and Finding 17's reconciliation only run when a
-  post-completion repair loop actually fires, which no run since has triggered.
+### Two of the six are now PROVEN on a live build — ASTERISK, 2026-10-10
+One build against `560fe95`, prompt deliberately requirement-dense to reach the criteria cap.
+A reading tracker, three views, URL routing. 40 rounds (**`turnsExhausted: true`** — it hit the
+40-turn cap), 18 files, planned 16, `check_page` pass, `check_types` pass, `run_tests` never,
+audit **18 proven / 0 unverified / 0 contradicted of 18**, $0.1196, 324 s.
+
+**Finding 17 is proven exactly, which is the one thing cases could not show.**
+
+| | |
+|---|---|
+| `buildOutcome.costUsd` | 0.119619 |
+| `usage_usd` | 0.478476 |
+| `costUsd × USAGE_MARGIN_MULTIPLIER (4)` | 0.478476 |
+| difference | **0** |
+
+Before the fix those two disagreed by the audit's own spend — here $0.010022 × 4 = $0.0401 —
+because `usageUsd` was snapshotted before it was added. One build now reports one cost.
+
+**Finding 18 is proven on real generated output**, by running the fixed verifier against this
+build's own 18 files rather than fixtures. It is a frontend-only app with no backend path at
+all, and `checkAuth` returns **`skip` — "No API route declarations found to check for auth
+middleware"**. Before the fix that exact input returned `pass` with *"All API route files apply
+auth middleware"*, which is the false clean sheet the change exists to stop.
+
+**Finding 20's counter read 0, correctly.** The extractor returned exactly 18 criteria, no
+`[audit] criteria cap hit` line was logged, and `criteriaDropped` is absent. Reading the 18 back,
+they cover the brief faithfully — R14 kept the "150 books" cap, R13 the Escape-and-focus-trap,
+R18 the 390px. So nothing was dropped and the absence is right. **The non-zero path remains
+unexercised**, exactly as the staleness counter was for a day: wired, honest, unobserved. See
+the correction above for why it will rarely fire.
+
+**Findings 16 and 19 were NOT exercised and remain unverified by a build.** No repair loop could
+fire — `verifyPreview`, the typecheck gate and the browser-render gate all passed, which is the
+good case and the one in which the persist path is dead code — and `review_code` was not called.
+Finding 16 needs a build whose backend crashes or whose typecheck fails after delivery.
+
+Two things this run measured in passing: `staleCheckPage: 2` and `staleCheckTypes: 2`, so both
+passing verdicts describe code that changed twice afterwards; and the free dead-code pass found
+1 never-rendered component plus 1 unreferenced export in the delivered app. `run_tests` was
+never called despite R14 being a pure numeric cap and R11/R12 being validation logic — the
+standing `check_types`-shaped gap, now in the test tool.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
