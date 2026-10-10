@@ -2312,7 +2312,7 @@ So "recall 4 of 6" understates the audit on one and overstates it on the other. 
 summary is: **wholly-removed implementations are caught; implementations left present but
 disconnected are not.**
 
-### Finding 26 — a live-sandbox dependency that empties the files endpoint
+### Finding 26 — a live-sandbox dependency that empties the files endpoint (FIXED)
 Found while assembling the fixture. `GET /api/build/:sessionId/files` reads the WORKSPACE
 directory off local disk with `walkDirectory` — it has no storage fallback, unlike the build
 path, which calls `downloadProjectFiles` on a disk miss. Railway's disk does not survive a
@@ -2321,8 +2321,17 @@ are sitting safely in Supabase Storage. Both ASTERISK sessions read 19 and 20 fi
 the day and 0 afterwards.
 
 So a user opening the file list of any project built before the last deploy sees nothing,
-although nothing was lost. Not fixed — recorded, because the fix is the storage fallback the
-build path already has and that is a behaviour change worth doing deliberately.
+although nothing was lost.
+
+**Fixed in `93f42ba`** with the fallback the build path already had: on a disk miss the endpoint
+now reads `downloadProjectFiles`. Read-only, because the build path restores to disk only so
+later steps can read it and a GET has no such need. Storage is keyed by PROJECT rather than by
+session, so an older session gets the project's current files — the closest honest answer
+available, and better than claiming there are none. A storage failure logs and returns the empty
+list, i.e. exactly the previous behaviour, so the change can only improve the response.
+
+**Verified on the two sessions that had returned 0**: both now serve 20 files with their
+`.preview` / `root` / `src` groups intact.
 
 ### The reasoning lever, measured and NOT pulled
 Probing the endpoint directly with the new key turned up something the gateway hides. M2.5
@@ -2340,10 +2349,35 @@ unintended default-MAXIMUM rather than a neutral choice, and the reasoning is sp
 `LLM_MAX_OUTPUT_TOKENS` budget that code has to come out of. That is a plausible contributor to
 M2.5 needing 40 rounds where K3 averaged 5.3.
 
-**Not changed.** This is one trivial prompt, and for a CODING task less reasoning may well be
-worse, not better — which is exactly the kind of threshold this file says not to set before
-taking the measurement. It is an eval question: run the smoke tier with `low`, `none` and the
-current default, and compare against the M2.5 baseline.
+**MEASURED, and the hypothesis was WRONG — the lever stays `off`.** Same day: set
+`MODAL_REASONING_EFFORT=low` on Railway and ran the smoke tier against the `m25-baseline` run
+from that morning, same four tasks.
+
+```
+task              old       new       rounds        cost
+counter           ✔ pass    ✔ pass    7 → 7         $0.011 → $0.017
+todo              ~ soft    ~ soft    10 → 22       $0.036 → $0.049
+pricing-page      ~ soft    ~ soft    9 → 8         $0.022 → $0.019
+form-validation   ✔ pass    ✔ pass    9 → 10        $0.035 → $0.025
+0 task(s) better, 0 worse, 4 unchanged          total $0.103 → $0.110
+```
+
+No verdict moved, spend went UP, and `todo` MORE THAN DOUBLED its rounds. That last number is
+the interesting one: cutting reasoning does not make the model arrive sooner, it makes it think
+less per round and take more rounds — which on a 40-turn cap is a risk rather than a saving.
+
+So the one-word probe above measured a real property of the API and told us nothing useful about
+builds, which is precisely the trap this file keeps naming. Reverted to `off`. The burden of
+proof is on the change and smoke gave it no signal to chase, so the core tier was NOT run —
+spending eleven builds to confirm a negative is worth less than spending them to confirm a
+positive. If this is revisited, `medium` and `high` are untested, and the honest prior after
+this run is that the field is not where M2.5's gap lives.
+
+**A second lesson, cheaper than the first:** `/health` returns 200 from the OLD container during
+a rolling deploy, so it is NOT a signal that a change is live. The first attempt to verify the
+storage fallback tested the old build and read 0 files; polling Railway's deployment status to
+`SUCCESS` is the only reliable gate, and the same applies before starting any eval after a
+config change.
 
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
