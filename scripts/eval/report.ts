@@ -168,7 +168,7 @@ function summarize(run: Run): void {
   console.log(`one-file builds    ${count((t) => t.fileCount === 1)}`);
   console.log(`mean wall clock    ${mean(r.map((t) => t.wallClockSec)).toFixed(0)}s`);
   const spend = withOutcome.reduce((s, t) => s + t.outcome!.costUsd, 0);
-  console.log(`model spend        $${spend.toFixed(3)}  (our own reckoning — a ceiling, see CLAUDE.md)`);
+  console.log(`model spend        $${spend.toFixed(3)}  (our own reckoning — a ceiling, see HISTORY.md)`);
   if (r.length - withOutcome.length > 0) {
     console.log(
       `\n${r.length - withOutcome.length} task(s) recorded no outcome. Either the build failed before ` +

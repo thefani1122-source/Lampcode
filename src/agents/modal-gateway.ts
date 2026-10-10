@@ -227,7 +227,7 @@ export function mapModalError(
     //   {"error":"Plan credits cannot be applied to shared endpoint usage.
     //             Add a payment method or increase your spend limit"}
     //
-    // That is the note already in CLAUDE.md — Modal plan credits do not cover
+    // That is the note already in HISTORY.md — Modal plan credits do not cover
     // shared-endpoint usage — arriving as an HTTP status that means something
     // else. PAYMENT_REQUIRED is NOT in FALLBACK_CODES, so this now fails in one
     // second with the provider's own words instead of 75 s of pointless waiting.

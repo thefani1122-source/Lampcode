@@ -10,7 +10,7 @@
  *  - false fullstack: an over-built app with storage that cannot work;
  *  - false frontend: someone asks for real auth and gets a UI with no backend.
  *
- * The real prompts from CLAUDE.md's history (Atlas, ForgeFlow) and all twenty
+ * The real prompts from HISTORY.md (Atlas, ForgeFlow) and all twenty
  * eval prompts are included, so a future narrowing cannot quietly break the
  * cases that were already right.
  */
@@ -140,7 +140,7 @@ await expectType(
   "fullstack",
 );
 
-// ── The historical prompts from CLAUDE.md ─────────────────────────────────────
+// ── The historical prompts from HISTORY.md ────────────────────────────────────
 
 await expectType(
   "Atlas (the 2026-10-01 build) is frontend",

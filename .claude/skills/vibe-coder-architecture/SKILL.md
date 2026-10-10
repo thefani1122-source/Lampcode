@@ -59,7 +59,7 @@ own gates while shipping a requirement it forgot, which is why the layer stays.
 With the flag off, generation degrades to parsing ```filename fences out of the
 reply. That same fence parsing is also the fallback **inside** the agentic path,
 for a model that writes code in its reply instead of calling the tool — see
-CLAUDE.md, which has the line-by-line account.
+HISTORY.md, which has the line-by-line account.
 
 ## The shape of a build
 
@@ -79,8 +79,11 @@ describe deploy as working on the strength of that file.
 
 ## Things to read before changing anything
 
-- **CLAUDE.md** — current state, what is proven and what is not, and a list of
-  things that will bite you. Start here, always.
+- **CLAUDE.md** — current state, the live provider config, and the list of
+  things that will bite you. Start here, always. It is deliberately short.
+- **HISTORY.md** — the evidence behind every rule in CLAUDE.md: dated
+  measurements and findings. NOT loaded automatically. Read it before
+  re-investigating anything that sounds like it has been looked at before.
 - **`.claude/skills/sandbox-lifecycle/SKILL.md`** — accurate, and the right
   source for anything touching the sandbox, HMR or the preview iframe.
 - **`.claude/skills/investigate-confirm-fix`** — the required methodology:
