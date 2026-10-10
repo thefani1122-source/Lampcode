@@ -2187,7 +2187,30 @@ is not in the generated set at all.
 reports `[orphan-stylesheet] frontend/src/theme.css` plus the two findings already known there,
 and nothing else.
 
-### Finding 22 — `review_code` was offered and the model did not call it
+### REVIEW_CODE WORKS — proven end to end, and the trigger is naming it
+The last of the three problems the owner raised is closed. Second attempt, same project, prompt
+changed only to name the tool: *"Use the review_code tool on this project, then report what it
+found."*
+
+| | |
+|---|---|
+| coverage | **deep 17 / total 17**, `unreviewed: 0` |
+| findings | 21 |
+| `dropped` | **1** — a claim whose quote was not in the file it cited |
+| cost | $0.0375 against a $1.00 ceiling |
+| `toolCalls` | `{"review_code": 1}` |
+
+Full coverage, the corroboration rule firing on a real hallucinated claim, and the whole thing
+for under four cents. The spine built on 2026-10-07 — import graph, risk ranking, free pre-pass,
+per-unit dispatch, quote corroboration, coverage accounting — is now exercised against a real
+model rather than only cases.
+
+**The finding is the trigger, not the tool.** "Do a code review of this project" produced
+`toolCalls: {}` — not one call. Naming `review_code` produced a complete review. Same model,
+same project, same offered tool list. This is the `check_types` pattern again (3/10 → 11/11 by
+stating the consequence): on this model a capability that is merely available is not reached.
+
+### Finding 22 — `review_code` was offered and the model did not call it (SUPERSEDED above)
 The first attempt ever to exercise it against a real model. An EDIT on ASTERISK asking in plain
 words for a review and for no code changes. Result: `rounds: 1`, **`toolCalls: {}`** — not one
 tool call — and `review: undefined`.
@@ -2203,6 +2226,22 @@ GitHub server attaches to every build on this account. It is not a sufficient ex
 ASTERISK used `edit_file` 13 times with the identical 60-tool list — but a review request is
 exactly the case where the relevant tool is rare and far down the list. Worth testing by running
 one review with that server disconnected before concluding anything about the model.
+
+### Finding 23 — the orphan-stylesheet rule was wrong within the hour, and the next build proved it
+Worth recording as a method note more than a bug. The rule shipped with "ANY mention in ANY file
+counts as wiring", chosen deliberately to under-report. The very next build then wrote its review
+report to `frontend/output.md`, that report named `theme.css`, and the tally dropped to
+`orphanStylesheets: 0` **while the palette was still unwired**. A prose file silenced the only
+check that catches a dead palette.
+
+It was caught by re-running the probe against the real project rather than by trusting the
+number, which is the same discipline that caught the `stripComments` glob bug: a rule that looks
+right on fixtures can be wrong on the first real input it meets. Only files that can actually
+import now count — code, stylesheets, HTML — so markdown and JSON naming the file do not. Both
+are regression cases, along with an HTML `<link>` which must still count.
+
+Re-verified on the same 20-file project: `[orphan-stylesheet] frontend/src/theme.css` is reported
+again, with `output.md` sitting right there naming it.
 
 ### Still blocked, and on one thing each
 - **The audit probe set** (parked item 4). An earlier note in this session said it was unblocked

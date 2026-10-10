@@ -345,12 +345,20 @@ export function findDeadCode(files: Record<string, string>): DeadCodeFinding[] {
   // is baked and imported by the template, and is not in this file set), and a
   // mention anywhere in any file counts as wiring, so a non-standard import
   // cannot be reported as dead.
+  // Only a file that can actually IMPORT counts as wiring. "Any mention in any
+  // file" was the first version of this rule and it was wrong within the hour:
+  // the next build wrote its review report to `output.md`, that report named
+  // `theme.css`, and the finding went quiet while the palette was still
+  // unwired. A markdown file cannot import anything, and neither can JSON or a
+  // lockfile — so prose that happens to contain the filename must not silence
+  // the one check that catches a dead palette.
   const STYLESHEET_RE = /\.(css|scss|sass|less)$/;
+  const CAN_IMPORT_RE = /\.(tsx?|jsx?|mts|mjs|cjs|css|scss|sass|less|html?|vue|svelte|astro)$/;
   for (const path of Object.keys(files)) {
     if (!STYLESHEET_RE.test(path)) continue;
     const base = path.split("/").pop() ?? path;
     const referenced = Object.entries(files).some(
-      ([p, content]) => p !== path && content.includes(base),
+      ([p, content]) => p !== path && CAN_IMPORT_RE.test(p) && content.includes(base),
     );
     if (referenced) continue;
     findings.push({

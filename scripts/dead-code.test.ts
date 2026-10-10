@@ -363,3 +363,35 @@ check(
   check("the tally counts orphan stylesheets separately", t.orphanStylesheets, 1);
   check("an orphan stylesheet is not counted as an unreferenced export", t.unreferencedExports, 0);
 }
+
+// Found by running it, one build after the rule shipped: the model wrote its
+// review report to output.md, that report named theme.css, and the finding went
+// quiet while the palette was still unwired. Prose cannot import anything.
+check(
+  "a markdown file naming the stylesheet does NOT count as wiring",
+  kinds({
+    "src/theme.css": ":root { --primary: oklch(0.45 0.11 155); }",
+    "output.md": "The project has a src/theme.css which is never imported.",
+    "src/index.tsx": `import App from "./App";`,
+  }).filter((k) => k.startsWith("orphan-stylesheet")),
+  ["orphan-stylesheet:src/theme.css:theme.css"],
+);
+
+check(
+  "JSON naming the stylesheet does not count either",
+  kinds({
+    "src/theme.css": ":root{}",
+    "manifest.json": `{ "styles": ["theme.css"] }`,
+    "src/index.tsx": "export {};",
+  }).filter((k) => k.startsWith("orphan-stylesheet")),
+  ["orphan-stylesheet:src/theme.css:theme.css"],
+);
+
+check(
+  "an html file CAN wire a stylesheet, so it still counts",
+  kinds({
+    "src/theme.css": ":root{}",
+    "index.html": `<link rel="stylesheet" href="./theme.css">`,
+  }).filter((k) => k.startsWith("orphan-stylesheet")),
+  [],
+);
