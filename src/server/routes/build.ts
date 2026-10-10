@@ -3267,7 +3267,49 @@ buildRouter.get("/:sessionId/files", async (c) => {
   }
 
   const workspaceBase = join(WORKSPACE_BASE, session.projectId, sessionId);
-  const files = await walkDirectory(workspaceBase, workspaceBase);
+  let files = await walkDirectory(workspaceBase, workspaceBase);
+
+  // ── Disk miss → fall back to storage ────────────────────────────────────
+  // WORKSPACE_BASE is local disk, and Railway's disk does not survive a
+  // deploy. Without this the endpoint answered `groups: {}` for any project
+  // built before the last deploy — measured 2026-10-10, two sessions that
+  // returned 19 and 20 files in the morning returned 0 in the afternoon with
+  // their files sitting untouched in Supabase Storage. Nothing was lost and
+  // nothing said so; the file list simply went empty.
+  //
+  // The build path already does exactly this on a disk miss
+  // (`downloadProjectFiles`), so this endpoint was the one reader that did
+  // not. Read-only here on purpose — the build path restores to disk because
+  // later steps read from it, and a GET has no reason to write.
+  //
+  // Storage is keyed by PROJECT, not by session, so this returns the
+  // project's current files rather than that session's. For the latest
+  // session they are the same thing; for an older one it is the closest
+  // honest answer available, and better than claiming there are none.
+  if (files.length === 0) {
+    try {
+      const stored = await downloadProjectFiles(session.projectId);
+      const paths = Object.keys(stored);
+      if (paths.length > 0) {
+        console.log(
+          `[files] disk miss for session=${sessionId} — served ${paths.length} file(s) from storage`,
+        );
+        files = paths.map((p) => {
+          const content = stored[p] ?? "";
+          return {
+            path: p,
+            content,
+            sizeBytes: Buffer.byteLength(content, "utf8"),
+            lines: content.split("\n").length,
+          };
+        });
+      }
+    } catch (err) {
+      // Never fail the request over this: an empty list is what it returned
+      // before, so the worst case is the behaviour that was already there.
+      logger.warn({ sessionId, projectId: session.projectId, err }, "[files] storage fallback failed");
+    }
+  }
 
   // Group by subdirectory (frontend / backend)
   const grouped: Record<string, typeof files> = {};
