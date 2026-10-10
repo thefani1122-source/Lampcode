@@ -2478,3 +2478,43 @@ planner's gating and parsing, the project-memory derivation, and the eval scorin
 (`scripts/*.test.ts`, plain tsx scripts, no runner). 180 cases, costing nothing and needing no
 credentials. `tsc --noEmit` via `npm run typecheck` remains the main gate, and now
 covers `scripts/` too.
+
+## THE AUDIT IS BACK IN THE CHAT, IN THE USER'S LANGUAGE — 2026-10-10
+Reversing the removal made earlier the same day, and the reversal is about WORDING rather than
+about audience.
+
+It was pulled because what it said was written for a maintainer: it named files, stores and
+exported functions, and the owner was right that somebody who asked for a habit tracker is not
+served by reading that their build has a `deleteHabit` action with no caller. But hiding it
+left the product with the same build-loop-and-hope every competitor ships, while the one thing
+that genuinely distinguishes it sat in a jsonb column nobody reads.
+
+**What changed: `formatAuditForUser` now shows ONLY the criterion text.** That text is the
+user's own words, lifted from their prompt by the acceptance pass — it is the single part of a
+verdict already written in their language. The auditor's `note` and its file citations are
+never shown; they stay in `build_outcome.completionAudit` for the eval and for triage.
+
+```
+I checked all 3 things you asked for, and they're all there.
+
+I checked what you asked for: 1 of 3 are there.
+This one looks missing:
+  • A weekly grid showing every shift
+And this one I couldn't confirm either way:
+  • Escape closes the dialog
+Couldn't confirm doesn't mean broken — just that I found no proof either way.
+```
+
+"Looks missing" and "couldn't confirm" are kept apart deliberately: they are different claims
+and users hear the second as the first. The hedging is also honest about the check itself —
+Finding 24 measured that it is strong on "was this written" and weak on "does it actually run".
+
+**Chat lines only; the `build:completion_audit` event is NOT re-emitted.** The frontend handler
+and its card went with the old wording, and emitting to nobody is the dead-path habit this file
+keeps recording. The thinking stream is where the user is already looking and it needs no
+frontend change. **Not visually confirmed in the app** — the formatter and its wiring are
+covered by cases and by a rendered preview of all three shapes, but no build has been watched
+in the UI since.
+
+Six formatter cases were rewritten rather than deleted, and the most important one is inverted:
+it used to assert the note IS shown, and now asserts it is NOT.

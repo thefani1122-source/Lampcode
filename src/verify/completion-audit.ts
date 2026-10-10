@@ -321,24 +321,56 @@ export function formatAuditForUser(audit: CompletionAudit): string[] {
 
   const lines: string[] = [];
   if (contradicted === 0 && unverified === 0) {
-    lines.push(`Checked against your request: all ${total} requirement(s) verified.`);
+    lines.push(
+      total === 1
+        ? "I checked the one thing you asked for, and it's there."
+        : `I checked all ${total} things you asked for, and they're all there.`,
+    );
     return lines;
   }
 
-  lines.push(
-    `Checked against your request: ${proven} of ${total} verified, ` +
-    `${unverified} unverified, ${contradicted} contradicted.`,
-  );
-
   const byId = new Map(audit.criteria.map((c) => [c.id, c.text]));
-  for (const v of audit.verdicts) {
-    if (v.status === "proven") continue;
-    const label = v.status === "contradicted" ? "NOT DONE" : "UNVERIFIED";
-    const text = byId.get(v.id) ?? v.id;
-    lines.push(`  ${label} — ${text}${v.note ? ` (${v.note})` : ""}`);
+  const pick = (status: CriterionStatus) =>
+    audit.verdicts
+      .filter((v) => v.status === status)
+      .map((v) => byId.get(v.id))
+      .filter((t): t is string => typeof t === "string" && t.length > 0);
+
+  const missing = pick("contradicted");
+  const unsure = pick("unverified");
+
+  lines.push(`I checked what you asked for: ${proven} of ${total} are there.`);
+
+  // The criterion TEXT is the user's own words, pulled from their prompt by the
+  // acceptance pass. That is the only part of a verdict written in their
+  // language, so it is the only part shown. `note` and `evidence` are the
+  // auditor talking to a maintainer — "the store has a deleteHabit action but no
+  // UI component invokes it" is true, useful to us, and not what somebody who
+  // asked for a habit tracker is here to read. They are kept in
+  // build_outcome.completionAudit for the eval and for triage.
+  if (missing.length > 0) {
+    lines.push(missing.length === 1 ? "This one looks missing:" : "These look missing:");
+    for (const t of missing) lines.push(`  • ${t}`);
   }
+  if (unsure.length > 0) {
+    lines.push(
+      unsure.length === 1
+        ? "And this one I couldn't confirm either way:"
+        : "And these I couldn't confirm either way:",
+    );
+    for (const t of unsure) lines.push(`  • ${t}`);
+  }
+
+  // Said plainly because the two states are genuinely different and users hear
+  // the second as the first. The hedging is also honest about the check itself:
+  // it reads the delivered code, so it is good at "was this written" and weaker
+  // at "does it actually run" — see HISTORY.md, Finding 24.
   lines.push(
-    "Unverified does not mean broken; it means nothing in this build proves it works.",
+    unsure.length > 0 && missing.length > 0
+      ? "Couldn't confirm doesn't mean broken — just that I found no proof either way. Ask me to fix anything above."
+      : unsure.length > 0
+        ? "That doesn't mean it's broken — only that I found no proof either way. Ask me to check it properly."
+        : "Just tell me and I'll add it.",
   );
   return lines;
 }

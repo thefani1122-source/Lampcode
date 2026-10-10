@@ -450,7 +450,7 @@ check(
     unverified: 0,
     costUsd: 0.01,
   }),
-  ["Checked against your request: all 2 requirement(s) verified."],
+  ["I checked all 2 things you asked for, and they're all there."],
 );
 
 const mixed = formatAuditForUser({
@@ -469,14 +469,26 @@ const mixed = formatAuditForUser({
 // point is that "done" stops being said over an unproven requirement.
 ok("formatAuditForUser: names the unverified requirement in the user's words",
   mixed.some((l) => l.includes("Cmd+Z undoes the last edit")));
-ok("formatAuditForUser: labels it UNVERIFIED", mixed.some((l) => l.includes("UNVERIFIED")));
-ok("formatAuditForUser: carries the reason", mixed.some((l) => l.includes("no keyboard handler")));
+// The auditor's NOTE is never shown. It is written for a maintainer — it names
+// files, stores and exported functions — and showing it was the reason this
+// output was pulled from the chat entirely on 2026-10-10. It stays in
+// build_outcome.completionAudit, where the eval and triage read it.
+ok("formatAuditForUser: the auditor's note is NOT shown to the user",
+  !mixed.some((l) => l.includes("no keyboard handler")));
+ok("formatAuditForUser: no jargon labels",
+  !mixed.some((l) => l.includes("UNVERIFIED") || l.includes("NOT DONE")));
+ok("formatAuditForUser: says how many of how many are there",
+  mixed.some((l) => l.includes("1 of 2 are there")));
 // A proven requirement is not listed: the list is what needs attention, and
 // restating the passes would bury the one line that matters.
 ok("formatAuditForUser: proven requirements are not listed",
   !mixed.some((l) => l.includes("Notes persist")));
-ok("formatAuditForUser: says what unverified means",
-  mixed.some((l) => l.includes("does not mean broken")));
+// "couldn't confirm" and "missing" are genuinely different and users hear the
+// second as the first, so the difference is spelled out in plain words.
+ok("formatAuditForUser: explains that unconfirmed is not the same as broken",
+  mixed.some((l) => l.includes("doesn't mean it's broken")));
+ok("formatAuditForUser: tells the user what to do next",
+  mixed.some((l) => /ask me/i.test(l)));
 
 check(
   "formatAuditForUser: no criteria means no output at all",
@@ -492,8 +504,12 @@ const contradicted = formatAuditForUser({
   unverified: 0,
   costUsd: 0,
 });
-ok("formatAuditForUser: contradicted reads NOT DONE, not UNVERIFIED",
-  contradicted.some((l) => l.includes("NOT DONE")) && !contradicted.some((l) => l.includes("UNVERIFIED")));
+ok("formatAuditForUser: a contradicted requirement reads as missing, in plain words",
+  contradicted.some((l) => l.includes("looks missing")));
+ok("formatAuditForUser: and names it in the user's own words",
+  contradicted.some((l) => l.includes("Notes persist across reloads")));
+ok("formatAuditForUser: a contradicted verdict does not carry its note either",
+  !contradicted.some((l) => l.includes("plain useState")));
 
 // ── formatFilesForAudit ──────────────────────────────────────────────────────
 

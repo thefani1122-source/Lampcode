@@ -54,6 +54,7 @@ import {
   extractCriteria,
   auditCompletion,
   unverifiedAudit,
+  formatAuditForUser,
   type ExtractResult,
 } from "../../verify/completion-audit.js";
 
@@ -2771,17 +2772,29 @@ export async function runFastBuild(
         `of=${completionAudit.criteria.length}`,
       );
 
-      // NOT said in the chat, and NOT sent to the client — a deliberate product
-      // decision on 2026-10-10, reversing the one above it. The audit's text is
-      // written for whoever maintains this harness: it names files, stores and
-      // exported functions. A person who asked for a habit tracker is not
-      // served by reading that their build has a `deleteHabit` action with no
-      // caller; they are served by the app, and by being able to ask for the
-      // missing button. The owner keeps the signal where it was always most
-      // useful — `build_outcome.completionAudit`, which the eval scores and
-      // `GET /api/build/:sessionId/status` returns.
+      // Said in the chat again, in the USER's language this time.
       //
-      // The measurement is unchanged. Only its audience is.
+      // It was pulled on 2026-10-10 because what it said was written for a
+      // maintainer — it named files, stores and exported functions, and a person
+      // who asked for a habit tracker is not served by reading that their build
+      // has a `deleteHabit` action with no caller. That was the right call about
+      // the WORDING and the wrong one about the audience: this check is the only
+      // thing in the product that compares what the person actually asked for
+      // against what was delivered, and hiding it left them with the same
+      // build-loop-and-hope every competitor ships.
+      //
+      // formatAuditForUser now shows only the criterion text — which is the
+      // user's own words, lifted from their prompt by the acceptance pass — and
+      // never the auditor's note or its file citations. Those stay in
+      // build_outcome.completionAudit for the eval and for triage.
+      // Chat lines only — no `build:completion_audit` event. The frontend's
+      // handler and its card were removed with the old wording, and emitting to
+      // nobody is the dead-path habit this repo keeps finding in its own code.
+      // The thinking stream is where the user is already looking, and it needs
+      // no frontend change to land.
+      for (const line of formatAuditForUser(completionAudit)) {
+        server?.thinking(sessionId, { text: line, sessionId });
+      }
     }
 
     // ── Dead code in what is actually being delivered ───────────────────────
