@@ -2252,6 +2252,99 @@ again, with `output.md` sitting right there naming it.
 - **Findings 16 and 19** still need a build whose backend crashes or whose typecheck fails after
   delivery, which cannot be ordered on demand.
 
+## THE AUDIT PROBE SET RAN — parked item 4 is closed, 2026-10-10
+The owner supplied a Bedrock key, which is the one thing this was ever blocked on. `npm run
+audit-probe`, `scripts/audit-probe/`. Two full runs, ~$0.02 and about a minute each, no builds.
+
+The fixture is NOTEBOX, a purpose-built notes app (11 files, 11 criteria) rather than LEDGER:
+LEDGER's files were downloaded in an earlier session and that container is gone. Both the files
+and the criteria are COMMITTED, for the same reason an eval task's prompt may never be edited —
+a fixture that moves makes every stored run incomparable.
+
+| | run 1 | run 2 |
+|---|---|---|
+| **precision** (unmutated original) | **11/11 proven, 0 false alarms** | **11/11, 0** |
+| **recall** (6 mutated requirements) | 4 of 6 | 4 of 6 |
+| collateral flags on one mutation | 1 | **4** |
+| spend | $0.0220 | $0.0214 |
+
+**Precision is the headline, and it is good.** Zero false alarms, twice. Finding 6 — a
+confident, specific, entirely false `contradicted` over working code — did not recur. That was
+the risk the corroboration rule was built against, and it is holding.
+
+### Finding 24 — the audit proves a behaviour from code EXISTING, not from it being WIRED
+The hard miss, and the valuable one. The `handler-never-attached` mutation removes
+`document.addEventListener("keydown", handleEscape)` and leaves everything else. The audit
+returned **`proven`**, citing `NoteDialog.tsx`, with the note:
+
+> handleEscape checks for Escape key and calls onClose when dialog is open
+
+Every word of that is true **about the function's body**, and the function never runs. This is
+ROTA's shape with the volume turned down: there, four views were never imported by anything and
+the audit caught it; here the handler is still referenced — by the `removeEventListener` in the
+cleanup — so a surface "is it wired" reading passes. **A requirement is proven when its
+implementation is found, not when a path from the app to it is found.**
+
+Worth stating because it bounds what the audit is for. It is strong on "was this written at
+all" and weak on "does it actually run", which is precisely the half `check_page` cannot cover
+either — the page renders whether or not Escape is attached.
+
+### Finding 25 — the audit is not deterministic, so one probe run is not a measurement
+`no-inline-error` returned `proven` on one run and `unverified` on another, same fixture, same
+mutation, same criteria. `no-sort` drew ONE collateral flag on the first run and FOUR on the
+second. The verdicts that matter were stable — precision 11/11 both times, recall 4/6 both
+times — but which criteria drift is not.
+
+This is the same caution this file already records for M2.5 on builds ("one run is not a
+measurement on this model"), now measured on the audit itself. Read the probe as a
+two-run average, and re-run it before concluding that a change helped.
+
+### What the two misses say, precisely
+Both mutations left a decoy, and that was not the plan — it is what makes them interesting:
+
+- `handler-never-attached` leaves `removeEventListener("keydown", handleEscape)`, so the
+  identifier is still referenced in the file.
+- `no-inline-error` removes the `<p>` carrying the message but leaves
+  `error ? "border-destructive" : "border-input"`, so an error is still *shown*, just not in
+  words. Calling that requirement met is arguably defensible rather than plainly wrong.
+
+So "recall 4 of 6" understates the audit on one and overstates it on the other. The honest
+summary is: **wholly-removed implementations are caught; implementations left present but
+disconnected are not.**
+
+### Finding 26 — a live-sandbox dependency that empties the files endpoint
+Found while assembling the fixture. `GET /api/build/:sessionId/files` reads the WORKSPACE
+directory off local disk with `walkDirectory` — it has no storage fallback, unlike the build
+path, which calls `downloadProjectFiles` on a disk miss. Railway's disk does not survive a
+deploy, and after today's deploys the endpoint returned `groups: {}` for projects whose files
+are sitting safely in Supabase Storage. Both ASTERISK sessions read 19 and 20 files earlier in
+the day and 0 afterwards.
+
+So a user opening the file list of any project built before the last deploy sees nothing,
+although nothing was lost. Not fixed — recorded, because the fix is the storage fallback the
+build path already has and that is a behaviour change worth doing deliberately.
+
+### The reasoning lever, measured and NOT pulled
+Probing the endpoint directly with the new key turned up something the gateway hides. M2.5
+returns a separate `reasoning` field, and on a one-word prompt:
+
+| request | completion tokens | reasoning chars |
+|---|---|---|
+| **no field — what we send today** | **201** | 945 |
+| `reasoning_effort: "low"` | **56** | 235 |
+| `reasoning_effort: "none"` | 65 | 293 |
+
+`MODAL_REASONING_EFFORT=off` means "do not send the field", which was chosen for Bedrock on the
+belief that it never asked for one. **M2.5 does accept it**, so the current setting is an
+unintended default-MAXIMUM rather than a neutral choice, and the reasoning is spending the
+`LLM_MAX_OUTPUT_TOKENS` budget that code has to come out of. That is a plausible contributor to
+M2.5 needing 40 rounds where K3 averaged 5.3.
+
+**Not changed.** This is one trivial prompt, and for a CODING task less reasoning may well be
+worse, not better — which is exactly the kind of threshold this file says not to set before
+taking the measurement. It is an eval question: run the smoke tier with `low`, `none` and the
+current default, and compare against the M2.5 baseline.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based
@@ -2270,7 +2363,13 @@ again, with `output.md` sitting right there naming it.
    the function behind the cost guard, the credits deducted, and any price set from `usage_usd`.
 3. **`AGENTIC_MAX_TURNS=40` and `MAX_BUILD_COST_USD=3.0`** were raised on Railway on 2026-10-01
    for a long-running test. Revisit before opening the product to real users.
-4. **The audit needs its own probe set — AGREED 2026-10-07, not built.** The one thing the
+4. ~~**The audit needs its own probe set**~~ — **BUILT AND RUN 2026-10-10**, see
+   "THE AUDIT PROBE SET RAN" above. `npm run audit-probe`. Precision 11/11 twice, recall 4/6
+   twice, and two new findings (24: proven-from-existence rather than from being wired;
+   25: the audit is not run-to-run deterministic). The original note is kept below for the
+   reasoning that produced it.
+
+   **The audit needs its own probe set — AGREED 2026-10-07, not built.** The one thing the
    completion audit has not shown is that it catches a REAL missing requirement, and waiting for
    a build to drop one is not a test you can run: you cannot make the model forget on demand.
    So mutate known-good output instead and keep the criteria fixed. Five mutations, each one a

@@ -1,0 +1,57 @@
+[
+  {
+    "id": "R1",
+    "kind": "visual",
+    "text": "Two-column layout: notes list on left, selected note editor on right"
+  },
+  {
+    "id": "R2",
+    "kind": "data",
+    "text": "Each note has a title, body text, and created date"
+  },
+  {
+    "id": "R3",
+    "kind": "data",
+    "text": "Notes persist across page reloads using localStorage"
+  },
+  {
+    "id": "R4",
+    "kind": "data",
+    "text": "Maximum of 50 notes in storage"
+  },
+  {
+    "id": "R5",
+    "kind": "logic",
+    "text": "When 50 notes exceeded, the oldest note by created date is automatically dropped"
+  },
+  {
+    "id": "R6",
+    "kind": "behaviour",
+    "text": "New Note dialog validates that title is not empty"
+  },
+  {
+    "id": "R7",
+    "kind": "visual",
+    "text": "Inline error shown under the title field when title is empty"
+  },
+  {
+    "id": "R8",
+    "kind": "behaviour",
+    "text": "New Note dialog closes when Escape key is pressed"
+  },
+  {
+    "id": "R9",
+    "kind": "data",
+    "text": "Notes displayed sorted newest first"
+  },
+  {
+    "id": "R10",
+    "kind": "visual",
+    "text": "Empty state displayed when there are no notes"
+  },
+  {
+    "id": "R11",
+    "kind": "data",
+    "text": "Pre-seeded with approximately 6 realistic notes"
+  }
+]

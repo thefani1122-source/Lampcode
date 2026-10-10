@@ -14,3 +14,7 @@ eval-results/
 
 # Stray build artifacts that have been committed by accident before.
 .wrangler/
+
+# Probe-set run output — changes every run; the FIXTURE beside it is the
+# committed part, and must stay fixed or runs stop being comparable.
+scripts/audit-probe/fixture/probe-results.json

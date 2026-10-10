@@ -17,7 +17,8 @@
     "db:studio": "drizzle-kit studio",
     "test": "tsx scripts/vitest-parse.test.ts && tsx scripts/classifier.test.ts && tsx scripts/planner.test.ts && tsx scripts/memory.test.ts && tsx scripts/pricing.test.ts && tsx scripts/mcp-tools.test.ts && tsx scripts/imports.test.ts && tsx scripts/completion-audit.test.ts && tsx scripts/dead-code.test.ts && tsx scripts/review.test.ts && tsx scripts/dispatch-retry.test.ts && tsx scripts/security.test.ts && tsx scripts/env-example.test.ts && tsx scripts/eval/auth.test.ts && tsx scripts/eval/score.test.ts",
     "eval": "tsx scripts/eval/run.ts",
-    "eval:report": "tsx scripts/eval/report.ts"
+    "eval:report": "tsx scripts/eval/report.ts",
+    "audit-probe": "tsx scripts/audit-probe/run.ts"
   },
   "repository": {
     "type": "git",
