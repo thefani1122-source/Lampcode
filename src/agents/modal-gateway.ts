@@ -294,7 +294,7 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     messages: toOpenAiMessages(req.messages),
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: req.maxTokens ?? 16_000,
+    max_tokens: req.maxTokens ?? config.LLM_MAX_OUTPUT_TOKENS,
     // GLM-5.3 forces reasoning on and cannot disable it (confirmed against
     // Z.ai's own docs) — reasoning_effort defaults to "max" when omitted,
     // and Z.ai's own benchmarks show max-effort reasoning alone can run

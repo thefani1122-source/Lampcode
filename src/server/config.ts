@@ -88,6 +88,12 @@ const envSchema = z.object({
   MODAL_REASONING_EFFORT: z
     .enum(["off", "low", "medium", "high", "max"])
     .default("low"),
+  // Ceiling sent as `max_tokens` on the OpenAI-compatible path. It is a
+  // PER-MODEL limit, not a preference: MiniMax M2.5 caps output at 8K while
+  // Kimi K2.5 allows 16K, and asking for more than a model permits is either
+  // rejected outright or silently clamped — neither of which announces itself.
+  // Default stays 16000 so nothing changes for the models already in use.
+  LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(16_000),
   // Multiplier applied to real per-dispatch costUsd to produce the billed
   // usage_usd amount. Covers real profit margin AND infra cost costUsd
   // doesn't capture (E2B sandbox compute, Railway hosting, Redis, bandwidth —

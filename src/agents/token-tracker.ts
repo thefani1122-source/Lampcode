@@ -60,6 +60,10 @@ const MODEL_PRICING: Record<
   // $0.72/$3.60, so moving region without moving this row misprices the build.
   // K2.5 has no Geo or Global inference profile at all, hence the bare id.
   "moonshotai.kimi-k2.5":        { inputPerM: 0.618, outputPerM: 3.09  }, // ap-southeast-2
+  // MiniMax — agent-native, and on Bedrock it is HALF K2.5's price. Same
+  // region caveat: these are Sydney rates (US regions are $0.30/$1.20,
+  // London $0.47/$1.86), so a region move needs this row moved with it.
+  "minimax.minimax-m2.5":        { inputPerM: 0.31,  outputPerM: 1.24  }, // ap-southeast-2
   "moonshotai/kimi-k2.7-code":   { inputPerM: 0.95,  outputPerM: 4.00  },
   "moonshotai/kimi-k2.6":        { inputPerM: 0.60,  outputPerM: 2.50  },
   "moonshotai/kimi-k2":          { inputPerM: 0.60,  outputPerM: 2.50  },
