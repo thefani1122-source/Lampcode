@@ -54,7 +54,6 @@ import {
   extractCriteria,
   auditCompletion,
   unverifiedAudit,
-  formatAuditForUser,
 } from "../../verify/completion-audit.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -2695,16 +2694,17 @@ export async function runFastBuild(
         `of=${completionAudit.criteria.length}`,
       );
 
-      // Said in the chat, not only stored. A number in a jsonb column that the
-      // user never sees would leave the product still claiming "done" over an
-      // unproven requirement, which is the behaviour being fixed.
-      for (const line of formatAuditForUser(completionAudit)) {
-        server?.thinking(sessionId, { text: line, sessionId });
-      }
-      server?.emitToRoom(sessionId, "build:completion_audit", {
-        sessionId,
-        audit: completionAudit,
-      });
+      // NOT said in the chat, and NOT sent to the client — a deliberate product
+      // decision on 2026-10-10, reversing the one above it. The audit's text is
+      // written for whoever maintains this harness: it names files, stores and
+      // exported functions. A person who asked for a habit tracker is not
+      // served by reading that their build has a `deleteHabit` action with no
+      // caller; they are served by the app, and by being able to ask for the
+      // missing button. The owner keeps the signal where it was always most
+      // useful — `build_outcome.completionAudit`, which the eval scores and
+      // `GET /api/build/:sessionId/status` returns.
+      //
+      // The measurement is unchanged. Only its audience is.
     }
 
     // ── Dead code in what is actually being delivered ───────────────────────
