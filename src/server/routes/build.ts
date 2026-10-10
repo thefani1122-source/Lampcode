@@ -54,6 +54,7 @@ import {
   extractCriteria,
   auditCompletion,
   unverifiedAudit,
+  type ExtractResult,
 } from "../../verify/completion-audit.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1178,7 +1179,7 @@ export async function runFastBuild(
     // from the builder's interpretation agrees with the builder's blind spots
     // by construction, which is how `editor-undo` passed every gate while
     // shipping no persistence at all.
-    const criteriaPromise = shouldAudit()
+    const criteriaPromise: Promise<ExtractResult> = shouldAudit()
       ? extractCriteria({ dispatcher, prompt, sessionId, userId, projectId, provider })
           .catch(() => ({ criteria: [], costUsd: 0, reason: "extraction threw" }))
       : Promise.resolve({ criteria: [], costUsd: 0, reason: "disabled" });
@@ -2297,6 +2298,14 @@ export async function runFastBuild(
     // fix src/server, write the fix back (which restarts the backend), and
     // re-verify. Bounded so it can't loop forever. Then hand back the URL.
     const finishPreview = async (url: string): Promise<void> => {
+      // Everything in here runs AFTER the build session has been recorded
+      // "success", after its files were persisted and after usageUsd was
+      // computed — the calls below are reached only from non-awaited `.then()`
+      // chains. The three repair loops it contains all MUTATE allFiles, so both
+      // of those records go stale the moment one of them lands. Tracked here and
+      // settled once at the end; see the reconciliation block below for why.
+      const costBeforeRepairs = cumulativeCostUsd;
+      let repairedAfterCompletion = false;
       const MAX = 2;
       for (let attempt = 0; attempt < MAX; attempt++) {
         const { ok, issues } = await verifyPreview(projectId).catch((err: unknown) => gateFailedOpen("verifyPreview", sessionId, projectId, err));
@@ -2361,6 +2370,7 @@ export async function runFastBuild(
           break;
         }
         if (fixedCount === 0) break;
+        repairedAfterCompletion = true;
         // Write the fix back — this restarts the backend with the new code.
         await writeFilesToSandbox(projectId, allFiles, (line) =>
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
@@ -2470,6 +2480,7 @@ export async function runFastBuild(
             break;
           }
           if (fixedCount === 0) break;
+          repairedAfterCompletion = true;
           await writeFilesToSandbox(projectId, allFiles, (line) =>
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
           ).catch(() => {});
@@ -2562,6 +2573,7 @@ export async function runFastBuild(
             break;
           }
           if (fixedCount === 0) break;
+          repairedAfterCompletion = true;
           await writeFilesToSandbox(projectId, allFiles, (line) =>
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
           ).catch(() => {});
@@ -2569,6 +2581,66 @@ export async function runFastBuild(
       }
 
       server?.emitPreviewUrl(sessionId, { sessionId, url });
+
+      // ── Reconcile what the repair loops above changed ─────────────────────
+      // They ran after the build was recorded and delivered, and they mutate
+      // allFiles. Two records are therefore wrong until this runs, and neither
+      // announced it:
+      //
+      // 1. STORAGE. persistFilesAsWritten/uploadProjectFiles both ran before
+      //    this function was ever called, so a fix made here reached the
+      //    sandbox and nowhere else. Sandboxes are reclaimed; restore prefers a
+      //    live sandbox and falls back to storage, so the user would get back
+      //    the exact crashing / non-type-checking version these loops just
+      //    fixed. Upserts are keyed on path, so re-persisting the whole set
+      //    converges on the same stored project.
+      // 2. usageUsd. Each loop adds its dispatch to cumulativeCostUsd, but
+      //    usageUsd was computed from that variable earlier. The user IS
+      //    charged for these dispatches — deductUsage runs per-dispatch inside
+      //    dispatcher.ts — so this is a recording gap, not a billing hole: the
+      //    column billing.ts sums for usage reporting under-reports the build.
+      //
+      // Only runs when a repair actually landed, and cannot fail the build —
+      // the build is already complete and the user already has the app.
+      if (repairedAfterCompletion) {
+        await persistFilesAsWritten(projectId, allFiles);
+
+        const repairCostUsd = cumulativeCostUsd - costBeforeRepairs;
+        try {
+          // Read-modify-write rather than a blind set: this races the main
+          // body's own finalizing update in principle. In practice the repair
+          // dispatches above take seconds, so that write has long landed —
+          // but reading it means an unexpected ordering under-reports by a
+          // repair instead of discarding the whole build's figures.
+          const [row] = await db
+            .select({ usageUsd: buildSessions.usageUsd, buildOutcome: buildSessions.buildOutcome })
+            .from(buildSessions)
+            .where(eq(buildSessions.id, sessionId))
+            .limit(1);
+          if (row) {
+            const prior = row.buildOutcome;
+            await db
+              .update(buildSessions)
+              .set({
+                usageUsd: row.usageUsd + repairCostUsd * config.USAGE_MARGIN_MULTIPLIER,
+                ...(prior
+                  ? { buildOutcome: { ...prior, costUsd: cumulativeCostUsd } }
+                  : {}),
+              })
+              .where(eq(buildSessions.id, sessionId));
+          }
+        } catch (err) {
+          logger.warn(
+            { sessionId, projectId, err },
+            "Post-completion repair cost reconciliation failed — usageUsd under-reports this build",
+          );
+        }
+
+        logger.info(
+          { sessionId, projectId, repairCostUsd, files: Object.keys(allFiles).length },
+          "Persisted post-completion repairs and reconciled their cost",
+        );
+      }
     };
 
     if (wantsE2BPreview) {
@@ -2642,7 +2714,6 @@ export async function runFastBuild(
     // is the new, accurate field — the real margined cost of the whole
     // build, main dispatch + every fix loop that ran.
     const creditsUsed = Math.ceil(result.costUsd * 1_000);
-    const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
 
     // ── Completion audit, pass 2 of 2: did it do what was asked? ────────────
     // Runs last, over the final file set — after every repair loop, so it is
@@ -2687,6 +2758,12 @@ export async function runFastBuild(
         });
       }
 
+      // Carried onto the stored audit so the record cannot read as full
+      // coverage when the extraction cap dropped requirements before it ran.
+      if (extracted.dropped && extracted.dropped > 0) {
+        completionAudit = { ...completionAudit, criteriaDropped: extracted.dropped };
+      }
+
       cumulativeCostUsd += extracted.costUsd + completionAudit.costUsd;
       console.log(
         `[build] audit session=${sessionId} proven=${completionAudit.proven} ` +
@@ -2727,6 +2804,15 @@ export async function runFastBuild(
     // Close out the evidence record: file count from what was actually written
     // to disk (the fence-parsing path writes files the dispatch never reported),
     // and cost across every dispatch this build made, not just the first.
+    // Taken here, not before the audit: the acceptance-extraction and audit
+    // dispatches add themselves to cumulativeCostUsd above, and computing this
+    // first meant the column billing.ts sums for usage reporting excluded both
+    // while buildOutcome.costUsd included them — one build with two figures
+    // that disagreed by roughly the audit's own $0.06. The user is charged for
+    // those dispatches either way; deductUsage runs per-dispatch in
+    // dispatcher.ts. This only makes the record match what was spent.
+    const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
+
     const outcome: BuildOutcome = {
       ...outcomeDraft,
       filesWritten: writtenPaths.length,

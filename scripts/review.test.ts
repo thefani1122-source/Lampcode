@@ -354,7 +354,7 @@ check("an unparseable reply yields nothing, not a crash", parseFindings("sorry",
 const PARTIAL = formatReview({
   findings: [],
   prePass: [],
-  coverage: { total: 40, deep: 4, cheapOnly: 36, unreviewed: 0 },
+  coverage: { total: 40, deep: 4, cheapOnly: 36, unreviewed: 0, truncated: 0 },
   droppedUncorroborated: 0,
   costUsd: 0.2,
 });
@@ -366,12 +366,56 @@ ok("partial coverage says the rest was skipped, not cleared", PARTIAL.includes("
 const FAILED = formatReview({
   findings: [],
   prePass: [],
-  coverage: { total: 10, deep: 7, cheapOnly: 1, unreviewed: 2 },
+  coverage: { total: 10, deep: 7, cheapOnly: 1, unreviewed: 2, truncated: 0 },
   droppedUncorroborated: 3,
   costUsd: 0.1,
 });
 ok("a failed unit is reported as NOT reviewed", FAILED.includes("2 NOT reviewed"));
 ok("dropped claims are surfaced, not hidden", FAILED.includes("3 claim(s) were discarded"));
+
+// A unit whose file was cut at UNIT_BYTES still counts in `deep` — it did get a
+// pass — so `deep` alone claimed a whole file had been reviewed when only its
+// first 14 KB was sent. The qualifier has to appear with the coverage claim.
+const TRUNC = formatReview({
+  findings: [],
+  prePass: [],
+  coverage: { total: 5, deep: 5, cheapOnly: 0, unreviewed: 0, truncated: 2 },
+  droppedUncorroborated: 0,
+  costUsd: 0.1,
+});
+ok("truncated units are disclosed", TRUNC.includes("2 of those"));
+ok("truncation says the remainder is unreviewed", TRUNC.includes("Treat the rest as unreviewed"));
+ok(
+  "the truncation note sits in the opening paragraph",
+  TRUNC.split("\n\n")[0]!.includes("Treat the rest as unreviewed"),
+);
+
+const NOT_TRUNC = formatReview({
+  findings: [],
+  prePass: [],
+  coverage: { total: 5, deep: 5, cheapOnly: 0, unreviewed: 0, truncated: 0 },
+  droppedUncorroborated: 0,
+  costUsd: 0.1,
+});
+ok("a review with nothing truncated says nothing about it", !NOT_TRUNC.includes("too long to send"));
+
+// The reviewer must be told the file is cut, or it speaks for code it never saw.
+{
+  const bigPath = "src/big.ts";
+  const big = { [bigPath]: `export function a() {}\n${"// pad\n".repeat(4000)}` };
+  const bigUnits = enumerateUnits(big, buildImportGraph(big));
+  const bigUnit = bigUnits.find((u) => u.path === bigPath)!;
+  const body = formatUnitForReview(bigUnit, big, []);
+  ok("an oversized unit body declares itself truncated", body.includes("TRUNCATED:"));
+  ok(
+    "the truncated body tells the reviewer not to speak for the rest",
+    body.includes("do not treat the rest as reviewed"),
+  );
+  const small = { "src/small.ts": "export function a() { return 1; }\n" };
+  const smallUnits = enumerateUnits(small, buildImportGraph(small));
+  const smallBody = formatUnitForReview(smallUnits[0]!, small, []);
+  ok("a small unit body carries no truncation notice", !smallBody.includes("TRUNCATED:"));
+}
 
 // ── the unit prompt carries the blast radius and nothing else ────────────────
 

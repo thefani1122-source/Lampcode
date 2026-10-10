@@ -69,6 +69,12 @@ export type ReviewCoverage = {
   deep: number;
   cheapOnly: number;
   unreviewed: number;
+  /** Units whose file was longer than UNIT_BYTES, so the pass saw only its
+   *  first 14 KB. They are counted in `deep` as well, because they did get a
+   *  model pass — but a file reviewed in part is not a file reviewed, and
+   *  `deep` alone said it was. This is the one number that keeps "reviewed N
+   *  of N" from being the overstatement the module exists to prevent. */
+  truncated: number;
 };
 
 export type ReviewResult = {
@@ -154,13 +160,22 @@ export function formatUnitForReview(
   files: Record<string, string>,
   unitPrePass: PrePassFinding[],
 ): string {
-  const own = (files[unit.path] ?? "").slice(0, UNIT_BYTES);
+  const full = files[unit.path] ?? "";
+  const own = full.slice(0, UNIT_BYTES);
   const parts = [
     `FILE UNDER REVIEW: ${unit.path} (${unit.lines} lines)`,
     unit.hasTest ? "It has a sibling test." : "It has NO sibling test.",
-    "",
-    own,
   ];
+  // Say so when the file is cut. Handing over the first 14 KB without a word
+  // invites the reviewer to speak for the whole file, and the module's whole
+  // claim is that its coverage numbers are checkable.
+  if (full.length > own.length) {
+    parts.push(
+      `TRUNCATED: you are seeing the first ${own.length} of ${full.length} bytes. ` +
+      `Do not comment on what you cannot see, and do not treat the rest as reviewed.`,
+    );
+  }
+  parts.push("", own);
 
   if (unit.importedBy.length > 0) {
     parts.push(
@@ -219,6 +234,7 @@ export async function reviewProject(opts: ReviewOptions): Promise<ReviewResult> 
   let costUsd = 0;
   let deep = 0;
   let unreviewed = 0;
+  let truncated = 0;
 
   for (const unit of units) {
     if (deep >= maxUnits || costUsd >= maxCost) break;
@@ -259,6 +275,9 @@ export async function reviewProject(opts: ReviewOptions): Promise<ReviewResult> 
       findings.push(...parsed.findings);
       dropped += parsed.dropped;
       deep += 1;
+      // Counted only on a unit that actually got a pass, so `truncated` is
+      // always a subset of `deep` rather than a separate population.
+      if ((opts.files[unit.path] ?? "").length > UNIT_BYTES) truncated += 1;
     } catch (err) {
       unreviewed += 1;
       logger.warn(
@@ -281,6 +300,7 @@ export async function reviewProject(opts: ReviewOptions): Promise<ReviewResult> 
       deep,
       cheapOnly: Math.max(0, units.length - deep - unreviewed),
       unreviewed,
+      truncated,
     },
     droppedUncorroborated: dropped,
     costUsd,
@@ -305,6 +325,14 @@ export function formatReview(result: ReviewResult): string {
     (c.unreviewed > 0 ? `, and ${c.unreviewed} NOT reviewed (the pass failed)` : "") +
     ".",
   );
+  if (c.truncated > 0) {
+    // In the first paragraph, with the coverage claim it qualifies — a caveat
+    // further down is a caveat nobody reads.
+    lines.push(
+      `${c.truncated} of those ${c.truncated === 1 ? "file was" : "files were"} too long to send whole, ` +
+      `so only the first part was read. Treat the rest as unreviewed.`,
+    );
+  }
   if (c.cheapOnly > 0) {
     lines.push(
       "The budget ran out before the rest. They are ranked riskiest first, so what was skipped " +

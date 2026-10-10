@@ -152,6 +152,10 @@ export type CompletionAudit = {
   contradicted: number;
   unverified: number;
   costUsd: number;
+  /** Requirements the extraction cap discarded before the audit ran. These are
+   *  not in `criteria` and therefore not in any tally above, so a non-zero
+   *  value means `unverified === 0` describes only part of what was asked. */
+  criteriaDropped?: number;
 };
 
 export type VerifyCheck = {

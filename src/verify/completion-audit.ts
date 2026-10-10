@@ -75,7 +75,13 @@ const VALID_KINDS = new Set(["visual", "behaviour", "data", "logic"]);
  * silent parse failure here would turn the audit off with nothing in the log
  * saying why.
  */
-export function parseCriteria(raw: string): AcceptanceCriterion[] {
+export function parseCriteria(
+  raw: string,
+  /** Optional out-param: receives how many well-formed criteria the
+   *  MAX_CRITERIA cap discarded. Optional so every existing caller and case
+   *  keeps its signature; the extractor below passes one. */
+  stats?: { dropped: number },
+): AcceptanceCriterion[] {
   const text = raw.trim();
   if (text.length === 0) return [];
 
@@ -111,7 +117,24 @@ export function parseCriteria(raw: string): AcceptanceCriterion[] {
     const rawKind = typeof e["kind"] === "string" ? e["kind"].trim().toLowerCase() : "";
     const kind = VALID_KINDS.has(rawKind) ? (rawKind as AcceptanceCriterion["kind"]) : "behaviour";
     out.push({ id, text: criterionText, kind });
-    if (out.length >= MAX_CRITERIA) break;
+    if (out.length >= MAX_CRITERIA) {
+      // Count what the cap throws away rather than returning quietly. A
+      // criterion dropped here is never audited, so it can never be anything
+      // but silently absent from the tallies — and `unverified === 0` then
+      // reads as "everything the user asked for is covered" over a prompt
+      // whose later requirements were never looked at. ROTA extracted exactly
+      // 18, i.e. it sat on the cap, which is how this surfaced.
+      if (stats) {
+        for (const rest of rawList.slice(rawList.indexOf(entry) + 1)) {
+          if (typeof rest !== "object" || rest === null) continue;
+          const t = (rest as Record<string, unknown>)["text"];
+          if (typeof t !== "string" || t.trim() === "") continue;
+          if (seen.has(t.trim().toLowerCase())) continue;
+          stats.dropped += 1;
+        }
+      }
+      break;
+    }
   }
   return out;
 }
@@ -364,7 +387,14 @@ export function unverifiedAudit(
   return { criteria, verdicts, ...tallyVerdicts(verdicts), costUsd };
 }
 
-export type ExtractResult = { criteria: AcceptanceCriterion[]; costUsd: number; reason?: string };
+export type ExtractResult = {
+  criteria: AcceptanceCriterion[];
+  costUsd: number;
+  reason?: string;
+  /** Well-formed criteria the MAX_CRITERIA cap discarded. Non-zero means the
+   *  audit's coverage is partial and its tallies understate what was asked. */
+  dropped?: number;
+};
 
 /**
  * Pass 1: the user's own words, turned into checkable claims by something that
@@ -393,7 +423,14 @@ export async function extractCriteria(opts: {
       costGuard: { cumulativeUsd: 0, maxUsd: EXTRACT_COST_CEILING_USD },
     });
 
-    const criteria = parseCriteria(result.finalContent || result.content);
+    const stats = { dropped: 0 };
+    const criteria = parseCriteria(result.finalContent || result.content, stats);
+    if (stats.dropped > 0) {
+      logger.warn(
+        { sessionId: opts.sessionId, kept: criteria.length, dropped: stats.dropped },
+        "[audit] criteria cap hit — these requirements will NOT be audited, so unverified=0 does not mean full coverage",
+      );
+    }
     if (criteria.length === 0) {
       logger.warn(
         { sessionId: opts.sessionId, head: (result.finalContent || result.content).slice(0, 300) },
@@ -401,7 +438,7 @@ export async function extractCriteria(opts: {
       );
       return { criteria: [], costUsd: result.costUsd, reason: "no criteria parsed" };
     }
-    return { criteria, costUsd: result.costUsd };
+    return { criteria, costUsd: result.costUsd, dropped: stats.dropped };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.warn({ sessionId: opts.sessionId, err: reason }, "[audit] extraction failed");

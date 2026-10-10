@@ -1902,6 +1902,140 @@ the beginning.
 green build above. What settled it was moving to K2.5 on `bedrock-mantle`, not anything about
 K3.
 
+## AN OUTSIDE CODE REVIEW, CHECKED CLAIM BY CLAIM — 2026-10-10
+The owner brought an eight-point review of `917a3e4`. **Six findings were real, two were
+wrong** — and the two wrong ones are the more instructive half, because both would have made
+things worse if implemented on the strength of the report. Everything below was verified against
+the current files first, the way Finding 6 should have been.
+
+### Finding 16 — the repair loops' fixes were written to the sandbox and NOWHERE ELSE
+The sharpest of the six, and a silent data-loss bug that has been live the whole time.
+
+`allFiles` is mutated at three places — `build.ts` backend-crash fix, typecheck fix, browser
+render fix — and all three are inside `finishPreview`, which is reached **only** from
+non-awaited `.then()` chains (`void` + `setImmediate`). So it runs after `status: "success"`.
+The only persist calls, `persistFilesAsWritten` and `uploadProjectFiles`, both run *before* it.
+
+So: a build whose backend crashed, got repaired and now runs correctly stores **the crashing
+version**. Restore prefers a live sandbox and falls back to storage, so the moment that sandbox
+is reclaimed the user gets back the exact code those loops fixed. The 10-02 entry above says
+files are persisted as they are written — true of `write_files` and `edit_file`, and these three
+loops go through neither; they assign to `allFiles` directly.
+
+**Fixed** by tracking whether any repair landed and, once, at the end of `finishPreview`,
+re-persisting. Upserts are keyed on path, so it converges on the same stored project.
+
+### Finding 17 — one build, three different cost figures
+`usageUsd` was computed from `cumulativeCostUsd` **before** the acceptance-extraction and audit
+dispatches added themselves to it, while `buildOutcome.costUsd` was taken after. The
+post-completion repair loops above add to it later still, so they were in neither.
+
+The report called this "the audit is never billed". **It is not** — `deductUsage` runs
+per-dispatch inside `dispatcher.ts:753`, so the money is taken either way. It is a RECORDING
+gap, and it matters because `billing.ts` sums that column for user-facing usage reporting:
+the figure shown under-reported every audited build by roughly the audit's own $0.06, and
+disagreed with the outcome stored beside it.
+
+**Fixed**: `usageUsd` is now taken after the audit, and the post-completion reconciliation adds
+the repair spend by read-modify-write rather than a blind set.
+
+### Finding 18 — `checkAuth` reported a clean pass over ZERO files scanned
+The security verifier selected route files by `p.includes("/routes/") || p.includes("route")`.
+Lampcode's own generated Hono backend is **`src/server/index.ts`**, which matches neither — so
+the check never opened the single most common place a generated app declares its API, and then
+returned `status: "pass"` with the message *"All API route files apply auth middleware"*. An
+app with no auth anywhere passed. Three more blind spots in the same function:
+
+- `path.includes("auth")` exempted `author.ts` and `authorize-admin.ts` as "auth routes".
+  **The first attempt at narrowing this reproduced the bug** — `auth` plus `[^/]*` still
+  swallows `author`. The name must be the whole basename or be followed by a separator.
+- The route regex required the literal `/api/`, so `app.route("/api", users)` — the standard
+  Hono composition pattern — hid every route in the mounted file.
+- Zero files scanned now reports **`skip`**, not `pass`. Same pass-vs-unavailable distinction
+  the build gates keep; only `fail` drives the auto-fix loop, so this changes no gating.
+
+`checkCORS` had two. A bare `cors()` defaults to `origin: "*"` and was invisible to a regex
+looking for the literal — and it is the subject of hono's own advisory. Reported as `warn`
+rather than `fail` **on purpose**: only `fail` spends a model dispatch, and nobody has measured
+how often generated backends use a bare `cors()`, so failing on it would set a threshold before
+taking the measurement. Same reported-not-scored stance as churn and the dead-code tally.
+Separately, a case written for that work turned up that `Access-Control-Allow-Origin['":\s]+\*`
+never matched `c.header("Access-Control-Allow-Origin", "*")` — the comma is not in the class, and
+the call form is the one a Hono backend actually uses. A pre-existing hole, found by writing the
+case rather than by reading the code.
+
+**`security.ts` had NO cases at all** — the module behind the hard-block loop, unprotected by
+anything that would notice it changing, exactly as `pricing.ts` was. It has 26 now.
+
+### Finding 19 — `review_code` counted a truncated file as fully reviewed
+`formatUnitForReview` cuts a unit at `UNIT_BYTES` (14 KB) and the loop then did `deep += 1`
+regardless. So a 50 KB file read on its first 14 KB counted toward "Reviewed N of N in depth" —
+in the one module whose entire purpose is that coverage is recorded rather than asserted.
+`ReviewCoverage.truncated` is now carried as a subset of `deep`, disclosed in `formatReview`'s
+**opening paragraph** (a caveat further down is a caveat nobody reads), and the unit prompt now
+tells the reviewer outright that it is seeing part of a file and must not speak for the rest.
+
+### Finding 20 — the criteria cap dropped requirements silently
+`MAX_CRITERIA = 18` broke out of the extraction loop with no record. ROTA extracted exactly 18,
+i.e. it sat on the cap, so it very likely lost requirements — and `unverified === 0` then reads
+as "everything you asked for is covered" over a prompt whose later requirements were never
+looked at. `parseCriteria` now takes an optional stats out-param (optional so every existing
+case keeps its signature), counts only genuinely new criteria past the cap, and the count rides
+through to `build_outcome` as `completionAudit.criteriaDropped`.
+
+### The two claims that were WRONG — and why implementing them would have hurt
+**"`proven` is not fail-closed."** It already is, and has been. `parseVerdicts` requires a
+citation that resolves to a file in the generated set or a real gate name, and anything else —
+no citation, an invented path, a status outside the three, a criterion the auditor never
+mentioned — falls to `unverified`. The function's own doc-comment is headed "FAIL CLOSED". This
+is Finding 6's shape repeated by a different reviewer: a confident, specific accusation against
+working code. Nothing was changed.
+
+**"The audit should gate `status: success`."** It should not, yet. Finding 6 is the standing
+counter-example: the audit's one non-proven verdict on `editor-undo` was entirely false, and
+self-refuting against evidence already in hand. Gating on it would have shipped **NOT DONE over
+a working app**. Its precision rests on one wrong verdict and one right one (ROTA); the probe
+set in "Open" #4 is what has to come first. Recorded as a decision, not an oversight.
+
+### Repo hygiene, since both were true
+**`.env.example` was dated 2026-09-23 and actively misleading.** It advertised
+`OPENROUTER_API_KEY` as "what calls Claude/DeepSeek" — a variable the codebase does not read —
+documented Stripe billing that Paddle replaced, and said **nothing** about the `LLM_*` trio that
+selects the provider. Somebody setting the project up from it would configure a dead key and no
+model. Rewritten against `config.ts`, and `scripts/env-example.test.ts` now fails if a schema key
+goes undocumented. Writing that guard caught three defaults I had guessed wrong in the rewrite
+(`AGENTIC_MAX_TURNS` 12 not 40, `BUILD_PLAN_MIN_WORDS` 38 not 25, `USAGE_MARGIN_MULTIPLIER` 4
+not 1), which is the argument for the check rather than against it.
+
+**Nothing ran the repo's own gates.** `.github/workflows/` held one workflow, and `tsc --noEmit`
+and `npm test` — the main gate and 438 free cases — had never blocked a merge. `ci.yml` now runs
+typecheck, cases and build on every push and PR, plus an advisory `npm audit --omit=dev`. No
+secrets, no sandbox, no model dispatch.
+
+**That one existing workflow is itself wrong and was left alone.** `e2b-template.yml` triggers on
+`e2b.Dockerfile` — an orphan this file already says never to edit — builds a template named
+`lampcode-react` rather than the live `lampcode-vite`, and bakes a `--cmd`, which is the exact
+double-Vite port race listed under "Things that will bite you". It is dead rather than harmful,
+so deleting it is the owner's call, not a drive-by.
+
+**Dependencies: 23 advisories down to 7.** `npm audit fix` within semver (`hono` 4.12.19 →
+4.13.13, plus `tar`, `undici`, `ws`, `@hono/node-server`), cleared both criticals and all nine
+highs; typecheck, 438 cases and the tsup build all pass on it. The hono advisories that actually
+applied here are the two CORS ones; the rest are Lambda, Windows `serve-static` and `hono/jsx`
+paths this product does not use. The remaining 7 are all devDependencies behind `esbuild`
+(tsup/tsx/drizzle-kit) and need `--force` major upgrades — **not taken**, and the advisory is a
+Windows dev-server file read that reaches neither production nor the bundle.
+
+### What is NOT done
+- **The monolith split** (`build.ts` 3244 lines, `prompt-builder.ts` 2232, `e2b-service.ts`
+  2051) — the review's eighth point, and true. Deliberately not started: it is a large
+  behaviour-preserving refactor of the least-covered code in the repo, every October finding
+  above lives in `build.ts`, and the cases that exist cover the pure modules rather than the
+  orchestrator. It wants its own session and a plan, not the tail of a bug-fix pass.
+- **None of the six fixes has been exercised by a real build.** Typecheck, 438 cases and the
+  build all pass; Finding 16's persist path and Finding 17's reconciliation only run when a
+  post-completion repair loop actually fires, which no run since has triggered.
+
 ## Open, deliberately parked — raise these when the current work settles
 1. ~~**`[memory-generator] failed: Could not resolve authentication method`**~~ — **RESOLVED
    2026-10-02.** The parked question was whether memory should route through the plan-based

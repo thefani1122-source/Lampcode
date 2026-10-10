@@ -1,0 +1,71 @@
+# The repo's own gates, on every push and pull request.
+#
+# Both of these were runnable by hand and run by nothing. `tsc --noEmit` is the
+# main gate in this project and `npm test` is 440-odd cases that cost nothing
+# and need no credentials — but neither had ever blocked a merge, so the only
+# thing standing between a type error and production was somebody remembering.
+#
+# Deliberately cheap: no secrets, no network beyond the registry, no builds that
+# spend money. Nothing here starts a sandbox or dispatches a model.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches package.json's engines.node floor. This is a Node project,
+          # not Bun — the frontend repo is the one using Bun.
+          node-version: '20.18.1'
+          cache: npm
+
+      # `ci` not `install`: it installs exactly the lockfile and fails if
+      # package.json and the lock have drifted, which is a thing worth hearing
+      # about rather than silently resolving past.
+      - run: npm ci
+
+      # Covers src/ and scripts/ (tsconfig.scripts.json).
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The vitest-output parser, the planner's gating, project memory, the
+      # classifier, pricing, MCP tool classification, the dead-code analyser,
+      # the review spine, retry policy, the security verifier, the eval scoring
+      # rules, and the .env.example guard.
+      - name: Cases
+        run: npm test
+
+      # Catches the case npm test cannot: tsup resolving and bundling the real
+      # entry point. A module that type-checks can still fail to bundle.
+      - name: Build
+        run: npm run build
+
+  audit:
+    runs-on: ubuntu-latest
+    # Advisory. A new advisory against a transitive dependency is not a reason
+    # to stop a merge at 2am, but it is a reason to see it — and `|| true`
+    # inside the step keeps the job green while leaving the report in the log.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.1'
+          cache: npm
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev || true

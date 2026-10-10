@@ -86,17 +86,46 @@ function anyMatch(files: FileTree, pattern: RegExp, extensions?: string[]): bool
 
 // ── 1. checkAuth ──────────────────────────────────────────────────────────────
 
+/** Backend entry files that hold routes without having "route" in the name.
+ *  Lampcode's own generated Hono backend is `src/server/index.ts`, so a
+ *  selector keyed on "/routes/" or "route" skipped the single most common
+ *  place a generated app declares its API — and then reported a clean pass
+ *  over zero files scanned. Same drift class as prompt-vs-reality: the
+ *  selector has to match what the generator actually emits. */
+const BACKEND_ENTRY_RE = /(^|\/)(index|main|app|server)\.(ts|js)$/;
+
+/** An auth route file, which is intentionally public. A substring test for
+ *  "auth" also swallowed `author.ts`, `authorize-admin.ts` and anything else
+ *  that merely contains the letters, exempting files nobody meant to exempt.
+ *
+ *  The name must be the WHOLE basename or be followed by a separator:
+ *  `auth.ts`, `auth-routes.ts` and `oauth-callback.ts` are auth routes, while
+ *  `author.ts` and `authorize-admin.ts` are not. Written this way because the
+ *  first attempt at narrowing the old substring test reproduced its bug —
+ *  `auth` plus "any characters" still swallows `author`. */
+const AUTH_ROUTE_RE =
+  /(^|\/)(auth|login|signin|sign-in|signup|sign-up|register|oauth|session)([-_.][^/]*)?\.(ts|js)$/;
+
 export function checkAuth(files: FileTree): SecurityCheck {
   const routeFiles = [...files].filter(([p]) =>
-    (p.includes("/routes/") || p.includes("route")) &&
+    (p.includes("/routes/") || p.includes("route") || BACKEND_ENTRY_RE.test(p)) &&
     (p.endsWith(".ts") || p.endsWith(".js")),
   );
 
   const unprotected: string[] = [];
+  let scanned = 0;
 
   for (const [path, content] of routeFiles) {
-    if (path.includes("auth")) continue; // auth routes are intentionally public
-    if (!/\.(get|post|put|patch|delete)\s*\(\s*["'`]\/api\//.test(content)) continue;
+    if (AUTH_ROUTE_RE.test(path)) continue; // auth routes are intentionally public
+    // Routes mounted under a prefix — `app.route("/api", users)` — declare
+    // their own paths without "/api", so requiring that literal missed every
+    // route in a file using the standard Hono composition pattern.
+    const declaresRoutes =
+      /\.(get|post|put|patch|delete)\s*\(\s*["'`]\/api\//.test(content) ||
+      (/\.route\s*\(\s*["'`]\/api/.test(content) &&
+        /\.(get|post|put|patch|delete)\s*\(\s*["'`]\//.test(content));
+    if (!declaresRoutes) continue;
+    scanned += 1;
 
     const hasAuthGuard =
       content.includes("requireAuth") ||
@@ -118,11 +147,24 @@ export function checkAuth(files: FileTree): SecurityCheck {
       message: `${unprotected.length} route file(s) expose /api/ routes without auth middleware: ${unprotected.join(", ")}`,
     };
   }
+  // "Nothing to check" is not "checked and fine". A browser-only build has no
+  // API routes at all, and before this the check reported "All API route files
+  // apply auth middleware" over zero files — the one reading that cannot tell a
+  // verified backend from an unscanned one. Same pass/unavailable distinction
+  // the build gates keep, and `skip` does not gate: only `fail` does.
+  if (scanned === 0) {
+    return {
+      id: "auth-missing-middleware",
+      status: "skip",
+      severity: "critical",
+      message: "No API route declarations found to check for auth middleware",
+    };
+  }
   return {
     id: "auth-missing-middleware",
     status: "pass",
     severity: "critical",
-    message: "All API route files apply auth middleware",
+    message: `All ${scanned} API route file(s) apply auth middleware`,
   };
 }
 
@@ -387,7 +429,12 @@ export function checkPackages(files: FileTree): SecurityCheck[] {
 export function checkCORS(files: FileTree): SecurityCheck {
   const hits = scanLines(
     files,
-    /origin\s*:\s*["'`]\*["'`]|Access-Control-Allow-Origin['":\s]+\*/,
+    // The comma is in the class because Hono sets headers as a CALL —
+    // `c.header("Access-Control-Allow-Origin", "*")` — not as the literal
+    // `Access-Control-Allow-Origin: *` the original class assumed. A case
+    // written for the bare-cors() work turned this up: the call form, which is
+    // the one a generated Hono backend actually uses, was reported as a pass.
+    /origin\s*:\s*["'`]\*["'`]|Access-Control-Allow-Origin['":,\s]+\*/,
     { extensions: [".ts", ".js"] },
   );
   if (hits.length > 0) {
@@ -401,6 +448,31 @@ export function checkCORS(files: FileTree): SecurityCheck {
       message: `Wildcard CORS origin (*) found at ${h.file}:${h.line}`,
     };
   }
+  // A bare `cors()` from hono/cors defaults to `origin: "*"`, so it is the same
+  // hole as the literal above with none of the text to match on — and it is the
+  // subject of hono's own advisory ("CORS Middleware reflects any Origin with
+  // credentials when `origin` defaults to the wildcard"). Reported as `warn`,
+  // not `fail`, on purpose: only `fail` drives build.ts's auto-fix loop, and
+  // nobody has yet measured how many generated backends use a bare `cors()`,
+  // so failing on it would spend a model dispatch per fullstack build to
+  // enforce a threshold set before the measurement. Same reported-not-scored
+  // stance as churn and the dead-code tally. The explicit-wildcard case above
+  // still fails, because there the intent is unambiguous.
+  const bare = scanLines(files, /\bcors\s*\(\s*\)/, { extensions: [".ts", ".js"] });
+  if (bare.length > 0) {
+    const h = bare[0]!;
+    return {
+      id: "cors-default-wildcard",
+      status: "warn",
+      severity: "high",
+      file: h.file,
+      line: h.line,
+      message:
+        `cors() with no options at ${h.file}:${h.line} defaults to allowing every origin — ` +
+        `pass an explicit origin if this backend holds user data`,
+    };
+  }
+
   return { id: "cors-wildcard", status: "pass", severity: "high", message: "No wildcard CORS origins" };
 }
 

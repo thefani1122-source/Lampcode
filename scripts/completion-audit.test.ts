@@ -101,6 +101,51 @@ check(
   18,
 );
 
+// What the cap discards has to be countable, or `unverified === 0` reads as
+// full coverage over a prompt whose later requirements were never audited.
+{
+  const stats = { dropped: 0 };
+  parseCriteria(
+    JSON.stringify({ criteria: Array.from({ length: 40 }, (_, i) => ({ text: `req ${i}` })) }),
+    stats,
+  );
+  check("parseCriteria: the cap reports how many it dropped", stats.dropped, 22);
+}
+
+{
+  const stats = { dropped: 0 };
+  parseCriteria(
+    JSON.stringify({ criteria: Array.from({ length: 18 }, (_, i) => ({ text: `req ${i}` })) }),
+    stats,
+  );
+  check("parseCriteria: exactly at the cap drops nothing", stats.dropped, 0);
+}
+
+{
+  const stats = { dropped: 0 };
+  parseCriteria(JSON.stringify({ criteria: [{ text: "only one" }] }), stats);
+  check("parseCriteria: under the cap drops nothing", stats.dropped, 0);
+}
+
+{
+  // Blanks and duplicates past the cap are not lost requirements, so counting
+  // them would overstate the gap as surely as ignoring real ones understates it.
+  const stats = { dropped: 0 };
+  parseCriteria(
+    JSON.stringify({
+      criteria: [
+        ...Array.from({ length: 18 }, (_, i) => ({ text: `req ${i}` })),
+        { text: "   " },
+        { text: 7 },
+        { text: "REQ 0" },
+        { text: "a genuinely new one" },
+      ],
+    }),
+    stats,
+  );
+  check("parseCriteria: past the cap, only real new criteria count as dropped", stats.dropped, 1);
+}
+
 // ── parseVerdicts: the fail-closed property ──────────────────────────────────
 
 const CRITERIA: AcceptanceCriterion[] = [
