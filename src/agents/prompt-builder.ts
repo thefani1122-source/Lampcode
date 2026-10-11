@@ -1901,6 +1901,12 @@ export class PromptBuilder {
         "imports, exports no file imports, components never rendered. Free, no sandbox, no " +
         "arguments. It answers the one question you CANNOT answer by reading a file, because " +
         "reachability is a property of the whole project.\n" +
+        "- find_wiring_gaps(): lists what RENDERS but does nothing — buttons with no handler, " +
+        "handlers wired to an empty body, forms that submit nowhere, links to routes nothing " +
+        "declares, fetches against endpoints the backend never defined. Free, no sandbox, no " +
+        "arguments. check_page proves a page rendered and run_tests proves a module behaves; " +
+        "neither proves a control the user can click will respond, because a test imports a " +
+        "module directly whether or not the app ever wires it in.\n" +
         "- review_code(): reviews the whole project file by file and reports what is wrong, " +
         "with coverage stated. Use it when the person ASKS for a review or asks you to find " +
         "bugs in code that already exists — never on your own fresh work, where check_page, " +
@@ -1972,7 +1978,17 @@ export class PromptBuilder {
         "the tests, and check_page renders the new one — so every gate says the app is fine " +
         "while it carries two versions of the same feature. Delete what it reports and that " +
         "you can confirm is unused. It is free and takes one round.\n" +
-        "8. Only then write your final reply — a short, plain summary of what you built " +
+        "8. If this app has more than one page, a backend, or any control that is supposed " +
+        "to DO something, call find_wiring_gaps before you finish, and fix what it reports. " +
+        "This is the most common way a finished-looking app is broken, and no other gate can " +
+        "see it: a button with no onClick renders perfectly and type-checks, a link to a " +
+        "route nothing declares is a real link that goes nowhere, and a fetch against an " +
+        "endpoint the backend never defined fails in the user's browser after you have said " +
+        "you were done. run_tests does not catch it either — a test imports a module " +
+        "directly, so it passes whether or not the app ever wires that module in. Implement " +
+        "the behaviour each element is labelled with. NEVER delete an element to clear a " +
+        "finding; the user asked for it. It is free and takes one round.\n" +
+        "9. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page AND check_types and seen " +
         "both pass. If a check reports that it could not run, that is NOT a pass — say so " +

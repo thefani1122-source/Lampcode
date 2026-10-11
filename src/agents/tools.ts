@@ -8,6 +8,7 @@ import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./p
 import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
+import { findWiringGaps, formatWiringGaps } from "../verify/wiring.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 import {
@@ -213,6 +214,22 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       "one feature means the next edit has to guess which one is live.\n" +
       "It is free, needs no sandbox, and takes no arguments. The analysis is textual rather " +
       "than a compiler, so confirm anything surprising with read_file before deleting it.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "find_wiring_gaps",
+    description:
+      "List everything in the project that RENDERS but does nothing: buttons with no " +
+      "handler, handlers wired to an empty body, forms that submit nowhere, links to routes " +
+      "nothing declares, and fetches against endpoints the backend never defined.\n" +
+      "Call this before you say a multi-page app or anything with a backend is done. " +
+      "check_page proves a page rendered, check_types proves it compiles, and run_tests " +
+      "proves a module behaves — none of them proves a control the user can see will respond " +
+      "when clicked, because a test imports a module directly whether or not the app ever " +
+      "wires it in. This is the question those three cannot answer.\n" +
+      "It is free, needs no sandbox, and takes no arguments. The analysis is textual, so a " +
+      "control receiving its handler from a parent may be reported — confirm with read_file " +
+      "before changing it, and never satisfy a finding by deleting the element.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
@@ -520,6 +537,7 @@ export async function executeTool(
     name === "read_file" ||
     name === "read_logs" ||
     name === "find_dead_code" ||
+    name === "find_wiring_gaps" ||
     name === "review_code" ||
     name === "fetch_reference"
   ) {
@@ -544,6 +562,22 @@ export async function executeTool(
         ctx.deadCode.called = true;
       }
       return formatDeadCode(findings);
+    }
+
+    // Same placement and the same reason: it reads the file set this build
+    // already holds, so it works on a cold sandbox and costs nothing. Nothing is
+    // recorded on ctx — unlike find_dead_code, the end-of-build tally for this
+    // runs unconditionally over the delivered files, so "did the model ask?" is
+    // not the fact that decides whether the number exists.
+    if (name === "find_wiring_gaps") {
+      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      if (Object.keys(files).length === 0) {
+        return (
+          "There are no files to analyse yet. Call this once the pages and controls exist, " +
+          "not before."
+        );
+      }
+      return formatWiringGaps(findWiringGaps(files));
     }
 
     // Also before the sandbox check: the review reads the file set, not the

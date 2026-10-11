@@ -545,23 +545,77 @@ export function findWiringGaps(files: Record<string, string>): WiringFinding[] {
   return findings;
 }
 
+/**
+ * Which kinds get a repair dispatch, and which are only reported.
+ *
+ * The split is not about severity — the two left out are arguably the worst
+ * things on the list. It is about whether there is ONE obvious correct response.
+ *
+ * A button with no handler, a form that submits nowhere, a link to an undeclared
+ * route, a call to an endpoint that does not exist: each has a single fix that
+ * cannot be mistaken for a different product decision.
+ *
+ * `orphan-endpoint` and `placeholder-text` do not. A backend route nothing calls
+ * is fixed either by building the UI for it or by deleting it, and those are
+ * opposite outcomes — one of them throws away a feature the user asked for.
+ * "Coming soon" is fixed by building the feature, which is not a repair, it is
+ * the rest of the build. Dispatching on either invites the loop to make a
+ * product judgement on the user's behalf with no way to ask, so both are
+ * surfaced and left to the user's next prompt.
+ */
+export const REPAIRABLE_KINDS: ReadonlySet<WiringKind> = new Set<WiringKind>([
+  "dead-handler",
+  "button-no-handler",
+  "form-no-submit",
+  "dead-link",
+  "missing-endpoint",
+]);
+
+/** The findings a repair loop should act on. */
+export function repairableGaps(findings: WiringFinding[]): WiringFinding[] {
+  return findings.filter((f) => REPAIRABLE_KINDS.has(f.kind));
+}
+
+export type WiringTally = {
+  deadHandlers: number;
+  bareButtons: number;
+  formsNoSubmit: number;
+  deadLinks: number;
+  missingEndpoints: number;
+  orphanEndpoints: number;
+  placeholders: number;
+  total: number;
+};
+
+/** Mapped rather than derived from the kind strings so `build_outcome` reads in
+ *  the same camelCase as every other field there. Typed as a total map over
+ *  `WiringKind`, so adding a kind without a column here fails the typecheck
+ *  instead of silently going uncounted. */
+const TALLY_FIELD: Record<WiringKind, keyof Omit<WiringTally, "total">> = {
+  "dead-handler": "deadHandlers",
+  "button-no-handler": "bareButtons",
+  "form-no-submit": "formsNoSubmit",
+  "dead-link": "deadLinks",
+  "missing-endpoint": "missingEndpoints",
+  "orphan-endpoint": "orphanEndpoints",
+  "placeholder-text": "placeholders",
+};
+
 /** Counts for `build_outcome`, so "do we ship hollow apps?" becomes a number
  *  instead of an impression. */
-export function tallyWiringGaps(findings: WiringFinding[]): Record<WiringKind, number> & {
-  total: number;
-} {
-  const t = {
-    "dead-handler": 0,
-    "button-no-handler": 0,
-    "form-no-submit": 0,
-    "dead-link": 0,
-    "missing-endpoint": 0,
-    "orphan-endpoint": 0,
-    "placeholder-text": 0,
+export function tallyWiringGaps(findings: WiringFinding[]): WiringTally {
+  const t: WiringTally = {
+    deadHandlers: 0,
+    bareButtons: 0,
+    formsNoSubmit: 0,
+    deadLinks: 0,
+    missingEndpoints: 0,
+    orphanEndpoints: 0,
+    placeholders: 0,
     total: 0,
   };
   for (const f of findings) {
-    t[f.kind] += 1;
+    t[TALLY_FIELD[f.kind]] += 1;
     t.total += 1;
   }
   return t;

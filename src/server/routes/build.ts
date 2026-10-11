@@ -50,6 +50,13 @@ import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
 import { findDeadCode, tallyDeadCode } from "../../verify/dead-code.js";
 import {
+  findWiringGaps,
+  tallyWiringGaps,
+  repairableGaps,
+  formatWiringGaps,
+  declaredRoutes,
+} from "../../verify/wiring.js";
+import {
   shouldAudit,
   extractCriteria,
   auditCompletion,
@@ -2116,6 +2123,172 @@ export async function runFastBuild(
       }
     }
 
+    // ── Wire up what renders but does nothing ───────────────────────────────
+    // Positioned here for the same reason the security loop is: everything
+    // below this point SHOWS the files to someone. The storage sync, the
+    // backendReady emit and the preview sandbox all read `allFiles`, so a fix
+    // that lands after them is a fix the user never sees.
+    //
+    // Three deliberate differences from the security loop above:
+    //
+    //  1. **It never fails the build.** A security hard-block aborts because a
+    //     live credential in shipped code is dangerous. A button with no
+    //     onClick is not — the app still runs, it is just incomplete. On the
+    //     cost ceiling, a repeated finding or a failed dispatch this warns,
+    //     stops, and lets the build finish with the gap recorded honestly in
+    //     build_outcome.wiring.
+    //  2. **Only `repairableGaps` are dispatched.** An endpoint nothing calls
+    //     and a "coming soon" label are left to the user's next prompt; see
+    //     REPAIRABLE_KINDS for why acting on those would mean the loop choosing
+    //     a product outcome with no way to ask.
+    //  3. **The affected files are sent WITH the findings.** The report alone
+    //     is not enough context to write a handler, and a dead link is fixed in
+    //     the router rather than in the file that writes the link — so the
+    //     router and the backend entry are pulled in when those kinds appear.
+    let wiringRepaired = 0;
+    let wiringCostUsd = 0;
+    {
+      const costBeforeWiring = cumulativeCostUsd;
+      const MAX_WIRING_FIX_ATTEMPTS = 2;
+      /** Per dispatch, not per build. Bounded so one prompt stays readable by
+       *  the model; the loop re-measures and the next attempt takes what is
+       *  left. */
+      const MAX_FIX_FILES = 8;
+      const MAX_FIX_CHARS = 120_000;
+      let lastWiringFingerprint = "";
+      let before = -1;
+      let remaining = 0;
+
+      for (let attempt = 0; attempt <= MAX_WIRING_FIX_ATTEMPTS; attempt++) {
+        const gaps = repairableGaps(findWiringGaps(allFiles));
+        remaining = gaps.length;
+        if (before < 0) before = gaps.length;
+        if (gaps.length === 0) break;
+        // The last pass exists to re-measure after the previous fix, not to
+        // dispatch again.
+        if (attempt === MAX_WIRING_FIX_ATTEMPTS) break;
+
+        const fingerprint = gaps.map((g) => `${g.kind}:${g.path}:${g.symbol}`).sort().join("|");
+        if (fingerprint === lastWiringFingerprint) {
+          logger.warn(
+            { sessionId, projectId, remaining: gaps.length },
+            "Wiring findings unchanged after a fix dispatch — stopping",
+          );
+          break;
+        }
+        lastWiringFingerprint = fingerprint;
+
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD, remaining: gaps.length },
+            "Build cost ceiling reached before wiring-fix dispatch — skipping further auto-repair",
+          );
+          break;
+        }
+
+        const affected = new Set<string>();
+        for (const g of gaps) if (g.path && allFiles[g.path] !== undefined) affected.add(g.path);
+        if (gaps.some((g) => g.kind === "dead-link")) {
+          for (const [p, code] of Object.entries(allFiles)) {
+            if (declaredRoutes(code).length > 0) affected.add(p);
+          }
+        }
+        if (gaps.some((g) => g.kind === "missing-endpoint")) {
+          for (const p of Object.keys(allFiles)) if (isBackendFile(p)) affected.add(p);
+        }
+
+        const included: string[] = [];
+        let budget = MAX_FIX_CHARS;
+        for (const p of affected) {
+          if (included.length >= MAX_FIX_FILES) break;
+          const code = allFiles[p];
+          if (code === undefined || code.length > budget) continue;
+          budget -= code.length;
+          included.push(p);
+        }
+        if (included.length === 0) break;
+
+        logger.warn(
+          { sessionId, projectId, attempt, gaps: gaps.length, files: included.length },
+          "Hollow elements found — dispatching wiring fix",
+        );
+        server?.thinking(sessionId, {
+          text: `${gaps.length} control(s) render but don't do anything yet — wiring them up…`,
+          sessionId,
+        });
+
+        const fixDescription =
+          `${formatWiringGaps(gaps)}\n\n` +
+          `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+          `truncation):\n\n` +
+          included.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "frontend",
+            // No usageCategory on purpose. The column is a Postgres enum and
+            // migrations here are applied by hand, not on boot — so adding a
+            // `wiring_fix` value would make every dispatch in this loop throw
+            // until someone ran db:migrate against production. The field is
+            // nullable, billing is per-dispatch in dispatcher.ts either way,
+            // and what the loop costs is recorded in build_outcome.wiring
+            // instead. Add the enum value and a migration if the usage
+            // breakdown UI ever needs to separate it.
+            provider,
+            task: {
+              description: fixDescription,
+              requirements: [
+                "Implement the behaviour each element is labelled with — a button that says " +
+                "Save must save, a link must reach a real route, a fetch must hit a route the " +
+                "backend defines.",
+                "Do NOT delete an element to satisfy a finding. The user asked for it.",
+                "Change ONLY what the findings name — leave unrelated logic alone.",
+                "Return the COMPLETE corrected file for each file you touch.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fixResult.costUsd;
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          // Known paths only, as in the security loop. A fix that invents a new
+          // file is the one shape this cannot check — it could be a legitimate
+          // new route module or it could be a regenerated `package.json`, which
+          // the template owns. Editing what already exists covers the common
+          // case: the backend entry gains a route, the router gains a path.
+          const knownPaths = new Set(Object.keys(allFiles));
+          let applied = 0;
+          for (const f of fixedParsed) {
+            if (!knownPaths.has(f.path)) continue;
+            allFiles[f.path] = f.code;
+            applied += 1;
+          }
+          if (applied === 0) {
+            logger.warn(
+              { sessionId, returned: fixedParsed.length },
+              "Wiring fix dispatch returned no file this build already had — stopping",
+            );
+            break;
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Wiring fix dispatch failed");
+          break;
+        }
+      }
+
+      wiringRepaired = Math.max(0, before - remaining);
+      wiringCostUsd = cumulativeCostUsd - costBeforeWiring;
+      if (before > 0) {
+        console.log(
+          `[build] wiring session=${sessionId} before=${before} remaining=${remaining} ` +
+          `repaired=${wiringRepaired} cost=${wiringCostUsd.toFixed(4)}`,
+        );
+      }
+    }
+
     // ── Sync project files to Supabase Storage (survives Railway redeploys) ──
     // For edits: merge existingFiles (pre-build state) with allFiles (LLM output)
     // so unchanged files that the LLM didn't re-emit are not lost in Storage.
@@ -2804,6 +2977,22 @@ export async function runFastBuild(
     // sandbox — and it runs over the final set, after every repair loop, so it
     // describes what the user gets. Advisory only: the analysis is textual, so
     // it reports and never blocks a build.
+    // Re-measured over the final set rather than reusing the loop's last count,
+    // for the reason this file keeps relearning: the repair loops between there
+    // and here mutate `allFiles`, so a number carried forward describes code the
+    // build no longer has. `repaired` is the one figure that has to be carried,
+    // since it is a difference across the loop and cannot be recovered from the
+    // end state.
+    const wiringTally = tallyWiringGaps(findWiringGaps(allFiles));
+    if (wiringTally.total > 0 || wiringRepaired > 0) {
+      console.log(
+        `[build] wiring final session=${sessionId} total=${wiringTally.total} ` +
+        `repaired=${wiringRepaired} deadHandlers=${wiringTally.deadHandlers} ` +
+        `bareButtons=${wiringTally.bareButtons} deadLinks=${wiringTally.deadLinks} ` +
+        `missingEndpoints=${wiringTally.missingEndpoints}`,
+      );
+    }
+
     const deadFindings = findDeadCode(allFiles);
     const deadTally = tallyDeadCode(deadFindings);
     if (deadFindings.length > 0) {
@@ -2830,6 +3019,7 @@ export async function runFastBuild(
       ...outcomeDraft,
       filesWritten: writtenPaths.length,
       deadCode: deadTally,
+      wiring: { ...wiringTally, repaired: wiringRepaired, costUsd: wiringCostUsd },
       ...(completionAudit
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),

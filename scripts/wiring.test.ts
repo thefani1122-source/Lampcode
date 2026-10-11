@@ -15,6 +15,7 @@
 import {
   findWiringGaps,
   tallyWiringGaps,
+  repairableGaps,
   formatWiringGaps,
   extractTags,
   handlerExpressions,
@@ -444,11 +445,39 @@ const HOLLOW = {
 };
 
 const t = tallyWiringGaps(findWiringGaps(HOLLOW));
-check("the tally counts dead handlers", t["dead-handler"], 1);
-check("the tally counts bare buttons", t["button-no-handler"], 1);
-check("the tally counts dead links", t["dead-link"], 1);
-check("the tally counts placeholder copy", t["placeholder-text"], 1);
+check("the tally counts dead handlers", t.deadHandlers, 1);
+check("the tally counts bare buttons", t.bareButtons, 1);
+check("the tally counts dead links", t.deadLinks, 1);
+check("the tally counts placeholder copy", t.placeholders, 1);
 check("the tally totals", t.total, 4);
+
+// ── what a repair loop is allowed to act on ──────────────────────────────────
+// The two left out are not the mild ones. They are the two whose fix is a
+// product decision: an endpoint nothing calls is fixed by building its UI or by
+// deleting it, which are opposite outcomes, and "coming soon" is fixed by
+// building the feature. Dispatching on either lets the loop choose for the user.
+
+check(
+  "the repairable set excludes the two that need a product decision",
+  repairableGaps(
+    findWiringGaps({
+      "src/server/index.ts": `app.get("/api/todos", h)\napp.get("/api/stats", h)`,
+      "src/H.tsx":
+        `export function H() { return <div>` +
+        `<button>Save</button>` +
+        `<p>Coming soon</p>` +
+        `<div onClick={() => fetch("/api/todos")} />` +
+        `</div>; }`,
+    }),
+  ).map((f) => f.kind),
+  ["button-no-handler"],
+);
+
+check(
+  "and a clean project has nothing to repair",
+  repairableGaps(findWiringGaps({ "src/H.tsx": `export function H() { return <div />; }` })),
+  [],
+);
 
 const empty = tallyWiringGaps([]);
 check("an empty tally is all zeroes", empty.total, 0);

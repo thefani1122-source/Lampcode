@@ -231,6 +231,32 @@ export type BuildOutcome = {
     orphanStylesheets?: number;
   };
   deadCodeCalled?: boolean;
+  /** What renders but does nothing, in the delivered files. Separate from
+   *  `deadCode`, which asks whether a file is reachable: these are elements the
+   *  user can see and click that will not respond — a button with no handler, a
+   *  link to an undeclared route, a fetch against an endpoint the backend never
+   *  defined. Counted AFTER the repair loop, so it describes what shipped, and
+   *  `repaired` is how many the loop cleared on the way. Absent on builds from
+   *  before it existed; absent and zero are different facts. */
+  wiring?: {
+    deadHandlers: number;
+    bareButtons: number;
+    formsNoSubmit: number;
+    deadLinks: number;
+    missingEndpoints: number;
+    orphanEndpoints: number;
+    placeholders: number;
+    total: number;
+    /** Findings present before the repair loop and gone after it. A build with
+     *  a high `repaired` and a low `total` is the loop working; both high means
+     *  the fixes are not landing. */
+    repaired?: number;
+    /** What the repair loop spent. Recorded here rather than as a
+     *  `usageCategory` because that column is a Postgres enum and migrations in
+     *  this repo are applied by hand — so a new category would have broken every
+     *  dispatch in the loop until someone ran db:migrate. */
+    costUsd?: number;
+  };
   /** What a `review_code` call did, when one happened. `deep` out of `total` is
    *  the point: a review that looked at four of forty files is not a review of
    *  the project, and before this nothing recorded the difference. `dropped`
