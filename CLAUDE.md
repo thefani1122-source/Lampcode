@@ -31,8 +31,16 @@ live preview. Competitors: Lovable, Bolt, Replit. This repo is the **backend**; 
 | Realtime | Socket.IO |
 | Frontend repo | React 19 + Vite + TanStack Router, Bun as package manager |
 
-`src/deploy/pipeline.ts` is **dead code** — no live call path reaches it. Do not describe deploy
-as working on the strength of that file.
+**There is no deploy today.** `src/deploy/pipeline.ts` was deleted 2026-10-11: every one of its
+methods returned a hardcoded `success: false`, so `deploy()` could only ever fail, and it fired
+progress events from 5% to 100% while doing nothing. Only `src/deploy/smoke.ts` remains — real,
+and imported by nothing yet.
+
+**The deploy decision is settled: the user's OWN Vercel/Railway, never Lampcode's account.** And
+the plumbing for it already exists and is proven — `vercel` is in `src/mcp/registry.ts`
+(`https://mcp.vercel.com`, bearer token), `callMcpTool` is a real generic MCP client, and the
+agent has driven the GitHub MCP end to end through the approval gate. So deploy is not a build
+from scratch; it is teaching the existing path to deploy and then verifying the URL.
 
 ## How a build runs
 

@@ -1,3 +1,21 @@
+/**
+ * Does a deployed URL actually answer?
+ *
+ * **Nothing imports this yet.** Its only caller was `pipeline.ts`, deleted
+ * 2026-10-11 because every one of that file's methods returned a hardcoded
+ * `success: false` — a 223-line shell that fired progress events from 5% to
+ * 100% while doing nothing, which is the same hollow shape `verify/wiring.ts`
+ * now looks for in generated apps.
+ *
+ * This file is kept because, unlike that one, it is real: it makes actual
+ * requests and reports actual statuses. It is the verification half of the
+ * deploy path being built on the user's own connected Vercel MCP — a deploy
+ * that returns a URL proves the API call succeeded, not that the app loads,
+ * which is the same distinction the rest of `verify/` exists for.
+ *
+ * If that deploy path is abandoned, delete this too. An orphan file kept on the
+ * strength of a plan is how the thing it replaced got to 223 lines.
+ */
 interface SmokeCheck {
   name: string;
   passed: boolean;

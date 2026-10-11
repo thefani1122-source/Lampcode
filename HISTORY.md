@@ -2666,3 +2666,55 @@ Tell me which of these you want and I'll build it.
 
 **Not visually confirmed in the app** — covered by cases and by that rendered preview, but no
 build has been watched in the UI.
+
+## DEPLOY: pipeline.ts deleted, and the scope was wrong, 2026-10-11
+
+The owner asked for deploy — Lampcode deploying the user's generated app — and settled the one
+decision that mattered: **the user's OWN Vercel/Railway/whatever they choose, never Lampcode's
+account.** Their reasoning for the mechanism was also right: *"mcps humne rakha hi isliye hain
+na k user ka kam asan ho or agent bhi sai se kam dekh sake kr sake."*
+
+### `src/deploy/pipeline.ts` was worse than dead code
+
+CLAUDE.md called it "dead code — no live call path reaches it". True, and an understatement.
+**It was a hollow shell.** Every method — `setEnvVars`, `pushDatabase`, `pushCode`, `rollback` —
+returned a hardcoded `{ success: false, error: "Deploy gateway not configured" }`. Step 4
+(Deploy) was a literal hardcoded failure object. `previewUrl` was
+`const previewUrl: string | undefined = undefined`, so it could never hold anything, which means
+`if (!allManual && previewUrl)` made the smoke tests **unreachable**, and `anyFailed` was always
+true — so `deploy()` could only ever return `status: "failed"` after attempting a rollback that
+also always failed.
+
+223 lines firing progress events from 5% to 100% with nothing underneath. **That is the same
+hollow shape `verify/wiring.ts` now looks for in generated apps**, in Lampcode's own repo, in
+the file that was supposed to ship them.
+
+Deleted. 531 cases, typecheck and build all pass unchanged, which confirms it was genuinely
+unreachable. `smoke.ts` kept — it is real, it makes actual requests — with a header saying
+nothing imports it and to delete it if the deploy path is abandoned. An orphan kept on the
+strength of a plan is how the other file reached 223 lines.
+
+### The scope was wrong, and the correction matters
+
+First assessment, made from reading `pipeline.ts` alone: deploy is a build from scratch, static
+frontend is Stage 1, fullstack is "a project, not a feature."
+
+**Then the MCP layer turned up, and it is already proven:**
+
+- `vercel` is in `src/mcp/registry.ts` — `https://mcp.vercel.com`, `authType: "bearer_token"`,
+  `supportsRealMCP: true`, one credential field (an account token).
+- `src/mcp/call-tool.ts` exports `callMcpTool` — a real generic MCP client over
+  StreamableHTTPClientTransport, 30s timeout.
+- `POST /mcp/:slug/connect` stores per-user credentials encrypted as one blob, normalised
+  against the envelope bug that once made the owner's GitHub connection invisible to builds.
+- `getConnectedMcpServers(userId)` is already imported and used by `build.ts`.
+- CLAUDE.md's own verified-capability line: the agent **has driven the GitHub MCP end to end
+  through the approval gate.**
+
+So deploy is **not** a build from scratch. If the user has Vercel connected, the agent can
+already reach it. What is missing is that it does not know to, and nothing verifies the result.
+A deploy call returning a URL proves the API call succeeded, not that the app loads — which is
+the distinction the whole `verify/` directory exists for, and why `smoke.ts` is the other half.
+
+The lesson is the one in the working rules: **reading one file produced a confident scope that
+was wrong by an order of magnitude.** The MCP machinery was two greps away.
