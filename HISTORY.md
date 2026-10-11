@@ -2827,3 +2827,58 @@ Left out rather than shipped on a guess; it belongs with the deploy work, where 
 
 542 cases, typecheck and build all pass. **Not verified on a real build** — this is prompt text,
 so proving it works means generating a fullstack app and loading its production bundle.
+
+## THE APP SPLIT FROM THE THING THAT STARTS IT — 2026-10-11
+
+The owner's question settled the deploy design: *"jb user khae ga k deploy kr de toh poora app hi
+deploy krna hoga na"* — yes. A Lampcode fullstack app is two things, a Vite frontend and a
+backend listening on :3001, and deploying only the frontend reproduces the bug fixed earlier the
+same day: a site where no data loads. **So "frontend-only deploy" is not a product.**
+
+### Verified against Vercel's own docs, not recalled
+
+- A file in **`api/`** becomes a function with **no configuration**, exporting
+  `export default { fetch(request) {…} }` or per-method `GET`/`POST`.
+- For Hono specifically, Vercel's KB detects a **default-exported app**, and *"Because Hono
+  exports a single app, Vercel sends every incoming request to that app."*
+- Vercel also captures a **`server.{ts,js}`** entry at root or `src/` that calls `listen()` —
+  *"The port you pass to listen() is only used when you run the file locally"*. But the same
+  page says a captured Node server **alongside a static frontend in one project** needs
+  **Services**, so that is not the simple path.
+- **`hono/vercel` needs no new dependency.** The installed `hono` (4.13.13 here, `^4.6.3` in the
+  template) exports `./vercel` in its own exports map. Checked, not assumed — so this costs **no
+  template rebuild**, which would otherwise have meant `verify-template.ts` and a real risk per
+  trap 6.
+
+Still unverified and untestable from here: **which convention wins when a project has BOTH a Vite
+build and an `api/` directory.** No source settles it; one recipe adds a `vercel.json` rewrite.
+That belongs to the deploy step, which can emit the rewrite explicitly rather than trusting
+auto-detection nobody has confirmed.
+
+### The change: the app no longer listens
+
+Previously `src/server/index.ts` built the app AND called `serve()` at module scope. Importing it
+to deploy would therefore try to bind a port inside a serverless invocation. The earlier entry in
+this file deferred `export default app` for exactly that reason — every guard available was an
+env-var name recalled rather than verified.
+
+**The structural split removes the guess entirely.** No env var, no conditional:
+
+```
+src/server/app.ts    → builds the Hono app, `export default app`, NOTHING that listens
+src/server/index.ts  → `import app from './app.js'` + serve()      ← the preview runs this
+```
+
+The preview is untouched, and that was checked rather than assumed: `e2b-service.ts` detects a
+Node backend by `test -f src/server/index.ts` and starts it with `tsx src/server/index.ts`. That
+file still exists and still serves, so detection and startup are unchanged. `isBackendPath` also
+already matches `src/server/app.ts`, so follow-up file selection and the backend-crash-fix file
+set pick it up with no change.
+
+One stale instruction found by grepping the whole prompt afterwards rather than trusting the
+edit: the auth section still said *"Mount it in src/server/index.ts: app.route('/api/auth',
+auth)"*, which would now mount a route on a file that only starts the server. Fixed. That is trap
+4 — prompt-vs-reality drift — caught inside the same change that created it.
+
+542 cases, typecheck and build pass. **Not verified on a real build**: this is prompt text, so
+proving it means generating a fullstack app and watching the preview still come up.

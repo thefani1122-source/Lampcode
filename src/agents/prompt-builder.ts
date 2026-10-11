@@ -648,7 +648,9 @@ export const FULLSTACK_INSTRUCTION = `
 
 ⚠️ CRITICAL — REACT + HONO BUILDS ONLY (Next.js → NEXTJS_INSTRUCTION; TanStack → TANSTACK_INSTRUCTION)
 BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY):
-  • src/server/index.ts   → Hono server entry (import + app + cors + serve)
+  • src/server/app.ts     → the Hono app (import + app + cors + route), default-exported,
+                            with NOTHING that listens — so it can also be deployed
+  • src/server/index.ts   → imports that app and calls serve() (what the preview runs)
   • src/server/routes/api.ts → ALL route handlers for this app (NEVER empty)
   • src/db/types.ts       → TypeScript interfaces for every DB entity
   • src/db/schema.sql     → Full SQL schema (all tables, columns, constraints)
@@ -684,18 +686,29 @@ if token limit hits mid-generation, DB and server files must already be complete
 2. \`\`\`filename:src/db/schema.sql
    Full SQL schema + RLS policies (per DATABASE section below).
 
-3. \`\`\`filename:src/server/index.ts — Hono server. EXACT shape:
-     import { serve } from '@hono/node-server'
+3. \`\`\`filename:src/server/app.ts — the Hono app, and NOTHING that listens.
+   EXACT shape:
      import { Hono } from 'hono'
      import { cors } from 'hono/cors'
      import { api } from './routes/api.js'
      const app = new Hono()
      app.use('/*', cors())
      app.route('/api', api)
+     export default app
+   WHY the app is separate from the thing that starts it: this file must be
+   importable WITHOUT a server starting as a side effect, so the very same app
+   can also be served as a deployed function. If serve() lived here, importing
+   the app to deploy it would try to bind a port where there is none.
+
+4. \`\`\`filename:src/server/index.ts — starts the app for the preview. EXACT shape:
+     import { serve } from '@hono/node-server'
+     import app from './app.js'
      serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })
      console.log('API on :' + (process.env.PORT || 3001))
+   This file must exist and must be named exactly this — the preview detects a
+   Node backend by its presence and runs it.
 
-4. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
+5. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
    Read/write data with the DB CLIENT defined in the DATABASE section below
    (Supabase OR MongoDB — exactly the one specified there; never mix two DBs).
    ALWAYS handle errors so the server never crashes (return [] / an error json,
@@ -716,7 +729,7 @@ if token limit hits mid-generation, DB and server files must already be complete
    For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
    reads the raw body — keep it defensive (try/catch, 200 by default).
 
-5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers. EVERY call goes
+6. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers. EVERY call goes
    through API_BASE, so the app keeps working once it is built and served
    without the dev server:
      import type { Rider } from '../db/types' // or wherever the DATABASE section defines row types
@@ -737,11 +750,11 @@ if token limit hits mid-generation, DB and server files must already be complete
    bare path. It is set only when the app is deployed with its backend on another
    host. Never set it yourself, and never generate .env.
 
-6. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
+7. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
    and renders the app (loading + error + empty states). Show the MAIN UI first
    (not a login wall). Polished, complete, realistic.
 
-7. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
+8. \`\`\`filename:src/index.tsx — standard React createRoot rendering <App/> + './styles.css'.
 Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design tokens and CSS
    variables. Overwriting it breaks the design system. Its tokens are neutral grey by
    default, so to give the app its OWN palette write src/theme.css redefining the tokens
@@ -1019,7 +1032,8 @@ custom JWT auth in the Hono backend. Generate:
        if (!u || !(await bcrypt.compare(password, u.passwordHash))) return c.json({ error: 'invalid credentials' }, 401)
        return c.json({ token: jwt.sign({ sub: u.id, email }, SECRET, { expiresIn: '7d' }), user: { id: u.id, email } })
      })
-   Mount it in src/server/index.ts:  app.route('/api/auth', auth)
+   Mount it in src/server/app.ts (where the app is built, NOT index.ts, which only
+   starts it):  app.route('/api/auth', auth)
 
 2. A requireAuth helper (verify the Bearer token with jwt.verify) used by routes
    that need a logged-in user; read user id from the token, scope data by it.
