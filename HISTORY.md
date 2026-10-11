@@ -2882,3 +2882,81 @@ auth)"*, which would now mount a route on a file that only starts the server. Fi
 
 542 cases, typecheck and build pass. **Not verified on a real build**: this is prompt text, so
 proving it means generating a fullstack app and watching the preview still come up.
+
+## THE DEPLOY MODULE — built and tested, not yet reachable, 2026-10-11
+
+`src/deploy/vercel.ts` + 50 cases. Deploys a generated app to the **user's own**
+Vercel through their own connected Vercel MCP. Never Lampcode's account — the owner's decision,
+and the only version where the app, its domain, its logs and its bill belong to the person who
+asked for it, and Lampcode never holds a credential it must be trusted with.
+
+### The adapter turned out to be unnecessary — and deprecated
+
+Plan was `import { handle } from 'hono/vercel'`. Reading the installed package first:
+
+```
+@deprecated `hono/vercel` will be removed in v5. Install `@hono/vercel` instead.
+```
+
+So the documented path was a dead end twice over — deprecated, and `@hono/vercel` is a separate
+package, which would have meant a new dependency in the E2B template, a rebuild and
+`verify-template.ts` (trap 6).
+
+**No adapter is needed at all.** Vercel's docs say an `api/` function exports
+`export default { fetch(request) {…} }`. A Hono instance **already exposes `.fetch`**, so
+`export default app` IS that shape — which is also what Vercel's own Hono KB describes. Two
+verified facts beat the recalled plan: zero dependencies, nothing deprecated, no template work.
+
+### What the module does
+
+`detectDeployShape` reads the **same signals `e2b-service.ts` starts the backend with**
+(`src/server/index.ts` / `src/server/main.py`, plus `app.ts` after the split). Deliberate: if the
+two disagree, an app boots in the preview and deploys as the wrong thing — the #1 drift class
+here.
+
+`vercelScaffold` synthesises the provider-specific files the MODEL never writes, so the generated
+app stays deploy-agnostic and everything Vercel-shaped lives in one function that can be
+corrected without touching a prompt or re-measuring a model.
+
+`toInlinedFiles` uploads inline (a whole generated app is tens of kilobytes; one call beats an
+upload plus a SHA1 per file), skipping `node_modules`, `dist`, `.git`, `.vercel`, `coverage`
+**and every `.env`** — a dotenv in a deploy request hands the user's secrets to a provider log.
+What it leaves out is returned, not silently dropped.
+
+Then `create_deployment` → poll `get_deployment` → **`smoke.ts` on the URL**.
+
+### `ok` is honest, and that is the point of the file
+
+> A deploy returning a URL proves the API call was accepted. It says nothing about whether the
+> app loads.
+
+Every other builder reports done at the URL. `ok` here requires READY **and** a passing smoke
+check, so the live-URL-serving-a-broken-app case is reported rather than claimed. That case is
+not hypothetical: it is the predicted failure mode of the one untested assumption below.
+
+### The one unverified assumption, deliberately isolated
+
+Whether `api/[...route].ts` catches every `/api/*` path in a project that is **also** a Vite
+build. **No source settles the precedence** — Vercel's docs cover each separately, one third-party
+recipe adds a `vercel.json` rewrite. It cannot be tested without a real Vercel account.
+
+So it is confined to `vercelScaffold` — one function, one fix — and `smoke.ts` runs after every
+deploy precisely so a routing mistake surfaces as a failure.
+
+### A bug the cases caught
+
+At the poll ceiling with a non-terminal state, the outcome said *"Vercel finished with state
+BUILDING"* — a contradiction that would have told a user their slow build had broken. Only a
+terminal state is a verdict now; anything else reports that it may still be building. Found by a
+case, not by reading.
+
+### Not done
+
+**Nothing imports this yet** — `dist` did not grow. The agent tool is the next step, and it must
+take the Vercel auth through the tool context rather than importing `integrations.ts` into
+`tools.ts`: that would pull db and crypto into `scripts/mcp-tools.test.ts`, which is trap 9's
+exact shape. `build.ts` already imports `getConnectedMcpServers` and already resolves
+`getUserSupabaseMcpAuth` the same way, so the pattern exists.
+
+592 cases, typecheck and build pass. **No real deploy has been attempted** — that needs a
+connected Vercel token.
