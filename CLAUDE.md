@@ -170,6 +170,14 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
 10. **`selectTemplate` deliberately ignores `NEXTJS_TEMPLATE_ID` / `TANSTACK_TEMPLATE_ID`.**
     Those templates exist and BOOT, but predate every October fix and carry no `check_page`,
     `check_types` or `run_tests`. Re-enabling needs a rebuilt, verified image first.
+11. **The `/api` proxy is a DEV-SERVER feature.** `template.ts` bakes
+    `server.proxy['/api'] → localhost:3001` into `vite.config.ts`, so a generated app's
+    relative `/api/...` calls work in the preview and **only** there — a production build has no
+    dev server and nothing answers them. Fixed 2026-10-11 by routing every call through
+    `API_BASE = import.meta.env.VITE_API_URL ?? ''` in the generated `src/lib/api.ts` (unset in
+    the preview, so behaviour there is unchanged). If you touch either side, check the other:
+    the prompt's `src/lib/api.ts` shape, this proxy, and `wiring.ts`'s `hardcoded-dev-host` rule
+    all describe the same contract.
 
 ## What makes this product different — and why it is currently invisible
 

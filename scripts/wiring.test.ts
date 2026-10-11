@@ -402,6 +402,97 @@ check(
   [],
 );
 
+// ── a dev-only host baked into frontend code ─────────────────────────────────
+// The one rule here that catches a bug invisible in the preview, because in the
+// preview it WORKS: localhost:3001 resolves inside the sandbox and nowhere else,
+// so the feature is live for exactly one viewer. A sibling of missing-endpoint
+// and a different class — there the two halves disagree about the PATH; here
+// they agree perfectly and the HOST is wrong.
+
+check(
+  "a hardcoded dev host in frontend code is reported",
+  kinds({ "src/lib/api.ts": `export const get = () => fetch("http://localhost:3001/api/todos")` }),
+  ["hardcoded-dev-host"],
+);
+
+check(
+  "and it names the host so the fix is obvious",
+  findWiringGaps({
+    "src/lib/api.ts": `export const get = () => fetch("http://127.0.0.1:3001/api/todos")`,
+  })[0]?.symbol,
+  "http://127.0.0.1:3001",
+);
+
+check(
+  "0.0.0.0 counts too",
+  kinds({ "src/lib/api.ts": `export const u = "http://0.0.0.0:5173/x"` }),
+  ["hardcoded-dev-host"],
+);
+
+// A CORS allow-list, a database URL and a bound address all name localhost
+// legitimately, and none of them ships to a browser.
+check(
+  "a backend file naming localhost is left alone",
+  kinds({
+    "src/server/index.ts":
+      `app.use(cors({ origin: "http://localhost:5173" }))\napp.get("/api/x", h)`,
+    "src/List.tsx": `export function L() { return <div onClick={() => fetch("/api/x")} />; }`,
+  }),
+  [],
+);
+
+// vite.config.ts IS the proxy. The template owns it (BAKED_FILES) and it must
+// never be reported.
+check(
+  "the baked vite config is left alone",
+  kinds({
+    "vite.config.ts": `export default { server: { proxy: { "/api": { target: "http://localhost:3001" } } } }`,
+  }),
+  [],
+);
+
+check(
+  "a comment mentioning localhost is not a finding",
+  kinds({ "src/lib/api.ts": `// talks to http://localhost:3001 in dev\nexport const x = 1` }),
+  [],
+);
+
+check(
+  "a bare port is not guessed at",
+  kinds({ "src/lib/api.ts": `export const PORT_NOTE = "backend runs on :3001"` }),
+  [],
+);
+
+check(
+  "the same host twice in one file is one finding",
+  kinds({
+    "src/lib/api.ts":
+      `fetch("http://localhost:3001/api/a")\nfetch("http://localhost:3001/api/b")`,
+  }),
+  ["hardcoded-dev-host"],
+);
+
+// The fix is single and obvious — route it through API_BASE — so unlike the two
+// product-decision kinds, this one dispatches.
+check(
+  "a dev host is repairable",
+  repairableGaps(
+    findWiringGaps({ "src/lib/api.ts": `fetch("http://localhost:3001/api/a")` }),
+  ).map((f) => f.kind),
+  ["hardcoded-dev-host"],
+);
+
+// The instructed shape must not trip its own rule.
+check(
+  "the API_BASE pattern the prompt now asks for is clean",
+  kinds({
+    "src/lib/api.ts":
+      `const API_BASE = import.meta.env.VITE_API_URL ?? ''\n` +
+      `export const getTodos = () => fetch(API_BASE + '/api/todos')`,
+  }),
+  [],
+);
+
 // ── placeholder copy ─────────────────────────────────────────────────────────
 
 check(
@@ -563,6 +654,19 @@ check(
     0,
   )[0],
   "A few things I've left for you to decide:",
+);
+
+// The hardest one to word: the user is looking at a preview where this WORKS,
+// so the line has to explain that it works only here, without naming a host or
+// a file.
+check(
+  "a dev host is explained as preview-only, in the user's terms",
+  formatWiringForUser([gap("hardcoded-dev-host", "http://localhost:3001")], 0),
+  [
+    "I couldn't finish wiring everything. These still don't work:",
+    "  • a part of the app that only works on this preview and would break for anyone else",
+    "Tell me which of these you want and I'll build it.",
+  ],
 );
 
 // A route path is the one symbol here already in the user's language — they

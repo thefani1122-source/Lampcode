@@ -2760,3 +2760,70 @@ So the honest split:
 The lesson, twice in one hour: **a confident scope from one file was wrong by an order of
 magnitude in both directions.** The plumbing was two greps away; the blocker was one grep past
 that.
+
+## FIXED: fullstack apps were dev-only — 2026-10-11
+
+The bug recorded above, fixed. The owner's call: *"yeh fullstack wala bug toh bhoat important
+hai ise pehle fix kre."*
+
+### What the investigation changed about the fix
+
+Two things found by reading before editing, and both made the change smaller:
+
+**1. The chokepoint already existed.** The prompt already instructs
+`src/lib/api.ts` as a generated file and already says *"The frontend talks to the backend ONLY
+through src/lib/api.ts"*. So every API call in a generated app already funnels through one file —
+the fix is one pattern in one place, not a sweep through the frontend.
+
+**2. "no VITE_API_URL" was in the prompt ON PURPOSE.** The MongoDB instruction block said the
+frontend *"always calls same-origin /api (no VITE_API_URL)"*. That was not an oversight: in the
+sandbox, same-origin IS correct because the proxy handles it, and an env var the model invented
+for itself would be unset and **break the preview** — the thing the user sees first.
+
+So the fix had to satisfy both. It does, and the reason it is safe is worth stating plainly:
+
+```ts
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
+fetch(API_BASE + '/api/todos')
+```
+
+`VITE_API_URL` is unset in the preview → `API_BASE` is `''` → the call is byte-for-byte the
+same request as a bare relative path. **The change cannot break the preview**, because unset
+reproduces today's behaviour exactly. It only starts mattering once the app is served without a
+dev server, which is precisely where it used to fail.
+
+Changed in four places, all prompt text: the `src/lib/api.ts` shape (with the WHY attached, so
+a model that is tempted to "simplify" it back to a bare path reads the reason first), the HARD
+RULES line that used to say *"always relative '/api'"*, the MongoDB instruction that forbade
+the env var, and the Python section that said the frontend *"stays exactly the same"*.
+
+### The check that catches a regression
+
+New `wiring.ts` kind: **`hardcoded-dev-host`** — `http://localhost`, `127.0.0.1` or `0.0.0.0`
+in frontend code. This is the only rule in that file catching a bug the user **cannot see in
+the preview, because in the preview it works**: the host resolves inside the sandbox and
+nowhere else, so the feature is live for exactly one viewer.
+
+It is a sibling of `missing-endpoint` and a different class. There, the two halves disagree
+about the PATH. Here they agree perfectly and the HOST is wrong, which no amount of route
+comparison can see.
+
+Repairable, since the fix is single and obvious. Skips backend files — a CORS allow-list, a
+database URL and a bound address all name localhost legitimately and none of them ships to a
+browser — and skips `vite.config.ts`, which IS the proxy and is template-owned. Only the
+unambiguous full forms match; a bare `:3001` appears in prose and port arithmetic, and the
+response to a finding is editing code.
+
+A case asserts the newly instructed `API_BASE` pattern does not trip its own rule.
+
+### What was deliberately NOT done
+
+**No `export default app` added to the generated Hono server.** Vercel's `hono` preset wants a
+handler export, and adding one is one line — but the existing top-level
+`serve({ fetch: app.fetch, port })` would then also run inside a serverless invocation, so it
+needs a guard, and every guard I could write depends on an env var name I would be recalling
+rather than verifying. Deploy does not exist yet, so a handler export solves nothing today.
+Left out rather than shipped on a guess; it belongs with the deploy work, where it can be tested.
+
+542 cases, typecheck and build all pass. **Not verified on a real build** — this is prompt text,
+so proving it works means generating a fullstack app and loading its production bundle.

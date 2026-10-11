@@ -44,7 +44,8 @@ export type WiringKind =
   | "dead-link"
   | "missing-endpoint"
   | "orphan-endpoint"
-  | "placeholder-text";
+  | "placeholder-text"
+  | "hardcoded-dev-host";
 
 export type WiringFinding = {
   kind: WiringKind;
@@ -334,6 +335,14 @@ export function requestedEndpoints(code: string): string[] {
 const PLACEHOLDER_RE =
   /\b(?:coming soon|lorem ipsum|not implemented|to ?be implemented|placeholder text|your content here|TODO:)/i;
 
+/** The unambiguous full forms only. A bare `:3001` turns up in prose and in port
+ *  arithmetic, and the response to this finding is editing code. */
+const DEV_HOST_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?/;
+
+/** Config the template owns (CLAUDE.md: BAKED_FILES). `vite.config.ts` names
+ *  localhost legitimately — it IS the proxy — and must never be reported. */
+const BAKED_CONFIG_RE = /(^|\/)(vite|vitest)\.config\.[cm]?[tj]s$/;
+
 function isBackendFile(path: string): boolean {
   return (
     path.startsWith("src/server/") ||
@@ -427,6 +436,42 @@ export function findWiringGaps(files: Record<string, string>): WiringFinding[] {
           detail:
             "a <form> with no onSubmit and no action — typing in it and pressing enter reloads " +
             "the page and loses the input; add onSubmit with preventDefault",
+        });
+      }
+    }
+
+    // ── 8. A dev-only host baked into frontend code ───────────────────────────
+    // This is the one rule here that catches a bug the user cannot see at all
+    // in the preview, because in the preview it WORKS. `http://localhost:3001`
+    // resolves inside the sandbox and resolves to nothing on anybody else's
+    // machine, so the feature is live for exactly one viewer and dead for every
+    // real user.
+    //
+    // It is a sibling of `missing-endpoint` and a different class: there, the
+    // two halves disagree about the path. Here they agree perfectly and the HOST
+    // is wrong, which no amount of route comparison can see.
+    //
+    // Backend files are skipped: a CORS allow-list, a database URL and a bound
+    // address all name localhost legitimately and none of them ships to a
+    // browser. Only the unambiguous full forms are matched — a bare `:3001`
+    // appears in prose and port arithmetic, and guessing there would mean
+    // rewriting code that was already correct.
+    if (!isBackendFile(path) && !BAKED_CONFIG_RE.test(path)) {
+      const seen = new Set<string>();
+      let m: RegExpExecArray | null;
+      const re = new RegExp(DEV_HOST_RE.source, "g");
+      while ((m = re.exec(src)) !== null) {
+        const host = m[0];
+        if (seen.has(host)) continue;
+        seen.add(host);
+        findings.push({
+          kind: "hardcoded-dev-host",
+          path,
+          symbol: host,
+          detail:
+            `"${host}" is hardcoded in frontend code. It resolves only inside this preview, so ` +
+            `this works for nobody else — route the call through API_BASE ` +
+            `(import.meta.env.VITE_API_URL ?? '') in src/lib/api.ts instead`,
         });
       }
     }
@@ -569,6 +614,7 @@ export const REPAIRABLE_KINDS: ReadonlySet<WiringKind> = new Set<WiringKind>([
   "form-no-submit",
   "dead-link",
   "missing-endpoint",
+  "hardcoded-dev-host",
 ]);
 
 /** The findings a repair loop should act on. */
@@ -584,6 +630,7 @@ export type WiringTally = {
   missingEndpoints: number;
   orphanEndpoints: number;
   placeholders: number;
+  hardcodedDevHosts: number;
   total: number;
 };
 
@@ -599,6 +646,7 @@ const TALLY_FIELD: Record<WiringKind, keyof Omit<WiringTally, "total">> = {
   "missing-endpoint": "missingEndpoints",
   "orphan-endpoint": "orphanEndpoints",
   "placeholder-text": "placeholders",
+  "hardcoded-dev-host": "hardcodedDevHosts",
 };
 
 /** Counts for `build_outcome`, so "do we ship hollow apps?" becomes a number
@@ -612,6 +660,7 @@ export function tallyWiringGaps(findings: WiringFinding[]): WiringTally {
     missingEndpoints: 0,
     orphanEndpoints: 0,
     placeholders: 0,
+    hardcodedDevHosts: 0,
     total: 0,
   };
   for (const f of findings) {
@@ -656,6 +705,10 @@ const HUMAN: Record<WiringKind, (n: number) => string> = {
     n === 1
       ? 'a section that still says it\'s "coming soon" instead of being built'
       : `${n} sections that still say "coming soon" instead of being built`,
+  "hardcoded-dev-host": (n) =>
+    n === 1
+      ? "a part of the app that only works on this preview and would break for anyone else"
+      : `${n} parts of the app that only work on this preview and would break for anyone else`,
 };
 
 /** Kinds worth naming the specific target for. A route path is the one symbol

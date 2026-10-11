@@ -633,9 +633,10 @@ API ROUTES EXAMPLE — src/server/routes/api.ts:
 mongoose (+ mongodb driver bundled) is pre-installed. MONGODB_URI is injected by
 the preview env — do NOT generate .env. (A package.json holding only a
 "dependencies" object is allowed, and is how you add a package; see HARD RULES.)
-The frontend always
-calls same-origin /api (no VITE_API_URL). connectDB() must run at the start of
-every route (idempotent) so the lazy connection is established.`,
+The frontend reaches
+the backend only through src/lib/api.ts, as API_BASE + '/api/...' (API_BASE is
+'' in the preview, so this stays same-origin). connectDB() must run at the start
+of every route (idempotent) so the lazy connection is established.`,
 };
 
 // ── Fullstack mode instruction ────────────────────────────────────────────────
@@ -715,15 +716,26 @@ if token limit hits mid-generation, DB and server files must already be complete
    For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
    reads the raw body — keep it defensive (try/catch, 200 by default).
 
-5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers, same-origin:
+5. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers. EVERY call goes
+   through API_BASE, so the app keeps working once it is built and served
+   without the dev server:
      import type { Rider } from '../db/types' // or wherever the DATABASE section defines row types
+     const API_BASE = import.meta.env.VITE_API_URL ?? ''
      export async function getRiders(): Promise<Rider[]> {
-       const r = await fetch('/api/riders'); if (!r.ok) return []; return r.json()
+       const r = await fetch(API_BASE + '/api/riders'); if (!r.ok) return []; return r.json()
      }
      export async function createRider(input: Partial<Rider>): Promise<Rider | null> {
-       const r = await fetch('/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
+       const r = await fetch(API_BASE + '/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
        return r.ok ? r.json() : null
      }
+   WHY API_BASE and not a bare '/api/...': the preview works only because the
+   Vite DEV SERVER proxies /api to the backend on :3001. A production build has
+   no dev server and therefore no proxy, so a bare relative '/api' call reaches
+   nothing and every data feature in the app silently fails the moment it leaves
+   the preview. VITE_API_URL is UNSET in the preview, so API_BASE is '' and every
+   call stays same-origin exactly as the proxy expects — identical behaviour to a
+   bare path. It is set only when the app is deployed with its backend on another
+   host. Never set it yourself, and never generate .env.
 
 6. \`\`\`filename:src/App.tsx — the React UI. Imports the wrappers from ./lib/api
    and renders the app (loading + error + empty states). Show the MAIN UI first
@@ -737,8 +749,10 @@ Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design token
    classes (bg-primary, text-muted-foreground, …) for everything else.
 
 HARD RULES:
-- The frontend talks to the backend ONLY through src/lib/api.ts (fetch '/api/...').
-  Never put a hardcoded http://localhost or external URL — always relative '/api'.
+- The frontend talks to the backend ONLY through src/lib/api.ts, and every call
+  there is API_BASE + '/api/...'. Never put a hardcoded http://localhost,
+  127.0.0.1 or :3001 anywhere in frontend code — those work in the preview and
+  break for every real user.
 - The backend listens on Number(process.env.PORT) || 3001. Never hardcode another port.
 - Every file COMPLETE and non-empty. Backend routes must never throw uncaught.
 - Do NOT emit vite.config.ts, tsconfig.json, index.html, or .env — the environment
@@ -778,7 +792,8 @@ export const FASTAPI_OVERRIDE = `
 The user wants a Python backend. REPLACE the Node/Hono backend with FastAPI.
 Do NOT generate src/server/index.ts, src/server/routes/api.ts, or any .ts
 backend file. Everything else (the React frontend + src/lib/api.ts calling
-'/api/...') stays exactly the same — Vite proxies /api to this server on :3001.
+API_BASE + '/api/...') stays exactly the same — in the preview API_BASE is '' and
+Vite proxies /api to this server on :3001.
 
 {{PIP_MANIFEST}}
 
