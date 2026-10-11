@@ -8,6 +8,8 @@ import { db } from "../db/client.js";
 import { projectEnvVars } from "../db/schema.js";
 import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
+import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
+import type { InteractionFinding } from "../verify/interactions.js";
 
 /**
  * E2B cloud sandbox preview for fullstack builds.
@@ -816,6 +818,24 @@ export async function fetchReferenceDesign(
     throw new Error("the reference page could not be read");
   }
   return JSON.parse(r.stdout.slice(marker + 5).trim()) as Record<string, unknown>;
+}
+
+/** Operate preview controls using a runtime-written script. Failure is not a
+ * clean bill of health: the empty finding list carries no coverage claim. */
+export async function checkInteractions(projectId: string): Promise<InteractionFinding[]> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return [];
+  try {
+    await sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT);
+    const r = await sandbox.commands.run(
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs`,
+      { timeoutMs: 60_000 },
+    );
+    return parseInteractionReport(r.stdout);
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] interaction probe unavailable — controls remain unverified");
+    return [];
+  }
 }
 
 /**
