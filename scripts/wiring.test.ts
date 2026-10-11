@@ -17,6 +17,7 @@ import {
   tallyWiringGaps,
   repairableGaps,
   formatWiringGaps,
+  formatWiringForUser,
   extractTags,
   handlerExpressions,
   isDeadHandler,
@@ -27,6 +28,7 @@ import {
   backendEndpoints,
   requestedEndpoints,
 } from "../src/verify/wiring.js";
+import type { WiringFinding, WiringKind } from "../src/verify/wiring.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -492,6 +494,107 @@ ok(
 ok(
   "a clean project reports that it is clean",
   formatWiringGaps([]).includes("Nothing hollow found"),
+);
+
+// ── what the USER is told ────────────────────────────────────────────────────
+// The repair loop deliberately declines two of the seven kinds, so those
+// findings only exist for the user's next prompt. Unsaid, that design decision
+// is indistinguishable from the check not working.
+
+const gap = (kind: WiringKind, symbol: string): WiringFinding => ({
+  kind,
+  path: "src/H.tsx",
+  symbol,
+  detail: "irrelevant to the user-facing text",
+});
+
+check(
+  "a clean build says nothing at all",
+  formatWiringForUser([], 0),
+  [],
+);
+
+check(
+  "a build where everything was repaired says so, in the singular",
+  formatWiringForUser([], 1),
+  ["One control in the app wasn't connected to anything — I wired it up."],
+);
+
+check(
+  "and in the plural",
+  formatWiringForUser([], 3),
+  ["3 controls in the app weren't connected to anything — I wired them up."],
+);
+
+// The two groups are different claims: one is our failure, the other is a
+// question. They must not be blended into one list.
+check(
+  "what could not be fixed and what was declined are kept apart",
+  formatWiringForUser(
+    [gap("button-no-handler", "<button>"), gap("orphan-endpoint", "/api/stats")],
+    2,
+  ),
+  [
+    "2 controls in the app weren't connected to anything — I wired them up.",
+    "I couldn't finish wiring everything. These still don't work:",
+    "  • a button that isn't connected to anything",
+    "And these I've left for you to decide:",
+    "  • something the server can already do that nothing in the app uses yet",
+    "Tell me which of these you want and I'll build it.",
+  ],
+);
+
+// This exact line was wrong on the first write — built by patching a plural
+// string, which produced "One thing things I've left".
+check(
+  "a single declined finding reads as singular",
+  formatWiringForUser([gap("placeholder-text", "Coming soon")], 0),
+  [
+    "One thing I've left for you to decide:",
+    '  • a section that still says it\'s "coming soon" instead of being built',
+    "Tell me which of these you want and I'll build it.",
+  ],
+);
+
+check(
+  "several declined findings read as plural",
+  formatWiringForUser(
+    [gap("placeholder-text", "Coming soon"), gap("orphan-endpoint", "/api/stats")],
+    0,
+  )[0],
+  "A few things I've left for you to decide:",
+);
+
+// A route path is the one symbol here already in the user's language — they
+// asked for that page by name.
+check(
+  "a dead link names the page the user asked for",
+  formatWiringForUser([gap("dead-link", "/rules")], 0)[1],
+  "  • a link to a page that doesn't exist (/rules)",
+);
+
+check(
+  "but not when there are too many to read",
+  formatWiringForUser(
+    ["/a", "/b", "/c", "/d"].map((p) => gap("dead-link", p)),
+    0,
+  )[1],
+  "  • 4 links to pages that don't exist",
+);
+
+// No file path and no code identifier may reach the user. The same split the
+// completion audit had to make after its card was pulled for talking like a
+// maintainer.
+ok(
+  "nothing shown to the user names a file or an identifier",
+  formatWiringForUser(
+    [
+      gap("dead-handler", "onClick"),
+      gap("missing-endpoint", "/api/shifts"),
+      gap("placeholder-text", "Coming soon"),
+    ],
+    1,
+  ).every((l) => !l.includes("src/") && !l.includes(".tsx") && !l.includes("onClick")),
 );
 
 // ── a real shape: the ROTA failure, one level down ────────────────────────────

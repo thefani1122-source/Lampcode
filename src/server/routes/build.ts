@@ -54,6 +54,7 @@ import {
   tallyWiringGaps,
   repairableGaps,
   formatWiringGaps,
+  formatWiringForUser,
   declaredRoutes,
 } from "../../verify/wiring.js";
 import {
@@ -2983,7 +2984,23 @@ export async function runFastBuild(
     // build no longer has. `repaired` is the one figure that has to be carried,
     // since it is a difference across the loop and cannot be recovered from the
     // end state.
-    const wiringTally = tallyWiringGaps(findWiringGaps(allFiles));
+    const wiringFindings = findWiringGaps(allFiles);
+    const wiringTally = tallyWiringGaps(wiringFindings);
+
+    // Said in the chat, in the USER's language.
+    //
+    // The repair loop declines two of the seven kinds on purpose — an endpoint
+    // nothing calls and a "coming soon" label both need a product decision, so
+    // they are left for the user's next prompt. Left unsaid, that decision is
+    // indistinguishable from the check not working: the finding went into
+    // build_outcome and the one person who could act on it never heard about
+    // it. Chat lines only, no new event — the same choice the audit lines
+    // landed on, for the same reason. The thinking stream is where the user is
+    // already looking and it needs no frontend change.
+    for (const line of formatWiringForUser(wiringFindings, wiringRepaired)) {
+      server?.thinking(sessionId, { text: line, sessionId });
+    }
+
     if (wiringTally.total > 0 || wiringRepaired > 0) {
       console.log(
         `[build] wiring final session=${sessionId} total=${wiringTally.total} ` +

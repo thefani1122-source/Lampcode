@@ -2627,3 +2627,42 @@ loop.
 **NOT verified on a real build.** `typecheck`, `test` and `build` all pass, and the analyser is
 measured on real code — but the loop's dispatch path has never executed. Exercising it costs a
 build, and the owner's budget was explicitly unavailable.
+
+### And then said to the user, 2026-10-11
+
+The loop declines two of the seven kinds by design. **Left unsaid, that design decision is
+indistinguishable from the check not working** — the finding went into `build_outcome` and the
+one person who could act on it never heard about it. That is the dead-path habit this file keeps
+recording, created fresh by the commit that added the loop.
+
+`formatWiringForUser` keeps **two groups apart, because they are different claims**: what the
+loop could not fix is still broken and is our failure; what it declined is a question for the
+user. Blending them into one list would make a product decision look like a bug.
+
+No file paths and no code identifiers, for the reason the audit card was pulled —
+"src/views/WeekGrid.tsx — onClick is wired to an empty body" is true, useful to us, and not what
+somebody who asked for a shift planner is here to read. A route path is the one exception: the
+user asked for that page by name, so a dead link names it when there are three or fewer.
+
+Silence on a clean build. A line reporting that nothing was wrong teaches the user to skim.
+
+Chat lines only, no new event — same choice the audit lines landed on, same reason: the thinking
+stream is where the user is already looking and it needs no frontend change.
+
+One bug caught by its own case: the singular form was first built by patching the plural string,
+which produced "One thing things I've left for you to decide".
+
+Rendered preview of all three shapes:
+
+```
+3 controls in the app weren't connected to anything — I wired them up.
+I couldn't finish wiring everything. These still don't work:
+  • a link to a page that doesn't exist (/rules)
+And these I've left for you to decide:
+  • a section that still says it's "coming soon" instead of being built
+  • something the server can already do that nothing in the app uses yet
+Tell me which of these you want and I'll build it.
+```
+
+**Not visually confirmed in the app** — covered by cases and by that rendered preview, but no
+build has been watched in the UI.

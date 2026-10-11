@@ -622,6 +622,123 @@ export function tallyWiringGaps(findings: WiringFinding[]): WiringTally {
 }
 
 /**
+ * What one kind of gap is, said to the person who asked for the app.
+ *
+ * No file paths and no code identifiers. `formatWiringGaps` is the model
+ * talking to itself — "src/views/WeekGrid.tsx — onClick is wired to an empty
+ * body" is true, useful to us, and not what somebody who asked for a shift
+ * planner is here to read. The same split the completion audit had to make.
+ */
+const HUMAN: Record<WiringKind, (n: number) => string> = {
+  "dead-handler": (n) =>
+    n === 1
+      ? "a button that doesn't do anything when you click it"
+      : `${n} buttons that don't do anything when you click them`,
+  "button-no-handler": (n) =>
+    n === 1
+      ? "a button that isn't connected to anything"
+      : `${n} buttons that aren't connected to anything`,
+  "form-no-submit": (n) =>
+    n === 1 ? "a form that doesn't submit" : `${n} forms that don't submit`,
+  "dead-link": (n) =>
+    n === 1
+      ? "a link to a page that doesn't exist"
+      : `${n} links to pages that don't exist`,
+  "missing-endpoint": (n) =>
+    n === 1
+      ? "something the app asks the server for that the server can't answer"
+      : `${n} things the app asks the server for that it can't answer`,
+  "orphan-endpoint": (n) =>
+    n === 1
+      ? "something the server can already do that nothing in the app uses yet"
+      : `${n} things the server can already do that nothing in the app uses yet`,
+  "placeholder-text": (n) =>
+    n === 1
+      ? 'a section that still says it\'s "coming soon" instead of being built'
+      : `${n} sections that still say "coming soon" instead of being built`,
+};
+
+/** Kinds worth naming the specific target for. A route path is the one symbol
+ *  here that is already in the user's language — they asked for that page. */
+const NAME_TARGETS: ReadonlySet<WiringKind> = new Set<WiringKind>(["dead-link"]);
+
+/**
+ * What to tell the user about the controls in their app that do nothing.
+ *
+ * This exists because the repair loop deliberately does NOT fix two of the seven
+ * kinds: an endpoint nothing calls and a "coming soon" label both need a product
+ * decision, so they are left for the user's next prompt. Left unsaid, that
+ * design decision is indistinguishable from the check not working — the finding
+ * went into build_outcome and nobody who could act on it ever heard about it,
+ * which is the dead-path habit this repo keeps catching in its own code.
+ *
+ * Two groups, because they are different claims. What the loop could not fix is
+ * still broken and that is our failure. What the loop declined to fix is a
+ * question for the user, and saying so is the honest version — it also happens
+ * to be the one moment the product's own checking is visible to the person
+ * paying for it.
+ *
+ * Returns [] when there is nothing to say. Silence is correct for a clean build:
+ * a line reporting that nothing was wrong teaches the user to skim.
+ */
+export function formatWiringForUser(
+  remaining: WiringFinding[],
+  repaired: number,
+): string[] {
+  const lines: string[] = [];
+
+  if (repaired > 0) {
+    lines.push(
+      repaired === 1
+        ? "One control in the app wasn't connected to anything — I wired it up."
+        : `${repaired} controls in the app weren't connected to anything — I wired them up.`,
+    );
+  }
+
+  const counts = new Map<WiringKind, WiringFinding[]>();
+  for (const f of remaining) {
+    const list = counts.get(f.kind);
+    if (list) list.push(f);
+    else counts.set(f.kind, [f]);
+  }
+
+  const describe = (kind: WiringKind, group: WiringFinding[]): string => {
+    const base = HUMAN[kind](group.length);
+    if (!NAME_TARGETS.has(kind) || group.length > 3) return base;
+    const targets = [...new Set(group.map((f) => f.symbol))];
+    return `${base} (${targets.join(", ")})`;
+  };
+
+  const stillBroken = [...counts].filter(([k]) => REPAIRABLE_KINDS.has(k));
+  const yourCall = [...counts].filter(([k]) => !REPAIRABLE_KINDS.has(k));
+
+  if (stillBroken.length > 0) {
+    lines.push(
+      "I couldn't finish wiring everything. These still don't work:",
+      ...stillBroken.map(([k, g]) => `  • ${describe(k, g)}`),
+    );
+  }
+
+  if (yourCall.length > 0) {
+    const n = yourCall.reduce((sum, [, g]) => sum + g.length, 0);
+    lines.push(
+      stillBroken.length > 0
+        ? "And these I've left for you to decide:"
+        : n === 1
+          ? "One thing I've left for you to decide:"
+          : "A few things I've left for you to decide:",
+      ...yourCall.map(([k, g]) => `  • ${describe(k, g)}`),
+    );
+  }
+
+  if (stillBroken.length > 0 || yourCall.length > 0) {
+    lines.push("Tell me which of these you want and I'll build it.");
+  }
+
+  return lines;
+}
+
+/**
  * The repair prompt's input, and the tool's reply.
  *
  * Phrased as instructions rather than a list because this is the one check in
