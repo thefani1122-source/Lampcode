@@ -1936,6 +1936,13 @@ export class PromptBuilder {
         "arguments. check_page proves a page rendered and run_tests proves a module behaves; " +
         "neither proves a control the user can click will respond, because a test imports a " +
         "module directly whether or not the app ever wires it in.\n" +
+        "- deploy_app(): puts the app live on the user's OWN Vercel account and then checks " +
+        "the live URL actually answers. Call it ONLY when the user asks — 'deploy', 'publish', " +
+        "'put it live', 'give me a link to share'. NEVER on your own initiative: it publishes " +
+        "to an account that belongs to them, and a build you have not finished verifying is " +
+        "not something to put in front of their users. If they have not connected Vercel it " +
+        "says so, and that sentence is the answer to pass on, not a failure to retry. Report " +
+        "a URL as working only when the tool says the check passed.\n" +
         "- review_code(): reviews the whole project file by file and reports what is wrong, " +
         "with coverage stated. Use it when the person ASKS for a review or asks you to find " +
         "bugs in code that already exists — never on your own fresh work, where check_page, " +

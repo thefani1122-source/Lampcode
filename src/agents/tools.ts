@@ -9,6 +9,7 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps } from "../verify/wiring.js";
+import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 import {
@@ -233,6 +234,23 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "deploy_app",
+    description:
+      "Put this app live on the user's OWN Vercel account, then check the live URL actually " +
+      "answers.\n" +
+      "ONLY call this when the user asks for it — 'deploy', 'publish', 'put it live', 'give me " +
+      "a link I can share'. NEVER call it on your own initiative. It publishes to an account " +
+      "that belongs to them and spends their build minutes, and a build you have not finished " +
+      "verifying is not something to put in front of their users.\n" +
+      "It deploys the WHOLE app — the frontend and, if there is one, the backend as a function " +
+      "so '/api/...' keeps working. It takes no arguments; everything comes from the files you " +
+      "have written.\n" +
+      "If the user has not connected Vercel it will say so, and that is the answer to pass on — " +
+      "not a failure to retry. A deployed URL is reported as working only once it has been " +
+      "checked; if the check fails, say that plainly rather than handing over the link as done.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "review_code",
     description:
       "Review the whole project the way a senior engineer reviews a pull request, and report " +
@@ -447,6 +465,29 @@ export interface ToolExecutionContext {
   dispatcher?: AgentDispatcher | undefined;
   userId?: string | undefined;
   provider?: "anthropic" | "modal" | undefined;
+  /**
+   * What `deploy_app` needs, resolved by `build.ts` BEFORE the agent runs.
+   *
+   * Passed in rather than looked up here on purpose. Resolving it would mean
+   * importing `integrations.ts` into this file, which pulls the database and the
+   * crypto helpers along with it — and `scripts/mcp-tools.test.ts` imports this
+   * module, so that import would drag both into a free test that currently needs
+   * no credentials. That is trap 9's exact shape (importing `e2b-service.ts`
+   * outside the server process hangs for the same reason). `build.ts` already
+   * calls `getConnectedMcpServers` and already resolves
+   * `getUserSupabaseMcpAuth` this way, so the pattern is the established one.
+   *
+   * Absent means the user has not connected Vercel — which is a thing to TELL
+   * them, not an error.
+   */
+  deploy?:
+    | {
+        vercelToken: string;
+        teamId?: string | undefined;
+        /** What the user called their project; becomes the Vercel project slug. */
+        projectName: string;
+      }
+    | undefined;
 }
 
 function lineCount(text: string): number {
@@ -538,6 +579,7 @@ export async function executeTool(
     name === "read_logs" ||
     name === "find_dead_code" ||
     name === "find_wiring_gaps" ||
+    name === "deploy_app" ||
     name === "review_code" ||
     name === "fetch_reference"
   ) {
@@ -578,6 +620,47 @@ export async function executeTool(
         );
       }
       return formatWiringGaps(findWiringGaps(files));
+    }
+
+    // Also before the sandbox check: a deploy reads the file set this build
+    // holds and talks to Vercel, not to the sandbox. It is the one tool here
+    // that changes something OUTSIDE this build — it publishes to an account
+    // that belongs to the user — so each precondition is answered as a sentence
+    // the model can pass on rather than as an error to retry.
+    if (name === "deploy_app") {
+      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      if (Object.keys(files).length === 0) {
+        return "There is nothing to deploy yet — build the app first.";
+      }
+      if (!ctx.deploy) {
+        // Not an error. The remedy is the user's and this is how they learn it.
+        return (
+          "This app is ready to deploy, but no Vercel account is connected yet. The user needs " +
+          "to connect Vercel in their integrations settings (it takes a Vercel account token). " +
+          "Tell them that and stop — do not try again."
+        );
+      }
+      const outcome = await deployToVercel({
+        auth: {
+          accessToken: ctx.deploy.vercelToken,
+          ...(ctx.deploy.teamId === undefined ? {} : { teamId: ctx.deploy.teamId }),
+        },
+        files,
+        projectName: ctx.deploy.projectName,
+      });
+      ctx.onLog?.(
+        outcome.ok
+          ? `Deployed: ${outcome.url ?? "(no url)"}`
+          : `Deploy not successful: ${outcome.error ?? outcome.state ?? "unknown"}`,
+      );
+      // The user-facing lines, plus the one fact the MODEL needs that they do
+      // not: whether it may describe this as done.
+      return (
+        `${formatDeployForUser(outcome).join("\n")}\n\n` +
+        (outcome.ok
+          ? "This deploy is verified — the URL was checked and answered. You may tell the user it is live."
+          : "Do NOT describe this as deployed and working. Report exactly what is above.")
+      );
     }
 
     // Also before the sandbox check: the review reads the file set, not the

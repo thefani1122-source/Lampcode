@@ -2960,3 +2960,41 @@ exact shape. `build.ts` already imports `getConnectedMcpServers` and already res
 
 592 cases, typecheck and build pass. **No real deploy has been attempted** — that needs a
 connected Vercel token.
+
+### Wired: the deploy_app tool — 2026-10-11
+
+`deploy_app` is in `AGENTIC_BUILD_TOOLS`, handled before the sandbox check (it reads the file
+set and talks to Vercel, not the sandbox), and **reachable**: `dist/index.js` went 651.89 →
+663.92 KB and `deployToVercel` appears in the bundle. Checked, because the previous commit's
+honest note was that nothing imported it and `dist` had not grown.
+
+**Only when the user asks.** The owner's decision — *"deploy tb ho app jb user khae"* — and the
+reason is in the previous day's work: the wiring check may have just reported that three buttons
+do nothing, and auto-publishing that to the user's own account would put a known-broken app in
+front of their users. The tool description and prompt entry both say never on the agent's own
+initiative, and name the phrasings that count as asking.
+
+**The auth is passed down, never looked up in the tool.** Resolving it inside `agents/tools.ts`
+would import `integrations.ts` and drag the database and crypto helpers into
+`scripts/mcp-tools.test.ts`, which runs free and with no credentials — trap 9's exact shape.
+Verified rather than assumed: that test was run after the import was added and still passes in
+under a second. `build.ts` lifts the token from the `userMcpServers` it has **already** resolved
+and decrypted, so there is no second decrypt of the same row.
+
+One real cost decision: the project's NAME is not loaded anywhere in `runFastBuild`, and it is
+what the user sees in their own Vercel dashboard. So it is worth one read — **guarded on the
+token being present**, so the query never runs for the large majority who have not connected
+Vercel.
+
+**No Vercel connected is a normal state, not an error.** The tool answers with a sentence saying
+to connect it in integrations settings and to stop rather than retry. That is the owner's own
+point about why the MCPs exist: *"mcps humne rakha hi isliye hain na k user ka kam asan ho."*
+
+The tool returns the user-facing lines plus one fact only the MODEL needs: whether it may call
+this done. On success, *"This deploy is verified — the URL was checked and answered."* On
+anything else, *"Do NOT describe this as deployed and working."* Without that line the model has
+a URL in hand and every incentive to present it as finished, which is the exact failure the
+smoke check exists to prevent.
+
+592 cases, typecheck and build pass. **Still no real deploy** — that needs a connected Vercel
+token, and the `api/[...route].ts` routing assumption remains the one untested piece.

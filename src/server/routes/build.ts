@@ -1238,6 +1238,37 @@ export async function runFastBuild(
     // that never use them. Revisit if web access becomes a default need.
     const mcpServers = [...userMcpServers, ...(provider === "modal" ? [] : internalMcpServers)];
 
+    // ── What deploy_app needs, if the user connected Vercel ──────────────────
+    // Lifted from the servers already resolved above rather than read again:
+    // `getConnectedMcpServers` has run and already decrypted these, so a second
+    // lookup would be a second decrypt of the same row.
+    //
+    // Resolved HERE and passed down, not looked up inside the tool module. Doing
+    // it there would import integrations.ts into agents/tools.ts and pull the
+    // database and crypto helpers into scripts/mcp-tools.test.ts, which runs
+    // free and without credentials today — trap 9's exact shape.
+    //
+    // Absent is a normal state, not a failure: most users will not have Vercel
+    // connected, and the tool answers that with a sentence telling them how.
+    // The project's NAME is not otherwise loaded in this function, and it is
+    // what the user will see in their own Vercel dashboard — so it is worth one
+    // read, but only for the users who actually connected Vercel. Guarding the
+    // query on the token keeps it off the path of everyone who did not.
+    const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
+    let deployCtx: { vercelToken: string; projectName: string } | undefined;
+    if (vercelMcp?.authToken) {
+      const named = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .catch(() => []);
+      deployCtx = {
+        vercelToken: vercelMcp.authToken,
+        projectName: named[0]?.name ?? "lampcode-app",
+      };
+    }
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       usageCategory: "build",
@@ -1270,6 +1301,7 @@ export async function runFastBuild(
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
       restProviders,
+      ...(deployCtx === undefined ? {} : { deploy: deployCtx }),
     });
 
     outcomeDraft = {

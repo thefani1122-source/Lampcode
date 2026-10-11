@@ -119,6 +119,14 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   /** The project's current files on a follow-up edit. Lets the agentic tools
    *  serve reads from memory and keep the sandbox holding the whole project. */
   projectFiles?: Record<string, string> | undefined;
+  /** What `deploy_app` needs, resolved by the caller. Passed through rather than
+   *  looked up inside the tool module, which would pull the database and the
+   *  crypto helpers into a free, credential-less test — see the field's comment
+   *  on ToolExecutionContext. Absent means no Vercel is connected, which the
+   *  tool reports as a sentence rather than an error. */
+  deploy?:
+    | { vercelToken: string; teamId?: string | undefined; projectName: string }
+    | undefined;
 };
 
 export interface DispatchResult {
@@ -690,6 +698,7 @@ export class AgentDispatcher {
                 dispatcher: this,
                 userId: options.userId,
                 provider: effectiveProvider,
+                ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),
         }).catch(
