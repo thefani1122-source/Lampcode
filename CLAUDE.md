@@ -46,7 +46,8 @@ prompt → build.ts:runFastBuild()      orchestration, gates, repair loops
 
 **The agentic harness is the default** (`AGENTIC_BUILD_ENABLED`, true unless set to `"false"`).
 The model drives: `write_files`, `edit_file`, `list_files`, `read_file`, `read_logs`,
-`check_page`, `check_types`, `run_tests`, `fetch_reference`, `find_dead_code`, `review_code`.
+`check_page`, `check_types`, `run_tests`, `fetch_reference`, `find_dead_code`,
+`find_wiring_gaps`, `review_code`.
 
 **The deterministic repair loops run on BOTH paths**, after the agent finishes — they are gated
 on the build's shape, not on the flag. Nothing there is scheduled for deletion. The
@@ -175,6 +176,14 @@ are genuinely unusual:
    cost, and whether a verdict went stale.
 3. **Free deterministic checks** — orphan files, dead code, and a written-but-never-imported
    stylesheet (which silently leaves an app on the template's greyscale tokens).
+4. **The hollow-app check** (`src/verify/wiring.ts`) — what RENDERS but does nothing: a button
+   with no handler, a form that submits nowhere, a link to an undeclared route, a `fetch`
+   against an endpoint the backend never defined. Free, deterministic, and the only thing here
+   that answers the question the three gates cannot: a test imports its module DIRECTLY, so
+   passing tests never prove the app wired that module in. Five of the seven kinds feed a
+   repair loop that runs before the preview is shown; `orphan-endpoint` and `placeholder-text`
+   are reported only, because their fix is a product decision. Measured on 93 hand-written
+   files: 2 findings, both real bugs in the live frontend. (HISTORY, 2026-10-11.)
 
 **None of this is visible to a user today.** The audit card was removed from the UI because its
 language was written for a maintainer. The measurement is unchanged and still stored; only the

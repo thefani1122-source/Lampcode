@@ -2518,3 +2518,112 @@ in the UI since.
 
 Six formatter cases were rewritten rather than deleted, and the most important one is inverted:
 it used to assert the note IS shown, and now asserts it is NOT.
+
+## THE HOLLOW-APP CHECK — built and wired into the build, 2026-10-11
+
+The owner's standing complaint about generated apps, in their words: *"multi page sites keh le ya
+app sai se nhai bana pata usme kuch buttons kuch pages reload nhai hote kam nahi kr rhe hote
+sirf default hote hain"* — buttons that do nothing, pages that never load, controls left at
+their defaults. Same for the backend and integrations.
+
+**That is the ROTA failure one level down.** ROTA was components written and never imported.
+This is elements rendered and never wired: a `<button>` with no `onClick`, a
+`<Link to="/rules">` where no route declares `/rules`, a `fetch("/api/shifts")` the backend
+never defined. In both cases the app is structurally whole and behaviourally hollow, and in
+both cases **every gate passes**: it renders, it type-checks, and a test passes because a test
+file imports its module DIRECTLY — so passing tests never prove the app wired that module in.
+
+**None of it needs a model.** This is static analysis, not an intelligence problem, which is
+why it belongs beside `dead-code.ts` rather than in a prompt.
+
+### Why it is a separate module from `dead-code.ts`
+
+That file's contract is built around the response to its findings being **deleting** code —
+hence forty lines of comments establishing that every rule under-reports, because a false
+positive there costs a working app. The response here is **writing** code. Different blast
+radius, different caller. Folding these rules in would have quietly broken that contract.
+
+The discipline carries over for a different reason: a false positive here spends a repair
+dispatch rewriting code that was already correct, and *a repair that changes working code is a
+regression, not a fix*.
+
+### Measured against the real frontend, not trusted
+
+Ran over 93 hand-written files of `vibe-coder-suite` — a working app, so every element finding
+is either real or a false positive and the ratio is the only honest measure.
+
+| | first version | after the fix |
+|---|---|---|
+| element findings | 4 | **2** |
+| false positives | **2** | **0** |
+
+**Both false positives had one shared cause: `<button>` inside `<DropdownMenuTrigger asChild>`.**
+Radix — and so shadcn, and so most generated apps, since the template ships it — clones its
+single child and injects `onClick`. The child has no handler in the source and works fine at
+runtime. Un-fixed, the repair loop would have dispatched to "fix" two functioning menus.
+
+The skip stops at an intervening closing tag, and that mattered: the same probe found a
+**genuinely dead "Switch project" button** (`src/routes/workspace.$projectId.tsx:1295` — title,
+icon, no handler) a few hundred characters after a real trigger. A file-wide `asChild` test
+would have hidden it. The other true positive was `onRetry={() => {}}` at
+`src/components/SandpackPreview.tsx:367` — a Retry button that does not retry. **Both are real
+bugs in the live product.**
+
+Two bugs the new cases now pin, both found by running the thing rather than trusting it:
+`tagAttributes` required a following `=`, so a bare boolean attribute did not count and
+`<button disabled>` read as unwired; and not stripping attribute values let a name inside a
+string count, so `title="onClick demo"` looked wired and was skipped.
+
+`placeholder-text` is the one rule that depends on whose code is read. The probe reported three
+"coming soon" strings and all three were deliberate product copy. In generated output the same
+string means the opposite — the user asked for a feature and got a label. Correct where this
+runs, wrong as a general lint.
+
+### What gets a repair dispatch, and what does not
+
+`REPAIRABLE_KINDS` = dead-handler, button-no-handler, form-no-submit, dead-link,
+missing-endpoint. Left out: **orphan-endpoint and placeholder-text** — and not because they are
+mild. They are the two with no single correct response. A backend route nothing calls is fixed
+either by building its UI or by deleting it, which are opposite outcomes and one discards a
+feature the user asked for. "Coming soon" is fixed by building the feature, which is the rest
+of the build. Dispatching on either lets the loop make a product decision with no way to ask.
+
+### Three deliberate differences from the security loop
+
+The loop sits immediately after the security loop and **before** the storage sync, the
+`backendReady` emit and the preview sandbox — everything past that point shows the files to
+someone, so a fix landing later is a fix the user never sees.
+
+1. **It never fails the build.** A hard-blocked credential is dangerous; a button with no
+   handler is merely incomplete. Cost ceiling, repeated finding and failed dispatch all warn,
+   stop, and let the build finish with the gap recorded honestly.
+2. **Only `REPAIRABLE_KINDS` dispatch.**
+3. **The affected files go WITH the findings.** The report alone is not enough context to write
+   a handler. A dead link is fixed in the router, not where the link is written; a missing
+   endpoint in the backend — so those files are pulled in when those kinds appear. (The
+   security loop sends findings with no file contents, which may be a latent weakness there.)
+
+### Why no `usageCategory`
+
+`usage_category` is a **Postgres enum** and migrations in this repo are applied by hand, not on
+boot (there is no `migrate()` call in the server). A `wiring_fix` value would therefore have
+thrown on **every dispatch in the loop** until someone ran `db:migrate` against production. The
+column is nullable, billing is per-dispatch in `dispatcher.ts` regardless, so what the loop
+spends is recorded in `build_outcome.wiring.costUsd` instead.
+
+### The cheap path is the agent's
+
+`find_wiring_gaps` is in `AGENTIC_BUILD_TOOLS` and handled before the sandbox check, so it is
+free and works on a cold sandbox. If the model calls it, it fixes the gap inside a round it was
+already taking, with full context — **no extra dispatch**. The deterministic loop is the
+backstop that costs money. Prompt step 8 asks for it on any app with more than one page, a
+backend, or a control meant to do something.
+
+`build_outcome.wiring` is re-measured over the final file set rather than carried from the loop,
+because the repair loops in between mutate `allFiles` — the staleness `build.ts` keeps
+relearning. `repaired` is the one figure that must be carried, being a difference across the
+loop.
+
+**NOT verified on a real build.** `typecheck`, `test` and `build` all pass, and the analyser is
+measured on real code — but the loop's dispatch path has never executed. Exercising it costs a
+build, and the owner's budget was explicitly unavailable.
