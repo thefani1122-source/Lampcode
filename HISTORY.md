@@ -2718,3 +2718,45 @@ the distinction the whole `verify/` directory exists for, and why `smoke.ts` is 
 
 The lesson is the one in the working rules: **reading one file produced a confident scope that
 was wrong by an order of magnitude.** The MCP machinery was two greps away.
+
+### Deploy scope, corrected twice, and a real bug found on the way — 2026-10-11
+
+**First scope (wrong):** read `pipeline.ts` alone, concluded deploy was a build from scratch and
+fullstack was "a project, not a feature."
+
+**Second scope (also wrong, the other way):** read the real `mcp.vercel.com` schemas and found
+`create_deployment` takes **inline files** (`{file, data, encoding}` — no GitHub, no separate
+upload for small files), `target: "production"`, `skipAutoDetectionConfirmation: "1"` for
+automation, and a `projectSettings.framework` enum containing `vite`, `hono`, `express`,
+`fastapi`, `flask`, `python`, `node`. Concluded fullstack was therefore easy too.
+
+**Third, checked against what Lampcode actually generates — and this one holds.** Vercel supports
+those frameworks in *their* expected entry shape. `prompt-builder.ts` instructs the opposite:
+
+- Node backend: `serve({ fetch: app.fetch, port: Number(process.env.PORT) || 3001 })` — a
+  listening server, not a handler export.
+- Python: `uvicorn main:app --port 3001` — also a listening server.
+- Vite **proxies** `/api/*` to :3001.
+
+**That proxy is a dev-server feature and does not exist in a production build.** So:
+
+> **Every fullstack app Lampcode generates today breaks the moment it leaves the dev server.**
+> The frontend's relative `/api/...` calls depend on Vite's dev proxy; a built bundle has no
+> proxy and nothing answers them.
+
+This is a code-generation bug, not a deploy bug — it is true whether or not deploy is ever
+built, and it is exactly the owner's own complaint that "backend sai se nahi banata". Note that
+`verify/wiring.ts`'s `missing-endpoint` rule does **not** catch it: the backend genuinely
+defines the route, so both halves agree. The missing piece is the proxy, which is a different
+class and needs its own check.
+
+So the honest split:
+
+| | state |
+|---|---|
+| **Frontend-only deploy** | small and real — one module over `callMcpTool`, Vite preset, inline files, then `smoke.ts` on the URL |
+| **Fullstack deploy** | blocked on the generated shape, NOT on deploy plumbing. Needs either the generator emitting a Vercel-shaped backend (handler export / `api/` functions), or the backend on Railway plus an API base URL the built frontend actually uses |
+
+The lesson, twice in one hour: **a confident scope from one file was wrong by an order of
+magnitude in both directions.** The plumbing was two greps away; the blocker was one grep past
+that.
