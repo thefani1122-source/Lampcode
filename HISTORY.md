@@ -2998,3 +2998,92 @@ smoke check exists to prevent.
 
 592 cases, typecheck and build pass. **Still no real deploy** — that needs a connected Vercel
 token, and the `api/[...route].ts` routing assumption remains the one untested piece.
+
+## REVIEWED: Codex's two analysers — measured, nothing to fix, 2026-10-12
+
+Codex implemented `hollow-tests.ts` and `interactions.ts` on Windows and pushed to the branch
+(`2170cde`, `ae8ddd0`). Claude's job was the half Codex could not do: run the gates on Linux and
+measure both against KNOWN ground truth.
+
+### The Windows failures were environmental, as predicted
+
+`npm run build` failed on Windows with an esbuild parent-directory denial, and `npm test` needed
+a username-lookup workaround. On Linux, with no workaround: **typecheck, test and build all
+pass. 715 cases** (592 before). Railway is Linux, so the arrangement — Codex writes, Claude
+verifies where it ships — held.
+
+### Interactions: measured 7/7 against ground truth
+
+The risk both of us flagged was that "the fingerprint did not change" is a heuristic, not proof
+of a dead control. A modal, a class toggle, a clipboard write and a network call can all be real
+work that `{title, body length, path, href}` cannot see.
+
+So: a static page was built with eight controls whose behaviour was known in advance, served on
+:5173, and the **real `INTERACTION_SCRIPT`** — extracted from the module, unmodified — was run
+against it with the system Chromium.
+
+| control | truth | reported | verdict |
+|---|---|---|---|
+| no handler at all | dead | `changed: false` → finding | **true positive** |
+| `onclick="console.log(…)"` | stub | `changed: false` → finding | **true positive** |
+| sets `document.title` | works | `changed: true` | correct |
+| toggles a CSS class | works | skipped, "effect outside the fingerprint" | correct |
+| calls `fetch()` | works | skipped — **and captured the 404 console error** | correct |
+| opens an `alert()` | works | skipped | correct |
+| link to another page | works | `changed: true` | correct |
+
+**2 true positives, 0 false positives, 0 false negatives.**
+
+The reason it holds is the suppression layer, and **two of its guards were Codex's own, not in
+the spec**: a `MutationObserver` on `document.body` with `subtree`, `childList`, `characterData`
+**and `attributes`** — so essentially any visible response suppresses the finding — plus
+`request` / `download` / `popup` / `dialog` listeners and an input-state snapshot. What survives
+as "unchanged" is a control where literally nothing happened.
+
+Two further guards Codex added unprompted and both are right: the fingerprint is taken **twice
+before** clicking and the entry is skipped as "page not settled" if they already differ (an
+animating or polling page would otherwise produce noise), and the control inventory is
+re-checked so a list that shifted mid-run is skipped rather than mis-attributed. The repair text
+also pre-empts the obvious way to game the check: *"Do not delete controls or add cosmetic
+changes merely to satisfy this check."*
+
+**One suspected bug was not a bug.** Labels came back as `Dead â€" no handler`. Re-run with
+`<meta charset="utf-8">` added to the probe page, they were clean — the mojibake was the probe's
+own missing charset, not the script's encoding. Worth the one extra run: reporting a defect that
+is not there costs more than finding it.
+
+### Hollow tests: the probe that proved nothing, and the one that did
+
+Codex's real-code probe returned **18 files, 0 findings** and said, correctly, that this
+"does not establish recall on generated applications". **That was a fault in the spec, not the
+implementation:** this repo's own `scripts/*.test.ts` use a custom `check()` / `ok()` harness and
+contain no `it(` and no `expect(`, so rules keyed on those were never going to fire. Codex
+caught it; the spec sent them at the wrong corpus.
+
+Re-probed against vitest-shaped fixtures with known ground truth — which is what generated apps
+actually produce:
+
+| fixture | truth | reported |
+|---|---|---|
+| real test, meaningful assertion | clean | clean |
+| no assertions | `no-assertions` | ✓ |
+| `expect(1).toBe(1)` | `literal-assertion` | ✓ |
+| imports nothing from the project | `imports-nothing` | ✓ |
+| `it.skip` | `skipped-test` | ✓ |
+| empty `it` body | `empty-test` | ✓ (+ `no-assertions`, also true) |
+| `expect(sum(2,3)).toBe(5)` | clean — computed, not literal | clean |
+| a COMMENT containing `it.skip` | clean | clean (`stripComments` holding) |
+
+**8/8 correct, all five kinds firing, zero false positives on the two precision cases.**
+
+### Outcome
+
+**Nothing needed fixing.** Both modules follow the spec, including the user-facing formatters,
+and neither touches `build.ts`, the E2B template or `check-render.mjs` — the constraint that
+mattered most, since changing a baked script needs a rebuild whose failure mode silently leaves
+the old image serving (trap 6, which cost three weeks on this exact tool).
+
+Still unverified, and these are Claude's to close: **E2B execution** (the script has run under
+system Chromium, never inside the sandbox), and **integration** — neither analyser is wired into
+a build yet. The probe also only operates controls on the FIRST page; there is no recursive route
+crawl, so a dead button on an unrouted-to page is still invisible.
