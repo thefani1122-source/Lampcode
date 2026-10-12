@@ -3087,3 +3087,55 @@ Still unverified, and these are Claude's to close: **E2B execution** (the script
 system Chromium, never inside the sandbox), and **integration** — neither analyser is wired into
 a build yet. The probe also only operates controls on the FIRST page; there is no recursive route
 crawl, so a dead button on an unrouted-to page is still invisible.
+
+## REVIEWED: the Receipt — passed, and two of its three "failures" were not Codex's, 2026-10-12
+
+Codex built the Receipt in `vibe-coder-suite` (`5b26b83`). Reviewed on Linux.
+
+### What held
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit` | clean |
+| `vite build` (failed on Windows) | **passes on Linux** — environmental, as with the backend |
+| `eslint` on the three new files | **exit 0, clean** |
+| `bun run lint` repo-wide | fails — **pre-existing**, in files Codex never touched |
+| Their vitest tests | **cannot run here at all** — see below |
+
+All three rules that mattered are honoured: `criterion.text` is the only audit string in the
+default view with `note`/`evidence` behind a closed `<details>`; `unverified` is neutral grey
+with a question mark, never a tick and never alarm-styled; and `criteriaDropped` gets its own
+box saying the dropped requirements are **"not included in these counts"**, which is the precise
+reason it matters.
+
+Two things were better than the spec. An extra line — *"Not confirmed means there isn't enough
+evidence yet. It does not mean the feature is broken."* — states the semantic this project
+exists to defend, in the user's own terms, and nobody asked for it. And `receiptRequirements`
+is **fail-closed in ways the spec did not name**: it joins by `id` rather than array order (with
+a comment explaining that extraction and assessment may return different orders), and it treats
+a **duplicate** verdict as no verdict.
+
+Probed directly rather than trusted — 7 cases, all passing: explicit proven, explicit
+contradicted, **missing** verdict, **duplicate** verdicts, **unknown** status, a verdict for a
+different id, and an out-of-order join. Everything that is not an explicit `proven` or
+`contradicted` falls to `unverified`, matching `parseVerdicts` in the backend.
+
+### The test runner in the frontend repo is broken, and it is not Codex's doing
+
+`bunx vitest run` on their file dies with `Missing field 'moduleType'` (`PLUGIN_ERROR`, Vite's
+module-runner). **A trivial `expect(1+1).toBe(2)` file fails identically**, so this is the repo's
+own Vite/vitest toolchain on Linux, not their test content. Codex reported 7 passing on their
+machine, which is plausible on a different install.
+
+Worth knowing: `scripts/build-receipt.test.tsx` is the **only test file in the whole frontend
+repo**. Codex added the first one, and it cannot run in this environment. Not worth fixing before
+the 23rd, but it means the frontend has no working test gate at all.
+
+Because of that, the review verified `receiptRequirements` directly with `tsx` instead — which is
+the stronger check anyway, since it is the fail-closed semantic rather than the runner.
+
+### Still unverified
+
+**Real build data.** Every state was seen against hand-made fixtures, never against a live
+build's `buildOutcome`. And the authenticated workspace flow was never exercised. Both close the
+moment a real user builds something — which is what A2 and A3 unlock.
