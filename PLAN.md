@@ -7,6 +7,41 @@ owner, Claude and Codex are reading one list instead of three.
 Delete a row when it is done and the gate below it passed. Add the evidence to `HISTORY.md`, not
 here.
 
+## THE DEADLINE — 2026-10-23, and what it cuts
+
+Both AI plans (Claude and Codex) end on **23 October**. Claude's weekly budget is 86% spent.
+The owner's goal: **launch, and have real users test it, before the plans end.** That is
+**11 days** from 2026-10-12.
+
+**That reorders everything, because real-user testing cannot come after the engineering.** The
+door has to open first. A2 and A3 are config flags that can be done today; every day they stay
+shut is a day of user feedback that will never exist.
+
+It also makes most of the B list free. Those paths are unproven because proving them costs a
+build — and **a real user's build IS that build.** Ten users building is the measurement, and it
+costs nothing extra.
+
+### Ships before the 23rd
+
+| | What | Who |
+|---|---|---|
+| 1 | **A2 + A3** — open the door, un-pause Supabase | Owner, today |
+| 2 | **A1** — a good model (Anthropic key) | Owner, this week |
+| 3 | Wire `wiring.ts`, `hollow-tests.ts`, `interactions.ts` into the build | Claude |
+| 4 | **C4 — the Receipt** | Codex |
+| 5 | **C3 — the Contract**, only if 1–4 are done | Codex |
+
+### Cut, and these are deliberate
+
+| Cut | Why it is safe to cut |
+|---|---|
+| **C5 provider boundary** | **It is not actually a prerequisite.** `dispatcher.ts` already supports the Anthropic direct API for the paid tier (CLAUDE.md, "Model availability"), so with an Anthropic key the swap is a config change, not a refactor. The 3,624-line file stays ugly and ships. |
+| **C6 research-before-build** | Real improvement, zero launch risk in deferring. Prompt text, where a rushed change is most dangerous. |
+| **C7 decision controller** | A bet, and its gate is a paid 20-task eval. There is no budget for the eval and no time to honour "delete it if it loses". |
+
+**If a choice has to be made between shipping an item and having real users, the users win.** An
+unlaunched product with a better turn-cap policy is worth nothing on 24 October.
+
 ## How we work right now
 
 The owner's Claude weekly budget is nearly spent, so the split is:
