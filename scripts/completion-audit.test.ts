@@ -21,6 +21,7 @@ import {
   tallyVerdicts,
   unverifiedAudit,
   formatAuditForUser,
+  formatCriteriaForUser,
   formatFilesForAudit,
 } from "../src/verify/completion-audit.js";
 import type { AcceptanceCriterion } from "../src/db/schema.js";
@@ -495,6 +496,34 @@ check(
   formatAuditForUser({ criteria: [], verdicts: [], proven: 0, contradicted: 0, unverified: 0, costUsd: 0 }),
   [],
 );
+
+// ── formatCriteriaForUser ──────────────────────────────────────────────────
+
+const understood = (texts: string[], dropped = 0) => formatCriteriaForUser({
+  criteria: texts.map((text, index) => ({ id: `R${index + 1}`, text, kind: "behaviour" as const })),
+  costUsd: 0,
+  ...(dropped > 0 ? { dropped } : {}),
+});
+
+check("formatCriteriaForUser: no requirements means no output", understood([]), []);
+check(
+  "formatCriteriaForUser: extraction reason means no output",
+  formatCriteriaForUser({ criteria: [{ id: "R1", text: "Notes persist", kind: "data" }], costUsd: 0, reason: "disabled" }),
+  [],
+);
+const oneUnderstood = understood(["Notes persist across reloads"]);
+ok("formatCriteriaForUser: one requirement uses singular wording", oneUnderstood[0]?.includes("one thing") === true);
+ok("formatCriteriaForUser: shows the user's words", oneUnderstood.some((line) => line.includes("Notes persist across reloads")));
+const severalUnderstood = understood(["Notes persist", "Undo restores the last edit"]);
+ok("formatCriteriaForUser: several requirements use plural wording", severalUnderstood[0]?.includes("what I understood you want") === true);
+check(
+  "formatCriteriaForUser: dropped requirements make the partial list explicit",
+  understood(["Notes persist"], 2).find((line) => line.toLowerCase().includes("partial")),
+  "The list is partial: 2 more requirements were left out.",
+);
+ok("formatCriteriaForUser: invites a correction", severalUnderstood.some((line) => line.includes("send a correction")));
+ok("formatCriteriaForUser: no jargon or code identifiers in fixed wording", [...oneUnderstood, ...severalUnderstood].every((line) =>
+  !/\bcriterion\b|\bR\d+\b|\bsrc\/|\b[A-Za-z_$][\w$]*\(\)/i.test(line)));
 
 const contradicted = formatAuditForUser({
   criteria: [CRITERIA[0] as AcceptanceCriterion],
