@@ -63,6 +63,7 @@ import {
   auditCompletion,
   unverifiedAudit,
   formatAuditForUser,
+  formatCriteriaForUser,
   type ExtractResult,
 } from "../../verify/completion-audit.js";
 
@@ -1192,6 +1193,17 @@ export async function runFastBuild(
       ? extractCriteria({ dispatcher, prompt, sessionId, userId, projectId, provider })
           .catch(() => ({ criteria: [], costUsd: 0, reason: "extraction threw" }))
       : Promise.resolve({ criteria: [], costUsd: 0, reason: "disabled" });
+
+    // Show what was understood as soon as extraction completes, without
+    // joining the build's critical path. Catch the side-effect chain too so a
+    // failed chat emit cannot become an unhandled rejection.
+    void criteriaPromise
+      .then((result) => {
+        for (const line of formatCriteriaForUser(result)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      })
+      .catch((err) => logger.warn({ sessionId, err }, "Could not show extracted requirements in chat"));
 
     // Fetched unconditionally now — there's no upfront keyword gate deciding
     // whether this build might need a connected service; the model decides
