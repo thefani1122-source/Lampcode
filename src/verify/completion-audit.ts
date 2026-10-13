@@ -375,6 +375,25 @@ export function formatAuditForUser(audit: CompletionAudit): string[] {
   return lines;
 }
 
+/** The user's own words, shown as soon as extraction finishes so they can
+ *  correct a misunderstanding while the build is still running. */
+export function formatCriteriaForUser(result: ExtractResult): string[] {
+  if (result.reason || result.criteria.length === 0) return [];
+
+  const lines = [
+    result.criteria.length === 1
+      ? "Here's the one thing I understood:"
+      : "Here's what I understood you want:",
+    ...result.criteria.map((criterion) => `  • ${criterion.text}`),
+  ];
+
+  if (result.dropped && result.dropped > 0) {
+    lines.push(`The list is partial: ${result.dropped} more requirements were left out.`);
+  }
+  lines.push("If I misunderstood anything, send a correction while the build is running.");
+  return lines;
+}
+
 /** Assemble the code excerpt the auditor reads. Smaller files first, so a
  *  budget that runs out costs depth on the largest file rather than dropping
  *  whole small ones — a missing requirement is usually a missing small file. */
