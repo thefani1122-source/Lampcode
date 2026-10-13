@@ -388,7 +388,15 @@ export function formatCriteriaForUser(result: ExtractResult): string[] {
   ];
 
   if (result.dropped && result.dropped > 0) {
-    lines.push(`The list is partial: ${result.dropped} more requirements were left out.`);
+    // Singular is a real case, not a hypothetical: `dropped` is whatever the
+    // MAX_CRITERIA cap discarded, so nine requirements against a cap of eight
+    // produces exactly 1. "1 more requirements" in the one line that admits the
+    // list is incomplete is the wrong place to look careless.
+    lines.push(
+      result.dropped === 1
+        ? "The list is partial: 1 more requirement was left out."
+        : `The list is partial: ${result.dropped} more requirements were left out.`,
+    );
   }
   lines.push("If I misunderstood anything, send a correction while the build is running.");
   return lines;

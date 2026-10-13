@@ -3139,3 +3139,33 @@ the stronger check anyway, since it is the fail-closed semantic rather than the 
 **Real build data.** Every state was seen against hand-made fixtures, never against a live
 build's `buildOutcome`. And the authenticated workspace flow was never exercised. Both close the
 moment a real user builds something — which is what A2 and A3 unlock.
+
+## REVIEWED: the Contract — passed, one word fixed, 2026-10-13
+
+Codex added `formatCriteriaForUser` and a fire-and-forget emit of the extracted requirements
+(`f59aeaf`). Reviewed on Linux: **typecheck, test and build all pass, 724 cases.** The Windows
+esbuild denial was environmental for the third time.
+
+The specific risk the spec named was handled correctly:
+
+```ts
+void criteriaPromise.then(...).catch((err) => logger.warn(...))
+```
+
+The side-effect chain carries **its own** `.catch()`, so a failed chat emit cannot become an
+unhandled rejection — and `criteriaPromise` already had an inline catch of its own. The build
+does not wait (`void`, no await), the final `await` at the end is untouched, and no socket event
+was added, so there is no frontend change and no dead path. Twelve lines in `build.ts`.
+
+The formatter returns `[]` when `reason` is set or there are no criteria — silence rather than an
+empty message — and shows `criterion.text` only.
+
+**One fix applied.** With `dropped === 1` it read *"1 more requirements were left out"*. That is a
+real case, not a hypothetical: `dropped` is whatever the `MAX_CRITERIA` cap discarded, so nine
+requirements against a cap of eight gives exactly 1 — and the one line that admits the list is
+incomplete is the worst place to look careless. Same slip this file recorded on 2026-10-11, when
+the singular was first built by patching a plural string and produced "One thing things I've
+left". A case now pins it.
+
+**Not verified:** no real build has shown this in a live chat. Unlike the rest, that cannot be
+closed by a probe — it needs a user, which is what the two waitlist flags unlock.

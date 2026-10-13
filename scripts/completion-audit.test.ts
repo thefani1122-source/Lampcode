@@ -521,6 +521,15 @@ check(
   understood(["Notes persist"], 2).find((line) => line.toLowerCase().includes("partial")),
   "The list is partial: 2 more requirements were left out.",
 );
+// Singular is a real case: `dropped` is whatever the MAX_CRITERIA cap
+// discarded, so nine requirements against a cap of eight gives exactly 1. The
+// one line that admits the list is incomplete is the worst place to read as
+// careless, and the first version of it said "1 more requirements".
+check(
+  "formatCriteriaForUser: one dropped requirement reads as singular",
+  understood(["Notes persist"], 1).find((line) => line.toLowerCase().includes("partial")),
+  "The list is partial: 1 more requirement was left out.",
+);
 ok("formatCriteriaForUser: invites a correction", severalUnderstood.some((line) => line.includes("send a correction")));
 ok("formatCriteriaForUser: no jargon or code identifiers in fixed wording", [...oneUnderstood, ...severalUnderstood].every((line) =>
   !/\bcriterion\b|\bR\d+\b|\bsrc\/|\b[A-Za-z_$][\w$]*\(\)/i.test(line)));
