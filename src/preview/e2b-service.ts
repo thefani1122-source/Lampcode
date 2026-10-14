@@ -820,21 +820,32 @@ export async function fetchReferenceDesign(
   return JSON.parse(r.stdout.slice(marker + 5).trim()) as Record<string, unknown>;
 }
 
-/** Operate preview controls using a runtime-written script. Failure is not a
- * clean bill of health: the empty finding list carries no coverage claim. */
-export async function checkInteractions(projectId: string): Promise<InteractionFinding[]> {
+/**
+ * Operate preview controls using a runtime-written script.
+ *
+ * `ran` is the whole point of the return shape. Failure is not a clean bill of
+ * health, and an empty finding list carries no coverage claim — but a caller
+ * that got back only `[]` could not tell "every control responded" from "there
+ * was no sandbox" or "the probe threw". Recording the second as though it were
+ * the first is the exact mistake `build_outcome` is built to avoid, where
+ * absent and zero are deliberately different facts. So the two are kept apart
+ * here, at the only place that knows which happened.
+ */
+export async function checkInteractions(
+  projectId: string,
+): Promise<{ findings: InteractionFinding[]; ran: boolean }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return [];
+  if (!sandbox) return { findings: [], ran: false };
   try {
     await sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT);
     const r = await sandbox.commands.run(
       `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs`,
       { timeoutMs: 60_000 },
     );
-    return parseInteractionReport(r.stdout);
+    return { findings: parseInteractionReport(r.stdout), ran: true };
   } catch (err) {
     logger.warn({ projectId, err }, "[e2b] interaction probe unavailable — controls remain unverified");
-    return [];
+    return { findings: [], ran: false };
   }
 }
 

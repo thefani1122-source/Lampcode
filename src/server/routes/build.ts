@@ -37,7 +37,7 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, checkInteractions, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -57,6 +57,12 @@ import {
   formatWiringForUser,
   declaredRoutes,
 } from "../../verify/wiring.js";
+import {
+  findHollowTests,
+  tallyHollowTests,
+  formatHollowTestsForUser,
+} from "../../verify/hollow-tests.js";
+import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
 import {
   shouldAudit,
   extractCriteria,
@@ -2860,6 +2866,64 @@ export async function runFastBuild(
           "Persisted post-completion repairs and reconciled their cost",
         );
       }
+
+      // ── Click the delivered app's own controls ──────────────────────────────
+      // Every other check in this build reads source. This one drives the
+      // running preview, so it is the only evidence here about BEHAVIOUR rather
+      // than about text — and it answers the question the wiring scan cannot: a
+      // handler can be present, correctly wired, and still change nothing.
+      //
+      // Last thing in finishPreview on purpose. It needs a live sandbox, and it
+      // has to run after the repair loops above have landed, or it reports on an
+      // app the user no longer has. Costs no model spend; the script runs inside
+      // the sandbox against the baked Playwright.
+      const interaction = await checkInteractions(projectId);
+      const interactionTally = tallyInteractions(interaction.findings);
+
+      // Only said when the probe actually ran. A probe that could not run has
+      // nothing to report, and "some controls need a closer look" from a check
+      // that never happened would be worse than silence.
+      if (interaction.ran) {
+        for (const line of formatInteractionsForUser(interaction.findings)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      }
+
+      console.log(
+        `[build] interactions session=${sessionId} ran=${interaction.ran} ` +
+        `total=${interactionTally.total} buttons=${interactionTally.buttonsNoChange} ` +
+        `links=${interactionTally.linksNoChange} forms=${interactionTally.formsNoChange} ` +
+        `consoleErrors=${interactionTally.consoleErrors}`,
+      );
+
+      // Read-modify-write, like the cost reconciliation above and for the same
+      // reason: build_outcome was written when the build was recorded complete,
+      // which is before this point. A blind set would discard every other field
+      // in it. Cannot fail the build — the user already has the app — so a
+      // failure here costs the record and nothing else.
+      try {
+        const [row] = await db
+          .select({ buildOutcome: buildSessions.buildOutcome })
+          .from(buildSessions)
+          .where(eq(buildSessions.id, sessionId))
+          .limit(1);
+        if (row?.buildOutcome) {
+          await db
+            .update(buildSessions)
+            .set({
+              buildOutcome: {
+                ...row.buildOutcome,
+                interactions: { ran: interaction.ran, ...interactionTally },
+              },
+            })
+            .where(eq(buildSessions.id, sessionId));
+        }
+      } catch (err) {
+        logger.warn(
+          { sessionId, projectId, err },
+          "Could not record the interaction probe — build_outcome will not carry it for this build",
+        );
+      }
     };
 
     if (wantsE2BPreview) {
@@ -3054,6 +3118,37 @@ export async function runFastBuild(
       );
     }
 
+    // ── Tests that pass while proving nothing ─────────────────────────────────
+    // Free, deterministic, over the delivered files, for the same reason the
+    // wiring scan above runs here: no model call, no sandbox, and it describes
+    // what the user actually gets rather than some mid-build state.
+    //
+    // This is the check that guards the most misleading field in the record.
+    // `checkTests: "pass"` on its own cannot tell a real green run from four
+    // tests with no assertion in them, and a build handed that verdict has
+    // proof of correctness it never earned. Advisory only — it reports and
+    // never blocks, because a thin test is a reason to look, not a broken app.
+    const hollowFindings = findHollowTests(allFiles);
+    const hollowTally = tallyHollowTests(hollowFindings);
+
+    // In the user's language, chat lines only — the same choice the wiring and
+    // audit lines landed on, and for the same reason: the thinking stream is
+    // where the user is already looking and it needs no frontend change. The
+    // formatter emits counts and fixed prose only; no path or source text from
+    // a finding crosses into the chat.
+    for (const line of formatHollowTestsForUser(hollowFindings)) {
+      server?.thinking(sessionId, { text: line, sessionId });
+    }
+
+    if (hollowTally.total > 0) {
+      console.log(
+        `[build] hollow tests session=${sessionId} total=${hollowTally.total} ` +
+        `noAssertions=${hollowTally.noAssertions} literalAssertions=${hollowTally.literalAssertions} ` +
+        `importsNothing=${hollowTally.importsNothing} skipped=${hollowTally.skippedTests} ` +
+        `empty=${hollowTally.emptyTests} checkTests=${result.gateResults.checkTests ?? "never"}`,
+      );
+    }
+
     const deadFindings = findDeadCode(allFiles);
     const deadTally = tallyDeadCode(deadFindings);
     if (deadFindings.length > 0) {
@@ -3081,6 +3176,7 @@ export async function runFastBuild(
       filesWritten: writtenPaths.length,
       deadCode: deadTally,
       wiring: { ...wiringTally, repaired: wiringRepaired, costUsd: wiringCostUsd },
+      hollowTests: hollowTally,
       ...(completionAudit
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),

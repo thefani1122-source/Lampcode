@@ -257,6 +257,40 @@ export type BuildOutcome = {
      *  dispatch in the loop until someone ran db:migrate. */
     costUsd?: number;
   };
+  /** Tests that run and pass while proving nothing — no assertion at all, an
+   *  assertion against a literal, a file that imports no application code, a
+   *  check left skipped or empty. Recorded because `checkTests: "pass"` is the
+   *  single most misleading field in this record on its own: a build that
+   *  writes four hollow tests and is told they passed has proof of correctness
+   *  it never earned, and nothing here could previously tell that apart from a
+   *  real green run. Free and deterministic, measured over the delivered files.
+   *  Absent on builds from before it existed. */
+  hollowTests?: {
+    noAssertions: number;
+    literalAssertions: number;
+    importsNothing: number;
+    skippedTests: number;
+    emptyTests: number;
+    total: number;
+  };
+  /** What happened when the delivered preview's own controls were clicked.
+   *  Every other check here reads source; this one drives the running app, so
+   *  it is the only evidence about behaviour rather than about text.
+   *
+   *  `ran` is load-bearing and must be read before the counts. The probe needs
+   *  a live sandbox and can be unavailable, and a probe that never ran reports
+   *  the same zeroes as an app whose every control responded. Counts mean
+   *  nothing unless `ran` is true. Even then the check is brief and a working
+   *  control can look inert, so these are a prompt to look rather than a
+   *  verdict. Absent on builds from before it existed. */
+  interactions?: {
+    ran: boolean;
+    buttonsNoChange: number;
+    linksNoChange: number;
+    formsNoChange: number;
+    consoleErrors: number;
+    total: number;
+  };
   /** What a `review_code` call did, when one happened. `deep` out of `total` is
    *  the point: a review that looked at four of forty files is not a review of
    *  the project, and before this nothing recorded the difference. `dropped`
