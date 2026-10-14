@@ -58,6 +58,31 @@ export async function handleAgentStream(
   const emit = (event: string, data: Record<string, unknown>): void =>
     wsServer.emitToRoom(sessionId, event, data)
 
+  /**
+   * Passes that produce structured data for the system, not reasoning a person
+   * should watch.
+   *
+   * These dispatch on the USER'S sessionId — they have to, for cost attribution
+   * and logging — so every token they stream landed in the user's chat as
+   * "thinking". Observed in production 2026-10-14: a notes-app build opened with
+   *
+   *     { "criteria": [ { "text": "User can create new notes", "kind": …
+   *
+   * sitting in the THOUGHTS panel. That is the acceptance pass talking to the
+   * audit, rendered as though the builder were thinking out loud in JSON.
+   *
+   * Narration exists to show what the BUILD agent is doing. `frontend`,
+   * `backend`, `fix` and `planning` are that agent; these three are plumbing,
+   * and their results already reach the user through their own formatters —
+   * `formatCriteriaForUser` and `formatAuditForUser` — written in the user's
+   * words rather than the model's raw output.
+   */
+  const SILENT_AGENT_TYPES = new Set(["acceptance", "audit", "review"])
+  const narrate = (event: string, data: Record<string, unknown>): void => {
+    if (SILENT_AGENT_TYPES.has(agentType)) return
+    emit(event, data)
+  }
+
   // Only emit thinking text that appears BEFORE the first code fence.
   // Claude Sonnet sometimes streams the entire response as one large chunk,
   // making per-chunk fence detection unreliable. Instead we gate on whether
@@ -69,7 +94,7 @@ export async function handleAgentStream(
   let lastFenceCount = 0
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
-  emit("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
+  narrate("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
 
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
@@ -80,7 +105,7 @@ export async function handleAgentStream(
         // Reasoning / thinking tokens (DeepSeek R1, o1, etc.)
         case "reasoning":
           if (chunk.reasoning) {
-            emit("build:thinking", { text: chunk.reasoning, sessionId })
+            narrate("build:thinking", { text: chunk.reasoning, sessionId })
           }
           break
 
@@ -106,7 +131,7 @@ export async function handleAgentStream(
 
           if (!codeStarted) {
             // Forward pre-code planning/explanation text to the thinking panel
-            emit("build:thinking", { text, sessionId })
+            narrate("build:thinking", { text, sessionId })
           } else {
             // Detect file transitions — scan only when fence count may have changed
             const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
