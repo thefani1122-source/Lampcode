@@ -2896,6 +2896,16 @@ export async function runFastBuild(
         `consoleErrors=${interactionTally.consoleErrors}`,
       );
 
+      // Re-measured here, not carried from the main body, because the repair
+      // loops above MUTATE allFiles — so a count taken before them describes
+      // code the build no longer has. Measured on this build: deadCode recorded
+      // orphanStylesheets=1 while the delivered files had the import and scanned
+      // clean, which is the loop working and the record not keeping up. The
+      // wiring scan already re-measures for exactly this reason; it just could
+      // not reach past finishPreview. Free and deterministic, so re-running it
+      // costs nothing but accuracy.
+      const hollowNow = tallyHollowTests(findHollowTests(allFiles));
+
       // Read-modify-write, like the cost reconciliation above and for the same
       // reason: build_outcome was written when the build was recorded complete,
       // which is before this point. A blind set would discard every other field
@@ -2913,6 +2923,7 @@ export async function runFastBuild(
             .set({
               buildOutcome: {
                 ...row.buildOutcome,
+                hollowTests: hollowNow,
                 interactions: { ran: interaction.ran, ...interactionTally },
               },
             })

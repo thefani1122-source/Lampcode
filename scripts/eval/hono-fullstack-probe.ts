@@ -72,15 +72,31 @@ console.log("deadCode:", JSON.stringify(o.deadCode ?? null));
 // Reading it as { files: [...] } silently yields zero files and makes every
 // check below report MISSING — which is exactly how this probe first claimed
 // the split had failed on a build that was in fact correct.
+// Each `path` is relative to the WORKSPACE root, so it carries the build's
+// output directory as a leading segment — `frontend/src/server/app.ts`, not
+// `src/server/app.ts`. Project-relative is what the prompt, the wiring rules
+// and every check below are written in, so the prefix is stripped here.
+//
+// Second time this probe has reported MISSING on a build that was correct, for
+// a different reason each time: first by reading the response as { files: [] },
+// now by comparing against the wrong path root. Both looked like a broken
+// build and were a broken instrument — hence the loud guard below, which now
+// also fires when files were read but none of them are project files.
 const fj = await api<any>("GET", `/api/build/${started.sessionId}/files`);
 const files: Record<string, string> = {};
 for (const [, arr] of Object.entries(fj.groups ?? {})) {
   for (const f of arr as Array<{ path: string; content: unknown }>) {
-    if (typeof f.content === "string") files[f.path] = f.content;
+    if (typeof f.content !== "string") continue;
+    files[f.path.replace(/^(?:frontend|backend)\//, "")] = f.content;
   }
 }
 if (Object.keys(files).length === 0) {
   console.log("\nNO FILES READ — the checks below prove nothing. Fix the fetch, not the build.");
+} else if (!Object.keys(files).some((p) => p.startsWith("src/"))) {
+  console.log(
+    "\nFILES READ BUT NONE ARE PROJECT-RELATIVE — the paths below are not the shape\n" +
+    "the checks expect, so every MISSING is this probe's fault, not the build's.",
+  );
 }
 console.log("\nfiles:", Object.keys(files).length);
 for (const p of Object.keys(files).sort()) console.log("   ", p);
