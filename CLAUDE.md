@@ -138,8 +138,15 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
 - **`AGENTIC_MAX_TURNS=40`, `MAX_BUILD_COST_USD=3.0` — measured, leave them.** A real build hit
   40/40 rounds while using 4% of the cost ceiling. The turn cap is binding; lowering it ships
   unfinished apps. The risk to watch is the opposite one.
-- **The preview Supabase project is PAUSED**, so a generated app's server-side persistence
-  cannot actually work.
+- **The preview Supabase is ACTIVE again** (checked 2026-10-14: both projects report
+  `ACTIVE_HEALTHY`). The older note that it was PAUSED — and that a generated app's server-side
+  persistence therefore could not work — is superseded. Free Supabase projects pause themselves
+  after inactivity, so re-check rather than assume in either direction.
+- **`LLM_PROVIDER_MODE=openai` means an `ANTHROPIC_API_KEY` alone changes nothing.**
+  `build.ts` picks the provider BEFORE the key is ever consulted: `openai` → always the Bedrock
+  gateway, `anthropic` → always Anthropic, `auto` → per plan (free → Bedrock, paid → Anthropic).
+  So switching to Anthropic is two variables, not one. `auto` is the shape the owner described —
+  M2.5 for free users, Anthropic for paying ones.
 
 ## Things that will bite you
 
