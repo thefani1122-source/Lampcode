@@ -3169,3 +3169,68 @@ left". A case now pins it.
 
 **Not verified:** no real build has shown this in a live chat. Unlike the rest, that cannot be
 closed by a probe — it needs a user, which is what the two waitlist flags unlock.
+
+## THE MERGE, VERIFIED ON REAL BUILDS — 2026-10-14
+
+Twenty commits went to `main` and production (Railway deployment SUCCESS at `d526d32`, checked
+before anything was measured — trap 8). Then five real builds, $0.20 of model spend.
+
+### Smoke tier: the merge broke nothing
+
+2 pass, 2 soft-fail, **$0.123** — against the recorded M2.5 baseline of 2/4 at $0.103. Same
+verdict rate, slightly more spend. Both soft-fails are unverified requirements, which is the
+completion audit doing its job rather than a regression (`todo` 8 unverified, `form-validation`
+3).
+
+### The Hono split and API_BASE, proven on a real fullstack build
+
+The eval set could not do this, and that is itself a finding: **of twenty tasks the only backend
+one is `python-api`, which is FastAPI.** Nothing in the set generates a Hono/Node backend — the
+DEFAULT fullstack path, and the one the `src/server/app.ts` split changed. The four smoke tasks
+are frontend-only. So the riskiest change of the week was covered by no eval at all.
+
+One build driven through the same HTTP API (28 rounds, $0.076, turn cap NOT hit), reading the
+real generated files back:
+
+```
+src/server/app.ts      PRESENT     default-exports the app      does NOT call serve()
+src/server/index.ts    PRESENT     imports ./app.js             calls serve()
+src/lib/api.ts         PRESENT     uses VITE_API_URL            no hardcoded localhost
+gates: checkPage pass · checkTypes pass
+```
+
+So **B2 and B3 are closed**: the generator produces the split shape, and the preview still comes
+up with it. The thing most likely to have broken every fullstack build did not.
+
+### The wiring analyser is live, and found nothing
+
+`build_outcome.wiring` is populated on all five builds — its first execution in production. Every
+count zero, `repaired: 0`.
+
+Checked rather than assumed, twice. `deadCode` found two things on `form-validation` (one unused
+import, one unreferenced export), and both analysers read the same `allFiles`, so the file set was
+real. And the fullstack build's ten files were fetched and run through `findWiringGaps` locally:
+also zero, agreeing with what production recorded. The analyser is consistent and reading real
+code; four simple frontend apps and one small backend simply had nothing hollow in them — in line
+with the 93-file probe that found only two.
+
+**Still not directly proven:** no build has yet produced a hollow control for it to catch, so the
+repair loop's dispatch path remains unexercised. That needs a build that goes wrong, not another
+that goes right.
+
+### Two notes that cost time
+
+**`npm run eval` does not load `.env`.** The `dev` script passes `--env-file=.env`; `eval` does
+not. The first run therefore exited instantly saying credentials were missing while they sat in
+`.env`. Use:
+
+```bash
+npx tsx --env-file=.env scripts/eval/run.ts --tier smoke --label x
+```
+
+**The files endpoint answers `{ totalFiles, groups: { "<dir>": [{path, content}] } }`,** not
+`{ files: [...] }`. Reading it the wrong way yields zero files and makes every downstream check
+report MISSING — which is how the probe first claimed the split had failed on a build that was
+correct. Second time in two days that a probe's own bug nearly became a reported defect; the
+first was a missing charset meta producing mojibake. Both were caught by asking why the result
+looked wrong rather than writing it up.

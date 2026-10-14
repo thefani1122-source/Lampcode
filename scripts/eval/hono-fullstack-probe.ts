@@ -68,9 +68,20 @@ console.log("rounds", o.rounds, "cost", o.costUsd, "turnsExhausted", o.turnsExha
 console.log("wiring  :", JSON.stringify(o.wiring ?? null));
 console.log("deadCode:", JSON.stringify(o.deadCode ?? null));
 
+// The endpoint answers { totalFiles, groups: { "<dir>": [{path, content}] } }.
+// Reading it as { files: [...] } silently yields zero files and makes every
+// check below report MISSING — which is exactly how this probe first claimed
+// the split had failed on a build that was in fact correct.
 const fj = await api<any>("GET", `/api/build/${started.sessionId}/files`);
 const files: Record<string, string> = {};
-for (const f of fj.files ?? []) files[f.path] = f.content;
+for (const [, arr] of Object.entries(fj.groups ?? {})) {
+  for (const f of arr as Array<{ path: string; content: unknown }>) {
+    if (typeof f.content === "string") files[f.path] = f.content;
+  }
+}
+if (Object.keys(files).length === 0) {
+  console.log("\nNO FILES READ — the checks below prove nothing. Fix the fetch, not the build.");
+}
 console.log("\nfiles:", Object.keys(files).length);
 for (const p of Object.keys(files).sort()) console.log("   ", p);
 
@@ -84,4 +95,13 @@ console.log("index.ts serves     :", /serve\(/.test(idx) ? "yes" : "NO");
 console.log("app.ts default-export:", /export\s+default\s+app/.test(app) ? "yes" : "NO");
 console.log("app.ts does NOT listen:", /serve\(/.test(app) ? "NO — it calls serve()" : "correct");
 console.log("preview url:", status?.previewUrl ?? "(none)");
+
+// The other change that only a real fullstack build can exercise: a generated
+// frontend must reach its backend through API_BASE, never a hardcoded dev host,
+// or the app works in the preview and nowhere else.
+const apiLib = files["src/lib/api.ts"] ?? "";
+console.log("\n── API_BASE ──");
+console.log("src/lib/api.ts      :", apiLib ? "PRESENT" : "MISSING");
+console.log("uses VITE_API_URL   :", /VITE_API_URL/.test(apiLib) ? "yes" : "NO");
+console.log("hardcodes localhost :", /localhost|127\.0\.0\.1/.test(apiLib) ? "YES — bad" : "no");
 console.log("\nlocal wiring on the real files:", JSON.stringify(tallyWiringGaps(findWiringGaps(files))));
