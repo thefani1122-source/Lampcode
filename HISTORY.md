@@ -3234,3 +3234,89 @@ report MISSING — which is how the probe first claimed the split had failed on 
 correct. Second time in two days that a probe's own bug nearly became a reported defect; the
 first was a missing charset meta producing mojibake. Both were caught by asking why the result
 looked wrong rather than writing it up.
+
+## THE TWO DEAD CHECKS ARE NOW CALLED — and the record was stale, 2026-10-14
+
+`findHollowTests` and `checkInteractions` had been in the tree for days, both measured against
+fixtures, both passing their cases, and **neither had a caller anywhere**. Cost without benefit,
+and passing cases that meant less than they appeared to. Both are wired now and both have been
+seen running in production.
+
+### Where each one goes, and why
+
+**Hollow tests** sit beside the wiring and dead-code scans, over the delivered files — free,
+deterministic, no model call and no sandbox. They guard the most misleading field in the whole
+record: `checkTests: "pass"` cannot on its own tell a real green run from four tests with no
+assertion in them, and a build handed that verdict has proof of correctness it never earned.
+Advisory; a thin test is a reason to look, not a broken app.
+
+**The interaction probe** runs LAST in `finishPreview`, where the sandbox is still live and the
+post-completion repair loops have already landed. It is the only check here that drives the
+running preview instead of reading source, which is the one question the wiring scan cannot
+answer: a handler can be present, correctly wired, and still change nothing.
+
+### `checkInteractions` had to change shape to be wired honestly
+
+It returned `InteractionFinding[]`, so a caller could not tell "every control responded" from
+"there was no sandbox" from "the probe threw" — **all three were `[]`**. That is precisely the
+conflation `build_outcome` exists to prevent, where absent and zero are kept as different facts
+on purpose. It now returns `{ findings, ran }`, `ran` is recorded, and the user-facing lines are
+emitted ONLY when the probe really ran. "Some controls need a closer look" from a check that
+never happened would be worse than silence. Changing the signature broke nothing because nothing
+called it.
+
+### Verified on two production builds, one of them the owner's own
+
+| build | `hollowTests` | `interactions` |
+|---|---|---|
+| `09e94977` — the owner's "build me a b2b saas", through the UI | present | `ran: true` |
+| `423aeb4e` — the hono probe, 9 files | present | `ran: true` |
+
+Production log line: `[build] interactions session=09e94977… ran=true total=0`. Four builds from
+earlier the same day show BOTH fields absent, which is the control: the fields are being written,
+not defaulted.
+
+**Not verified: a non-zero finding.** Both builds were clean (`total: 0`), so the chat-line path
+— which only fires when there are findings — has still never run in production. Fixtures cover
+it; a real build has not.
+
+### THE FINDING: build_outcome goes stale after finishPreview
+
+Found by looking at what the first builds RECORDED rather than at whether the code ran.
+`build_outcome.deadCode.orphanStylesheets` said **1**, while the delivered files had
+`index.tsx` importing `./theme.css` and scanned **clean**.
+
+Nothing is wrong with either number. `finishPreview`'s repair loops **mutate `allFiles` after
+the main body takes its counts**, so any figure measured there describes code the build no
+longer has. The repair fixed the orphan stylesheet and the record never caught up. This is the
+same class as `staleCheckPage`/`staleCheckTypes`, and the reason the wiring scan already
+re-measures at the end — it simply could not reach past `finishPreview`.
+
+`hollowTests` now re-measures inside the same read-modify-write that records the interaction
+probe, where the files are final. Free and deterministic, so the only thing re-running it costs
+is the wrong number. **`deadCode` still has this gap** — it predates the change and was left
+alone deliberately.
+
+### The probe reported MISSING on a correct build for the SECOND time
+
+Different cause each time, same symptom, same false accusation of the build:
+
+1. 2026-10-14 earlier — read the response as `{ files: [] }` when it answers
+   `{ groups: { "<dir>": [...] } }`. Zero files, every check MISSING.
+2. This time — the endpoint returns paths relative to the WORKSPACE root, so they carry the
+   output directory as a leading segment (`frontend/src/server/app.ts`), while the prompt, the
+   wiring rules and every check in the probe are written project-relative.
+
+Stripped now. Re-reading the real session afterwards, all six split checks and all three
+API_BASE checks pass. The loud guard fired only on zero files, so a response that parsed into
+the wrong path SHAPE sailed past it; it now also fires when files were read but none are
+project-relative — the instrument saying it is broken instead of blaming the subject.
+
+**The lesson, twice over: when a probe says the build is broken, suspect the probe first.** It
+has been wrong both times it has said so.
+
+### Also seen
+
+`build_sessions` carries orphaned `running` rows — the newest is 15 days old, the oldest 142.
+They predate `failRunningBuildsOnShutdown`. Nothing acted on; recorded so a future "is a build
+in flight?" query is not misled by them.
