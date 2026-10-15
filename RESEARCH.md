@@ -661,3 +661,162 @@ Every report so far has pointed at the same two missing things, from different d
 
 **Durable evidence** and **a loop that closes past the preview**. Five independent sources, two
 conclusions.
+
+---
+
+## REPORT 6 — review of the page-sweep work — 2026-10-15
+
+### 1. Verified — and this is the most accurate report of the six
+
+Every claim it makes about our code checks out:
+
+- `capturePreviewScreenshot()` is for the project-card thumbnail. Its own comment says *"A
+  missing thumbnail is a cosmetic gap"*. **It has never been a vision input to the model.** ✅
+- The interaction probe has `const target = "http://localhost:5173"` hardcoded. It only ever
+  operates controls on the HOME page; `/settings`, `/users`, `/reports` are never touched. ✅
+- Dynamic routes are not covered — `routesToVisit` deliberately drops anything containing `:` or
+  `*`, because visiting `/shift/:id` literally lands on a record that does not exist and reports
+  its empty state as a failure. Correct behaviour, real gap. ✅
+- Interaction findings do not feed a repair. Open task #10. ✅
+- `main` is at `e0044c4`. ✅
+
+Its verdict — **"strong V1, not finished"** — is right, and its decision not to rewrite is right.
+
+### 2. Its best idea, and why we are closer to it than it thinks
+
+The journey proposal is the strongest single suggestion in all six reports:
+
+> Notes app where notes persist after refresh → derive journey → open, type, save, refresh, find
+> → run before fix (FAIL) → repair → run after (PASS) → that pair IS the proof.
+
+**We already derive the requirement half.** `completion-audit.ts` turns the user's own prompt
+into checkable criteria with a pass that cannot write code. "Notes persist after refresh" is
+exactly the kind of criterion it already extracts and then marks `unverified` — because nothing
+can check it.
+
+So a journey runner is not a new intelligence. It is **an executor for criteria we are already
+extracting and already failing to verify.** It closes the audit's biggest gap: today
+`unverified` means "nobody looked"; with journeys it can mean "we drove the app and it did not
+happen".
+
+### 3. What this report does not say, and should
+
+It lists `observe_app` as a merge of the existing checks. Worth recording that the pieces are
+not equal in readiness: routes, text, console, network and the diff are **built and proven on a
+real build**; interactions are **built but unwired**; screenshot is **built but pointed at the
+wrong consumer**; DOM, storage and traces are **absent**. A single `observe_app` that hides that
+difference would be a worse tool than three honest ones, because a model cannot tell which parts
+of its evidence are real.
+
+The `ran` / `unavailable` discipline it praises exists precisely to prevent that, and must
+survive any merge.
+
+---
+
+# SYNTHESIS — all six reports, 2026-10-15
+
+## What survived verification
+
+| Report | Source checked | Verdict |
+|---|---|---|
+| 1 DeepSeek Harness | architecture.md + README, fetched | **Accurate.** Two corrections: the Claude/Codex bundle claim is unsupported, and the abstraction cost is far larger than conveyed. README says in capitals it is a developer preview with breaking changes expected. |
+| 2 Eight tools | Cursor tools page **redirected** | Premise right, one citation not proof. Order wrong for us. |
+| 3 OpenAI harness | Full article, fetched | **Accurate in full**, including the caveat that it may not generalise. The report missed the article's biggest section. |
+| 4 External systems | MCP RC post, fetched | Tasks correct, one correction (server-directed). **Report missed the headline: MCP went stateless, spec final 2026-07-28.** |
+| 5 Three gates | arXiv abstract, fetched | Paper real, **numbers drifted** — report cited a superseded version, revised v3 two days earlier. Endor Labs figures are vendor-published. |
+| 6 Review of our work | Our own code | **Most accurate of the six.** Every claim checks out. |
+
+## The one pattern that matters most
+
+**Three separate reports proposed building something we substantially already have.**
+
+- R2 wanted a Code Intelligence Engine. `parseImports`, `parseNamedExports`, `identifierCount`,
+  `declaredRoutes`, `linkTargets`, `backendEndpoints`, `requestedEndpoints` all exist and all run
+  on **every build** — then the graph is discarded.
+- R4 wanted an MCP Compatibility Layer. Four of its five layers are in
+  `mcp-tool-classifier.ts` already, with 14 providers registered.
+- R5 wanted "the builder cannot approve itself". `completion-audit.ts` has done exactly that
+  since October, reading the raw prompt so it cannot inherit the builder's interpretation.
+
+And from our own history: `hollow-tests.ts` and `interactions.ts` were written, tested, merged
+and **had no caller for days**. `build_plan` is written to a column that **does not exist**. The
+completion audit — the single most differentiated thing in the product — was **removed from the
+UI**. `capturePreviewScreenshot` exists and points at a thumbnail instead of the model.
+
+> **Lampcode's gap is not capability. It is wiring, persistence and visibility.**
+> We keep building the hard part and then not connecting it, not keeping it, or not showing it.
+
+That is also, at a different level, the owner's complaint about how this work gets done: finished
+once, declared done, and ten things fall out on first real verification. Same root cause.
+
+## Where all six converge
+
+Every report points at the same two absences:
+
+**1. Durable evidence.** R1 from architecture (append-only session log), R3 from debugging
+(before/after proof artifacts), R5 from quality (evidence per gate), R6 from observation. We
+write `build_outcome` once at the end and it is **already provably stale** —
+`orphanStylesheets: 1` recorded against files that scanned clean.
+
+**2. A loop that closes past the preview.** R2 (know the blast radius before editing), R3
+(observe → diagnose → prove), R4 (code → deploy → logs → verify), R5 (production qualification),
+R6 (observation as a first-class tool in the loop, not a final diagnostic).
+
+## THE FINAL LIST
+
+Ordered by evidence we hold ourselves, then cost, then what it unblocks.
+
+### Tier 0 — owner actions, block everything, cost us nothing
+- **A4 — connect a Vercel token.** Unblocks the ENTIRE production gate. `vercel.ts` is written,
+  tested, and has never executed once.
+- **A1 — Anthropic key + `LLM_PROVIDER_MODE=auto`.** The model is the largest single quality
+  lever and every premium model 403s on the current account.
+
+### Tier 1 — finish what is half-built (cheap, and we have our own evidence)
+1. **#9** run the page check automatically after writes — RelayOps: 5 rounds, 0 files, no nudge.
+2. **#10** interaction probe as an in-build tool, **and across all routes, not just `/`**.
+3. **`search_code`** — free, in-memory, no sandbox. RelayOps again: the model had no way to look
+   for anything.
+4. **#11** a delete capability — there is none, and empty files are dropped.
+5. **#12** cut superseded code once the new code is proven — the owner's design, and OpenAI's
+   garbage collection independently.
+
+### Tier 2 — the thing five of six reports converge on
+6. **Session event log.** Append-only, typed. `build_outcome` becomes a projection. Fixes
+   staleness permanently, makes a post-mortem a query, and is the prerequisite for resuming a
+   build a deploy killed.
+7. **The `build_plan` migration** — same problem, already broken, applied by hand here.
+
+### Tier 3 — the differentiator
+8. **`code_intel` + `impact_analysis`** — stop discarding the graph.
+9. **Journey verification** — derive journeys from criteria the audit ALREADY extracts, run
+   before and after, and let the pair be the proof. Turns `unverified` from "nobody looked" into
+   "we drove it and it did not happen".
+
+### Tier 4 — needs a decision before any code
+10. **`shell`** — plumbing is done; the sandbox `.env` holds Supabase keys including a service
+    key. Decide that first.
+11. **Screenshot as vision input** — needs a vision-capable model, so it is downstream of A1.
+
+### Tier 5 — later, and only for the long-project target
+12. Tool registry seam (758-line `executeTool`, 29 branches).
+13. MCP capability mapper (the one missing layer).
+14. Architecture gate — decisive only once apps are edited repeatedly.
+15. Contextual security gate — **replace** `security.ts`, do not extend it. Reuse the
+    completion-audit shape: derive checks from the user's words, adversarially test after.
+
+### Deliberately NOT doing
+- Plugin system / Cordis — a framework, in preview, breaking changes expected.
+- Metrics and traces stack — right for a complex internal service, wrong for a small generated app.
+- Multi-agent — our failure is not coordination.
+- Trajectory learning — ~50 builds. Nothing to learn from yet. Needs users first.
+- **Minimal blocking merge gates** — right for OpenAI, actively harmful here, where a bad result
+  is what a stranger sees on their first build.
+
+## The tension that has to be resolved by a person
+
+The deadline (23 October, both AI plans ending) and the long-project target pull in opposite
+directions. This list is ordered for the **long-project target**. If the deadline holds, only
+Tier 0 plus the top of Tier 1 fit, and Tiers 2–5 are next quarter's work.
+
+That is the owner's call, not an engineering one.
