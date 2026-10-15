@@ -1045,7 +1045,20 @@ export async function executeTool(
           // a repeat of the same four working pages.
           const previous = ctx.lastRender?.report ?? null;
           if (ctx.lastRender) ctx.lastRender.report = report;
-          return formatRenderForAgent(report, previous);
+          const out = formatRenderForAgent(report, previous);
+          // The result of this tool goes to the MODEL and nowhere else, so
+          // without this line there is no way to tell from outside whether the
+          // multi-route sweep ran at all, how many pages it saw, or whether the
+          // diff is doing its job. `chars` is the figure the cost argument
+          // rests on and the only one that can show the diff working on a real
+          // build rather than in a fixture.
+          console.log(
+            `[tools] check_page routes=${report.routes.length} ` +
+            `broken=${report.routes.filter((r) => !r.ok).length} ` +
+            `unreachable=${report.unreachable.length} ` +
+            `repeat=${previous !== null} chars=${out.length}`,
+          );
+          return out;
         }
 
         // Fall back to the single-route check rather than reporting nothing.
