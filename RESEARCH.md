@@ -429,3 +429,114 @@ message carries the fix. We already do this in two places without having named i
 refusing a template-owned path tells the model to make its own stylesheet and import it, and the
 edit-marker refusal explains why a fragment would destroy the file. It should be a rule, not an
 accident.
+
+---
+
+## REPORT 4 — external engineering systems: GitHub, deploy, MCP — 2026-10-15
+
+### 1. Verified — and the report missed the headline
+
+The Tasks claim is correct: Tasks graduates to an official extension in MCP `2026-07-28`, with
+`tasks/get`, `tasks/update`, `tasks/cancel`, exactly for durable asynchronous calls like a
+six-minute deploy. One correction: **task creation is SERVER-directed** — the client advertises
+the extension and the server decides when a call runs as a task. The report's `deploy() →
+task_id` flow implies the client chooses. It does not.
+
+But Tasks is a side note in that release. **The headline is that MCP went stateless**, and the
+report does not mention it at all:
+
+- The `initialize`/`initialized` **handshake is removed** (SEP-2575). Protocol version, client
+  info and capabilities now travel in `_meta` on every request.
+- **`Mcp-Session-Id` is removed** (SEP-2567), along with the protocol-level session.
+- Streamable HTTP now **requires `Mcp-Method` and `Mcp-Name` headers** (SEP-2243), and servers
+  reject requests whose headers and body disagree.
+- `tasks/list` is **removed** — it cannot be scoped safely without sessions.
+- **Roots, Sampling and Logging are deprecated.**
+- Tool schemas lift to **full JSON Schema 2020-12**.
+- *"Anyone who shipped against the `2025-11-25` experimental Tasks API will need to migrate."*
+
+Timeline, which matters: the RC locked 2026-05-21 and **the final specification shipped
+2026-07-28**. That is nearly three months ago. This is not a thing to plan for; it is a thing to
+check against.
+
+### 2. Where we actually stand — and most of the "MCP Compatibility Layer" already exists
+
+The report draws a diagram — discovery → schema inspection → permission engine → capability
+mapper → progressive tool loading — as something to build. Measured against the code, **four of
+those five are already implemented** in `src/agents/mcp-tool-classifier.ts`:
+
+| Report's layer | What exists |
+|---|---|
+| Capability discovery | `classifyMcpServers(servers)`, with `McpDiscoveryFailure` carrying a per-server transport error into the build log |
+| Schema inspector | reads each tool's `annotations.readOnlyHint` / `destructiveHint` |
+| Permission engine | builds a **denylist** per server; `buildReadToolDefinitions` vs `buildWriteProxyDefinitions` splits reads from writes, and writes go through `request_write_action`'s approval gate |
+| Progressive tool loading | `McpToolsetConfig` with `default_config.enabled` plus per-tool `configs` — this IS toolset filtering, the thing GitHub recommends |
+| **Capability mapper** | **MISSING.** Nothing maps `vercel_get_logs` and `railway_logs` onto one `deployment.read_logs` |
+
+And the registry already carries 14 providers — `github`, `vercel`, `cloudflare`, `stripe`,
+`linear`, `sentry`, `notion`, `figma`, `shopify`, `wordpress`, `n8n`, `make`, `zapier`,
+`google-stitch` — plus Supabase through its own module.
+
+**So the one genuinely missing piece is the capability mapper**, which is also the report's best
+idea: the agent should reason about `deployment.read_logs`, not about each vendor's vocabulary.
+That is a much smaller task than the diagram suggests, because everything feeding it is built.
+
+### 3. A risk worth checking before any of this
+
+`package.json` pins `@modelcontextprotocol/sdk: ^1.29.0`. That range predates the stateless
+rework described above. Whether the installed SDK negotiates `2026-07-28` could not be resolved
+in this environment, so **this is flagged, not asserted** — but it is the first thing to verify
+before building on MCP, because a client on the old handshake against a server on the new spec
+is a failure mode that will look like "the integration is flaky".
+
+Our own client shows no `initialize` call and no `Mcp-Session-Id` handling anywhere in
+`src/mcp/`, which is consistent with the SDK owning the transport. That is the right place for
+it to live; it just means the SDK version is the whole answer.
+
+### 4. Tiered permissions — we have two of the four
+
+The report's four levels are right in shape. We already have the hard half: reads are automatic,
+writes are proxied through an approval gate the agent has driven end to end. What we do not have
+is the distinction between **Level 2** (push a branch, open a draft PR — safe inside a sandbox)
+and **Level 3/4** (merge, change workflows, touch production). Today everything that writes gets
+the same gate, which means either too much friction on safe actions or too little on dangerous
+ones.
+
+That is a real gap and a cheap one to close, since the gate already exists.
+
+### 5. Build logs vs runtime logs — the most useful distinction in this report
+
+A deployment that fails to build and an app that fails after deploying are different problems
+with different fixes, and the report is right that an agent which cannot tell them apart will
+edit code at random. We have **neither**: `read_logs` reads the sandbox dev server, and nothing
+reads a deployment's logs, because `deploy_app`'s real path has never run.
+
+This also sharpens Report 3's lesson. "Observe → diagnose → prove" currently stops at the
+preview. Build logs and runtime logs are the two observations that extend it past deploy, and
+they are the specific thing that would let a failure be classified rather than guessed at.
+
+### 6. Secrets: the report is right, and we do the opposite today
+
+The principle — the agent should see **names and configured/missing status, never values** — is
+correct and worth adopting as a rule.
+
+It is also worth recording next to Report 2's finding: `e2b-service.ts` writes a `.env` into the
+sandbox containing actual Supabase keys, including a service key where configured. So the
+pattern we would enforce for external providers is the opposite of what we already do internally.
+Two findings, one underlying decision to make.
+
+### 7. What is blocked, and on what
+
+The entire deployment half of this report — ten normalized capabilities, the failure-triage loop,
+build-vs-runtime logs — is blocked on the same thing PLAN.md has recorded as A4 since 2026-10-11:
+**a Vercel token has never been connected**, so `vercel.ts` has never executed once. The
+architecture here is sound and none of it can be verified until that happens.
+
+### 8. The sentence that is actually right
+
+> MCP becomes genuinely valuable not because the agent has 100 integrations, but because external
+> systems become part of a closed engineering feedback loop.
+
+That matches what the measurement says: we already have 14 providers and an approval gate and a
+classifier. What we have never had is a single loop that runs from code to deploy to observation
+and back. The missing piece was never the integrations.
