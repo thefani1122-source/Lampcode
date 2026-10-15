@@ -170,3 +170,104 @@ The report's own summary is the right one and survives verification:
 With one correction from the measurement above: for us, **"engineering state" is the part we do
 not have.** Models are already swappable here. Tools are one refactor away. State is missing
 entirely — and every one of the three failures in (a) is a state failure.
+
+---
+
+## REPORT 2 — the eight missing tools — 2026-10-15
+
+### 1. Verified
+
+The premise — that search, terminal, browser and code intelligence are table stakes rather than
+innovations — is plainly right and matches Report 1's primary source, where DeepSeek lists
+`ctx.shell`, `ctx.terminals`, `ctx.fs`, `ctx.jobs` and subagents as registered capabilities.
+
+**One citation did not resolve.** `docs.cursor.com/en/agent/tools` redirects to the
+documentation home. The navigation there does list Tools, Subagents, Hooks, MCP, Browser,
+Rollouts and Security Agents, which is consistent with the claim, but the specific tool list was
+not read. **Not treated as proof here.** It does not matter much: the value of this report is
+the list itself, not who else has it.
+
+### 2. The report's real contribution, and where I would change it
+
+Its framing is correct and better than a tool count: **capability classes, not tools.** And its
+rule — build a special tool only where there is extra intelligence or safety, otherwise let the
+shell do it — is the right test. `run_build`, `install_package`, `npm_install` as separate tools
+would be noise.
+
+But the recommended ORDER assumes we are starting from nothing. We are not, and what already
+exists changes the order substantially. Measured today:
+
+| Report's tool | What we already have | Real cost |
+|---|---|---|
+| `search_code` | Nothing — **but** `ctx.projectFiles` + `ctx.generatedFiles` hold the WHOLE project in memory on every tool call | **Trivial.** No sandbox, no index, no disk. This is the hard problem for Cursor, which must index a large repo; for us it is a loop over a Record we already have. |
+| `code_intel` | `parseImports()` → `{local, source}[]`, `parseNamedExports()`, `identifierCount()`, `stripComments()` — all in `dead-code.ts`. **typescript 6.0.3 is already a dependency**, so real AST work is available, not just regex | **Moderate.** The graph material exists and is thrown away after each scan. |
+| `impact_analysis` | `declaredRoutes`, `linkTargets`, `backendEndpoints`, `requestedEndpoints`, `handlerExpressions` in `wiring.ts`, plus the import/export graph above | **This is the finding.** See below. |
+| `browser_interact` | `interactions.ts` already does `page.goto`, `page.click`, fresh context per control, console capture. `checkRender` now adds multi-route, page text and failed requests | **~60% built.** Missing: type/fill, login, screenshot — and it is not exposed as a tool (that is open task #10). |
+| `shell` | `sandbox.commands.run` is already used by `checkRender`, `checkInteractions`, `runTypeCheck`, `runTests` | Plumbing is **done**. The work is entirely safety, not capability. See the warning below. |
+| `git_change` | Nothing. Generated projects are not git repos at all | Needs `git init` in the template first — a template rebuild, trap 6 applies. |
+| `checkpoint` / `revert` | `persistFilesAsWritten` per write, plus `churn` tracking | Partly there: we already store files as they are written. What is missing is a NAMED restore point and a restore path. |
+| `web_search` | `fetch_reference` (known URL only) | Straightforward; an external dependency and a cost per call. |
+
+### 3. THE finding: impact_analysis is assembly, not invention
+
+The owner's instinct that this is the differentiator is right, and it is much closer than the
+report assumes. `impact_analysis("refreshSession")` needs:
+
+- **callers** → `parseImports` gives who imports what; `identifierCount` gives usage per file
+- **routes affected** → `declaredRoutes` over the files that import it
+- **API contract** → `backendEndpoints` / `requestedEndpoints`
+- **tests** → files matching `.test.` that import it
+- **handlers** → `handlerExpressions`
+
+**Every one of those functions already exists and already runs on every build.** We compute this
+graph, use it for one narrow verdict, and discard it. The gap is not analysis — it is that
+nothing keeps the graph or lets the model query it.
+
+That reframes the Code Intelligence Engine from "a thing to build" to "a thing to stop throwing
+away", which is a completely different size of task.
+
+### 4. A safety finding the report does not mention, and it blocks `shell` as written
+
+`e2b-service.ts` writes into the sandbox a `.env` containing `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_ANON_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and where configured
+`PREVIEW_SUPABASE_SERVICE_KEY`. A service key bypasses row-level security entirely.
+
+An unrestricted shell in that sandbox means any model turn — including one steered by content
+inside a user's own prompt — can `cat .env`. The code already shows this class of risk was
+thought about once: there is an explicit guard refusing to run when the preview Supabase URL
+equals the platform `SUPABASE_URL`, logged as a data-safety refusal. That guard protects the
+platform database. **Nothing protects the preview service key from a shell.**
+
+So `shell` is not simply "the plumbing exists, expose it". Production level here means deciding,
+before shipping it: whether the service key belongs in the sandbox at all, whether shell runs
+under a restricted user, what the approval policy is, and whether output is scanned before it
+reaches the model's context. `request_write_action` already establishes an approval-gate pattern
+in this codebase, so the shape exists.
+
+### 5. The order I would actually build in, and why it differs
+
+The report says: shell → search_code → code_intel → browser_interact → impact_analysis →
+git/checkpoint → web_search.
+
+Mine:
+
+1. **`search_code`** — free, instant, zero risk, files already in memory. RelayOps is the
+   argument: the model called `list_files` once and `read_file` three times, then gave up and
+   wrote prose. It had no way to look for anything.
+2. **`browser_interact` as a tool** — ~60% built, and open task #10 is already this. Highest
+   ratio of value to remaining work.
+3. **`code_intel` + `impact_analysis`** — the differentiator, and mostly assembly of functions
+   that already run.
+4. **`shell`** — biggest capability gap, agreed, but the only one with a security consequence
+   that must be designed first. Shipping it badly is worse than not shipping it.
+5. **`checkpoint`/`revert`** — pairs with open tasks #11/#12: a cut that can be undone is a much
+   safer cut.
+6. **`git_change`**, **`web_search`** — real, later, and `git` needs the template changed.
+
+### 6. Where I agree without reservation
+
+- **Stop at ~25 tools.** Supported by Report 1's own source: DeepSeek's answer to tool growth is
+  scoped registries and per-agent presets, not a longer list.
+- **No `run_build` / `install_package` / `npm_install` as separate tools.** The shell covers
+  them; a special tool must earn itself with intelligence or safety.
+- **`impact_analysis` is the one that differentiates.** Everything else on this list is parity.
