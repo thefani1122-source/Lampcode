@@ -3320,3 +3320,80 @@ has been wrong both times it has said so.
 `build_sessions` carries orphaned `running` rows — the newest is 15 days old, the oldest 142.
 They predate `failRunningBuildsOnShutdown`. Nothing acted on; recorded so a future "is a build
 in flight?" query is not misled by them.
+
+## THE AGENT CAN SEE EVERY PAGE NOW — proven on a real build, 2026-10-15
+
+`check_page` opened `/` and answered one question: did it crash. That one sentence was
+everything the model had ever seen of its own work, and two measured failures come straight out
+of it.
+
+**ROTA** shipped a dashboard reading "No shifts scheduled" while four requested views were never
+imported, and check_page said **pass** — truly, because `#root` had children and the console was
+quiet. Correct, and useless.
+
+**And the owner's standing complaint** — that pages in a multi-page app do nothing — was
+literally true OF THE HARNESS. `/` was the only URL it ever visited, so every other route was
+unobserved by construction. Nobody had ever looked at them.
+
+### What replaced it
+
+`src/verify/render.ts`. Every route the project declares, one browser launch, and per route:
+blank check, console errors, pageerror, Vite overlay, failed requests, and **the page's own
+text**. The text is the part that answers "is this the app that was asked for", which no error
+count can.
+
+Written into the sandbox at RUNTIME, like `lampcode-interact.mjs` — not baked into the template.
+Changing the baked `check-render.mjs` means a template rebuild, where a failed build silently
+leaves the last good image serving, which is how check_page stayed broken for three weeks.
+
+### Proven on a real build
+
+Deploy `e0044c4`, a four-page recipe site, 11 rounds, $0.049:
+
+```
+routes declared by the generated app: /, /recipes/new, /favourites, /about
+[tools] check_page routes=4 broken=0 unreachable=0 repeat=false chars=1753
+```
+
+**`routes=4`.** The sweep derived the routes from the project and opened all of them. The old
+check would have seen one.
+
+### Two things that only showed up by RUNNING it
+
+Neither was reachable from a fixture, and both were found against a hand-built four-page site
+before any money was spent on a build.
+
+1. **A missing favicon marked every page broken.** It produces both a console error and a 404,
+   and generated apps almost never ship one. Cosmetic assets (favicon, apple-touch-icon,
+   manifest, robots) are now filtered. **The OLD check has this same false positive,
+   unfiltered** — confirmed by running it against the same page.
+2. **Watching responses beats watching the console.** The console's line is "Failed to load
+   resource: the server responded with a status of 404" — no URL, no method, unactionable. The
+   response listener gives `"/api/shifts returned 500"`. In a generated app a request its own
+   backend refuses IS the feature not working, which is exactly the owner's complaint about half
+   an app's functions doing nothing.
+
+### Cost, measured, and one claim corrected
+
+An earlier version of the file's header claimed more routes would beat one route. **That was
+wrong** and is corrected in it. Old check, one route: 1.88s. New: 1.70s for one, 4.56s for four,
+8.31s for eight — about 0.95s per extra page. Not free. About half what launching a browser per
+route would cost, and what it buys is the only evidence anyone has ever had about the pages after
+the first.
+
+The TOKEN cost is the one that mattered, because a tool's output is re-paid in context on every
+later round. A repeat check now reports only what moved: measured on a 10-route app, first check
+~439 tokens, **every repeat ~21, flat in the number of routes.**
+
+Two rules keep the diff from hiding things: a route that is STILL broken is always restated
+(silence about a known failure reads as "fixed" to a model that has forgotten it), and changed
+text is always shown even on a page that was and remains fine — for a model whose written code
+sometimes never reaches the screen, "this page now says something different" is the most useful
+thing a re-check can say.
+
+### NOT proven
+
+**The diff has not run in production.** This build called `check_page` exactly once, so
+`repeat=true` never happened. It is covered by cases and by the local measurement, nothing more.
+The hono build on 10-14 called check_page five times, so it will appear on its own; spending
+another build only to see it would be spending the owner's money to watch a number.
