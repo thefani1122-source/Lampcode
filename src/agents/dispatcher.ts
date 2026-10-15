@@ -37,6 +37,7 @@ import { deductUsage } from "../build/credits.js";
 import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
+import type { RenderReport } from "../verify/render.js";
 
 // Workspace root: one directory per project
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
@@ -536,6 +537,9 @@ export class AgentDispatcher {
     } = {};
     // Shared across every tool call in this dispatch, so the counters above
     // count the whole build rather than one round.
+    // Carries the previous render sweep so a repeat check_page reports only
+    // what moved. One object for the whole loop, same reasoning as gateResults.
+    const lastRender: { report: RenderReport | null } = { report: null };
     const writeCounter = { value: 0 };
     const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0 };
     const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
@@ -687,6 +691,7 @@ export class AgentDispatcher {
                 onLog: options.onSandboxLog,
                 projectFiles: options.projectFiles,
                 gateResults,
+                lastRender,
                 writeCounter,
                 churn,
                 deadCode,

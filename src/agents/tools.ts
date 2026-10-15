@@ -10,6 +10,7 @@ import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
+import type { RenderReport } from "../verify/render.js";
 import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
 import type { AgentDispatcher } from "./dispatcher.js";
@@ -441,6 +442,12 @@ export interface ToolExecutionContext {
         writesAfterCheckTests?: number;
       }
     | undefined;
+  /** The previous render sweep, so a repeat check can report only what moved.
+   *  The browser work is nearly free; what costs money is that everything this
+   *  tool returns is re-paid in the context of every later round. A build that
+   *  calls check_page eight times should not pay eight times for the same
+   *  unchanged page. Last sweep wins. */
+  lastRender?: { report: RenderReport | null } | undefined;
   /** Monotonic count of write_files/edit_file calls this build. Only meaningful
    *  relative to itself — it exists to date the gate results above. */
   writeCounter?: { value: number } | undefined;
@@ -1033,7 +1040,12 @@ export async function executeTool(
             ctx.gateResults.checkPage = allRoutesOk(report) ? "pass" : "fail";
             ctx.gateResults.writesAfterCheckPage = 0;
           }
-          return formatRenderForAgent(report);
+          // Only what moved since last time. The sweep costs the same either
+          // way; what this saves is the tokens every later round pays to carry
+          // a repeat of the same four working pages.
+          const previous = ctx.lastRender?.report ?? null;
+          if (ctx.lastRender) ctx.lastRender.report = report;
+          return formatRenderForAgent(report, previous);
         }
 
         // Fall back to the single-route check rather than reporting nothing.

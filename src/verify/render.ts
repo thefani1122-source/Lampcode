@@ -291,6 +291,80 @@ export function allRoutesOk(report: RenderReport): boolean {
   return report.unreachable.length === 0 && report.routes.every((r) => r.ok);
 }
 
+/**
+ * A second check reports only what MOVED.
+ *
+ * The browser sweep is nearly free; the expensive part is that everything this
+ * tool returns is re-paid in the model's context on every round that follows.
+ * A build that checks eight times should not pay eight times to be told the
+ * same four pages are still fine.
+ *
+ * Two rules keep this from becoming a way to hide problems:
+ *
+ *   A route that is STILL broken is always restated. Silence about a known
+ *   failure reads as "fixed" to a model that has forgotten it, and the one
+ *   thing this whole module exists to prevent is an agent believing it
+ *   verified something it did not.
+ *
+ *   Text that changed is always shown, even on a page that was and remains
+ *   fine. That is how the model finds out whether its last edit reached the
+ *   screen — which, for a model whose written code sometimes never applies, is
+ *   the single most useful thing a re-check can say.
+ */
+function formatRenderDiff(now: RenderReport, before: RenderReport): string {
+  const prior = new Map(before.routes.map((r) => [r.route, r]));
+  const fixed: string[] = [];
+  const brokeNow: RouteRender[] = [];
+  const stillBroken: RouteRender[] = [];
+  const changedText: RouteRender[] = [];
+  const appeared: RouteRender[] = [];
+
+  for (const r of now.routes) {
+    const was = prior.get(r.route);
+    if (!was) {
+      appeared.push(r);
+      continue;
+    }
+    if (was.ok && !r.ok) brokeNow.push(r);
+    else if (!was.ok && r.ok) fixed.push(r.route);
+    else if (!r.ok) stillBroken.push(r);
+    else if (r.text !== was.text) changedText.push(r);
+  }
+
+  const gone = before.routes.filter((r) => !now.routes.some((n) => n.route === r.route));
+  const lines: string[] = [];
+
+  for (const r of brokeNow) {
+    lines.push(`  ${r.route} BROKE: ${describeProblem(r)}`);
+    if (r.text) lines.push(`      shows: "${r.text}"`);
+  }
+  for (const r of appeared) {
+    lines.push(
+      r.ok
+        ? `  ${r.route} is new — ${r.text ? `shows "${r.text}"` : "renders, but has NO text on it at all"}`
+        : `  ${r.route} is new and BROKEN: ${describeProblem(r)}`,
+    );
+  }
+  for (const route of fixed) lines.push(`  ${route} is fixed — it renders now`);
+  // Always restated. See the second rule above.
+  for (const r of stillBroken) lines.push(`  ${r.route} is STILL broken: ${describeProblem(r)}`);
+  for (const r of changedText) lines.push(`  ${r.route} now shows: "${r.text}"`);
+  if (gone.length > 0) lines.push(`  no longer declared: ${gone.map((r) => r.route).join(", ")}`);
+
+  if (now.unreachable.length > 0) {
+    lines.push(
+      `  could not open: ${now.unreachable.join(", ")} — nothing was verified about these.`,
+    );
+  }
+
+  if (lines.length === 0) {
+    const n = now.routes.length;
+    return `No change since the last check — all ${n} page(s) still render, with the same content.`;
+  }
+
+  return `Since the last check:\n${lines.join("\n")}`;
+}
+
 /** `GET /api/shifts returned 500`, which is actionable, rather than a count. */
 function describeRequests(r: RouteRender): string {
   return r.failedRequests
@@ -329,7 +403,9 @@ function describeProblem(r: RouteRender): string {
  * page that renders the wrong thing is the failure this check exists to catch
  * and an "ok" alone would hide it exactly as the old one-sentence check did.
  */
-export function formatRenderForAgent(report: RenderReport): string {
+export function formatRenderForAgent(report: RenderReport, previous?: RenderReport | null): string {
+  if (previous) return formatRenderDiff(report, previous);
+
   const lines: string[] = [];
 
   if (report.routes.length === 0 && report.unreachable.length === 0) {

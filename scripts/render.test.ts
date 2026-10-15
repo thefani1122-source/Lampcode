@@ -13,6 +13,7 @@ import {
   MAX_TEXT_CHARS,
   RENDER_SCRIPT,
 } from "../src/verify/render.js";
+import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -188,6 +189,50 @@ const silent = formatRenderForAgent(parseRenderReport(line({
 ok("a route with no text says so explicitly", silent.includes("NO text on it at all"));
 
 check("nothing checked says so", formatRenderForAgent({ routes: [], unreachable: [] }), "No routes could be checked.");
+
+// ── the diff, which is what makes repeat checks affordable ───────────────────
+
+const mk = (routes: Array<Partial<RouteRender> & { route: string }>): RenderReport =>
+  parseRenderReport(line({
+    routes: routes.map((r) => ({
+      route: r.route,
+      blank: r.blank ?? false,
+      errors: r.errors ?? [],
+      text: r.text ?? "",
+      failedRequests: r.failedRequests ?? [],
+      ...(r.overlay ? { overlay: r.overlay } : {}),
+    })),
+    unreachable: [],
+  }))!;
+
+const twoGood = mk([{ route: "/", text: "Home" }, { route: "/shifts", text: "Shifts" }]);
+
+// The whole point: a second sweep over an unchanged app costs almost nothing.
+const unchanged = formatRenderForAgent(twoGood, twoGood);
+check("an unchanged re-check is one short line", unchanged, "No change since the last check — all 2 page(s) still render, with the same content.");
+ok("and it is far shorter than the full report", unchanged.length < formatRenderForAgent(twoGood).length);
+
+const broke = mk([{ route: "/", text: "Home" }, { route: "/shifts", blank: true }]);
+const d1 = formatRenderForAgent(broke, twoGood);
+ok("a newly broken page is called out", d1.includes("/shifts BROKE"));
+ok("the unchanged page is not repeated", !d1.includes("/ — \"Home\""));
+
+const d2 = formatRenderForAgent(twoGood, broke);
+ok("a fixed page is reported", d2.includes("/shifts is fixed"));
+
+// Silence about a known failure reads as "fixed" to a model that has forgotten
+// it. This is the fail-closed rule of the diff.
+const d3 = formatRenderForAgent(broke, broke);
+ok("a still-broken page is ALWAYS restated", d3.includes("/shifts is STILL broken"));
+ok("and it is not reported as unchanged-and-fine", !d3.includes("still render, with the same content"));
+
+// How the model learns its edit reached the screen at all.
+const textChanged = mk([{ route: "/", text: "Home" }, { route: "/shifts", text: "Monday Tuesday" }]);
+ok("changed text on a working page is shown", formatRenderForAgent(textChanged, twoGood).includes("Monday Tuesday"));
+
+const added = mk([{ route: "/", text: "Home" }, { route: "/shifts", text: "Shifts" }, { route: "/staff", text: "Staff" }]);
+ok("a newly declared route is reported", formatRenderForAgent(added, twoGood).includes("/staff is new"));
+ok("a removed route is reported", formatRenderForAgent(twoGood, added).includes("no longer declared: /staff"));
 
 // ── the script itself ────────────────────────────────────────────────────────
 
