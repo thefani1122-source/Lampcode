@@ -540,3 +540,124 @@ architecture here is sound and none of it can be verified until that happens.
 That matches what the measurement says: we already have 14 providers and an approval gate and a
 classifier. What we have never had is a single loop that runs from code to deploy to observation
 and back. The missing piece was never the integrations.
+
+---
+
+## REPORT 5 — the three gates: production, architecture, security — 2026-10-15
+
+### 1. Verified, with the numbers corrected
+
+**arXiv 2603.28592 is real** — *"Debt Behind the AI Boom: A Large-Scale Empirical Study of
+AI-Generated Code in the Wild"*, Liu et al. But the figures quoted have drifted, because the
+paper was **revised to v3 on 13 October 2026, two days before this report**:
+
+| Report says | Paper (v3) says |
+|---|---|
+| 304,362 commits | **302.6k** commits, 6,299 repositories |
+| 484k+ issues | 484,366 ✅ exact |
+| 89.1% code smells | **89.3%** |
+| 24.2% survive to latest revision | **22.7%** |
+
+The direction is right and the conclusion is unchanged. But this is the second report whose
+numbers did not survive checking, and it is worth noticing *how*: not fabricated, just taken
+from a version that has since been superseded.
+
+**And the report left out the most useful number in the abstract:** *"Between 7.5% and 14.8% of
+each assistant's commits introduce at least one issue."* Roughly one AI commit in ten introduces
+a problem, and a fifth of those problems are still there at the latest revision. That is a
+better argument for the gates than any of the percentages quoted.
+
+**The Endor Labs figures (87.2% functional vs 37.4% security) are a vendor-published benchmark.**
+Not independently verified here, and treated as directional rather than established. The
+qualitative claim it supports — that functional correctness far outruns security correctness —
+is consistent with the OWASP observation and with our own code, below.
+
+### 2. Where we actually stand on each gate
+
+**Functional gate — by far our strongest, and genuinely ahead.**
+`check_types`, `run_tests`, `check_page` (now every declared route, with text, console errors
+and failed requests), `wiring.ts`, `dead-code.ts`, `hollow-tests.ts`, `interactions.ts`, and the
+completion audit on top. This is the gate the industry treats as sufficient, and we already
+treat it as insufficient.
+
+**Production gate — essentially nothing.**
+`deploy_app` exists; `vercel.ts` is written and tested and **has never executed once**, blocked
+on A4. No build logs, no runtime logs, no health check, no rollback, no post-deploy observation.
+Everything in this part of the report is correct and entirely unbuilt.
+
+**Architecture gate — partial, and more real than it looks.**
+`dead-code.ts` already finds orphans, unreferenced exports and never-rendered components.
+`churn` already records `added` vs `removed`, whose signature — removed near zero while added
+climbs — is precisely the "local fix bolted beside the old one" pattern. `wiring.ts` enforces
+route and endpoint contracts. What is missing from the report's constitution: dependency
+direction rules, circular-dependency detection, file-size limits, duplicate business logic, one
+canonical state source.
+
+**Security gate — EXISTS, and is exactly the kind the research says does not work.**
+`src/verify/security.ts` is 520 lines: `checkAuth`, `checkRLS`, `checkSecrets`, `checkOWASP`
+(XSS, SQLi, CSRF), `checkPackages` (slopsquatting — a genuinely modern check). Every one of them
+is **pattern-based static analysis**, which is the category the OWASP work in this report singles
+out as catching only a small fraction compared with contextual analysis.
+
+And it has already been caught lying. HISTORY, Finding 18, 2026-10-10: `checkAuth` selected
+route files by `p.includes("/routes/")`, our generated backend is `src/server/index.ts`, so the
+check **reported a clean pass over zero files scanned**. A security gate that passes when it
+examined nothing is worse than no gate, because it produces evidence.
+
+### 3. The principle the report ends on — we already do it
+
+> Builder model cannot approve itself.
+
+This is `completion-audit.ts`: the acceptance pass and the audit pass **cannot write code**, by
+construction, and the audit reads the RAW user prompt rather than the expanded one, specifically
+so it cannot inherit the builder's interpretation. `review_code` is separate again. As of
+2026-10-14 all three are also silenced from the user-facing narration, since they are plumbing.
+
+So the report's conclusion is not a direction for us — it is a description of something built,
+measured and shipped. What is missing is not the separation; it is that two of the three gates
+it should be separating are weak or absent.
+
+### 4. The honest objection to this report, and why it still holds
+
+The arXiv study is about AI commits landing in **existing production repositories**. A freshly
+generated ten-file app has no architecture to drift from and no technical debt to survive into
+the next revision. On a first build, the architecture gate has almost nothing to do.
+
+It becomes decisive on **follow-up edits** — which is exactly the target the owner has now set
+("MVP banane wala tool kisi ko nahi chahiye"). The moment Lampcode is used for a project rather
+than a demo, every finding in that paper starts applying to the apps we generate, and `edit_file`
+being additive by nature (HISTORY, 2026-10-07) is the mechanism that gets it there.
+
+So: the architecture gate is **not** the first thing to build, and it **is** the thing that
+decides whether the long-project target is real. Those are both true, and the sequencing follows
+from which product we are building.
+
+### 5. What this report changes about priority
+
+Nothing about the functional gate — it is ahead and improving.
+
+For the other two, it sharpens what was already visible:
+
+- The **production gate is blocked on one owner action** (A4, a Vercel token) and nothing else.
+  It is the largest unbuilt capability and the cheapest to unblock.
+- The **security gate needs replacing, not extending.** Adding more regexes to a 520-line
+  pattern matcher moves it along the axis the research says does not matter. The contextual
+  version — generate task-specific threat checks from the user's prompt BEFORE implementation,
+  then test them adversarially after — is the same shape as the completion audit, which we have
+  already built once and proven. **That is the reusable part: we know how to build a pass that
+  derives checks from the user's own words and cannot write code.**
+
+### 6. Where the five reports now converge
+
+Every report so far has pointed at the same two missing things, from different directions:
+
+| | missing state / evidence | missing closed loop |
+|---|---|---|
+| R1 DeepSeek | append-only session event log | — |
+| R2 tools | — | impact analysis before editing |
+| R3 OpenAI | before/after proof artifacts | observe → diagnose → prove |
+| R4 MCP | — | code → deploy → logs → verify |
+| R5 gates | evidence per gate | production qualification |
+
+**Durable evidence** and **a loop that closes past the preview**. Five independent sources, two
+conclusions.
