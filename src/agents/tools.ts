@@ -8,13 +8,15 @@ import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./p
 import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
-import { findWiringGaps, formatWiringGaps } from "../verify/wiring.js";
+import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
+import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
 import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 import {
   writeFilesToSandbox,
   verifyBrowserRender,
+  checkRender,
   runTypeCheck,
   runTests,
   readProjectFile,
@@ -1014,6 +1016,31 @@ export async function executeTool(
 
     if (name === "check_page") {
       try {
+        // Every route the project declares, not just `/`. The old check opened
+        // one URL, so every other page in a multi-page app was unobserved by
+        // construction — which is the owner's standing complaint about pages
+        // that do nothing, and it was true: nothing ever looked at them.
+        const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+        const declared = new Set<string>();
+        for (const code of Object.values(files)) {
+          for (const r of declaredRoutes(code)) declared.add(r);
+        }
+        const routes = routesToVisit([...declared]);
+
+        const { report, ran } = await checkRender(projectId, routes);
+        if (ran && report) {
+          if (ctx.gateResults) {
+            ctx.gateResults.checkPage = allRoutesOk(report) ? "pass" : "fail";
+            ctx.gateResults.writesAfterCheckPage = 0;
+          }
+          return formatRenderForAgent(report);
+        }
+
+        // Fall back to the single-route check rather than reporting nothing.
+        // That one is proven in production, so this change cannot leave the
+        // model with less than it had; it only ever adds. A fallback that
+        // reported "unavailable" on any hiccup in the new path would be a
+        // regression dressed as a feature.
         const { ok, issues, unavailable } = await verifyBrowserRender(projectId);
         // Report "couldn't check" as itself. Saying the page rendered fine when
         // the browser never opened it is how an agent ships a blank app while

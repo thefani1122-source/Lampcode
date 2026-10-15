@@ -10,6 +10,8 @@ import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
 import type { InteractionFinding } from "../verify/interactions.js";
+import { RENDER_SCRIPT, parseRenderReport } from "../verify/render.js";
+import type { RenderReport } from "../verify/render.js";
 
 /**
  * E2B cloud sandbox preview for fullstack builds.
@@ -818,6 +820,49 @@ export async function fetchReferenceDesign(
     throw new Error("the reference page could not be read");
   }
   return JSON.parse(r.stdout.slice(marker + 5).trim()) as Record<string, unknown>;
+}
+
+/**
+ * Open every route the app declares and report what each one renders.
+ *
+ * Replaces a check that opened `/` alone and answered only "did it crash".
+ * `ran` carries the same meaning it does for the interaction probe, and for
+ * the same reason: a probe that never ran produces the identical empty result
+ * as an app whose every page is fine, and reporting the first as the second is
+ * how an agent ships a blank app believing it verified one.
+ *
+ * The timeout is the whole sweep, not one page. Each route costs a navigation
+ * on an already-warm dev server, and the one expensive thing — launching
+ * Chromium — happens once inside the script rather than once per route.
+ */
+export async function checkRender(
+  projectId: string,
+  routes: string[],
+): Promise<{ report: RenderReport | null; ran: boolean }> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return { report: null, ran: false };
+  try {
+    await sandbox.files.write(`${TOOLS_DIR}/lampcode-render.mjs`, RENDER_SCRIPT);
+    const r = await sandbox.commands.run(
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-render.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))}`,
+      { timeoutMs: 90_000 },
+    );
+    const report = parseRenderReport(r.stdout);
+    // Unparseable output means the pages were never actually looked at. Saying
+    // so is the whole point of the null; a caller that treats it as "fine"
+    // reintroduces the bug this function exists to kill.
+    if (!report) {
+      logger.warn(
+        { projectId, stdoutHead: r.stdout.slice(0, 300), stderrHead: r.stderr.slice(0, 300) },
+        "[e2b] render check produced no parseable report — pages remain unverified",
+      );
+      return { report: null, ran: false };
+    }
+    return { report, ran: true };
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] render check unavailable — pages remain unverified");
+    return { report: null, ran: false };
+  }
 }
 
 /**
