@@ -1,5 +1,42 @@
 # Codex task prompts — batch 1
 
+## Git workflow — do this yourself, every task, without being asked
+
+```bash
+git fetch origin claude/magical-fermat-zr857z
+git checkout claude/magical-fermat-zr857z
+git pull --ff-only origin claude/magical-fermat-zr857z   # ALWAYS before starting
+# …implement one task…
+npm run typecheck && npm test && npm run build
+git add <only the files this task touched>
+git commit                                               # message rules below
+git push -u origin claude/magical-fermat-zr857z
+```
+
+**Branch: `claude/magical-fermat-zr857z`. Never push to `main`** — Claude merges to `main` after
+reviewing on Linux and running a real build, because `main` deploys to production and a deploy
+kills any build in flight.
+
+**Pull before every task.** Claude pushes to the same branch, so starting from a stale copy is
+how two people silently undo each other.
+
+**One commit per task, pushed immediately.** Not a batch of four. Claude can only review what is
+pushed, and one task's diff is reviewable where four are not.
+
+**If the push is rejected** because Claude pushed meanwhile: `git pull --rebase origin
+claude/magical-fermat-zr857z`, re-run the three gates, then push. Do not force-push.
+
+**Commit messages:** explain WHY, not what — the diff already says what. Say what breaks without
+this change and what you could not verify. End every message with exactly:
+
+```
+Co-Authored-By: Codex <noreply@openai.com>
+```
+
+**Only touch the files your task names.** No drive-by refactors, no reformatting, no "while I
+was here". A diff that does one thing is a diff that can be reviewed in minutes.
+
+
 Four self-contained tools. Each is provable without Railway, E2B, money or a real build, which
 is why they are Codex's and not Claude's.
 
