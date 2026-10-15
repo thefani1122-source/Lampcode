@@ -10,6 +10,7 @@ import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
+import { autoCheckReason } from "../verify/auto-check.js";
 import type { RenderReport } from "../verify/render.js";
 import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
@@ -542,6 +543,57 @@ function noteWrite(ctx: ToolExecutionContext): void {
   if (g.checkTests) g.writesAfterCheckTests = (g.writesAfterCheckTests ?? 0) + 1;
 }
 
+/**
+ * Open every route the project declares and report what each one renders.
+ *
+ * Shared by `check_page` and by the automatic check that rides along with a
+ * write, so the model gets the same evidence either way — if the two could
+ * drift, the automatic one would be the one nobody noticed had rotted.
+ *
+ * Returns null when the sweep could not run, which the callers must report as
+ * "not checked" rather than as a pass. Saying the pages rendered fine when the
+ * browser never opened them is the failure this whole module exists to end.
+ */
+async function runPageSweep(
+  ctx: ToolExecutionContext,
+  projectId: string,
+  trigger: "asked" | "never" | "stale",
+): Promise<string | null> {
+  const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+  const declared = new Set<string>();
+  for (const code of Object.values(files)) {
+    for (const r of declaredRoutes(code)) declared.add(r);
+  }
+  const routes = routesToVisit([...declared]);
+
+  const { report, ran } = await checkRender(projectId, routes);
+  if (!ran || !report) return null;
+
+  if (ctx.gateResults) {
+    ctx.gateResults.checkPage = allRoutesOk(report) ? "pass" : "fail";
+    ctx.gateResults.writesAfterCheckPage = 0;
+  }
+
+  // Only what moved since last time. The sweep costs the same either way; what
+  // this saves is the tokens every later round pays to carry a repeat of the
+  // same working pages.
+  const previous = ctx.lastRender?.report ?? null;
+  if (ctx.lastRender) ctx.lastRender.report = report;
+  const out = formatRenderForAgent(report, previous);
+
+  // This tool's result goes to the MODEL and nowhere else, so without this
+  // line there is no way to tell from outside whether the sweep ran, how many
+  // pages it saw, or whether the diff is doing its job. `chars` is the figure
+  // the cost argument rests on.
+  console.log(
+    `[tools] page sweep trigger=${trigger} routes=${report.routes.length} ` +
+    `broken=${report.routes.filter((r) => !r.ok).length} ` +
+    `unreachable=${report.unreachable.length} ` +
+    `repeat=${previous !== null} chars=${out.length}`,
+  );
+  return out;
+}
+
 /** Execute one tool call and return the text to send back as its tool_result. */
 export async function executeTool(
   name: string,
@@ -812,10 +864,36 @@ export async function executeTool(
         ? `\nNOT written: ${refused.join(", ")} — owned by the project template. ` +
           `Put custom CSS in your own file (e.g. src/app.css) and import it from src/App.tsx.`
         : "";
-      return (
-        `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}\n` +
-        `The app is running at ${url}. Call check_page to see what it actually renders.`
-      );
+      const head =
+        `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}`;
+
+      // The page check rides along rather than waiting to be asked.
+      //
+      // Telling the model to "call check_page" was the whole mechanism before
+      // this, and a real build showed what that is worth: three writes and one
+      // edit, a single check_page call, and a finishing verdict of "pass" about
+      // code three writes older than what shipped. A weaker model is worse
+      // still — one spent five rounds without calling the write tool at all.
+      // Guidance in a sentence does not survive a long build; the environment
+      // doing it does.
+      //
+      // Fires only when the verdict is missing or stale (see autoCheckReason),
+      // so a model that checks after its own writes never pays for this twice.
+      const reason = autoCheckReason(ctx.gateResults);
+      if (reason !== null) {
+        const swept = await runPageSweep(ctx, projectId, reason);
+        if (swept !== null) {
+          return `${head}\n\nThe app is running at ${url}. I opened it for you:\n\n${swept}`;
+        }
+        // The sweep could not run. Say so rather than staying silent, because
+        // silence here reads as "and everything was fine".
+        return (
+          `${head}\nThe app is running at ${url}. ` +
+          `I could not open it to check — call check_page yourself; do not assume it renders.`
+        );
+      }
+
+      return `${head}\nThe app is running at ${url}. Call check_page to see what it renders.`;
     }
 
     // Reads resolve newest-first: what the model wrote this turn, then the
@@ -1027,39 +1105,8 @@ export async function executeTool(
         // one URL, so every other page in a multi-page app was unobserved by
         // construction — which is the owner's standing complaint about pages
         // that do nothing, and it was true: nothing ever looked at them.
-        const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-        const declared = new Set<string>();
-        for (const code of Object.values(files)) {
-          for (const r of declaredRoutes(code)) declared.add(r);
-        }
-        const routes = routesToVisit([...declared]);
-
-        const { report, ran } = await checkRender(projectId, routes);
-        if (ran && report) {
-          if (ctx.gateResults) {
-            ctx.gateResults.checkPage = allRoutesOk(report) ? "pass" : "fail";
-            ctx.gateResults.writesAfterCheckPage = 0;
-          }
-          // Only what moved since last time. The sweep costs the same either
-          // way; what this saves is the tokens every later round pays to carry
-          // a repeat of the same four working pages.
-          const previous = ctx.lastRender?.report ?? null;
-          if (ctx.lastRender) ctx.lastRender.report = report;
-          const out = formatRenderForAgent(report, previous);
-          // The result of this tool goes to the MODEL and nowhere else, so
-          // without this line there is no way to tell from outside whether the
-          // multi-route sweep ran at all, how many pages it saw, or whether the
-          // diff is doing its job. `chars` is the figure the cost argument
-          // rests on and the only one that can show the diff working on a real
-          // build rather than in a fixture.
-          console.log(
-            `[tools] check_page routes=${report.routes.length} ` +
-            `broken=${report.routes.filter((r) => !r.ok).length} ` +
-            `unreachable=${report.unreachable.length} ` +
-            `repeat=${previous !== null} chars=${out.length}`,
-          );
-          return out;
-        }
+        const swept = await runPageSweep(ctx, projectId, "asked");
+        if (swept !== null) return swept;
 
         // Fall back to the single-route check rather than reporting nothing.
         // That one is proven in production, so this change cannot leave the
