@@ -3397,3 +3397,56 @@ thing a re-check can say.
 `repeat=true` never happened. It is covered by cases and by the local measurement, nothing more.
 The hono build on 10-14 called check_page five times, so it will appear on its own; spending
 another build only to see it would be spending the owner's money to watch a number.
+
+## THE PAGE CHECK NO LONGER WAITS TO BE ASKED — 2026-10-15
+
+Telling the model to "call check_page" was the entire mechanism. Two real builds measured what
+that is worth:
+
+- **2026-10-14, RelayOps.** 5 rounds, **0 files written**, `check_page` never called. Nothing in
+  the environment noticed.
+- **2026-10-15, multi-page.** `write_files` ×3 and `edit_file` ×1, `check_page` called **once**,
+  final verdict `checkPage: "pass"` — about code three writes older than what shipped.
+
+### What it does
+
+The sweep now rides along with a write, but **only** in the two shapes that are actually wrong:
+
+- `never` — code has been written and the page has not once been looked at.
+- `stale` — a verdict exists but describes code the build no longer has
+  (`writesAfterCheckPage >= 3`, the number the build above actually produced).
+
+A model that checks after its own writes pays nothing extra. This matters because the sweep is
+not free: ~1.7s plus ~0.95s per route, so running it after every write would add most of a
+minute to an already slow build to re-answer a question nobody asked.
+
+**`never` has to be its own case.** `writesAfterCheckPage` cannot see it — that counter only
+starts incrementing once `checkPage` has been set at least once, so before the first check it
+stays undefined no matter how much is written. A rule watching only the counter would miss the
+worse failure entirely.
+
+The decision lives in `src/verify/auto-check.ts` rather than in `tools.ts`, because anything
+importing `tools.ts` drags in `e2b-service.ts` and hangs outside the server process (trap 9) — a
+rule left there could never be tested. 12 cases, including that a **failing** verdict goes stale
+too: the model may have fixed it, and repeating the old failure would send it chasing a bug that
+no longer exists.
+
+### Proven on a real build, in the best possible way
+
+Deploy `132ff8a`, the four-page probe:
+
+```
+toolCalls: {"read_file":1,"list_files":1,"write_files":1}     ← check_page NEVER called
+checkPage: pass
+[tools] page sweep trigger=never routes=4 broken=0 unreachable=0 repeat=false chars=1778
+```
+
+The model wrote ten files in one call and never once looked at the result. **Before this change
+that build would have shipped with `checkPage: "never"` — four routes, ten files, and nothing
+had opened a single page.** The automatic sweep opened all four.
+
+### Not verified
+
+The `stale` trigger has not fired on a real build — this one hit `never` first and reset the
+counter. Covered by cases only. It needs a build where the model checks once and then keeps
+writing, which is the shape the 10-15 multi-page build produced before this change existed.
