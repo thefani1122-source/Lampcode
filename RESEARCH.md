@@ -271,3 +271,161 @@ Mine:
 - **No `run_build` / `install_package` / `npm_install` as separate tools.** The shell covers
   them; a special tool must earn itself with intelligence or safety.
 - **`impact_analysis` is the one that differentiates.** Everything else on this list is parity.
+
+---
+
+## REPORT 3 — OpenAI harness engineering: making the app legible — 2026-10-15
+
+### 1. Verified — all of it
+
+Fetched the article in full. Every claim the report makes about it is accurate, including the
+caveat, which matters more than the rest:
+
+- *"we made the app bootable per git worktree, so Codex could launch and drive one instance per
+  change. We also wired the Chrome DevTools Protocol into the agent runtime and created skills
+  for working with DOM snapshots, screenshots, and navigation."*
+- *"Logs, metrics, and traces are exposed to Codex via a local observability stack that's
+  ephemeral for any given worktree… Agents can query logs with LogQL and metrics with PromQL."*
+- The end-to-end list: validate state → reproduce bug → **record a video of the failure** → fix
+  → validate by driving the app → **record a second video** → open PR → respond to feedback →
+  remediate build failures → escalate only when judgment is required → merge.
+- *"what capability is missing, and how do we make it both legible and enforceable for the
+  agent?"*
+- **The caveat, verbatim:** *"This behavior depends heavily on the specific structure and tooling
+  of this repository and should not be assumed to generalize without similar investment—at least,
+  not yet."*
+
+Scale, for calibration: ~1M lines, ~1,500 PRs, 3 engineers rising to 7, five months, zero
+manually written lines.
+
+### 2. The biggest lesson in the article is one the report skipped — and it is about us
+
+An entire section is devoted to this, and it is not about browsers at all:
+
+> **Give Codex a map, not a 1,000-page instruction manual.**
+
+They tried one big `AGENTS.md` and it failed in four named ways: context is a scarce resource; too
+much guidance becomes non-guidance; it rots instantly; it is hard to verify mechanically. Their
+answer: `AGENTS.md` as a ~100-line **table of contents**, with a structured `docs/` directory as
+the system of record, plans checked in as first-class artifacts under `active/` and `completed/`,
+linters that validate the knowledge base, and a recurring **doc-gardening agent** that opens
+fix-up PRs for documentation that no longer matches the code.
+
+**We hit this exact wall independently and made the exact same fix.** CLAUDE.md reached 2,465
+lines and 162 KB and was costing roughly 40k tokens before any work began; on 2026-10-10 it was
+split into a 12 KB CLAUDE.md plus HISTORY.md, explicitly so the big file is not loaded unless
+needed. That is their finding, arrived at from our own pain, and it is the strongest evidence in
+this whole research pass that the article's reasoning transfers.
+
+What we have not copied: the mechanical enforcement. They lint the knowledge base for staleness
+and run an agent that fixes it. Our CLAUDE.md said the preview Supabase was PAUSED for days after
+it was active again — a human caught it, nothing mechanical did.
+
+### 3. The asymmetry neither the report nor the article names — and it favours us
+
+OpenAI invested five months in **one repository** they controlled. Lampcode generates a **new app
+per prompt**. On the face of it their lesson does not transfer: you cannot spend months
+instrumenting a repository that does not exist yet.
+
+But that reading is wrong, and the correct one is better for us:
+
+> **`e2b-template/template.ts` IS our repository.**
+
+It defines the world every generated app lives in — its dependencies, its config, its baked
+tooling, its `vite.config.ts`, its test runner. Everything OpenAI did once to their repo, we do
+once to the template, and it applies to **every app we will ever generate**. They instrumented one
+codebase. The same work here instruments all of them.
+
+That reframes "make the app legible" from an impossible per-user investment into a single
+template-level one. It is also why trap 6 (a failed template build silently leaves the last good
+image serving) is a much more serious operational risk than it looks: the template is the one
+place where this leverage lives.
+
+### 4. We already have the half the article does not solve
+
+The report is right that observation gives *what happened* and not *what should have happened*.
+The article's own answer to that is **humans**: *"We prioritize work, translate user feedback into
+acceptance criteria, and validate outcomes."* A person writes the expectation.
+
+**We generate it.** `completion-audit.ts` turns the user's own prompt into checkable requirements
+with a pass that cannot write code, then marks each `proven` / `contradicted` / `unverified`. On
+ROTA it correctly reported four requested views were never wired in while all three gates passed.
+
+So the two systems are mirror images:
+
+| | expectation | observation |
+|---|---|---|
+| OpenAI / Codex | human-written acceptance criteria | **very strong** — DOM, screenshots, video, logs, metrics, traces |
+| Lampcode | **automatic, from the user's own words** | weak, and only now improving |
+
+The thesis follows directly, and it is not "copy their observation stack". It is: **we have the
+scarce half already.** Their expectation side needs a person per task; ours does not. Closing the
+observation gap is what makes the audit's verdicts enforceable instead of advisory.
+
+### 5. Where we actually stand against the report's ten signals
+
+| Signal | Status |
+|---|---|
+| Code | ✅ `projectFiles` + `generatedFiles`, whole project in memory |
+| Console errors | ✅ `checkRender`, per route |
+| Network requests | ✅ `checkRender` failed requests with URL and status — **built 2026-10-15** |
+| Browser DOM | ⚠️ partial — we return `body.innerText`, not a DOM snapshot |
+| App runtime / logs | ⚠️ partial — `read_logs` gives the dev server's output |
+| Screenshot | ❌ `capturePreviewScreenshot` EXISTS and is not exposed as a tool |
+| Click / type / navigate | ⚠️ `interactions.ts` clicks and navigates; not a tool, and cannot type |
+| DB / state | ❌ nothing |
+| Metrics | ❌ nothing |
+| Traces | ❌ nothing |
+
+Five of ten, two of them built this week. The cheapest remaining wins are a DOM snapshot and the
+screenshot tool, because both already have their machinery in place.
+
+Metrics and traces are the ones to be honest about: OpenAI ran Victoria Logs/Metrics/Traces per
+worktree. For a generated app that a non-coder will use, that is almost certainly the wrong
+investment — their product is a complex internal service and ours is a new small app. **This is
+the part of the report I would not pursue.**
+
+### 6. Observe → diagnose → change → reproduce → prove needs one thing we do not have
+
+The report's loop is right, and it has a hidden prerequisite: **before** and **after** must be
+comparable. OpenAI records a video of the failure and a second video of the resolution. That is
+not theatre — it is the proof artifact.
+
+Comparing before and after requires keeping both. We do not keep either: `build_outcome` is
+written once at the end, and even that goes stale when `finishPreview`'s repair loops mutate the
+files after it.
+
+**This is the same conclusion Report 1 reached from a completely different direction.** DeepSeek
+arrived at an append-only session event log from architecture; OpenAI arrives at an evidence
+timeline from debugging practice. Two independent sources, two different motivations, one missing
+primitive. That convergence is the strongest signal in the research so far.
+
+### 7. One lesson that explicitly does NOT transfer
+
+The article recommends **minimal blocking merge gates**: *"Test flakes are often addressed with
+follow-up runs rather than blocking progress indefinitely… corrections are cheap, and waiting is
+expensive."*
+
+That is right for an internal product with its own engineers watching, where a bad merge is
+noticed and fixed within the hour. For Lampcode a bad result **is** the product — it is what a
+stranger sees on their first build, and there is no one to catch it. Our gates should get
+stronger, not weaker. The report did not flag this; it should be flagged, because the article is
+persuasive and this part of it would be actively harmful here.
+
+### 8. The owner's "code gets ugly, old code never removed" problem is in this article
+
+Verbatim: *"Codex replicates patterns that already exist in the repository—even uneven or
+suboptimal ones. Over time, this inevitably leads to drift."* Their team spent **20% of every
+week** cleaning up AI slop before they automated it with golden principles plus recurring cleanup
+agents, and their framing is exactly the owner's: *"Technical debt is like a high-interest loan:
+it's almost always better to pay it down continuously in small increments."*
+
+That is open tasks #11 and #12, independently arrived at, and now with a large organisation's
+measured experience behind the same design.
+
+One technique from it worth stealing outright, because it is free: *"Because the lints are custom,
+we write the error messages to inject remediation instructions into agent context."* The error
+message carries the fix. We already do this in two places without having named it — `write_files`
+refusing a template-owned path tells the model to make its own stylesheet and import it, and the
+edit-marker refusal explains why a fragment would destroy the file. It should be a rule, not an
+accident.
