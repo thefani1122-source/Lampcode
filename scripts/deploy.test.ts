@@ -207,9 +207,25 @@ const smokeBad = async (url: string) => ({
   totalLatencyMs: 3,
 });
 
-/** Records what was sent, and answers like the Vercel MCP would. */
-function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean } = {}) {
+/**
+ * Records what was sent, and answers the way the Vercel MCP ACTUALLY does.
+ *
+ * This fake used to return a bare `{ id, url }`, and that is why every case
+ * below passed while production could not deploy at all. The real response,
+ * captured from a live call on 2026-10-16, wraps the deployment two levels
+ * deep:
+ *
+ *   { "result": { "deployment": { "id": "dpl_…", "url": "…", "state": "INITIALIZING" } } }
+ *
+ * Reading only the top level found no id, so a deployment that was already
+ * INITIALIZING was reported as "Vercel accepted the request but returned no
+ * deployment to follow". A fixture that invents a friendlier shape than the
+ * server sends does not test the integration — it tests itself.
+ */
+function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; bare?: boolean } = {}) {
   const sent: Array<{ tool: string; args: Record<string, unknown> }> = [];
+  const wrap = (body: Record<string, unknown>) =>
+    opts.bare ? JSON.stringify(body) : JSON.stringify({ result: { deployment: body } });
   const call = async (
     target: { mcpToolName: string },
     args: Record<string, unknown>,
@@ -217,9 +233,9 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean } =
     sent.push({ tool: target.mcpToolName, args });
     if (target.mcpToolName === "create_deployment") {
       if (opts.failCreate) throw new Error("403 forbidden");
-      return JSON.stringify({ id: "dpl_1", url: opts.url ?? "rota.vercel.app" });
+      return wrap({ id: "dpl_1", url: opts.url ?? "rota.vercel.app", state: "INITIALIZING" });
     }
-    return JSON.stringify({
+    return wrap({
       readyState: opts.state ?? "READY",
       url: opts.url ?? "rota.vercel.app",
     });
@@ -372,3 +388,51 @@ ok(
 
 console.log(failures === 0 ? "\nAll deploy cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);
+
+// ── the response shape itself ────────────────────────────────────────────────
+// Both forms must work. The MCP server wraps; the REST API does not, and a
+// future MCP version may stop wrapping. Reading a field present at either
+// depth costs nothing — assuming one depth cost a working deploy for five days.
+{
+  const { call } = fakeCall({ bare: true });
+  const out = await deployToVercel({
+    auth: AUTH, files: APP, projectName: "Rota",
+    call: call as never, smoke: smokeOk as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("an UNWRAPPED response still deploys", [out.ok, out.url], [true, "https://rota.vercel.app"]);
+}
+
+// The exact payload the live Vercel MCP returned on 2026-10-16, trimmed. If
+// this ever stops parsing, the integration is broken and the cases above —
+// which use a shortened form of the same shape — may not notice.
+{
+  const live = JSON.stringify({
+    result: {
+      deployment: {
+        id: "dpl_8TnvVfuGu7jKqsgstcQSQX5EmhXA",
+        name: "deploy-probe-mvafdglk",
+        url: "deploy-probe-mvafdglk-d82mk8efw.vercel.app",
+        type: "LAMBDAS",
+        state: "INITIALIZING",
+        createdAt: 1792122402408,
+        creator: { uid: "fCJ", username: "someone" },
+        project: { id: "prj_VE1", name: "deploy-probe-mvafdglk", framework: "vite" },
+        meta: {},
+        alias: ["deploy-probe-mvafdg"],
+      },
+    },
+  });
+  const call = async (target: { mcpToolName: string }): Promise<string> =>
+    target.mcpToolName === "create_deployment"
+      ? live
+      : JSON.stringify({ result: { deployment: { readyState: "READY", url: "deploy-probe-mvafdglk-d82mk8efw.vercel.app" } } });
+  const out = await deployToVercel({
+    auth: AUTH, files: { "src/App.tsx": "x" }, projectName: "deploy probe",
+    call: call as never, smoke: smokeOk as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check(
+    "the REAL recorded Vercel response deploys",
+    [out.ok, out.url],
+    [true, "https://deploy-probe-mvafdglk-d82mk8efw.vercel.app"],
+  );
+}

@@ -334,6 +334,30 @@ export function parseMcpJson(text: string): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * The object the deployment fields actually live on.
+ *
+ * Vercel's MCP server wraps its payload — the real shape, logged from a live
+ * call on 2026-10-16, is `{ result: { deployment: { id, url, state, … } } }`,
+ * not a bare deployment object. Reading only the top level found no `id`, so
+ * every successful create was reported as "Vercel accepted the request but
+ * returned no deployment to follow" while the deployment was sitting one and
+ * two levels down, already INITIALIZING.
+ *
+ * Both levels are unwrapped and the outermost is kept as a fallback, because
+ * the REST API returns the bare shape and a future MCP version may stop
+ * wrapping. Reading a field that is present at either depth costs nothing;
+ * assuming one depth cost a working deploy.
+ */
+function deploymentOf(o: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!o) return null;
+  const result = o["result"];
+  const inner = result !== null && typeof result === "object" ? (result as Record<string, unknown>) : o;
+  const dep = inner["deployment"];
+  if (dep !== null && typeof dep === "object") return dep as Record<string, unknown>;
+  return inner;
+}
+
 function str(o: Record<string, unknown> | null, key: string): string | undefined {
   const v = o?.[key];
   return typeof v === "string" && v !== "" ? v : undefined;
@@ -427,7 +451,7 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
     };
   }
 
-  const createdJson = parseMcpJson(created);
+  const createdJson = deploymentOf(parseMcpJson(created));
   const id = str(createdJson, "id") ?? str(createdJson, "uid");
   let url = str(createdJson, "url");
   if (id === undefined && url === undefined) {
@@ -461,7 +485,10 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
         idOrUrl: id ?? (url as string),
         ...(input.auth.teamId ? { teamId: input.auth.teamId } : {}),
       });
-      const j = parseMcpJson(got);
+      // Same wrapping as create_deployment — see deploymentOf. Polling the
+      // top level here would have left `state` undefined forever, so the loop
+      // would have run to its ceiling on a deployment that was already READY.
+      const j = deploymentOf(parseMcpJson(got));
       state = str(j, "readyState") ?? str(j, "state") ?? state;
       url = str(j, "url") ?? url;
       if (state !== undefined && DONE_STATES.has(state)) break;
