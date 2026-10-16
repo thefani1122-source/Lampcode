@@ -64,13 +64,54 @@ check(
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
 
+// These two cases used to assert that a static app needs nothing added and a
+// hono app gets only its api entry. Both were WRONG, and they passed for five
+// days because they encoded the same mistake the code made.
+//
+// The first real deployment, 2026-10-16, logged `files: 1`: Vercel was handed
+// `src/App.tsx` and nothing to build it with. package.json, vite.config.ts,
+// index.html and tsconfig.json are BAKED_FILES — owned by the E2B template,
+// never present in projectFiles or generatedFiles. Inside the sandbox that is
+// invisible because the template wrote them to disk; outside it there is no
+// template. A case asserting "nothing added" was pinning the bug.
+const staticScaffold = vercelScaffold("static");
+for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json"]) {
+  ok(`a static app gets ${needed}, which the template owns and never ships`, needed in staticScaffold);
+}
 check(
-  "a hono app gets an api entry and nothing else",
-  Object.keys(vercelScaffold("hono")),
-  ["api/[...route].ts"],
+  "a hono app gets the build files AND its api entry",
+  Object.keys(vercelScaffold("hono")).sort(),
+  ["api/[...route].ts", "index.html", "package.json", "tsconfig.json", "vite.config.ts"],
 );
-check("a static app needs nothing added", vercelScaffold("static"), {});
 check("fastapi already exposes the ASGI app Vercel wants", vercelScaffold("fastapi"), {});
+
+// Trap 11: the template's vite.config bakes server.proxy['/api'] → localhost,
+// a DEV-SERVER feature. Shipping it to Vercel would be dead config implying
+// the API works. The generated app reaches its backend through VITE_API_URL.
+ok(
+  "the deployed vite config carries no dev proxy",
+  !(staticScaffold["vite.config.ts"] ?? "").includes("proxy"),
+);
+ok(
+  "the deployed index.html mounts the app's real entry point",
+  (staticScaffold["index.html"] ?? "").includes("/src/index.tsx"),
+);
+
+// Trap 2: a generated package.json is ignored for everything EXCEPT its
+// dependencies, which ARE installed. An app importing three or gsap declared
+// it there, so dropping those on the way to Vercel breaks the richer apps.
+const withDeps = vercelScaffold("static", {
+  "package.json": JSON.stringify({ dependencies: { three: "^0.169.0", react: "18.0.0" } }),
+});
+const deps = JSON.parse(withDeps["package.json"] ?? "{}").dependencies as Record<string, string>;
+check("a declared dependency survives to the deploy", deps["three"], "^0.169.0");
+check("the app's own pin wins over the baseline", deps["react"], "18.0.0");
+ok("the baseline is still there", deps["@tanstack/react-query"] !== undefined);
+check(
+  "a generated package.json that does not parse does not break the deploy",
+  typeof vercelScaffold("static", { "package.json": "{not json" })["package.json"],
+  "string",
+);
 
 // hono/vercel's own types say: "will be removed in v5. Install @hono/vercel".
 // A Hono instance already exposes .fetch, which IS the shape Vercel's api/

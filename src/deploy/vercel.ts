@@ -96,9 +96,146 @@ export function detectDeployShape(files: Record<string, string>): DeployShape {
  * re-measuring a model. It is also the single place holding the one unverified
  * assumption in this file.
  */
-export function vercelScaffold(shape: DeployShape): Record<string, string> {
+/**
+ * The build files a generated app needs on Vercel — which it has never carried.
+ *
+ * THE BUG THIS FIXES, found on the first real deployment, 2026-10-16. The log
+ * read `files: 1`. Vercel was handed `src/App.tsx` and nothing to build it
+ * with, and refused.
+ *
+ * The cause is structural, not a typo. `package.json`, `vite.config.ts`,
+ * `index.html` and `tsconfig.json` are in `BAKED_FILES` — the E2B template owns
+ * them, the model is forbidden to write them, and they are therefore NEVER in
+ * `projectFiles` or `generatedFiles`. Everything that reads the file map sees
+ * an app with no build setup. Inside the sandbox that is invisible, because
+ * the template put them on disk. Outside it there is no template.
+ *
+ * The previous comment here — "a static build needs nothing added" — was true
+ * of the sandbox and false of the world, which is exactly trap 4 (prompt-vs-
+ * reality drift) in a new place.
+ *
+ * These are deliberately NOT copied from `template.ts`. Two reasons, and the
+ * first is a bug waiting to happen: the template's `vite.config.ts` bakes
+ * `server.proxy['/api'] → localhost:3001`, a DEV-SERVER feature that means
+ * nothing on Vercel (trap 11) — shipping it would quietly suggest the API
+ * works when it does not. And importing `template.ts` from `src/` drags in the
+ * E2B SDK. So deployment owns its own build setup, tuned for Vercel.
+ */
+const DEPLOY_DEPENDENCIES: Record<string, string> = {
+  react: "19.0.0",
+  "react-dom": "19.0.0",
+  "@tanstack/react-query": "^5.62.0",
+  "lucide-react": "^0.460.0",
+  "class-variance-authority": "^0.7.1",
+  clsx: "^2.1.1",
+  "tailwind-merge": "^2.5.4",
+  "@supabase/supabase-js": "^2.45.0",
+  hono: "^4.6.3",
+  "@hono/node-server": "^1.13.1",
+  zod: "^3.23.8",
+};
+
+const DEPLOY_DEV_DEPENDENCIES: Record<string, string> = {
+  "@vitejs/plugin-react": "^4.3.1",
+  vite: "^6.0.0",
+  tailwindcss: "^4.0.0",
+  "@tailwindcss/vite": "^4.0.0",
+  typescript: "^5.5.4",
+  "@types/react": "19.0.0",
+  "@types/react-dom": "19.0.0",
+};
+
+/**
+ * Dependencies the generated app declared for itself.
+ *
+ * A generated `package.json` is ignored by the sandbox for everything EXCEPT
+ * its `dependencies` (CLAUDE.md, trap 2), which are installed. So an app that
+ * imports `three` or `gsap` declared it there and will not build without it.
+ * Dropping those on the way to Vercel would break exactly the richer apps.
+ */
+function declaredDependencies(files: Record<string, string>): Record<string, string> {
+  const raw = files["package.json"];
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const deps = (parsed as Record<string, unknown>)["dependencies"];
+    if (typeof deps !== "object" || deps === null) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(deps)) if (typeof v === "string") out[k] = v;
+    return out;
+  } catch {
+    // A generated package.json that does not parse is the model's error, not a
+    // reason to fail the deploy — the baseline below still builds a React app.
+    return {};
+  }
+}
+
+function buildFiles(files: Record<string, string>): Record<string, string> {
+  const pkg = {
+    name: "lampcode-app",
+    private: true,
+    type: "module",
+    scripts: { build: "vite build" },
+    // The app's own declarations win: if it pinned a version, honour it.
+    dependencies: { ...DEPLOY_DEPENDENCIES, ...declaredDependencies(files) },
+    devDependencies: DEPLOY_DEV_DEPENDENCIES,
+  };
+
+  return {
+    "package.json": `${JSON.stringify(pkg, null, 2)}\n`,
+    // No `server.proxy` — see the note above. A production build has no dev
+    // server, so a proxy here would be dead config that implies working API
+    // calls. The generated app reaches its backend through
+    // `import.meta.env.VITE_API_URL`, which is the contract the prompt already
+    // teaches and `wiring.ts` already enforces.
+    "vite.config.ts":
+      `import { defineConfig } from 'vite'\n` +
+      `import react from '@vitejs/plugin-react'\n` +
+      `import tailwindcss from '@tailwindcss/vite'\n` +
+      `import path from 'path'\n\n` +
+      `export default defineConfig({\n` +
+      `  plugins: [react(), tailwindcss()],\n` +
+      `  resolve: { alias: { '@': path.resolve(__dirname, './src') } },\n` +
+      `})\n`,
+    "tsconfig.json": `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2022",
+          lib: ["ES2022", "DOM", "DOM.Iterable"],
+          module: "ESNext",
+          moduleResolution: "bundler",
+          jsx: "react-jsx",
+          strict: true,
+          skipLibCheck: true,
+          allowImportingTsExtensions: false,
+          noEmit: true,
+          baseUrl: ".",
+          paths: { "@/*": ["./src/*"] },
+        },
+        include: ["src"],
+      },
+      null,
+      2,
+    )}\n`,
+    "index.html":
+      `<!doctype html>\n<html lang="en">\n  <head>\n` +
+      `    <meta charset="UTF-8" />\n` +
+      `    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n` +
+      `    <title>App</title>\n  </head>\n  <body>\n` +
+      `    <div id="root"></div>\n` +
+      `    <script type="module" src="/src/index.tsx"></script>\n` +
+      `  </body>\n</html>\n`,
+  };
+}
+
+export function vercelScaffold(
+  shape: DeployShape,
+  files: Record<string, string> = {},
+): Record<string, string> {
   if (shape === "hono") {
     return {
+      ...buildFiles(files),
       // A catch-all so every /api/* path reaches the one exported app, which
       // then routes internally — the app already does `app.route('/api', api)`.
       // `export default app` works because a Hono instance exposes `.fetch`,
@@ -112,8 +249,12 @@ export function vercelScaffold(shape: DeployShape): Record<string, string> {
     };
   }
   // FastAPI already exposes the ASGI `app` that Vercel's python preset wants,
-  // and a static build needs nothing added.
-  return {};
+  // and its dependencies come from the generated requirements.txt rather than
+  // from here. Untouched and still UNPROVEN — no Python app has been deployed.
+  if (shape === "fastapi") return {};
+
+  // Static: a React/Vite app, which needs everything above to build.
+  return buildFiles(files);
 }
 
 /** A project name Vercel accepts: lowercase, dashes, no leading/trailing dash. */
@@ -231,13 +372,20 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
   const maxWaitMs = input.maxWaitMs ?? 240_000;
 
   const shape = detectDeployShape(input.files);
-  const withScaffold = { ...input.files, ...vercelScaffold(shape) };
-  const { inlined, skipped } = toInlinedFiles(withScaffold);
-  const name = projectSlug(input.projectName);
 
-  if (inlined.length === 0) {
+  // Checked on the APP's files, before the scaffold is added. Once the scaffold
+  // always contributes a package.json and an index.html, "did we get anything
+  // to deploy" can never be answered from the combined set — it would always
+  // be yes, and an empty project would ship a blank React shell as though that
+  // were the app. Caught by a case that was already here.
+  const { inlined: appFiles } = toInlinedFiles(input.files);
+  if (appFiles.length === 0) {
     return { ok: false, shape, error: "There are no files to deploy." };
   }
+
+  const withScaffold = { ...input.files, ...vercelScaffold(shape, input.files) };
+  const { inlined, skipped } = toInlinedFiles(withScaffold);
+  const name = projectSlug(input.projectName);
 
   const target = (mcpToolName: string) => ({
     serverSlug: "vercel",
@@ -283,10 +431,19 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
   const id = str(createdJson, "id") ?? str(createdJson, "uid");
   let url = str(createdJson, "url");
   if (id === undefined && url === undefined) {
+    // Say what Vercel ACTUALLY returned. The first real run of this function,
+    // 2026-10-16, failed here and the message was all anyone got: no id, no
+    // error, no clue. The model then guessed the connection needed
+    // re-authorising, which was wrong, and a human had to read the sandbox to
+    // find the real cause. A diagnostic that discards the diagnosis is the
+    // same failure as a gate that passes having examined nothing.
+    logger.warn({ project: name, response: created.slice(0, 600) }, "Vercel returned no deployment id");
     return {
       ok: false,
       shape,
-      error: "Vercel accepted the request but returned no deployment to follow.",
+      error:
+        `Vercel accepted the request but returned no deployment to follow. ` +
+        `What it sent back: ${created.slice(0, 400)}`,
     };
   }
 
