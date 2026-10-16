@@ -26,9 +26,14 @@ export const INTERACTION_SCRIPT = String.raw`
 const entries = [];
 let browser;
 let printed = false;
-const target = "http://localhost:5173";
+const base = process.argv[2] || "http://localhost:5173";
+const routes = JSON.parse(process.argv[3] || '["/"]');
 const selector = 'button, a[href^="/"], form';
 const deadline = Date.now() + 45000;
+// Spread the shared budget across pages. Without a per-page cap the home page
+// would consume it and every later route would report "not attempted" — the
+// same blindness this change exists to remove, just moved one step along.
+const PER_ROUTE = Math.max(3, Math.floor(12 / Math.max(1, routes.length)));
 function print() {
   if (printed) return;
   printed = true;
@@ -50,10 +55,10 @@ function describe(el) {
 async function fingerprint(page) {
   return page.evaluate(() => ({ title: document.title, length: document.body.innerText.length, path: location.pathname, url: location.href }));
 }
-async function open(context) {
+async function open(context, route) {
   const page = await context.newPage();
   page.setDefaultTimeout(1500);
-  const response = await page.goto(target, { waitUntil: "domcontentloaded", timeout: 8000 });
+  const response = await page.goto(base + route, { waitUntil: "domcontentloaded", timeout: 8000 });
   if (!response || !response.ok()) throw new Error("preview did not load successfully");
   await page.waitForTimeout(300);
   return page;
@@ -64,23 +69,34 @@ try {
   // produce a skipped report rather than an uncaught module-load exception.
   const { chromium } = await import("playwright");
   browser = await chromium.launch({ headless: true, timeout: 8000 });
+
+  // One browser, every declared route. The probe used to open "/" and nothing
+  // else, so a multi-page app's own buttons were never touched — which is the
+  // owner's standing complaint, and it was literally true of this script.
+  for (const route of routes) {
   const discovery = await browser.newContext();
   let inventory;
   try {
-    const page = await open(discovery);
-    inventory = await Promise.all((await page.$$(selector)).map((el) => el.evaluate(describe)));
-  } finally { await discovery.close(); }
-  for (const item of inventory) entries.push({ kind: item.kind, label: item.label, changed: null, skipped: true, consoleErrors: [], reason: "not attempted", path: target });
+    const page = await open(discovery, route);
+    inventory = (await Promise.all((await page.$$(selector)).map((el) => el.evaluate(describe)))).slice(0, PER_ROUTE);
+  } catch {
+    await discovery.close().catch(() => {});
+    entries.push({ kind: "probe", label: route, changed: null, skipped: true, consoleErrors: [], reason: "page did not load", route });
+    continue;
+  } finally { await discovery.close().catch(() => {}); }
+
+  const offset = entries.length;
+  for (const item of inventory) entries.push({ kind: item.kind, label: item.label, changed: null, skipped: true, consoleErrors: [], reason: "not attempted", route, path: base + route });
 
   for (let index = 0; index < inventory.length; index++) {
-    const entry = entries[index];
+    const entry = entries[offset + index];
     if (Date.now() >= deadline) { entry.reason = "time budget exhausted"; continue; }
     let context;
     try {
       context = await browser.newContext();
-      const page = await open(context);
+      const page = await open(context, route);
       const controls = await page.$$(selector);
-      const observed = await Promise.all(controls.map((el) => el.evaluate(describe)));
+      const observed = (await Promise.all(controls.map((el) => el.evaluate(describe)))).slice(0, PER_ROUTE);
       // Index alone is unsafe after a reload: a dynamic list can reorder and
       // make us attribute another control's result to this one.
       if (JSON.stringify(observed) !== JSON.stringify(inventory)) { entry.reason = "control inventory changed"; continue; }
@@ -149,6 +165,7 @@ try {
     } finally {
       if (context) await context.close().catch(() => {});
     }
+  }
   }
 } catch {
   entries.push({ kind: "probe", label: "preview", changed: null, skipped: true, consoleErrors: [], reason: "browser or preview unavailable" });

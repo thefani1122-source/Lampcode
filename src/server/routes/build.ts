@@ -63,6 +63,7 @@ import {
   formatHollowTestsForUser,
 } from "../../verify/hollow-tests.js";
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
+import { routesToVisit } from "../../verify/render.js";
 import {
   shouldAudit,
   extractCriteria,
@@ -2877,7 +2878,13 @@ export async function runFastBuild(
       // has to run after the repair loops above have landed, or it reports on an
       // app the user no longer has. Costs no model spend; the script runs inside
       // the sandbox against the baked Playwright.
-      const interaction = await checkInteractions(projectId);
+      // Every route the app declares, not just "/". The probe used to open the
+      // home page alone, so a multi-page app's own buttons were never touched —
+      // which is precisely the complaint it exists to answer.
+      const interactionRoutes = routesToVisit(
+        [...new Set(Object.values(allFiles).flatMap((code) => declaredRoutes(code)))],
+      );
+      const interaction = await checkInteractions(projectId, interactionRoutes);
       const interactionTally = tallyInteractions(interaction.findings);
 
       // Only said when the probe actually ran. A probe that could not run has
@@ -2893,7 +2900,7 @@ export async function runFastBuild(
         `[build] interactions session=${sessionId} ran=${interaction.ran} ` +
         `total=${interactionTally.total} buttons=${interactionTally.buttonsNoChange} ` +
         `links=${interactionTally.linksNoChange} forms=${interactionTally.formsNoChange} ` +
-        `consoleErrors=${interactionTally.consoleErrors}`,
+        `consoleErrors=${interactionTally.consoleErrors} routes=${interactionRoutes.length}`,
       );
 
       // Re-measured here, not carried from the main body, because the repair
