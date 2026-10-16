@@ -215,7 +215,7 @@ export type BuildOutcome = {
    *  owner had observed exactly that behaviour. On an edit, `removed` near zero
    *  while `added` climbs is an edit bolting a new path on beside the old one.
    *  Absent on builds from before it existed. */
-  churn?: { added: number; removed: number; created: number; replaced: number; edited: number };
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number; deleted: number };
   /** What is left unreachable in the delivered files, measured deterministically
    *  at the end of every build — not only when the model asked. Separate from
    *  `deadCodeCalled`, which records whether it asked, because a model that

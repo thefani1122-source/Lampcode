@@ -9,6 +9,7 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
+import { commitFileDeletion, currentProjectFiles, planFileDeletions } from "./file-deletion.js";
 import { formatSearchHits, searchFiles } from "../verify/search.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
 import { autoCheckReason } from "../verify/auto-check.js";
@@ -30,8 +31,9 @@ import {
   fetchReferenceDesign,
   isFetchableReferenceUrl,
   isTemplateOwnedFile,
+  deleteProjectFileFromSandbox,
 } from "../preview/e2b-service.js";
-import { persistFilesAsWritten } from "../storage/project-files.js";
+import { deletePersistedProjectFile, persistFilesAsWritten } from "../storage/project-files.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 import { callMcpTool } from "../mcp/call-tool.js";
 
@@ -184,6 +186,25 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
         },
       },
       required: ["files"],
+    },
+  },
+  {
+    name: "delete_file",
+    description:
+      "Remove one or more files from the current project. Pass project-relative paths in " +
+      "paths. Template-owned files and the app entry point are protected. Missing files are " +
+      "reported as already absent; each path reports whether live and stored deletion both " +
+      "succeeded.",
+    input_schema: {
+      type: "object",
+      properties: {
+        paths: {
+          type: "array",
+          description: "Project-relative paths to remove.",
+          items: { type: "string" },
+        },
+      },
+      required: ["paths"],
     },
   },
   {
@@ -444,6 +465,8 @@ export interface ToolExecutionContext {
    *  caller ends up with the same file map the old fence-parsing path produced
    *  and every downstream gate keeps working unchanged. */
   generatedFiles?: Record<string, string> | undefined;
+  /** Paths removed this dispatch; projectFiles remains the build-start snapshot. */
+  deletedFiles?: Set<string> | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onLog?: ((line: string) => void) | undefined;
   /** Where the verification tools record what they found, so the build can be
@@ -488,7 +511,7 @@ export interface ToolExecutionContext {
    *  answer — and an unmeasured problem stays unmanaged. `removed` staying near
    *  zero while `added` climbs is the signature of an edit that bolts a new
    *  path on beside the old one. */
-  churn?: { added: number; removed: number; created: number; replaced: number; edited: number } | undefined;
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number; deleted: number } | undefined;
   /** What find_dead_code reported, and whether the model called it at all.
    *  `called: false` is its own fact — the same distinction build_outcome keeps
    *  between a gate that failed and a gate nobody ran. */
@@ -547,7 +570,7 @@ function noteChurn(
   ctx: ToolExecutionContext,
   before: string,
   after: string,
-  kind: "created" | "replaced" | "edited",
+  kind: "created" | "replaced" | "edited" | "deleted",
 ): void {
   const c = ctx.churn;
   if (!c) return;
@@ -589,7 +612,7 @@ async function runPageSweep(
   projectId: string,
   trigger: "asked" | "never" | "stale",
 ): Promise<string | null> {
-  const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+  const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
   const declared = new Set<string>();
   for (const code of Object.values(files)) {
     for (const r of declaredRoutes(code)) declared.add(r);
@@ -689,6 +712,7 @@ export async function executeTool(
 
   if (
     name === "write_files" ||
+    name === "delete_file" ||
     name === "edit_file" ||
     name === "check_page" ||
     name === "check_types" ||
@@ -704,7 +728,7 @@ export async function executeTool(
     name === "fetch_reference"
   ) {
     if (name === "search_code") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {
         return "There are no project files to search yet. Search after code has been written.";
       }
@@ -722,7 +746,7 @@ export async function executeTool(
     // nothing. Requiring a projectId would make it unavailable in exactly the
     // early rounds where the model is deciding what to keep.
     if (name === "find_dead_code") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {
         return (
           "There are no files to analyse yet. Call this after you have written or changed " +
@@ -746,7 +770,7 @@ export async function executeTool(
     // runs unconditionally over the delivered files, so "did the model ask?" is
     // not the fact that decides whether the number exists.
     if (name === "find_wiring_gaps") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {
         return (
           "There are no files to analyse yet. Call this once the pages and controls exist, " +
@@ -762,7 +786,7 @@ export async function executeTool(
     // that belongs to the user — so each precondition is answered as a sentence
     // the model can pass on rather than as an error to retry.
     if (name === "deploy_app") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {
         return "There is nothing to deploy yet — build the app first.";
       }
@@ -802,7 +826,7 @@ export async function executeTool(
     // the dispatcher and the identity to bill against, and it refuses rather
     // than silently doing nothing when either is missing.
     if (name === "review_code") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {
         return "There is no code to review yet.";
       }
@@ -837,6 +861,69 @@ export async function executeTool(
 
     const projectId = ctx.projectId;
     if (!projectId) return "Error: no project sandbox is attached to this build.";
+
+    if (name === "delete_file") {
+      const raw = Array.isArray(args["paths"]) ? args["paths"] : [];
+      const paths = raw.filter((path): path is string => typeof path === "string");
+      if (paths.length === 0) return "No valid file paths were provided.";
+
+      if (!ctx.deletedFiles) ctx.deletedFiles = new Set<string>();
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
+      const decisions = planFileDeletions(paths, files, isTemplateOwnedFile);
+      const lines: string[] = [];
+    for (const decision of decisions) {
+        if (decision.status === "missing") {
+          lines.push(`${decision.path}: already absent; nothing to delete.`);
+          continue;
+        }
+        if (decision.status === "template-owned") {
+          lines.push(`${decision.path}: refused because it belongs to the project template.`);
+          continue;
+        }
+        if (decision.status === "entry-point") {
+          lines.push(`${decision.path}: refused because it is a required app entry point.`);
+          continue;
+        }
+        if (decision.status === "unsafe-path") {
+          lines.push(`${decision.path || "(empty path)"}: refused because it is not a safe project-relative path.`);
+          continue;
+        }
+
+        let sandboxRemoved = false;
+        try {
+          // Do not publish the tombstone until both copies have been removed. If
+          // either side fails, the path remains current and can be retried.
+          await deleteProjectFileFromSandbox(projectId, decision.path);
+          sandboxRemoved = true;
+          await deletePersistedProjectFile(projectId, decision.path);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (sandboxRemoved && decision.before !== undefined) {
+            try {
+              await writeFilesToSandbox(projectId, { [decision.path]: decision.before }, ctx.onLog);
+            } catch (restoreErr) {
+              const restoreReason = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+              lines.push(`${decision.path}: INCOMPLETE — ${reason}. The live copy could not be restored (${restoreReason}); the file is not recorded as deleted.`);
+              continue;
+            }
+          }
+          lines.push(`${decision.path}: INCOMPLETE — ${reason}. It is not recorded as deleted.`);
+          continue;
+        }
+
+      commitFileDeletion(
+        decision.path,
+        decision.before ?? "",
+        ctx.generatedFiles,
+        ctx.deletedFiles,
+        (before, after, kind) => noteChurn(ctx, before, after, kind),
+        () => noteWrite(ctx),
+      );
+      lines.push(`${decision.path}: deleted from the live project and stored copy.`);
+    }
+
+    return lines.join("\n");
+    }
 
     if (name === "write_files") {
       noteWrite(ctx);
@@ -902,10 +989,11 @@ export async function executeTool(
       // reachable. A path this build has not seen before counts as created
       // rather than replaced, so a new project does not read as churn.
       for (const [path, content] of Object.entries(files)) {
-        const before = (ctx.generatedFiles ?? {})[path] ?? (ctx.projectFiles ?? {})[path];
+        const before = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles)[path];
         noteChurn(ctx, before ?? "", content, before === undefined ? "created" : "replaced");
       }
 
+      for (const path of Object.keys(files)) ctx.deletedFiles?.delete(path);
       if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
       // The sandbox gets the WHOLE project, not just this turn's files. On an
       // edit the model writes only what it changed (correctly — that is what
@@ -913,7 +1001,7 @@ export async function executeTool(
       // and checking a template with three edited files dropped into it tells
       // the model nothing about the real app. Existing files first so this
       // turn's writes win on any path they both have.
-      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? files) };
+      const toWrite = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles ?? files, ctx.deletedFiles);
 
       let url: string | undefined;
       let writeError: string | undefined;
@@ -974,7 +1062,7 @@ export async function executeTool(
     // two are already in memory and authoritative, so an edit doesn't have to
     // wait on a sandbox that may still be warming — and can't be misled into
     // thinking the project is empty because it asked a second too early.
-    const known = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+    const known = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
 
     // "No sandbox" must never read as "tools don't work here". On a brand-new
     // build the sandbox is still warming while the model takes its first turn,
@@ -1067,7 +1155,7 @@ export async function executeTool(
       // Write the WHOLE project, as write_files does: the sandbox may be a fresh
       // template, and checking one edited file dropped into it would tell the
       // model nothing about the real app.
-      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? { [path]: updated }) };
+      const toWrite = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles ?? { [path]: updated }, ctx.deletedFiles);
       let url: string | undefined;
       let writeError: string | undefined;
       try {

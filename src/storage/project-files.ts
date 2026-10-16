@@ -119,6 +119,28 @@ export async function persistFilesAsWritten(
   }
 }
 
+/** Remove a persisted build file so a later restore cannot bring it back. */
+export async function deletePersistedProjectFile(
+  projectId: string,
+  relativePath: string,
+): Promise<void> {
+  if (
+    !relativePath ||
+    relativePath.startsWith("/") ||
+    relativePath.startsWith("\\") ||
+    relativePath.includes("..") ||
+    relativePath.includes("\0")
+  ) {
+    throw new Error(`refused to delete unsafe stored path "${relativePath}"`);
+  }
+
+  await ensureBucket();
+  const { error } = await getSupabaseAdmin()
+    .storage.from(BUCKET)
+    .remove([`${projectId}/${relativePath}`]);
+  if (error) throw new Error(`[project-files] delete failed: ${error.message}`);
+}
+
 // ── Download ──────────────────────────────────────────────────────────────────
 
 /**

@@ -1648,6 +1648,18 @@ export async function readProjectFile(projectId: string, path: string): Promise<
   return sandbox.files.read(`${PROJECT_DIR}/${safe}`);
 }
 
+/** Remove one validated project file from the live sandbox. */
+export async function deleteProjectFileFromSandbox(projectId: string, path: string): Promise<void> {
+  await awaitWarming(projectId);
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) throw new Error("no live sandbox for this project");
+  const safe = safeProjectPath(path);
+  if (!safe) throw new Error(`refused to delete "${path}"`);
+  const fullPath = `${PROJECT_DIR}/${safe}`;
+  // E2B remove is not a no-op for missing paths; checking first keeps a retry idempotent.
+  if (await sandbox.files.exists(fullPath)) await sandbox.files.remove(fullPath);
+}
+
 /** List the project's source files (excludes deps, build output and env files). */
 export async function listProjectFiles(projectId: string): Promise<string[]> {
   const sandbox = sandboxes.get(projectId);
