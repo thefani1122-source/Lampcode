@@ -30,6 +30,9 @@ function check(name: string, got: unknown, want: unknown): void {
   failures++;
   console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
 }
+function ok(name: string, cond: boolean): void {
+  check(name, cond, true);
+}
 
 const SERVERS: ActiveMcpServer[] = [
   { slug: "github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authToken: "tok-gh" },
@@ -72,16 +75,29 @@ check(
   false,
 );
 
-// An unannotated tool whose name does not look like a read is ambiguous. It is
-// blocked on BOTH paths — not readable, and not even write-proxyable, because
-// a proxy would turn "we don't know what this does" into an approvable action.
+// An unannotated tool whose name does not look like a read goes behind the
+// approval gate — NOT into a void.
+//
+// This case used to assert the opposite, and that is how it stayed broken for
+// two months while the owner reported it. MCP annotations are optional per the
+// spec and many servers omit them, so `name-pattern-no-match` is the ordinary
+// case for a write, not an exotic one. Denied as a read and skipped by the
+// proxy, such a tool appeared NOWHERE and the model could not see it existed.
+//
+// Measured 2026-10-16: a build asked to create a repo, push, and deploy spent
+// nine minutes calling create_repository four times — GitHub annotates that
+// one — and never pushed, because `push_files` had silently vanished.
+//
+// Fail-closed is kept. An unclassified tool is not automatically callable; it
+// is callable with the user's approval. Vanishing is not a safer default than
+// asking, it is the same denial with the reason hidden from everyone.
 check(
-  "an ambiguous tool is in neither set",
+  "an ambiguous tool is offered behind approval, not hidden",
   [
     read.toolDefs.some((d) => d.name === "github__merge_pull_request"),
     write.toolDefs.some((d) => d.name === "github__merge_pull_request"),
   ],
-  [false, false],
+  [false, true],
 );
 
 // ── The two sets must not overlap ─────────────────────────────────────────────
@@ -214,6 +230,34 @@ check(
   unwrapCreds({ creds: { creds: { github_token: "ghp_x" } } }),
   { creds: { github_token: "ghp_x" } },
 );
+
+
+// ── the habit-tracker failure, pinned ────────────────────────────────────────
+// 2026-10-16. "create a repo, push the code, deploy to vercel" → nine minutes,
+// create_repository called four times, nothing pushed, output.md written.
+// GitHub's MCP annotates create_repository as destructive, so it was offered.
+// push_files is neither read-verbed nor (on an unannotated server) marked, so
+// it was offered NOWHERE. The model was not refusing to push — it could not
+// see any way to.
+{
+  const servers = [{ slug: "github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authToken: "t" }];
+  const report = [
+    t("github", "create_repository", false, "annotation-destructive"),
+    t("github", "push_files", false, "name-pattern-no-match"),
+    t("github", "create_or_update_file", false, "name-pattern-no-match"),
+    t("github", "get_file_contents", true, "name-pattern-match"),
+  ];
+  const r = buildReadToolDefinitions(report, servers as never);
+  const w = buildWriteProxyDefinitions(report, servers as never);
+  const names = new Set(w.toolDefs.map((d) => d.name));
+
+  ok("push_files is reachable behind approval", names.has("github__push_files"));
+  ok("create_or_update_file is reachable too", names.has("github__create_or_update_file"));
+  ok("create_repository still is", names.has("github__create_repository"));
+  ok("a read tool stays on the read path", r.toolDefs.some((d) => d.name.endsWith("get_file_contents")));
+  ok("and is NOT duplicated into the write proxy", !names.has("github__get_file_contents"));
+  ok("every write-proxied tool is registered for dispatch", w.toolDefs.every((d) => w.registry.has(d.name)));
+}
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

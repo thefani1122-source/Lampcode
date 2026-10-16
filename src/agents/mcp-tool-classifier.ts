@@ -218,7 +218,29 @@ export function buildWriteProxyDefinitions(
   const registry: WriteProxyRegistry = new Map();
 
   for (const t of report) {
-    if (t.reason !== "annotation-destructive") continue;
+    // Anything not confirmed read-only belongs here, behind approval — not
+    // only the tools a server bothered to annotate as destructive.
+    //
+    // THE BUG THIS FIXES, reported by the owner repeatedly over two months and
+    // measured on 2026-10-16. A build asked to "create a repo, push the code,
+    // deploy to Vercel" spent NINE MINUTES calling `create_repository` four
+    // times, never pushed, never called deploy_app, and ended by writing
+    // prose to output.md.
+    //
+    // `create_repository` worked because GitHub's MCP annotates it as
+    // destructive. `push_files` does not match READ_VERB_RE and — on a server
+    // that leaves annotations off, which this file's own comment notes is
+    // allowed by the spec and common — classified as `name-pattern-no-match`.
+    // That reason was denied as a read AND skipped here, so the tool did not
+    // appear anywhere. The model was not refusing to push; it could not see
+    // any way to.
+    //
+    // Fail-closed is still the rule: an unclassified tool does not become
+    // automatically callable. It becomes callable WITH the user's approval,
+    // which is what the gate is for. Vanishing is not a safer default than
+    // asking — it is the same denial with the reason hidden from everyone.
+    if (t.reason === "annotation-read-only" || t.reason === "name-pattern-match") continue;
+    if (t.reason === "discovery-failed") continue;
     const server = serversBySlug.get(t.serverSlug);
     if (!server) continue;
 
