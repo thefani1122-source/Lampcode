@@ -12,6 +12,7 @@ import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiri
 import { formatSearchHits, searchFiles } from "../verify/search.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
 import { autoCheckReason } from "../verify/auto-check.js";
+import { formatInteractions } from "../verify/interactions.js";
 import type { RenderReport } from "../verify/render.js";
 import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
 import { reviewProject, formatReview } from "../verify/code-review.js";
@@ -19,6 +20,7 @@ import type { AgentDispatcher } from "./dispatcher.js";
 import {
   writeFilesToSandbox,
   verifyBrowserRender,
+  checkInteractions,
   checkRender,
   runTypeCheck,
   runTests,
@@ -471,6 +473,12 @@ export interface ToolExecutionContext {
    *  calls check_page eight times should not pay eight times for the same
    *  unchanged page. Last sweep wins. */
   lastRender?: { report: RenderReport | null } | undefined;
+  /** Whether the controls have been operated yet this build. The probe drives
+   *  a real browser and costs seconds, so it runs ONCE — the first time every
+   *  page renders cleanly, which is the first moment its answer can mean
+   *  anything. Before that a dead button is indistinguishable from a page that
+   *  never loaded. */
+  interactionsProbed?: { value: boolean } | undefined;
   /** Monotonic count of write_files/edit_file calls this build. Only meaningful
    *  relative to itself — it exists to date the gate results above. */
   writeCounter?: { value: number } | undefined;
@@ -601,7 +609,35 @@ async function runPageSweep(
   // same working pages.
   const previous = ctx.lastRender?.report ?? null;
   if (ctx.lastRender) ctx.lastRender.report = report;
-  const out = formatRenderForAgent(report, previous);
+  let out = formatRenderForAgent(report, previous);
+
+  // Pages render — so now ask whether anything on them WORKS.
+  //
+  // This is the question the render sweep cannot answer and the one the owner
+  // keeps asking: buttons that are there and do nothing. The probe already
+  // existed, but it ran at the end of finishPreview, after the build was
+  // delivered, so the model never saw a word of it. A finding the builder
+  // cannot act on is a report, not a check.
+  //
+  // Gated twice on purpose. Only when every route renders — a dead button and
+  // a page that never loaded are indistinguishable otherwise — and only ONCE
+  // per build, because driving a real browser over several pages costs seconds
+  // and the answer rarely changes twice.
+  if (allRoutesOk(report) && ctx.interactionsProbed && !ctx.interactionsProbed.value) {
+    ctx.interactionsProbed.value = true;
+    const routes = report.routes.map((r) => r.route);
+    const { findings, ran } = await checkInteractions(projectId, routes);
+    console.log(
+      `[tools] interactions in-build trigger=${trigger} routes=${routes.length} ` +
+      `ran=${ran} findings=${findings.length}`,
+    );
+    if (ran && findings.length > 0) {
+      out += `\n\n${formatInteractions(findings)}`;
+    } else if (ran) {
+      out += `\n\nI also operated the controls on those pages: every button, link and form I ` +
+        `could try produced a visible response.`;
+    }
+  }
 
   // This tool's result goes to the MODEL and nowhere else, so without this
   // line there is no way to tell from outside whether the sweep ran, how many

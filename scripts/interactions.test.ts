@@ -76,7 +76,28 @@ ok("script never references baked renderer", !INTERACTION_SCRIPT.includes("check
 ok("script opens the preview port", INTERACTION_SCRIPT.includes('http://localhost:5173'));
 const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
 ok("runtime writes into tooling directory", service.includes('sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT)'));
-ok("runtime supplies browser environment", service.includes('`${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs`'));
+// Asserts the INTENT — the baked Playwright is on the path and the runtime
+// script is what runs — rather than one exact command string. The previous
+// version matched the string verbatim and broke the moment routes were passed
+// as arguments, which is a case failing for a change that was correct.
+ok(
+  "runtime supplies browser environment",
+  /\$\{TOOLS_ENV\} node \$\{TOOLS_DIR\}\/lampcode-interact\.mjs/.test(service),
+);
+ok(
+  "runtime passes the routes to probe",
+  /lampcode-interact\.mjs http:\/\/localhost:5173 \$\{JSON\.stringify\(JSON\.stringify\(routes\)\)\}/.test(service),
+);
+
+// The probe used to open "/" and nothing else, so a multi-page app's own
+// buttons were never touched — the owner's standing complaint, literally true
+// of this script.
+ok("script reads routes from its arguments", INTERACTION_SCRIPT.includes("process.argv[3]"));
+ok("script loops over them", /for \(const route of routes\)/.test(INTERACTION_SCRIPT));
+ok("each entry records which route it came from", INTERACTION_SCRIPT.includes("route,"));
+// Without a per-page cap the home page eats the shared budget and every later
+// route reports "not attempted" — the same blindness, moved one step along.
+ok("the budget is spread across pages", INTERACTION_SCRIPT.includes("PER_ROUTE"));
 
 console.log(failures === 0 ? "\nAll interaction cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);

@@ -540,6 +540,8 @@ export class AgentDispatcher {
     // Carries the previous render sweep so a repeat check_page reports only
     // what moved. One object for the whole loop, same reasoning as gateResults.
     const lastRender: { report: RenderReport | null } = { report: null };
+    // Once per build — see ToolContext.interactionsProbed.
+    const interactionsProbed = { value: false };
     const writeCounter = { value: 0 };
     const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0 };
     const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
@@ -692,6 +694,7 @@ export class AgentDispatcher {
                 projectFiles: options.projectFiles,
                 gateResults,
                 lastRender,
+                interactionsProbed,
                 writeCounter,
                 churn,
                 deadCode,

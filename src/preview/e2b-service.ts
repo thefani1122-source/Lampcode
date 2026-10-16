@@ -878,14 +878,15 @@ export async function checkRender(
  */
 export async function checkInteractions(
   projectId: string,
+  routes: string[] = ["/"],
 ): Promise<{ findings: InteractionFinding[]; ran: boolean }> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { findings: [], ran: false };
   try {
     await sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT);
     const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs`,
-      { timeoutMs: 60_000 },
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))}`,
+      { timeoutMs: 90_000 },
     );
     return { findings: parseInteractionReport(r.stdout), ran: true };
   } catch (err) {
