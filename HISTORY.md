@@ -3450,3 +3450,62 @@ had opened a single page.** The automatic sweep opened all four.
 The `stale` trigger has not fired on a real build — this one hit `never` first and reset the
 counter. Covered by cases only. It needs a build where the model checks once and then keeps
 writing, which is the shape the 10-15 multi-page build produced before this change existed.
+
+## CONTROLS ARE OPERATED ON EVERY PAGE, DURING THE BUILD — 2026-10-16
+
+Two gaps in the same probe, both measured, both closed.
+
+It opened `/` and nothing else — `const target = "http://localhost:5173"` was hardcoded — so a
+multi-page app's own buttons were never touched. The owner's standing complaint about pages that
+do nothing was literally true of the script meant to catch it.
+
+And it ran at the END of `finishPreview`, after the build was delivered, so the model never saw
+a word of it. **A finding the builder cannot act on is a report, not a check.**
+
+### What it does now
+
+Takes the routes the project declares and loops them, with a per-page cap so the home page
+cannot eat the shared budget and leave later routes reporting "not attempted". Runs INSIDE the
+build, appended to the page sweep, gated twice: only when every route renders (a dead button and
+a page that never loaded are otherwise indistinguishable) and only ONCE per build.
+
+### Proven locally before committing, then in production
+
+A real two-route site with a live button, a dead one, and a second page the old probe could
+never reach:
+
+```
+findings: 2
+  [button-no-change] Does nothing   @ /
+  [button-no-change] Save settings  @ /settings/
+```
+
+7.6s for two routes, and **the working button was not flagged** — zero false positives, which is
+the number that matters, since a false finding spends a repair rewriting correct code.
+
+Then on a real build, deploy `7971f24`:
+
+```
+[tools] interactions in-build trigger=never routes=4 ran=true findings=0
+```
+
+### The diff is now proven in production too
+
+Recorded yesterday as covered by cases only. The same build produced both halves:
+
+```
+[tools] page sweep trigger=never routes=4 broken=0 repeat=false chars=1788
+[tools] page sweep trigger=asked routes=4 broken=0 repeat=true  chars=83
+```
+
+**1788 → 83 characters**, about 21x smaller, flat in the number of routes — exactly the claim
+made for it. The second call also shows `trigger=asked`: the model called `check_page` itself,
+so the automatic path and the model's own use coexist without duplicating work.
+
+### Not verified
+
+- **A non-zero finding in production.** This build's controls all responded, so the path that
+  reports a dead button to the model has still only run locally.
+- **Scripted steps** (type, log in, multi-step) are deliberately absent. That is D3, where
+  journeys come from the criteria the completion audit already extracts; inventing the API now
+  would be guessing.
