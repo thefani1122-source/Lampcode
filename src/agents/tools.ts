@@ -9,6 +9,7 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
+import { formatSearchHits, searchFiles } from "../verify/search.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
 import { autoCheckReason } from "../verify/auto-check.js";
 import type { RenderReport } from "../verify/render.js";
@@ -325,6 +326,27 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "search_code",
+    description:
+      "Search the current project source already held in this build, without reading from " +
+      "the sandbox or disk. Use this to find definitions, usages, or related code across " +
+      "files instead of opening files one at a time. Literal search is the default; set " +
+      "is_regex to true to use a regular expression. Results include the matching line and " +
+      "up to two nearby lines. Vendor, build, oversized, and binary-like files are skipped, " +
+      "and the result says how many files were skipped. Invalid regular expressions are " +
+      "reported as an ordinary error.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Text to find, or a regular expression when regex is true." },
+        is_regex: { type: "boolean", description: "Treat query as a regular expression instead of literal text." },
+        path_glob: { type: "string", description: "Optional project-relative glob, e.g. \"src/**/*.ts\"." },
+        max_results: { type: "number", description: "Maximum matches to return. Defaults to 40." },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "read_file",
     description:
       "Read one project file's current contents from the sandbox. This is the real file on " +
@@ -636,6 +658,7 @@ export async function executeTool(
     name === "check_types" ||
     name === "run_tests" ||
     name === "list_files" ||
+    name === "search_code" ||
     name === "read_file" ||
     name === "read_logs" ||
     name === "find_dead_code" ||
@@ -644,6 +667,20 @@ export async function executeTool(
     name === "review_code" ||
     name === "fetch_reference"
   ) {
+    if (name === "search_code") {
+      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
+      if (Object.keys(files).length === 0) {
+        return "There are no project files to search yet. Search after code has been written.";
+      }
+      const query = typeof args["query"] === "string" ? args["query"] : "";
+      return formatSearchHits(searchFiles(files, {
+        query,
+        isRegex: args["is_regex"] === true,
+        ...(typeof args["path_glob"] === "string" ? { pathGlob: args["path_glob"] } : {}),
+        ...(typeof args["max_results"] === "number" ? { maxResults: args["max_results"] } : {}),
+      }));
+    }
+
     // Handled before the sandbox check on purpose: this one reads the file set
     // this build already holds, so it works on a cold sandbox and costs
     // nothing. Requiring a projectId would make it unavailable in exactly the
