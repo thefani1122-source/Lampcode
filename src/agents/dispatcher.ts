@@ -188,7 +188,7 @@ export interface DispatchResult {
    *  between new files, whole-file replacements and surgical edits. `removed`
    *  near zero while `added` climbs is an edit bolting a new path on beside the
    *  old one, which is the shape that makes a project grow forever. */
-  churn: { added: number; removed: number; created: number; replaced: number; edited: number };
+  churn: { added: number; removed: number; created: number; replaced: number; edited: number; deleted: number };
   /** What find_dead_code reported, if the model called it. `called: false`
    *  means it never asked — a different fact from "it asked and found none". */
   deadCode: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number };
