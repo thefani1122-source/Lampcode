@@ -3817,3 +3817,88 @@ ask, and spending the single ask on a question nobody saw would be worse than no
 - **End to end on a running system.** Neither half has met the other: no build has been run, so
   the emit, the new tab, the poll and the re-check have each been reasoned about and typechecked
   but never observed together. That is the next thing to prove, and it needs a real build.
+
+---
+
+## RECONCILING THE PLAN AGAINST THE REPO — 2026-10-17
+
+An outside reconciliation of the branch was offered. It was checked claim by claim against the
+working tree, the tool registry, the live database and git, rather than accepted. It was mostly
+right; the corrections below are the part worth keeping.
+
+### Confirmed
+
+- **`PLAN.md` was stale.** It still listed a Vercel token as an owner action and four section-B
+  rows as unstarted. Rewritten.
+- **`build_messages` RLS is still open** — re-queried today: 3253 rows, `rls_enabled: false`.
+- **E1–E4, C1–C4, F1/F3/F4, H2, H5, I1–I3, `code_intel`, `impact_analysis`, `shell`,
+  `web_search` are all genuinely absent.** Checked by grep and by the tool registry, not assumed.
+- **`browser_interact` is partial** — the probe operates buttons, links and forms on every route;
+  there is no scripted click/type/wait/assert.
+- **`H4` is a stub in the sense that matters:** `vercel.ts` exports `deployToVercel` and helpers
+  and nothing for status, build logs, runtime logs, redeploy, rollback or env names.
+
+### Corrected
+
+**"main and the branch have diverged and must be reconciled" — overstated.** The branch is 14
+ahead and 6 behind, but every one of `main`'s six commits is a cherry-pick of a commit already on
+the branch (`git cherry` confirms four by patch-id; the other two differ only because their
+cherry-pick resolved a `package.json` conflict). `main` is a subset, not a fork. The single thing
+to reconcile at merge time is the test chain in `package.json`, which on `main` deliberately omits
+Codex's case files because `main` does not carry Codex's modules.
+
+**`A2` is done, not pending.** `user_mcp_connections` carries a `vercel` row connected
+2026-10-16, alongside `github` from 2026-10-04. The deploy path is no longer waiting on the
+owner; it is waiting on a deploy nobody has watched succeed.
+
+**`E1` is much smaller than "not started".** `src/verify/import-graph.ts` already exports
+`buildImportGraph`, `resolveSpecifier` and `importSpecifiers`. Only the cycle walk is missing.
+
+**`I1`'s numbers were stale in our own file.** `executeTool` is **965 lines and 21 branches**
+today, where `PLAN.md` recorded 758 and 29. It is growing, which strengthens the case for doing
+the registry before the P1 tools land.
+
+### Found while checking, and missed by the reconciliation
+
+**`user_integrations` holds ZERO rows.** Nobody has connected a Supabase project — the owner
+included. Combined with the preview project holding no app tables, this closes the loop from the
+other side: **every one of the 416 projects was built with no database at all.** It also means
+the connect-your-database gate will fire for the owner on their own next full-stack build, which
+is the cheapest possible way to exercise it.
+
+### `diff_since` erases real edits — reproduced, not reported
+
+The reconciliation called this a pending optimisation for large created or deleted files. It is
+a defect, and it was measured rather than argued:
+
+```
+4 files of 11,000 new lines + a one-line edit to src/small.ts
+  → filesChanged=0  added=0  removed=0   src/small.ts ABSENT from the output
+same edit alone                          → filesChanged=1, present
+same edit + ONE large new file           → filesChanged=1, present
+```
+
+A pure create has no old side and a pure delete has no new side, so the answer is trivially
+all-add or all-remove — but the code still calls Myers, which spends work proportional to the
+file and draws it from the shared `MAX_TOTAL_WORK`. Three or four large new files exhaust the
+budget, and every file after them is dropped as `computeOmitted`.
+
+To Codex's credit the output does not lie: it says "these counts are not complete project
+totals". So the model is misled about nothing — it simply cannot see the change it just made,
+which on a build that creates several large files is exactly when it would ask.
+
+The fix is to skip Myers when one side is absent. Recorded as P0.2, and left to Codex since it
+is their module.
+
+### Verified
+
+- Every claim above comes from a command run today: `git cherry`, `git rev-list`, the tool
+  registry grep, `list_tables`, a `user_mcp_connections` query, and a reproduction script for
+  the diff defect.
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux at `5861e36`.
+
+### Not verified
+
+- **Nothing in the "written but unproven" list was run.** That list is now explicit in
+  `PLAN.md`, which is the point: six things are merged and green and have never been watched
+  working.
