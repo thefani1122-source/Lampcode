@@ -3945,3 +3945,82 @@ the surrounding lines rather than trusting the edit, and it is now case 7.
   proven by cases: the model may still write a module-level client despite being told twice.
   The proof is a build whose generated app signs a user in, writes a row, and does NOT return
   another user's rows. That is next, and it needs G6's gate to connect a Supabase first.
+
+### 283 tools a round, and a build that never wrote App.tsx — 2026-10-17
+
+The first real test of the database gate failed, and not on the gate. Build `cbd7099d`, on
+deploy `cf9aed46` (SUCCESS at 15:25:12, build started 15:28:38 — so it ran on the new code).
+
+**The gate itself worked.** `[build] db gate project=8a880df7 intent=connect connected=false`,
+twelve seconds in. The popup appeared, the answer came back as "connect", the re-check found no
+integration, and the build continued without a database — the designed fallback, exactly as
+written. Twelve seconds is too fast for the new-tab flow, so the most likely explanation is that
+Vercel had not yet redeployed the frontend and the OLD `QuestionPrompt` rendered the option as a
+plain button that sends its label. Unproven, and cheap to re-test.
+
+**What actually killed it was the tool list.** Round 5's `toolsSent`:
+
+```
+21 github writes, 95 vercel writes, 28 github reads, 130 vercel reads,
+then — last in the list — ask_user, write_files, edit_file, check_page, …
+283 definitions, every round
+```
+
+and the round itself:
+
+```
+15:30:55 [stream] loop done: totalChunks=2 contentChunks=0 fullContentLen=0 stopReason=undefined
+15:30:56 Parse failure: src/App.tsx missing from new build output
+```
+
+`totalChunks=2` is the number CLAUDE.md says to read first: **zero events parsed.** The gateway
+returned nothing. The model wrote 7 files across earlier rounds and never reached the one file
+the build requires.
+
+**This is new, and the date says why.** Only GitHub was connected until 2026-10-16, when Vercel
+was added — and Vercel alone brings ~225 tools. Before that the list was ~47.
+
+CLAUDE.md already held the principle and had applied it to the wrong half: Firecrawl and Exa are
+deliberately kept off this gateway because "each costs a discovery round trip plus its full tool
+list in every round's context". Nobody extended that to the servers a user connects.
+
+### The fix: attach what the request points at, and cap what is left
+
+`src/agents/mcp-relevance.ts`:
+
+- **`serversForPrompt`** — a connected server is attached when the request names it, or uses a
+  word that means its category is in play (deploy / repo / automation / cms / design / tracker).
+  A plain "build me an issue tracker" attaches **none**; "create a repo, push, and deploy to
+  vercel" attaches **exactly GitHub and Vercel**.
+- **`capMcpTools`** — a ceiling of 80 definitions per dispatch even after filtering, because
+  Vercel alone would re-create this failure on the very deploy build that asked for it. Tools
+  whose names the request gestures at are kept first, then the rest in a stable order, and the
+  omitted count is logged rather than the list quietly shortening.
+
+**The registry is not capped — only the definitions sent.** A tool trimmed from this round is
+still executable if the model names it from an earlier one. That is the difference between "not
+offered right now" and "gone", and this file has made the wrong one of those before.
+
+**Nothing loses a capability.** `deploy_app` is a NATIVE tool using the Vercel token directly,
+not MCP, so dropping the Vercel MCP server from an unrelated build removes nothing that build
+could have used.
+
+This is explicitly NOT the upfront keyword gate `build.ts` records having removed. That one
+decided whether to FETCH, which is a cheap local query. This decides what to ATTACH to a
+dispatch, which is neither cheap nor local.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 19 cases, weighted toward the opposite mistake: eight separate "this request must KEEP its
+  server" cases against two drop cases, plus the ranking, stability and empty-prompt behaviour
+  of the cap. The regression itself is case 1.
+- `[tools] interactions in-build ... ran=true` and `page sweep ... chars=323` appear in the same
+  failed build's logs — B6/B7 ran correctly throughout.
+
+### Not verified
+
+- **No build has run on the fix.** The claim that a clean context lets the model finish App.tsx
+  is the whole point and is unproven.
+- **Why the gate answered in twelve seconds** is inferred from the Vercel deploy timing, not
+  observed.
