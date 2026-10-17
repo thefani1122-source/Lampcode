@@ -13,6 +13,7 @@
  * finding: reporting a clean PASS over files that were never scanned.
  */
 
+import { readFileSync } from "node:fs";
 import { checkAuth, checkCORS, type FileTree } from "../src/verify/security.js";
 
 let failures = 0;
@@ -23,6 +24,11 @@ function check(name: string, got: unknown, want: unknown): void {
   }
   failures++;
   console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
+}
+
+/** For assertions that are already a boolean rather than a comparison. */
+function ok(name: string, cond: boolean): void {
+  check(name, cond, true);
 }
 
 const tree = (files: Record<string, string>): FileTree => new Map(Object.entries(files));
@@ -207,6 +213,41 @@ check(
   ).status,
   "fail",
 );
+
+// ── G1: no service-role key for the SHARED preview project ───────────────────
+// Decided 2026-10-17. The shared preview Supabase sits behind every user's
+// preview at once, and a service-role key bypasses RLS entirely, so the code it
+// was handed to — model-written, steered by whatever a stranger typed — could
+// read and write every other user's preview rows.
+//
+// These read the files as TEXT on purpose. Importing e2b-service.ts outside the
+// server process hangs (it pulls config, Redis and the E2B SDK), which is the
+// same reason review-units.ts copies its baked-file list instead of importing
+// it. Each assertion is written against the INTENT, not a line, so that a
+// rename or a reformat does not fail it and a reintroduced key cannot pass it.
+{
+  const configSrc = readFileSync(new URL("../src/server/config.ts", import.meta.url), "utf8");
+  const previewSrc = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+
+  ok(
+    "config declares no shared preview service key",
+    !/PREVIEW_SUPABASE_SERVICE_KEY\s*:\s*z\./.test(configSrc),
+  );
+  ok(
+    "the .env writer cannot source one from config",
+    !/config\.PREVIEW_SUPABASE_SERVICE_KEY/.test(previewSrc),
+  );
+  // The capability is narrowed, not deleted: a user's own connected project
+  // still gets its key, because the schema is applied there and it is their
+  // data. A change that removed this too would be over-correcting, and silently.
+  ok(
+    "a user's own project still passes its service key",
+    /override\?\.serviceKey/.test(previewSrc),
+  );
+  // The original guard, still worth pinning: whatever else happens, a service
+  // key must never reach the browser. Vite exposes exactly the VITE_ prefix.
+  ok("no service key is ever VITE_-prefixed", !/VITE_SUPABASE_SERVICE/.test(previewSrc));
+}
 
 if (failures > 0) {
   console.error(`\n${failures} security case(s) FAILED`);

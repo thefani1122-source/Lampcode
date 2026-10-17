@@ -21,10 +21,25 @@ const envSchema = z.object({
   // render. The anon key is public (RLS-protected) — safe to embed in previews.
   PREVIEW_SUPABASE_URL: z.string().url().optional(),
   PREVIEW_SUPABASE_ANON_KEY: z.string().min(1).optional(),
-  // Service-role key for the shared preview project. Injected ONLY into the
-  // backend process env (never VITE_, never the frontend) so generated Node/Hono
-  // backends can do real server-side work (bypass RLS, admin writes, webhooks).
-  PREVIEW_SUPABASE_SERVICE_KEY: z.string().min(1).optional(),
+  // PREVIEW_SUPABASE_SERVICE_KEY used to live here: a service-role key for the
+  // SHARED preview project, injected into every sandbox's backend env.
+  //
+  // G1, decided 2026-10-17. It is gone, and deliberately not replaced by a
+  // disabled flag. The shared preview project is one database behind every
+  // user's preview, and a service-role key bypasses RLS completely — so the
+  // code it was handed to, which is model-written and steered by whatever a
+  // stranger typed into the prompt box, could read and write every other
+  // user's preview rows. The key was never set on production, so nothing is
+  // being taken away; what is being removed is the one-line path from
+  // `railway variables set` to a cross-tenant hole, with nobody reviewing it.
+  //
+  // A user's OWN connected Supabase is a different question and keeps its
+  // service key (see writePreviewEnv): their project, their data, connected
+  // deliberately, and the generated schema is applied to it so the app has
+  // tables to talk to. HISTORY.md holds the rest of that decision, including
+  // the part that is NOT fixed: a backend holding only the anon key has no
+  // user identity, so `auth.uid()` is null and every owner-scoped RLS policy
+  // denies it. The real answer is forwarding the caller's JWT per request.
   // Shared preview MongoDB connection string — injected into the backend env
   // (MONGODB_URI) so generated MongoDB apps can connect & persist in the preview.
   PREVIEW_MONGODB_URI: z.string().min(1).optional(),
