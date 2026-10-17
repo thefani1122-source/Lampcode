@@ -42,6 +42,12 @@ import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpSer
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { findDataLayerGaps, formatDataLayerForUser } from "../../verify/data-layer.js";
+import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
+import {
+  buildDatabaseQuestion,
+  interpretDatabaseAnswer,
+  shouldAskForDatabase,
+} from "../database-prompt.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
@@ -945,7 +951,64 @@ export async function runFastBuild(
       // If the user has connected their OWN Supabase (via MCP), point this
       // project's preview at THEIR project; else fall back to the shared
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
-      const userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+      let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+
+      // No database of their own, and a full-stack app is about to be built on
+      // top of nothing. Ask now, because the sandbox .env is written during
+      // prewarm below and a project connected after that arrives too late to
+      // change what the app points at.
+      //
+      // The answer is never trusted — it only ends the wait. What decides is
+      // re-reading the integration, so "done" from someone who did not finish
+      // the flow lands exactly where declining does, with no false promise of
+      // persistence.
+      // `server &&` comes before the once-per-project check on purpose: with no
+      // socket there is nobody to ask, and consuming the single ask on a
+      // question that was never shown would mean the person is never asked at
+      // all — a gate that silently spends itself is worse than no gate.
+      if (!userSupa && server && shouldAskForDatabase(projectId)) {
+        const { question, options } = buildDatabaseQuestion();
+        const toolCallId = `db-gate:${randomUUID()}`;
+        const answer = await new Promise<string | null>((resolve) => {
+          let settled = false;
+          const done = (v: string | null) => {
+            if (settled) return;
+            settled = true;
+            resolve(v);
+          };
+          try {
+            void createPendingAnswer(toolCallId, sessionId).then(done);
+            server?.emitToRoom(sessionId, "build:question_asked", {
+              toolCallId,
+              question,
+              options,
+              timeoutMs: ANSWER_TIMEOUT_MS,
+              sessionId,
+            });
+            setTimeout(() => done(null), ANSWER_TIMEOUT_MS);
+          } catch {
+            // Nobody is listening, so nothing can be asked. Build as before.
+            done(null);
+          }
+        });
+
+        const intent = interpretDatabaseAnswer(answer);
+        if (intent === "connect") {
+          userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+        }
+        console.log(
+          `[build] db gate project=${projectId} intent=${intent} connected=${userSupa !== null}`,
+        );
+        if (intent === "connect" && !userSupa) {
+          server?.thinking(sessionId, {
+            sessionId,
+            text:
+              "I could not see a connected Supabase project yet, so I am building without one. " +
+              "Connect it and ask me again and I will create the tables.",
+          });
+        }
+      }
+
       setProjectPreviewEnv(projectId, userSupa);
       ownSupabaseConnected = userSupa !== null;
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);

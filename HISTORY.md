@@ -3766,3 +3766,54 @@ findings.** Most generated apps are not database apps.
 - **The product decision is still open.** Nothing here chooses between making "connect your
   Supabase" a required step and paying for per-app projects; it only stops the failure being
   silent while that is decided.
+
+### The gate: ask for a database before building an app that needs one — 2026-10-17
+
+The owner's call, after the research above: a full-stack build now **stops and asks** for a
+Supabase project before it generates anything.
+
+**Why before generation, not after.** The sandbox `.env` is written during `prewarmSandbox`,
+which runs inside the same block. A project connected halfway through a build arrives too late
+to change what the app is pointed at, so a notification the person reads at the end is a
+notification about something that can no longer be fixed.
+
+**Nothing new was invented.** `ask_user` already blocks a build on a question, `pending-answers.ts`
+already holds the 10-minute window with its session-identity check and disconnect sweep, and
+`QuestionPrompt` already renders the question with recommended options. The gate emits the same
+`build:question_asked` event those use. What was added is one idea: **an option can carry an
+ACTION instead of an answer**, because "connect your Supabase" is a thing to do, and sending the
+string "Connect Supabase" back to a build waiting for a database would be a lie.
+
+So the flow is: option pressed → `/mcp?connect=supabase` opens in a **new tab** (a navigation
+would drop the socket the paused build is waiting on) → the connect form opens on arrival rather
+than a grid of thirty services → the workspace polls `/api/integrations` every 4s → on seeing it
+connected, it answers for them.
+
+**The answer is never trusted.** It only ends the wait. What decides is re-reading
+`getUserSupabasePreviewCreds`, so someone who types "done" without finishing lands exactly where
+declining does, with no false promise of persistence.
+
+Three things the gate deliberately cannot do:
+
+- **It cannot withhold a build.** Declining is a listed, first-class option, and a timeout
+  proceeds exactly as today. The gate can only ever add a database.
+- **It cannot read a refusal as consent.** "don't connect anything" contains the word connect, so
+  the decline patterns are matched first and the cases pin that ordering rather than trusting it.
+  A timeout and an empty box are `unclear`, never a yes.
+- **It cannot nag.** Asked at most once per project per process. A gate that reappears on every
+  follow-up is one people learn to click past without reading.
+
+`server &&` is evaluated before the once-per-project check: with no socket there is nobody to
+ask, and spending the single ask on a question nobody saw would be worse than no gate.
+
+### Verified
+
+- Backend: `npm run typecheck`, `npm test` and `npm run build` pass on Linux. 27 cases in
+  `scripts/database-prompt.test.ts`, weighted toward the two failure modes above.
+- Frontend: `tsc --noEmit` and `vite build` pass.
+
+### Not verified
+
+- **End to end on a running system.** Neither half has met the other: no build has been run, so
+  the emit, the new tab, the poll and the re-check have each been reasoned about and typechecked
+  but never observed together. That is the next thing to prove, and it needs a real build.
