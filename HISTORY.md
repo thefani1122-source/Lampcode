@@ -3509,3 +3509,102 @@ so the automatic path and the model's own use coexist without duplicating work.
 - **Scripted steps** (type, log in, multi-step) are deliberately absent. That is D3, where
   journeys come from the criteria the completion audit already extracts; inventing the API now
   would be guessing.
+
+---
+
+## G1 AND H1 — THE SANDBOX SECRET, AND WHICH MCP PROTOCOL WE SPEAK — 2026-10-17
+
+Both were decisions waiting on an answer, and both answers came from reading what is installed
+and what is deployed rather than from a changelog. Neither cost a build.
+
+### H1 — the installed SDK negotiates 2025-11-25, and statelessness needs nothing from us
+
+`package.json` pins `@modelcontextprotocol/sdk` at `^1.29.0`, which resolves to **1.32.1** today.
+Read from the installed package, not the release notes:
+
+```
+LATEST_PROTOCOL_VERSION            = 2025-11-25
+DEFAULT_NEGOTIATED_PROTOCOL_VERSION = 2025-03-26
+SUPPORTED_PROTOCOL_VERSIONS        = 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07
+```
+
+The client sends `LATEST_PROTOCOL_VERSION` on `initialize`, then accepts whatever the server
+replies with **provided it is in `SUPPORTED_PROTOCOL_VERSIONS`** — anything else is a hard throw,
+`Server's protocol version is not supported`. On success it calls `transport.setProtocolVersion`,
+and the transport sends the negotiated value as an `mcp-protocol-version` header on every later
+request.
+
+**Statelessness is a non-issue for us, which was the actual worry.** The transport sends
+`mcp-session-id` only when a server handed one back (it reads the header off the initialize
+response and stores it). A stateless server simply never gets the header. And our own usage is
+`connect → listTools → callTool → close` inside one build, so neither shape changes anything.
+
+The one real risk is the `^`: the floor is pinned, the protocol is not. If a minor bump moves
+`LATEST` past what a connected server supports, the throw lands inside `discoverServerTools`,
+which catches it, pushes a `failures` entry and returns zero tools. That is correct fail-closed
+behaviour **and** it is indistinguishable in the logs from a flaky server, so the cause would
+never be found. Four cases in `scripts/mcp-tools.test.ts` now pin the version set, so the drift
+fails on the machine that runs the upgrade instead of on a user's build.
+
+No code change was needed. **H1 is answered, not implemented** — that was the task.
+
+### G1 — the shared preview service key is gone, and the real problem is not the key
+
+The question was whether `PREVIEW_SUPABASE_SERVICE_KEY` belongs in the sandbox at all. Three
+things were found, and only the first was expected.
+
+**1. It was never set.** `railway variables` on the production Lampcode service lists
+`PREVIEW_SUPABASE_URL` and `PREVIEW_SUPABASE_ANON_KEY` and **no** `PREVIEW_SUPABASE_SERVICE_KEY`.
+So the hole was one `railway variables set` away, not open.
+
+It is now removed from `config.ts` outright rather than left as a disabled option, because the
+shared preview project is one database behind **every** user's preview, a service-role key
+bypasses RLS completely, and the code it would be handed to is model-written and steered by
+whatever a stranger typed into the prompt box. Setting the variable now does nothing; the code
+never reads it. `.env.example` says so in place of the old line, so the next person does not
+helpfully add it back.
+
+**A user's own connected Supabase keeps its service key.** Their project, their data, connected
+deliberately — and `build.ts` applies the generated schema there, so the app has tables to talk
+to. After this change a service key can only ever accompany `override.url`, which is that same
+project; there is no path that mixes one user's key with a shared URL.
+
+**2. The anon key alone gives the backend no identity.** The prompt's DB client is a
+module-level `createClient(url, SUPABASE_SERVICE_KEY || SUPABASE_ANON_KEY)` with no auth header
+(`prompt-builder.ts`, and the same shape in the Python path). With the service key it bypasses
+RLS, so the four RLS patterns the prompt carefully teaches are decorative. With the anon key and
+no user JWT, `auth.uid()` is **null**, so every `owner_*` and `team_member_*` policy denies it.
+
+So "remove the key" and "keep the key" are both wrong, and that is the finding. The correct shape
+is forwarding the caller's JWT per request, which is a prompt change plus a real build to prove.
+**Not done, and deliberately not started here** — it is prompt-adjacent, which is trap 4.
+
+**3. On the shared preview, DB-backed apps cannot work at all — and fail silently.**
+`build.ts` applies `src/db/schema.sql` only when the user connected their own Supabase, with an
+explicit comment that generated SQL is never run against a shared or platform database. That is
+the right call. But it means that for every user **without** their own project, the tables the
+generated app queries were never created. The generated error handling then swallows it: the
+Python path is `except Exception: return []`, and the Node path destructures `{ data, error }`
+and renders `data`. The user gets an empty list, not an error.
+
+This supersedes nothing in CLAUDE.md — the note there says the preview Supabase is ACTIVE again,
+which is true. Active is not the same as having the app's tables. A build whose every gate passes
+can still hand someone an app whose data layer never had a chance, and the audit cannot see it
+because an empty list is what an empty table looks like.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` all pass on Linux.
+- Four H1 cases and four G1 cases, read against the files as TEXT (importing `e2b-service.ts`
+  outside the server process hangs — trap 9), each asserting intent rather than a line.
+- The G1 cases also pin the narrowing: one asserts the user's-own path still passes its key, so
+  an over-correction that removed that too would fail.
+
+### Not verified
+
+- **No build was run.** Nothing here was observed at the layer a user meets, which by this
+  repo's own definition of done means G1's code change is step 1 and 2 only. The change can only
+  remove a capability that production never had set, so the risk is bounded, but it is not proof.
+- **Finding 2 and 3 are read from the code, not reproduced.** The claim that `auth.uid()` is null
+  for an anon-key backend client, and that a missing table surfaces as an empty list, follows from
+  the prompt text and Supabase's semantics; neither was driven on a real preview.

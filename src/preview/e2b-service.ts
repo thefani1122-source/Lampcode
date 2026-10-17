@@ -434,7 +434,14 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
     anon = undefined;
   }
 
-  const serviceKey = override?.serviceKey ?? config.PREVIEW_SUPABASE_SERVICE_KEY;
+  // ONLY from the user's own connected project — never a shared one. G1,
+  // 2026-10-17: a service-role key bypasses RLS, and the shared preview project
+  // sits behind every user's preview at once, so handing that key to generated
+  // code meant any app could reach any other user's preview rows. The shared
+  // key no longer exists in config at all, so this can only ever be the key for
+  // the same project `override.url` points at, which the person connected
+  // themselves and whose schema we apply for them.
+  const serviceKey = override?.serviceKey;
   const mongoUri = config.PREVIEW_MONGODB_URI;
 
   // VITE_* → frontend (import.meta.env); plain keys → Node backend (process.env
@@ -447,7 +454,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
       `VITE_SUPABASE_URL=${url}\nVITE_SUPABASE_ANON_KEY=${anon}\n` +
       `SUPABASE_URL=${url}\nSUPABASE_ANON_KEY=${anon}\n` +
       (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
-    if (serviceKey) log("Backend has service-role access to Supabase");
+    if (serviceKey) log("Backend has service-role access to your own Supabase project");
   }
   if (mongoUri) {
     env += `MONGODB_URI=${mongoUri}\n`;

@@ -126,7 +126,8 @@ it was already caught **reporting a clean pass over zero files scanned** (Findin
 
 | # | Task | Owner | Done means |
 |---|---|---|---|
-| **G1** | **Decide the sandbox secret question**: does `PREVIEW_SUPABASE_SERVICE_KEY` belong in the sandbox at all? It bypasses RLS and the generated app needs only the anon key. **Blocks G4** | **Claude + owner** | Written decision in `HISTORY.md`, and the `.env` writer changed to match |
+| **G5** | **The generated backend has no user identity.** Its Supabase client is created once with a key and no auth header, so the service key bypasses every RLS policy the prompt teaches, and the anon key makes `auth.uid()` null and every owner-scoped policy deny. Forward the caller's JWT per request. Found while doing G1 — see `HISTORY.md`, 2026-10-17 | **Claude** (prompt text, trap 4) | A real build where a user can read their own row and NOT another user's |
+| **G6** | **On the shared preview, `schema.sql` is never applied**, so a DB-backed app queries tables that do not exist — and the generated error handling returns an empty list, so every gate passes and the user sees a blank app. Decide: apply it to a per-build schema, or say plainly in the UI that persistence needs their own Supabase. Found while doing G1 | **Claude + owner** | A real build either persists a row or tells the user why it cannot |
 | **G2** | Threat-model extraction: derive task-specific security checks from the user's prompt, with a pass that cannot write code — the completion-audit shape | **Claude** (prompt text, trap 4) | Different prompts produce genuinely different checks; probe set like `audit-probe` |
 | **G3** | Verify each check: statically where possible, by **driving the app** where not (sign in as B, request A's resource), plus an adversarial pass. Verdicts stay `proven`/`contradicted`/`unverified` | **Claude** | A seeded authorization hole is caught on a real build |
 | **G4** | Retire the pattern checks, **keeping** `checkPackages` (slopsquatting) and `checkSecrets` | **Codex** | Cases prove the kept two still fire; the removed ones are gone, not disabled |
@@ -137,7 +138,6 @@ it was already caught **reporting a clean pass over zero files scanned** (Findin
 
 | # | Task | Owner | Done means |
 |---|---|---|---|
-| **H1** | **Resolve the MCP SDK protocol version.** Pinned `^1.29.0`; the spec went stateless on 2026-07-28. Do this BEFORE building on MCP | **Claude** | Written answer: which protocol the installed SDK negotiates |
 | **H2** | Capability mapper — hand-seeded table for our 14 providers, one cached classification dispatch for unknown servers, unmapped tools stay raw | **Codex** | Cases for seeded, unknown-then-cached, and unmapped-still-usable |
 | **H3** | Four permission tiers over the existing approval gate | **Codex** | Cases for each tier |
 | **H4** | Deploy capabilities: status, build logs, runtime logs, redeploy, rollback, env NAMES only | **Claude** (needs A2 and a real deploy) | A real deployment is driven and verified end to end |

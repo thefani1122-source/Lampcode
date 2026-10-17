@@ -15,6 +15,11 @@
  */
 
 import {
+  DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/sdk/types.js";
+import {
   buildReadToolDefinitions,
   buildWriteProxyDefinitions,
   type ClassifiedTool,
@@ -257,6 +262,38 @@ check(
   ok("a read tool stays on the read path", r.toolDefs.some((d) => d.name.endsWith("get_file_contents")));
   ok("and is NOT duplicated into the write proxy", !names.has("github__get_file_contents"));
   ok("every write-proxied tool is registered for dispatch", w.toolDefs.every((d) => w.registry.has(d.name)));
+}
+
+// ── H1: which protocol the installed SDK actually negotiates ─────────────────
+// Answered 2026-10-17 by reading the installed SDK, not the changelog.
+//
+// package.json pins "^1.29.0", which resolves to 1.32.1 today. The client sends
+// LATEST_PROTOCOL_VERSION on initialize and then accepts whatever the server
+// replies with, PROVIDED it is in SUPPORTED_PROTOCOL_VERSIONS; anything else is
+// a hard throw ("Server's protocol version is not supported"). After that it
+// hands the negotiated version to the transport, which sends it as the
+// `mcp-protocol-version` header on every later request.
+//
+// Statelessness needs nothing from us: the transport sends `mcp-session-id`
+// only when a server handed one back, so a stateless server simply never gets
+// the header. Our own usage is connect → listTools → callTool → close, which is
+// valid either way.
+//
+// WHY THIS IS A CASE AND NOT A NOTE. The `^` means the floor is pinned and the
+// protocol is not. A minor bump can move LATEST under us, and the failure it
+// produces is a server-side rejection during discovery — which this codebase
+// swallows into `failures` and reports as "server unavailable this build". That
+// is correct fail-closed behaviour and it is also indistinguishable from a
+// flaky server, so the cause would never be found from the logs. This case
+// turns that silent drift into a red test on the machine that upgrades.
+{
+  ok("the SDK offers the protocol we recorded", LATEST_PROTOCOL_VERSION === "2025-11-25");
+  ok("it still accepts the 2025-06-18 spec", SUPPORTED_PROTOCOL_VERSIONS.includes("2025-06-18"));
+  ok("and the stateful 2025-03-26 one", SUPPORTED_PROTOCOL_VERSIONS.includes("2025-03-26"));
+  ok(
+    "the negotiated default is not newer than what servers support",
+    SUPPORTED_PROTOCOL_VERSIONS.includes(DEFAULT_NEGOTIATED_PROTOCOL_VERSION),
+  );
 }
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
