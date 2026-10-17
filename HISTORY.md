@@ -3664,3 +3664,105 @@ With **no policies**, deliberately. Nothing legitimate loses access:
 
 **Not applied.** It is a production change on live data and belongs to the owner, not to a
 session that found it.
+
+---
+
+## HOW THE OTHER PLATFORMS SOLVE G6, AND WHAT WE CAN AFFORD — 2026-10-17
+
+### What the market actually does
+
+Every serious competitor has converged on the same answer, and it is **not** the one this
+codebase implements. They provision a backend **per project, automatically, with no setup step
+for the user**:
+
+- **Lovable → Lovable Cloud.** A Supabase instance Lovable owns and manages, one per Lovable
+  project, on by default. It never appears in the user's Supabase dashboard and hands out no
+  service-role key. Connecting your own Supabase is the alternative path, and Lovable will
+  create the project for you inside that flow.
+- **Bolt → Bolt Cloud.** Built-in database, auth, storage and functions.
+- **Replit.** The agent detects that an app needs persistence and provisions Postgres for it,
+  through Neon since launch and reportedly on their own infrastructure since late 2025.
+- **v0.** Hosted sandbox plus database integrations.
+
+**Nobody shares one database across generated apps.** That is the design Lampcode has, and it is
+why the preview project is empty.
+
+### What Lampcode can afford, measured rather than assumed
+
+| route | cost | keeps supabase-js + Supabase Auth | verdict |
+|---|---|---|---|
+| A. A Supabase project per app (the Lovable Cloud model) | **$25/mo org + $10/mo per project** | yes | **blocked on money** |
+| B. Neon/raw Postgres per project (the Replit model) | ~free at this scale, scale-to-zero | **no** — no PostgREST, no GoTrue | rewrites the data layer AND auth |
+| C. Postgres inside the E2B sandbox | free | **no** | template rebuild + same rewrite |
+| D. A schema per project on the shared preview | free | yes | **proven impossible** |
+
+**A is blocked by a fact, not an opinion:** the Supabase org is on the **free plan**, which allows
+**2 active projects**, and both are in use — the platform DB and the preview DB.
+
+**D was tested rather than reasoned about**, which is the only reason we know. A `proj_probe`
+schema with a table and `GRANT USAGE ... TO anon` was created on the preview project, and
+PostgREST was asked for it with the anon key and an `Accept-Profile` header — the exact thing
+supabase-js's `db: { schema }` option sends:
+
+```
+HTTP 406
+{"code":"PGRST106","message":"Invalid schema: proj_probe",
+ "hint":"Only the following schemas are exposed: public, graphql_public"}
+```
+
+So a per-project schema needs that project's exposed-schemas config changed for **every** app,
+an unbounded list with a PostgREST reload each time. With 416 projects that is not a design.
+
+(The probe schema is still there: `DROP SCHEMA` needs a confirmation this session could not
+complete. It is unreachable through PostgREST — that is what the 406 proves — so it is litter,
+not exposure. `DROP SCHEMA proj_probe CASCADE;` removes it.)
+
+### The decision
+
+**Short term, free: the user's own Supabase becomes a guided, first-class step**, which is
+exactly Lovable's non-Cloud path. It is the only free route that keeps the entire existing stack
+working end to end — supabase-js, Supabase Auth, the RLS patterns the prompt teaches, and the
+schema apply that `build.ts` already does correctly.
+
+**When there is money: route A**, which is the same stack with the setup step removed, so the
+seam built now is the seam auto-provisioning plugs into later.
+
+### What was built, and why this and not the rewrite
+
+Neither route is a thing to half-do in an afternoon: both are prompt changes, and prompt-vs-
+reality drift is this repo's #1 bug class. So what shipped is the piece that is **correct under
+every one of those routes** and costs nothing: `src/verify/data-layer.ts`.
+
+It answers the question the three gates cannot — the app renders, its controls respond, and is
+there a database behind any of it? Three findings:
+
+- **`table-never-declared`** — `.from("invoices")` with no `CREATE TABLE invoices` anywhere.
+  Pure file analysis, no outside state, and wrong under every answer to where the database
+  lives. This one is a model mistake, not an infrastructure one.
+- **`no-database`** — the app stores data and this build has no database at all.
+- **`schema-never-applied`** — G6 itself: tables declared, and nothing will ever run the SQL.
+
+Reported to the user in their own words, never blocking, exactly like `wiring.ts`.
+
+**Measured on 185 hand-written files before being wired in.** Over `vibe-coder-suite/src` (97
+files) it found exactly `integrations` and `audit_log` — the only two tables that code really
+queries — and **nothing else**. Zero false positives from `Array.from`, which appears throughout
+both repos and is the one shape that would have had this check switched off in a day.
+
+18 cases in `scripts/data-layer.test.ts`, weighted toward the false positives rather than the
+true ones, including the case that matters most: **an app that stores nothing produces zero
+findings.** Most generated apps are not database apps.
+
+### Verified
+
+- `npm run typecheck`, `npm test` (870 cases) and `npm run build` pass on Linux.
+- The PGRST106 result above is a live HTTP response, not a reading of the docs.
+- The free-plan limit is from the org record itself: `plan: "free"`, two projects, both in use.
+
+### Not verified
+
+- **No build was run.** The check has not yet fired on a real build, so the log line and the
+  user-facing wording are unproven at the layer the user meets them.
+- **The product decision is still open.** Nothing here chooses between making "connect your
+  Supabase" a required step and paying for per-app projects; it only stops the failure being
+  silent while that is decided.
