@@ -9,6 +9,7 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
+import { unifiedDiff } from "../verify/diff.js";
 import {
   applyCheckpointToState,
   formatRestorePlan,
@@ -141,6 +142,24 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       type: "object",
       properties: { label: { type: "string", description: "The exact checkpoint label to restore." } },
       required: ["label"],
+    },
+  },
+  {
+    name: "diff_since",
+    description:
+      "Show a unified diff of the current project against the build-start files, or against " +
+      "an exact named checkpoint. This reads only the in-memory project state and works even " +
+      "while the sandbox is unavailable. It does not change files or verification results. " +
+      "If output or safety limits omit changes, the result says whether its counts are exact " +
+      "or cover only the computed portion.",
+    input_schema: {
+      type: "object",
+      properties: {
+        checkpoint: { type: "string", description: "Optional exact checkpoint label to compare from." },
+        context: { type: "number", description: "Context lines around changes; defaults to 3." },
+        max_chars: { type: "number", description: "Output character budget; defaults to 12000 and is capped at 24000." },
+      },
+      required: [],
     },
   },
   {
@@ -753,6 +772,7 @@ export async function executeTool(
     name === "delete_file" ||
     name === "checkpoint" ||
     name === "revert" ||
+    name === "diff_since" ||
     name === "edit_file" ||
     name === "check_page" ||
     name === "check_types" ||
@@ -877,6 +897,36 @@ export async function executeTool(
         ...(typeof args["path_glob"] === "string" ? { pathGlob: args["path_glob"] } : {}),
         ...(typeof args["max_results"] === "number" ? { maxResults: args["max_results"] } : {}),
       }));
+    }
+
+    // This tool needs only the file maps already in memory. Keep it before the
+    // sandbox-dependent handlers so a cold or unavailable sandbox is irrelevant.
+    if (name === "diff_since") {
+      if (Object.hasOwn(args, "checkpoint") && typeof args["checkpoint"] !== "string") {
+        return "Error: checkpoint must be an exact checkpoint label string.";
+      }
+      const checkpointLabel = typeof args["checkpoint"] === "string"
+        ? args["checkpoint"]
+        : undefined;
+      let before: Record<string, string>;
+      let basis: string;
+      if (checkpointLabel !== undefined) {
+        const checkpoint = ctx.checkpoints?.get(checkpointLabel);
+        if (!checkpoint) {
+          return formatUnknownCheckpoint(checkpointLabel, [...(ctx.checkpoints?.keys() ?? [])]);
+        }
+        before = checkpoint.files;
+        basis = `Diff since checkpoint "${checkpointLabel}":`;
+      } else {
+        before = ctx.projectFiles ?? {};
+        basis = "Diff since build start:";
+      }
+      const current = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
+      const result = unifiedDiff(before, current, {
+        ...(typeof args["context"] === "number" ? { context: args["context"] } : {}),
+        ...(typeof args["max_chars"] === "number" ? { maxChars: args["max_chars"] } : {}),
+      });
+      return `${basis}\n${result.text}`;
     }
 
     // Handled before the sandbox check on purpose: this one reads the file set
