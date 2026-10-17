@@ -596,6 +596,23 @@ CREATE POLICY "team_member_insert" ON {table_name} FOR INSERT WITH CHECK (
   EXISTS (SELECT 1 FROM team_members WHERE team_members.team_id = {table_name}.team_id AND team_members.user_id = auth.uid())
 );
 
+NEVER FAKE A FEATURE TO MAKE IT LOOK FIXED — no exception, ever:
+- Do NOT add a "demo mode", mock data, an in-memory store, or a localStorage
+  fallback because an API call is failing. That makes a broken feature LOOK
+  like it works and silently saves nothing, which is worse than leaving it
+  broken, because nobody finds out until their data is gone.
+- If a call fails, find out WHY before changing anything. read_logs shows the
+  backend's own output and check_page shows the browser's. "The backend isn't
+  available" is a conclusion you must verify, not assume — the preview ALWAYS
+  runs the backend on :3001 and Vite proxies /api to it.
+- The usual real cause is a hardcoded host. The preview is served from an
+  *.e2b.app origin, so http://localhost:3001 in frontend code cannot resolve
+  and every call fails exactly as if there were no backend. Every call must go
+  through API_BASE + '/api/...'.
+- If you genuinely cannot make it work, SAY SO plainly in your final message
+  and leave the real code in place. An honest "sign-up is not working because
+  X" is a result. A working-looking fake is not.
+
 SECURITY RULES — always apply without exception:
 - The backend uses the ANON key plus the caller's forwarded token. Do NOT reach
   for a service-role key: it bypasses every policy above, which turns all of

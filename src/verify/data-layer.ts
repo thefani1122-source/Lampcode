@@ -33,7 +33,9 @@ export type DataLayerKind =
   /** The app declares tables, but nothing will ever run the SQL that makes them. */
   | "schema-never-applied"
   /** The app queries tables and no database is configured at all. */
-  | "no-database";
+  | "no-database"
+  /** The app fakes persistence so a broken feature LOOKS like it works. */
+  | "fake-persistence";
 
 export type DataLayerFinding = {
   kind: DataLayerKind;
@@ -76,6 +78,37 @@ const CREATE_TABLE_RE =
 function normalise(path: string): string {
   return path.replace(/^\.?\//, "");
 }
+
+// ── Faked persistence ────────────────────────────────────────────────────────
+// MEASURED 2026-10-17, project d6e9855b. Sign-up was broken in the preview
+// because the generated frontend hardcoded http://localhost:3001, which a
+// browser on *.e2b.app cannot reach. Asked to fix it, the agent wrote:
+//
+//   "The problem is the app relies on a backend that's not available in the
+//    sandbox. Let me add a fallback demo mode so users can sign up."
+//
+// The premise was FALSE — nine minutes earlier, on the same project, the same
+// agent had written "Excellent! The backend is running." It then dismissed the
+// real type errors as "in the backend server code, which isn't used when
+// there's no backend configured", and shipped localStorage in place of the API.
+//
+// That is the worst outcome this product can produce: an app that looks
+// finished, signs you up, shows your data back, and has saved nothing anywhere.
+// Every gate passes, because every gate asks whether the app WORKS, and a fake
+// works beautifully.
+//
+// The prompt now forbids it. This exists because a prompt rule is advice and
+// this is the one failure where advice is not enough.
+
+/** Names a model reaches for when it is building a stand-in rather than a feature. */
+const FAKE_MARKER_RE =
+  /\b(demo[_\s]?mode|DEMO_MODE|isDemo|useDemo|mock[_\s]?mode|useMock|mockData|MOCK_DATA|fakeDb|fakeApi|inMemoryDb|offlineMode)\b/;
+
+// The shape without a label: a branch on the API base being absent, which then
+// reads or writes localStorage instead of calling it.
+const API_ABSENT_RE = /(!\s*(API_BASE|VITE_API_URL|apiBase)|(API_BASE|VITE_API_URL|apiBase)\s*(===?\s*(''|""|`` )|\?\?|\|\|))/;
+const STORAGE_RE = /\b(localStorage|sessionStorage)\s*\.\s*(get|set)Item\b/;
+const CALLS_API_RE = /\b(fetch|axios)\s*\(|API_BASE|VITE_API_URL/;
 
 /** Every table name the code asks a database for, with the file that asks. */
 export function queriedTables(files: Record<string, string>): Array<{ table: string; path: string }> {
@@ -128,11 +161,49 @@ export function declaredTables(files: Record<string, string>): Set<string> {
  * is: a query for a table the app never creates is wrong even on a database
  * that exists.
  */
+export function fakePersistence(files: Record<string, string>): DataLayerFinding[] {
+  const out: DataLayerFinding[] = [];
+  for (const [rawPath, code] of Object.entries(files)) {
+    const path = normalise(rawPath);
+    if (TEST_FILE_RE.test(path)) continue;
+    if (!CODE_EXT_RE.test(path)) continue;
+
+    // Two independent shapes. The labelled one — a `demoMode` flag — is what a
+    // model writes when it has decided to build a stand-in. The unlabelled one
+    // is the same decision without the word: a branch on the API base being
+    // missing that reads or writes storage instead.
+    //
+    // BOTH require the file to also touch the API. That is what keeps ordinary
+    // localStorage out of this: remembering a theme, a collapsed panel or an
+    // unsent draft is correct and common, and a check that flagged it would be
+    // switched off within a day.
+    const labelled = FAKE_MARKER_RE.test(code) && STORAGE_RE.test(code);
+    const unlabelled = API_ABSENT_RE.test(code) && STORAGE_RE.test(code);
+    if (!(labelled || unlabelled) || !CALLS_API_RE.test(code)) continue;
+
+    out.push({
+      kind: "fake-persistence",
+      path,
+      symbol: labelled ? "demo mode" : "storage fallback",
+      detail:
+        `This stores data in the browser when the API is unavailable, so the feature LOOKS like it ` +
+        `works and saves nothing. Do not stand in for a broken backend — fix the call, or say plainly ` +
+        `that it is not working. Check that the frontend calls API_BASE + '/api/...' and never a ` +
+        `hardcoded host: the preview is served from a different origin, so localhost never resolves.`,
+    });
+  }
+  return out;
+}
+
 export function findDataLayerGaps(
   files: Record<string, string>,
   database: DatabaseState,
 ): DataLayerFinding[] {
-  const findings: DataLayerFinding[] = [];
+  // Checked before anything else and regardless of the database state: a fake
+  // is wrong whether or not a real database exists, and it is the one finding
+  // here that hides all the others — an app with a localStorage stand-in never
+  // queries a table, so every check below would report a clean, empty app.
+  const findings: DataLayerFinding[] = fakePersistence(files);
   const queried = queriedTables(files);
   if (queried.length === 0) return findings;
 
@@ -193,6 +264,18 @@ export function formatDataLayerGaps(findings: DataLayerFinding[]): string {
 export function formatDataLayerForUser(findings: DataLayerFinding[]): string[] {
   if (findings.length === 0) return [];
   const lines: string[] = [];
+
+  // First, and in the bluntest words in this file. Someone who is told their
+  // app works, and finds out later that nothing was ever saved, has been let
+  // down worse than by any build that simply failed.
+  const fake = findings.filter((f) => f.kind === "fake-persistence");
+  if (fake.length > 0) {
+    lines.push(
+      "⚠️ Part of this app only pretends to save your data — it keeps it in your browser instead of " +
+        "a database, so it will look like it worked and then be gone. I have flagged it rather than " +
+        "leaving it to be discovered.",
+    );
+  }
 
   const missing = findings.filter((f) => f.kind === "table-never-declared");
   if (missing.length > 0) {
