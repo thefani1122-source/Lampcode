@@ -81,6 +81,7 @@ const outputLimited = unifiedDiff(
   { maxChars: 900 },
 );
 ok("character truncation is reported while exact counts remain", outputLimited.truncated &&
+  outputLimited.text.includes("containing 1 complete hunk(s), were omitted") &&
   outputLimited.text.includes("counts above still include every computed file") &&
   outputLimited.filesChanged === 2 && outputLimited.added === 2 && outputLimited.removed === 2);
 ok("character cap keeps complete hunks and omits the oversized file block", 

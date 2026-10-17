@@ -16,7 +16,7 @@ const MAX_TOTAL_WORK = 1_200_000;
 
 type Line = { text: string; newline: boolean };
 type Op = { kind: "equal" | "add" | "remove"; line: Line };
-type DiffFile = { path: string; block: string; added: number; removed: number };
+type DiffFile = { path: string; block: string; added: number; removed: number; hunks: number };
 
 function splitLines(value: string): Line[] {
   if (value === "") return [];
@@ -146,7 +146,7 @@ function renderFile(
 
   let block = `--- ${beforePresent ? `a/${safePath(path)}` : "/dev/null"}\n` +
     `+++ ${afterPresent ? `b/${safePath(path)}` : "/dev/null"}\n`;
-  if (groups.length === 0) return { path, block, added, removed };
+  if (groups.length === 0) return { path, block, added, removed, hunks: 0 };
 
   for (const [first, last] of groups) {
     const start = Math.max(0, first - context);
@@ -170,7 +170,7 @@ function renderFile(
       block += renderLine(prefix, op.line);
     }
   }
-  return { path, block, added, removed };
+  return { path, block, added, removed, hunks: groups.length };
 }
 
 /**
@@ -203,6 +203,7 @@ export function unifiedDiff(
   let removed = 0;
   let computeOmitted = 0;
   let outputOmitted = 0;
+  let outputOmittedHunks = 0;
   let workLeft = MAX_TOTAL_WORK;
   const blockBudget = maxChars - 350;
   let blockChars = 0;
@@ -239,6 +240,7 @@ export function unifiedDiff(
       blockChars += separatorLength + file.block.length;
     } else {
       outputOmitted++;
+      outputOmittedHunks += file.hunks;
     }
   }
 
@@ -253,7 +255,7 @@ export function unifiedDiff(
       `${computeOmitted} changed file(s) were omitted because of safety limits; these counts are not complete project totals.`
     : `${filesChanged} file(s) changed, +${added} / -${removed} lines.`;
   const outputNote = outputOmitted > 0
-    ? `Output truncated: ${outputOmitted} complete file diff(s) did not fit; counts above still include every computed file.`
+    ? `Output truncated: ${outputOmitted} complete file diff(s), containing ${outputOmittedHunks} complete hunk(s), were omitted; counts above still include every computed file.`
     : "";
   const text = [diffText, summary, outputNote].filter(Boolean).join("\n\n");
   return { text, filesChanged, added, removed, truncated };
