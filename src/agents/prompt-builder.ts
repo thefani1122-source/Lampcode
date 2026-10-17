@@ -530,15 +530,34 @@ export const DB_INSTRUCTIONS: Record<Database, string> = {
 DATABASE: Supabase (PostgreSQL) — the Hono BACKEND accesses it server-side via
 @supabase/supabase-js (NOT directly from the frontend; the frontend calls /api).
 
-DB CLIENT — at the top of src/server/routes/api.ts:
+DB CLIENT — at the top of src/server/routes/api.ts. ONE CLIENT PER REQUEST,
+carrying the caller's token. Not one shared client:
   import { createClient } from '@supabase/supabase-js'
-  // Service key (full access, bypasses RLS — backend-only) when present, else anon.
-  const db = createClient(
-    process.env.SUPABASE_URL || '',
-    process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '',
-  )
-  // read:  const { data, error } = await db.from('riders').select('*')
-  // write: const { data, error } = await db.from('riders').insert(body).select().single()
+  import type { Context } from 'hono'
+  const SUPABASE_URL = process.env.SUPABASE_URL || ''
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ''
+  // The caller's Authorization header is what makes auth.uid() resolve to the
+  // signed-in user inside your RLS policies. A client built without it is
+  // anonymous, auth.uid() is NULL, and every owner-scoped policy below DENIES
+  // it — the app would compile, run, and return empty lists forever.
+  function dbFor(c: Context) {
+    const token = c.req.header('Authorization') || ''
+    return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: token ? { Authorization: token } : {} },
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  }
+  // read:  const db = dbFor(c); const { data, error } = await db.from('riders').select('*')
+  // write: const db = dbFor(c); const { data, error } = await db.from('riders').insert(body).select().single()
+
+  Call dbFor(c) INSIDE each route handler, never once at module level — a
+  module-level client would serve every user with whichever token happened to
+  arrive first.
+
+  You do NOT filter by user id yourself. RLS does it: the policies in
+  schema.sql compare auth.uid() to the row, and the token you forwarded is what
+  auth.uid() reads. A route that also adds .eq('user_id', something) is either
+  redundant or a bug.
 
 DB SCHEMA FILES: Already listed in FULLSTACK_INSTRUCTION as items 1 and 2.
 Generate types.ts interfaces and schema.sql CREATE TABLE + RLS there.
@@ -578,7 +597,9 @@ CREATE POLICY "team_member_insert" ON {table_name} FOR INSERT WITH CHECK (
 );
 
 SECURITY RULES — always apply without exception:
-- SUPABASE_SERVICE_KEY: backend only, never in frontend, never in VITE_* env vars
+- The backend uses the ANON key plus the caller's forwarded token. Do NOT reach
+  for a service-role key: it bypasses every policy above, which turns all of
+  this into decoration and lets any signed-in user read everyone's rows
 - VITE_SUPABASE_ANON_KEY: frontend only, read-only operations
 - Every route that mutates data requires an authenticated user — verify auth.uid() exists
 - NEVER trust a user_id sent from the client in request body — always use auth.uid() server-side
@@ -733,12 +754,23 @@ if token limit hits mid-generation, DB and server files must already be complete
    through API_BASE, so the app keeps working once it is built and served
    without the dev server:
      import type { Rider } from '../db/types' // or wherever the DATABASE section defines row types
+     import { supabase } from './supabase' // the client the auth section defines
      const API_BASE = import.meta.env.VITE_API_URL ?? ''
+     // Every call carries the signed-in user's token. The backend forwards it
+     // to Supabase, which is the ONLY way auth.uid() inside an RLS policy knows
+     // who is asking. Without this header the backend is anonymous and every
+     // owner-scoped read comes back empty.
+     async function authHeaders(): Promise<Record<string, string>> {
+       const { data } = await supabase.auth.getSession()
+       const t = data.session?.access_token
+       return t ? { Authorization: 'Bearer ' + t } : {}
+     }
      export async function getRiders(): Promise<Rider[]> {
-       const r = await fetch(API_BASE + '/api/riders'); if (!r.ok) return []; return r.json()
+       const r = await fetch(API_BASE + '/api/riders', { headers: await authHeaders() })
+       if (!r.ok) return []; return r.json()
      }
      export async function createRider(input: Partial<Rider>): Promise<Rider | null> {
-       const r = await fetch(API_BASE + '/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })
+       const r = await fetch(API_BASE + '/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(input) })
        return r.ok ? r.json() : null
      }
    WHY API_BASE and not a bare '/api/...': the preview works only because the
@@ -821,14 +853,22 @@ Generate INSTEAD:
      from supabase import create_client
      app = FastAPI()
      app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-     # Service key (full access) when present, else anon. Both come from env.
-     _key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or ""
-     supabase = create_client(os.environ.get("SUPABASE_URL", ""), _key)
+     # ONE CLIENT PER REQUEST, carrying the caller's token. A module-level
+     # client is anonymous: auth.uid() is NULL inside every RLS policy, so
+     # owner-scoped reads return nothing and the app looks empty forever.
+     _URL = os.environ.get("SUPABASE_URL", "")
+     _ANON = os.environ.get("SUPABASE_ANON_KEY", "")
+     def db_for(req: Request):
+         client = create_client(_URL, _ANON)
+         token = (req.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+         if token:
+             client.postgrest.auth(token)
+         return client
 
      @app.get("/api/riders")
-     def list_riders():
+     def list_riders(req: Request):          # req is REQUIRED — it carries the token
          try:
-             return (supabase.table("riders").select("*").order("created_at", desc=True).execute()).data or []
+             return (db_for(req).table("riders").select("*").order("created_at", desc=True).execute()).data or []
          except Exception:
              return []
 
@@ -836,7 +876,7 @@ Generate INSTEAD:
      async def create_rider(req: Request):
          body = await req.json()
          try:
-             res = supabase.table("riders").insert(body).execute()
+             res = db_for(req).table("riders").insert(body).execute()
              return (res.data or [None])[0]
          except Exception as e:
              return {"error": str(e)}
