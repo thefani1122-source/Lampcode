@@ -30,6 +30,7 @@ import {
   type McpToolsetConfig,
   type WriteProxyRegistry,
 } from "./mcp-tool-classifier.js";
+import { capMcpTools } from "./mcp-relevance.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import { config } from "../server/config.js";
@@ -116,6 +117,10 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  is already warming. Turn count is bounded by config.AGENTIC_MAX_TURNS and,
    *  as the real budget, by the same in-loop costGuard every tool round uses. */
   agenticBuild?: boolean | undefined;
+  /** The person's own request, used ONLY to rank MCP tools when there are more
+   *  of them than a round can carry. Absent means no ranking signal, which
+   *  degrades to "keep the first N in a stable order" — never to sending all. */
+  userPrompt?: string | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onSandboxLog?: ((line: string) => void) | undefined;
   /** The project's current files on a follow-up edit. Lets the agentic tools
@@ -376,6 +381,7 @@ export class AgentDispatcher {
     let writeProxyRegistry: WriteProxyRegistry = new Map();
     let readToolDefs: typeof TOOL_DEFINITIONS = [];
     let readMcpRegistry: WriteProxyRegistry = new Map();
+    let mcpToolsOmitted = 0;
     if (enableTools && mcpServers && mcpServers.length > 0) {
       for (const s of mcpServers) {
         mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
@@ -400,15 +406,23 @@ export class AgentDispatcher {
         } catch { /* ws not available — the log line above still carries it */ }
       }
       const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
-      writeProxyDefs = writeProxies.toolDefs;
       writeProxyRegistry = writeProxies.registry;
+      // The registry keeps EVERY tool; only the definitions sent to the model
+      // are capped. A tool trimmed from this round's list is still executable
+      // if the model names it from an earlier round, which is the difference
+      // between "not offered right now" and "gone".
+      const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
+      writeProxyDefs = cappedWrites.kept;
+      mcpToolsOmitted += cappedWrites.omitted;
       // Read-only tools need explicit definitions ONLY where the gateway cannot
       // run them itself. Anthropic's connector executes them server-side from
       // mcpToolsets, so offering them again there would duplicate every tool.
       if (effectiveProvider === "modal") {
         const readTools = buildReadToolDefinitions(report, mcpServers);
-        readToolDefs = readTools.toolDefs;
         readMcpRegistry = readTools.registry;
+        const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
+        readToolDefs = cappedReads.kept;
+        mcpToolsOmitted += cappedReads.omitted;
       }
       logger.info(
         {
@@ -418,6 +432,7 @@ export class AgentDispatcher {
           classification: report.map((r) => `${r.serverSlug}.${r.toolName}=${r.allowed ? "allow" : "deny"}(${r.reason})`),
           writeProxyCount: writeProxyDefs.length,
           readToolCount: readToolDefs.length,
+          mcpToolsOmitted,
         },
         "MCP tool classification for this dispatch",
       );

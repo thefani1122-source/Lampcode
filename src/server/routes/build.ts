@@ -43,6 +43,7 @@ import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpSer
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { findDataLayerGaps, formatDataLayerForUser } from "../../verify/data-layer.js";
+import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
 import {
   buildDatabaseQuestion,
@@ -1326,7 +1327,19 @@ export async function runFastBuild(
     // plus its whole tool list in every round's context. A user-connected
     // server is one the user asked for; these two would be charged to builds
     // that never use them. Revisit if web access becomes a default need.
-    const mcpServers = [...userMcpServers, ...(provider === "modal" ? [] : internalMcpServers)];
+    // Attach only the servers this request points at. Measured 2026-10-17:
+    // a plain app build was sent 283 tool definitions every round, the gateway
+    // returned zero events on round 5, and the build died without ever writing
+    // src/App.tsx. See mcp-relevance.ts for the log lines and why this is not
+    // the upfront fetch gate the comment above describes.
+    const { kept: relevantUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
+    if (droppedMcp.length > 0) {
+      console.log(
+        `[build] mcp relevance project=${projectId} kept=[${relevantUserMcp.map((s) => s.slug).join(",")}] ` +
+        `dropped=[${droppedMcp.join(",")}]`,
+      );
+    }
+    const mcpServers = [...relevantUserMcp, ...(provider === "modal" ? [] : internalMcpServers)];
 
     // ── What deploy_app needs, if the user connected Vercel ──────────────────
     // Lifted from the servers already resolved above rather than read again:
@@ -1384,6 +1397,7 @@ export async function runFastBuild(
       enableTools: true,
       costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
       agenticBuild,
+      userPrompt: prompt,
       // Only on an edit — on a new build there is no prior project, and an
       // empty map would make list_files fall through to the sandbox anyway.
       ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
