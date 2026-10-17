@@ -43,6 +43,50 @@ check("empty maps say no changes", unifiedDiff({}, {}), {
 ok("empty before is represented as all additions", unifiedDiff({}, { "a.ts": "x\n" }).text.includes("+x\n"));
 ok("empty after is represented as all removals", unifiedDiff({ "a.ts": "x\n" }, {}).text.includes("-x\n"));
 
+const aloneCreation = unifiedDiff({}, { "src/new.ts": "one\ntwo\n" }).text;
+const creationWithOthers = unifiedDiff(
+  { "zz.ts": "old\n" },
+  { "src/new.ts": "one\ntwo\n", "zz.ts": "new\n" },
+).text;
+const aloneCreationBlock = aloneCreation.slice(0, aloneCreation.indexOf("\n\n1 file(s) changed"));
+const secondFile = creationWithOthers.indexOf("\n\n--- a/zz.ts");
+const sharedCreationBlock = creationWithOthers.slice(0, secondFile + 1);
+check("pure-created file diff is byte-equivalent alongside another change", sharedCreationBlock, aloneCreationBlock);
+check("pure-created file exact counts", [unifiedDiff({}, { "src/new.ts": "one\ntwo\n" }).added,
+  unifiedDiff({}, { "src/new.ts": "one\ntwo\n" }).removed], [2, 0]);
+
+const lines = (prefix: string, count: number): string =>
+  Array.from({ length: count }, (_, i) => `${prefix}-${i}`).join("\n");
+const fourLargeCreates: Record<string, string> = {};
+for (let i = 1; i <= 4; i++) fourLargeCreates[`src/new-${i}.ts`] = lines(`created-${i}`, 11_000);
+const regression = unifiedDiff(
+  { "src/small.ts": "before\n" },
+  { ...fourLargeCreates, "src/small.ts": "after\n" },
+);
+check("four 11,000-line creates do not hide the later one-line edit", [
+  regression.filesChanged,
+  regression.added,
+  regression.removed,
+  regression.text.includes("src/small.ts"),
+], [5, 44_001, 1, true]);
+
+const largeDelete = unifiedDiff(
+  { "src/large-old.ts": lines("deleted", 11_000), "src/small.ts": "before\n" },
+  { "src/small.ts": "after\n" },
+);
+check("large pure deletion does not hide a later edit and exact totals hold", [
+  largeDelete.filesChanged,
+  largeDelete.added,
+  largeDelete.removed,
+  largeDelete.text.includes("src/small.ts"),
+], [2, 1, 11_001, true]);
+
+const oversizedCreation = unifiedDiff({}, { "src/too-many-lines.ts": lines("line", 12_001) });
+ok("pure create beyond the line safety limit is still omitted", oversizedCreation.truncated &&
+  oversizedCreation.filesChanged === 0 && oversizedCreation.added === 0 &&
+  oversizedCreation.removed === 0 && !oversizedCreation.text.includes("src/too-many-lines.ts") &&
+  oversizedCreation.text.includes("omitted because of safety limits"));
+
 const buildStart = { "src/keep.ts": "v1\n", "src/deleted.ts": "remove me\n" };
 const currentFiles = currentProjectFiles(
   buildStart,
@@ -89,13 +133,14 @@ ok("character cap keeps complete hunks and omits the oversized file block",
   outputLimited.text.includes("-old\n+new\n"));
 
 const computationLimited = unifiedDiff(
-  { "large.ts": Array.from({ length: 9000 }, (_, i) => `before-${i}`).join("\n") },
-  { "large.ts": Array.from({ length: 9000 }, (_, i) => `after-${i}`).join("\n") },
+  { "a-large.ts": lines("before", 9000), "z-small.ts": "old\n" },
+  { "a-large.ts": lines("after", 9000), "z-small.ts": "new\n" },
 );
-ok("safety truncation warns counts are partial", computationLimited.truncated &&
+ok("real modification still uses bounded Myers and allows a later small edit", computationLimited.truncated &&
+  computationLimited.text.includes("a-large.ts") === false && computationLimited.text.includes("z-small.ts") &&
+  computationLimited.filesChanged === 1 && computationLimited.added === 1 && computationLimited.removed === 1 &&
   computationLimited.text.includes("Diff truncated during computation") &&
   computationLimited.text.includes("not complete project totals"));
-check("omitted computation does not manufacture all-added/all-removed counts", [computationLimited.added, computationLimited.removed], [0, 0]);
 
 if (failures > 0) {
   console.error(`\n${failures} diff test(s) failed.`);

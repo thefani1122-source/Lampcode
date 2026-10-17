@@ -221,10 +221,19 @@ export function unifiedDiff(
       continue;
     }
 
-    const remaining = { left: Math.min(MAX_FILE_WORK, workLeft) };
-    const ops = myers(oldLines, newLines, remaining);
-    const spent = Math.min(MAX_FILE_WORK, workLeft) - remaining.left;
-    workLeft -= spent;
+    // A missing side has only one possible edit script. Searching it would spend
+    // the shared budget needed to find meaningful edits in later files.
+    let ops: Op[] | undefined;
+    if (!beforePresent) {
+      ops = newLines.map((line) => ({ kind: "add", line }));
+    } else if (!afterPresent) {
+      ops = oldLines.map((line) => ({ kind: "remove", line }));
+    } else {
+      const remaining = { left: Math.min(MAX_FILE_WORK, workLeft) };
+      ops = myers(oldLines, newLines, remaining);
+      const spent = Math.min(MAX_FILE_WORK, workLeft) - remaining.left;
+      workLeft -= spent;
+    }
     if (!ops) {
       computeOmitted++;
       continue;
