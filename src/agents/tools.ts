@@ -9,7 +9,7 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
-import { commitFileDeletion, currentProjectFiles, planFileDeletions } from "./file-deletion.js";
+import { commitFileDeletion, currentProjectFile, currentProjectFiles, deletedFileEditMessage, planFileDeletions, recordProjectFileWrite } from "./file-deletion.js";
 import { formatSearchHits, searchFiles } from "../verify/search.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
 import { autoCheckReason } from "../verify/auto-check.js";
@@ -993,8 +993,9 @@ export async function executeTool(
         noteChurn(ctx, before ?? "", content, before === undefined ? "created" : "replaced");
       }
 
-      for (const path of Object.keys(files)) ctx.deletedFiles?.delete(path);
-      if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
+      for (const [path, content] of Object.entries(files)) {
+        recordProjectFileWrite(path, content, ctx.generatedFiles, ctx.deletedFiles);
+      }
       // The sandbox gets the WHOLE project, not just this turn's files. On an
       // edit the model writes only what it changed (correctly — that is what
       // preserves everything else), but the sandbox may be a fresh template,
@@ -1085,6 +1086,7 @@ export async function executeTool(
       const newString = typeof args["new_string"] === "string" ? args["new_string"] : "";
 
       if (!path) return "Error: `path` is required.";
+      if (ctx.deletedFiles?.has(path)) return deletedFileEditMessage(path);
       if (oldString === "") {
         return (
           "Error: `old_string` is required and cannot be empty. To create a new file, use " +
@@ -1106,8 +1108,7 @@ export async function executeTool(
       // it stood at build start, then the sandbox. Editing anything staler than
       // that would silently undo the model's own previous edit.
       const current =
-        (ctx.generatedFiles ?? {})[path] ??
-        (ctx.projectFiles ?? {})[path] ??
+        currentProjectFile(path, ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles) ??
         (await readProjectFile(projectId, path).catch((err: unknown) => {
           if (isNoSandbox(err)) return null;
           return undefined;

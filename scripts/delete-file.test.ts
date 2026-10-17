@@ -1,7 +1,10 @@
 import {
   commitFileDeletion,
+  currentProjectFile,
   currentProjectFiles,
+  deletedFileEditMessage,
   planFileDeletions,
+  recordProjectFileWrite,
 } from "../src/agents/file-deletion.js";
 
 let failures = 0;
@@ -95,6 +98,32 @@ check(
     new Set(["src/old.ts"]),
   ),
   {},
+);
+
+const editBaseline = { "src/removed.ts": "old baseline source" };
+const editGenerated: Record<string, string> = {};
+const editDeleted = new Set<string>();
+const editDecision = planFileDeletions(["src/removed.ts"], editBaseline, isTemplateOwned)[0]!;
+commitFileDeletion(editDecision.path, editDecision.before ?? "", editGenerated, editDeleted, () => {}, () => {});
+check(
+  "delete then edit resolves absent and instructs explicit recreation",
+  {
+    current: currentProjectFile("src/removed.ts", editBaseline, editGenerated, editDeleted),
+    message: deletedFileEditMessage("src/removed.ts"),
+  },
+  {
+    current: undefined,
+    message: "src/removed.ts is deleted from the current project. Use write_files if you intentionally want to recreate it.",
+  },
+);
+recordProjectFileWrite("src/removed.ts", "intentional replacement", editGenerated, editDeleted);
+check(
+  "delete then write_files explicitly clears the tombstone and recreates the path",
+  {
+    current: currentProjectFile("src/removed.ts", editBaseline, editGenerated, editDeleted),
+    tombstoned: editDeleted.has("src/removed.ts"),
+  },
+  { current: "intentional replacement", tombstoned: false },
 );
 
 const mixed = planFileDeletions(

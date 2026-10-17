@@ -22,6 +22,32 @@ export function currentProjectFiles(
   return files;
 }
 
+/** Resolve one path from the current project, never from its build-start snapshot after deletion. */
+export function currentProjectFile(
+  path: string,
+  projectFiles: Record<string, string> | undefined,
+  generatedFiles: Record<string, string> | undefined,
+  deletedFiles: ReadonlySet<string> | undefined,
+): string | undefined {
+  if (deletedFiles?.has(path)) return undefined;
+  return currentProjectFiles(projectFiles, generatedFiles, deletedFiles)[path];
+}
+
+/** Apply an explicit write and clear its tombstone; edit_file must never call this. */
+export function recordProjectFileWrite(
+  path: string,
+  content: string,
+  generatedFiles: Record<string, string> | undefined,
+  deletedFiles: Set<string> | undefined,
+): void {
+  if (deletedFiles) deletedFiles.delete(path);
+  if (generatedFiles) generatedFiles[path] = content;
+}
+
+export function deletedFileEditMessage(path: string): string {
+  return `${path} is deleted from the current project. Use write_files if you intentionally want to recreate it.`;
+}
+
 /** Classify a batch before side effects so every refusal can be reported by path. */
 export function planFileDeletions(
   paths: string[],
