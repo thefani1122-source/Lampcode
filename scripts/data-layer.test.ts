@@ -183,6 +183,94 @@ ok(
   ).length === 0,
 );
 
+
+// ── fake persistence: the 2026-10-17 failure ─────────────────────────────────
+// The agent decided the backend was unavailable — having itself confirmed nine
+// minutes earlier that it was running — and shipped localStorage in place of
+// the API. Every gate passed, because every gate asks whether the app works,
+// and a fake works beautifully.
+//
+// The false positives are pinned harder than the true ones, because ordinary
+// localStorage is correct and common: a remembered theme, a collapsed panel,
+// an unsent draft. A check that flagged those would be switched off in a day.
+
+check(
+  "a labelled demo mode standing in for the API is caught",
+  kinds(
+    findDataLayerGaps(
+      {
+        "src/lib/api.ts": `const DEMO_MODE = !import.meta.env.VITE_API_URL
+          export async function getIssues() {
+            if (DEMO_MODE) return JSON.parse(localStorage.getItem('issues') || '[]')
+            return fetch(API_BASE + '/api/issues').then(r => r.json())
+          }`,
+      },
+      READY,
+    ),
+  ),
+  ["fake-persistence"],
+);
+
+check(
+  "and so is the same thing without the word 'demo'",
+  kinds(
+    findDataLayerGaps(
+      {
+        "src/lib/api.ts": `export async function save(x) {
+            if (!API_BASE) { localStorage.setItem('items', JSON.stringify(x)); return x }
+            return fetch(API_BASE + '/api/items', { method: 'POST' })
+          }`,
+      },
+      READY,
+    ),
+  ),
+  ["fake-persistence"],
+);
+
+ok(
+  "a remembered theme is NOT faked persistence",
+  findDataLayerGaps(
+    { "src/components/Theme.tsx": `localStorage.setItem('theme', next); const t = localStorage.getItem('theme')` },
+    READY,
+  ).length === 0,
+);
+
+ok(
+  "an unsent draft kept in storage is NOT faked persistence",
+  findDataLayerGaps(
+    { "src/components/Composer.tsx": `useEffect(() => localStorage.setItem('draft', text), [text])` },
+    READY,
+  ).length === 0,
+);
+
+ok(
+  "a real api client with no storage is NOT faked",
+  findDataLayerGaps(
+    { "src/lib/api.ts": `export const getAll = () => fetch(API_BASE + '/api/items').then(r => r.json())` },
+    READY,
+  ).length === 0,
+);
+
+ok(
+  "a test file that mocks is NOT a finding",
+  findDataLayerGaps(
+    { "src/lib/api.test.ts": `const DEMO_MODE = true; localStorage.setItem('x','1'); fetch('/api/x')` },
+    READY,
+  ).length === 0,
+);
+
+// It outranks everything: a fake never queries a table, so without this check
+// the same app reports as a clean app that simply stores nothing.
+ok(
+  "the user is warned in plain words, first",
+  formatDataLayerForUser(
+    findDataLayerGaps(
+      { "src/lib/api.ts": `const useMock = !API_BASE; if (useMock) localStorage.getItem('x'); fetch(API_BASE+'/api/x')` },
+      READY,
+    ),
+  )[0]?.includes("pretends to save") === true,
+);
+
 // ── output ───────────────────────────────────────────────────────────────────
 
 check("the model's format is silent on a clean app", formatDataLayerGaps([]), "No data-layer gaps found.");
