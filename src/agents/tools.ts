@@ -9,6 +9,17 @@ import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending
 import { getWebSocketServer } from "../websocket/server.js";
 import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
 import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
+import {
+  applyCheckpointToState,
+  formatRestorePlan,
+  formatUnknownCheckpoint,
+  restorePlan,
+  restoreCheckpointPathState,
+  snapshotCheckpointPathState,
+  storeCheckpoint,
+  takeCheckpoint,
+  type Checkpoint,
+} from "../verify/checkpoints.js";
 import { commitFileDeletion, currentProjectFile, currentProjectFiles, deletedFileEditMessage, planFileDeletions, recordProjectFileWrite } from "./file-deletion.js";
 import { formatSearchHits, searchFiles } from "../verify/search.js";
 import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
@@ -33,7 +44,7 @@ import {
   isTemplateOwnedFile,
   deleteProjectFileFromSandbox,
 } from "../preview/e2b-service.js";
-import { deletePersistedProjectFile, persistFilesAsWritten } from "../storage/project-files.js";
+import { deletePersistedProjectFile, persistFilesAsWritten, persistFilesStrictly } from "../storage/project-files.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 import { callMcpTool } from "../mcp/call-tool.js";
 
@@ -107,6 +118,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // outside with fixed if-statements. Each one delegates to an e2b-service export
 // that the existing fix loops already use, so nothing new touches the sandbox.
 export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
+  {
+    name: "checkpoint",
+    description:
+      "Save a named snapshot of the current project files for this build. Checkpoints are " +
+      "private to this build and do not change files or verification results. Keep the label " +
+      "short and use it later with revert if an experiment should be undone.",
+    input_schema: {
+      type: "object",
+      properties: { label: { type: "string", description: "A short name for this snapshot." } },
+      required: ["label"],
+    },
+  },
+  {
+    name: "revert",
+    description:
+      "Restore the project to a named checkpoint. This restores changed or deleted files and " +
+      "removes files created after the checkpoint. The checkpoint remains available after a " +
+      "restore. If any live or stored file operation fails, the tool rolls back its attempted " +
+      "changes and reports incomplete paths.",
+    input_schema: {
+      type: "object",
+      properties: { label: { type: "string", description: "The exact checkpoint label to restore." } },
+      required: ["label"],
+    },
+  },
   {
     name: "ask_user",
     description:
@@ -467,6 +503,8 @@ export interface ToolExecutionContext {
   generatedFiles?: Record<string, string> | undefined;
   /** Paths removed this dispatch; projectFiles remains the build-start snapshot. */
   deletedFiles?: Set<string> | undefined;
+  /** Named snapshots live only for this agentic dispatch. */
+  checkpoints?: Map<string, Checkpoint> | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onLog?: ((line: string) => void) | undefined;
   /** Where the verification tools record what they found, so the build can be
@@ -713,6 +751,8 @@ export async function executeTool(
   if (
     name === "write_files" ||
     name === "delete_file" ||
+    name === "checkpoint" ||
+    name === "revert" ||
     name === "edit_file" ||
     name === "check_page" ||
     name === "check_types" ||
@@ -727,6 +767,104 @@ export async function executeTool(
     name === "review_code" ||
     name === "fetch_reference"
   ) {
+
+    if (name === "checkpoint") {
+      const label = typeof args["label"] === "string" ? args["label"].trim() : "";
+      if (!label) return "Error: checkpoint label must not be empty.";
+      if (label.length > 100) return "Error: checkpoint label must be 100 characters or fewer.";
+      const checkpoints = ctx.checkpoints ?? (ctx.checkpoints = new Map<string, Checkpoint>());
+      const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
+      const result = storeCheckpoint(checkpoints, takeCheckpoint(label, files));
+      const notice = result.replaced
+        ? ` Replaced the earlier checkpoint named "${label}".`
+        : result.evicted
+          ? ` The oldest checkpoint, "${result.evicted}", was evicted to make room.`
+          : "";
+      return `Checkpoint "${label}" saved with ${Object.keys(files).length} file(s).${notice}`;
+    }
+
+    if (name === "revert") {
+      const label = typeof args["label"] === "string" ? args["label"].trim() : "";
+      if (!label) return "Error: checkpoint label must not be empty.";
+      const checkpoint = ctx.checkpoints?.get(label);
+      if (!checkpoint) return formatUnknownCheckpoint(label, [...(ctx.checkpoints?.keys() ?? [])]);
+      const projectId = ctx.projectId;
+      if (!projectId) return "Error: no project sandbox is attached to this build.";
+
+      const current = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
+      const plan = restorePlan(checkpoint, current);
+      if (plan.toWrite.length + plan.toDelete.length === 0) {
+        return `${formatRestorePlan(plan)} Checkpoint "${label}" is still available.`;
+      }
+
+      // Capture content, generated-file presence, and tombstone state before side effects.
+      const memoryBefore = new Map<string, ReturnType<typeof snapshotCheckpointPathState>>();
+      for (const path of [...plan.toWrite, ...plan.toDelete]) {
+        memoryBefore.set(path, snapshotCheckpointPathState(path, ctx.generatedFiles, ctx.deletedFiles));
+      }
+      const restorePaths: Array<[string, string | undefined]> = [
+        ...plan.toWrite.map((path): [string, string | undefined] => [path, checkpoint.files[path]!]),
+        ...plan.toDelete.map((path): [string, string | undefined] => [path, undefined]),
+      ];
+      const attempted: string[] = [];
+      let failure: string | undefined;
+      for (const [path, content] of restorePaths) {
+        attempted.push(path);
+        try {
+          if (content === undefined) {
+            await deleteProjectFileFromSandbox(projectId, path);
+            await deletePersistedProjectFile(projectId, path);
+          } else {
+            await writeFilesToSandbox(projectId, { [path]: content }, ctx.onLog);
+            await persistFilesStrictly(projectId, { [path]: content });
+          }
+        } catch (err) {
+          failure = `${path}: ${err instanceof Error ? err.message : String(err)}`;
+          break;
+        }
+      }
+
+      if (failure !== undefined) {
+        const rollbackFailures: string[] = [];
+        for (const path of attempted.reverse()) {
+          const before = current[path];
+          try {
+            if (before === undefined) await deleteProjectFileFromSandbox(projectId, path);
+            else await writeFilesToSandbox(projectId, { [path]: before }, ctx.onLog);
+          } catch (err) {
+            rollbackFailures.push(`${path} live copy: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          try {
+            if (before === undefined) await deletePersistedProjectFile(projectId, path);
+            else await persistFilesStrictly(projectId, { [path]: before });
+          } catch (err) {
+            rollbackFailures.push(`${path} stored copy: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          // In-memory state is committed only after all paths succeed.
+          restoreCheckpointPathState(
+            path,
+            memoryBefore.get(path)!,
+            ctx.generatedFiles,
+            ctx.deletedFiles ?? (ctx.deletedFiles = new Set<string>()),
+          );
+        }
+        const rollback = rollbackFailures.length === 0
+          ? "The pre-revert files were restored."
+          : `Rollback was incomplete: ${rollbackFailures.join("; ")}.`;
+        return `INCOMPLETE — checkpoint "${label}" was not restored. ${failure} ${rollback} The checkpoint remains available.`;
+      }
+
+      const generatedFiles = ctx.generatedFiles ?? (ctx.generatedFiles = {});
+      const deletedFiles = ctx.deletedFiles ?? (ctx.deletedFiles = new Set<string>());
+      applyCheckpointToState(checkpoint.files, ctx.projectFiles, generatedFiles, deletedFiles, plan);
+      for (const path of plan.toWrite) {
+        const before = current[path];
+        noteChurn(ctx, before ?? "", checkpoint.files[path]!, before === undefined ? "created" : "replaced");
+      }
+      for (const path of plan.toDelete) noteChurn(ctx, current[path]!, "", "deleted");
+      noteWrite(ctx);
+      return `${formatRestorePlan(plan)} Reverted to "${label}". The checkpoint remains available.`;
+    }
     if (name === "search_code") {
       const files = currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles);
       if (Object.keys(files).length === 0) {

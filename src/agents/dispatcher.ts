@@ -38,6 +38,7 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
 import type { RenderReport } from "../verify/render.js";
+import type { Checkpoint } from "../verify/checkpoints.js";
 
 // Workspace root: one directory per project
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
@@ -558,6 +559,7 @@ export class AgentDispatcher {
     const maxRounds = agenticBuild ? config.AGENTIC_MAX_TURNS : MAX_TOOL_ROUNDTRIPS;
     const generatedFiles: Record<string, string> = {};
     const deletedFiles = new Set<string>();
+    const checkpoints = new Map<string, Checkpoint>();
 
     for (let round = 1; round <= maxRounds; round++) {
       roundsUsed = round;
@@ -694,6 +696,7 @@ export class AgentDispatcher {
                 projectId,
                 generatedFiles,
                 deletedFiles,
+                checkpoints,
                 onLog: options.onSandboxLog,
                 projectFiles: options.projectFiles,
                 gateResults,
