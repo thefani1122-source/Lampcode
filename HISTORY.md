@@ -3608,3 +3608,59 @@ because an empty list is what an empty table looks like.
 - **Finding 2 and 3 are read from the code, not reproduced.** The claim that `auth.uid()` is null
   for an anon-key backend client, and that a missing table surfaces as an empty list, follows from
   the prompt text and Supabase's semantics; neither was driven on a real preview.
+
+### G6 is measured now, not inferred — and the preview DB is empty — 2026-10-17
+
+Yesterday's entry said finding 3 was "read from the code, not reproduced". It has now been
+checked against the live projects, which cost nothing and took one call.
+
+Two Supabase projects exist on this account:
+
+| project | role | tables |
+|---|---|---|
+| `kkyzhykycqydcguqdxye` | the platform DB (`SUPABASE_URL`) | 23, including `projects` (416 rows), `build_sessions` (427), `agent_tasks` (818), `build_messages` (3253) |
+| `wdzbancieifhheugtxph` "lampcode two" | the shared preview DB (`PREVIEW_SUPABASE_URL`) | **one** — `user_mcp_connections`, 0 rows |
+
+**416 projects and 427 build sessions, and the preview database holds not a single generated
+app's table.** The inference was right and the scale of it is larger than the wording suggested:
+this is not an edge case for users who skipped a setup step, it is every build that ever ran
+without a connected Supabase of its own.
+
+`user_mcp_connections` being there at all is its own small finding — that table belongs to the
+platform schema, so something once pointed a migration at the preview project. It is empty, so
+nothing was lost, but it means the two projects' identities have been mixed up before.
+
+Fixing G6 alone would still not make persistence work, because G5 is in the way: tables that
+exist with the RLS policies the prompt teaches still deny an anon-key backend that has no
+`auth.uid()`. The two are one problem in two halves.
+
+### A live exposure found while checking it: `build_messages` has RLS disabled
+
+Supabase's own advisory flagged it on the platform project, and it is not a false positive:
+
+- `public.build_messages` holds **3253 rows** — the prompts users typed and what the model wrote
+  back — with **RLS disabled**.
+- The platform anon key is public by construction: `vibe-coder-suite/src/lib/supabase.ts` builds
+  a browser client from `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`, so the key ships inside
+  the deployed bundle and anyone can read it out of the network tab.
+- A table with RLS disabled is fully exposed to the `anon` role. So that key reads — and
+  **writes** — every row of every user's build history.
+
+The fix is one statement and it was checked for blast radius before being recommended:
+
+```sql
+ALTER TABLE "public"."build_messages" ENABLE ROW LEVEL SECURITY;
+```
+
+With **no policies**, deliberately. Nothing legitimate loses access:
+
+- `src/websocket/message-recorder.ts` is the only reader and writer, and it goes through Drizzle
+  over `DATABASE_URL` — a direct Postgres connection as the owning role, which RLS does not
+  constrain unless `FORCE ROW LEVEL SECURITY` is set.
+- The one Supabase client in the backend (`src/auth/supabase-server.ts`) uses the service key,
+  which bypasses RLS.
+- The frontend never touches this table. Its only direct queries are `integrations` and
+  `audit_log` (`routes/mcp.tsx`, `routes/settings.tsx`).
+
+**Not applied.** It is a production change on live data and belongs to the owner, not to a
+session that found it.
