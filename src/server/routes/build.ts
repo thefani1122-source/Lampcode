@@ -41,6 +41,7 @@ import { capturePreviewScreenshot, checkInteractions, createPreviewSandbox, kill
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
+import { findDataLayerGaps, formatDataLayerForUser } from "../../verify/data-layer.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
@@ -934,6 +935,11 @@ export async function runFastBuild(
     const editDetectedFramework: FullstackFramework = hasExistingCode ? detectFrameworkFromFiles(existingFiles) : "react";
     const fullstackFramework: FullstackFramework = ((isFullstackBuild ? classification?.framework : null) as FullstackFramework | null) ?? editDetectedFramework;
     const wantsPython = isFullstackBuild && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(prompt);
+    // Whether the generated schema has anywhere to land. Hoisted out of the
+    // block below because the data-layer check at the end of the build needs
+    // it: applying `schema.sql` only ever happens against a Supabase the user
+    // connected themselves, so this flag IS "the app's tables will exist".
+    let ownSupabaseConnected = false;
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -941,6 +947,7 @@ export async function runFastBuild(
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
       const userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
       setProjectPreviewEnv(projectId, userSupa);
+      ownSupabaseConnected = userSupa !== null;
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.
@@ -3112,6 +3119,33 @@ export async function runFastBuild(
     // end state.
     const wiringFindings = findWiringGaps(allFiles);
     const wiringTally = tallyWiringGaps(wiringFindings);
+
+    // The same question wiring asks, one layer down: the app RENDERS, its
+    // controls respond — and is there a database behind any of it?
+    //
+    // Measured 2026-10-17: the shared preview project holds no app tables at
+    // all, because `schema.sql` is only ever applied to a Supabase the user
+    // connected themselves. Without one, every read fails and the generated
+    // error handling turns the failure into an empty list, so a hollow app
+    // passes every gate looking finished. This is the only check that can tell
+    // those apart, and like wiring it reports and never blocks.
+    const dataLayerFindings = findDataLayerGaps(allFiles, {
+      configured:
+        ownSupabaseConnected ||
+        Boolean(config.PREVIEW_SUPABASE_URL && config.PREVIEW_SUPABASE_ANON_KEY) ||
+        Boolean(config.PREVIEW_MONGODB_URI),
+      schemaApplied: ownSupabaseConnected,
+    });
+    for (const line of formatDataLayerForUser(dataLayerFindings)) {
+      server?.thinking(sessionId, { text: line, sessionId });
+    }
+    if (dataLayerFindings.length > 0) {
+      console.log(
+        `[build] data layer session=${sessionId} findings=${dataLayerFindings.length} ` +
+        `kinds=[${[...new Set(dataLayerFindings.map((f) => f.kind))].join(",")}] ` +
+        `ownSupabase=${ownSupabaseConnected}`,
+      );
+    }
 
     // Said in the chat, in the USER's language.
     //
