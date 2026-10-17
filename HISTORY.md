@@ -3902,3 +3902,46 @@ is their module.
 - **Nothing in the "written but unproven" list was run.** That list is now explicit in
   `PLAN.md`, which is the point: six things are merged and green and have never been watched
   working.
+
+### G5 — the generated backend now has a user identity — 2026-10-17
+
+The prompt taught four RLS patterns built on `auth.uid()`, and then handed the backend a client
+that could never satisfy them: one `createClient` at module level, no auth header. With a service
+key every one of those policies was bypassed, so they were decoration. With the anon key
+`auth.uid()` is NULL, so every owner-scoped policy denied it and the app returned empty lists.
+Both readings were wrong, which is why removing the key in G1 could not be the whole fix.
+
+Changed, all four places the contract appears:
+
+- **Node/Hono** — `dbFor(c)` built per request, anon key plus the caller's `Authorization`
+  forwarded in `global.headers`, with an explicit warning that a module-level client would serve
+  every user with whichever token arrived first.
+- **Python/FastAPI** — `db_for(req)` doing the same through `client.postgrest.auth(token)`.
+- **The generated frontend** — `src/lib/api.ts` now reads `supabase.auth.getSession()` and sends
+  `Authorization: Bearer …` on every call. Half a chain is worse than none: the backend would
+  stop bypassing RLS and start being denied by it.
+- **The Next.js instruction in `build.ts`** — rewritten even though `selectTemplate` ignores that
+  template today, because a lie left in dead text is how drift comes back.
+
+The prompt now also says the model must NOT filter by user id itself: RLS does it, and a route
+that also adds `.eq('user_id', …)` is either redundant or a bug.
+
+**A drift bug was created and caught inside this change.** The Python client was rewritten while
+its two route examples kept calling the old module-level `supabase`, which no longer exists in
+the shape above — that would have shipped a `NameError` to every Python build. Found by reading
+the surrounding lines rather than trusting the edit, and it is now case 7.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 12 cases in `scripts/jwt-forwarding.test.ts`, which read the prompt as TEXT and pin the
+  contract: no service key under any spelling, a per-request client on both backends, the token
+  attached on both the read and the write example, and the RLS section still present — because
+  forwarding a token is pointless if a later edit drops the policies it is read by.
+
+### Not verified
+
+- **No build has run.** This is prompt text, which is the one thing in this repo that cannot be
+  proven by cases: the model may still write a module-level client despite being told twice.
+  The proof is a build whose generated app signs a user in, writes a row, and does NOT return
+  another user's rows. That is next, and it needs G6's gate to connect a Supabase first.
