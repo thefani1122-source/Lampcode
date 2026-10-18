@@ -91,6 +91,28 @@ ok(
   /RLS does it|redundant or a bug/i.test(prompt),
 );
 
+
+// ── the anti-fake rule must reach a FOLLOW-UP build ──────────────────────────
+// Measured twice, 2026-10-17 and 2026-10-18: both fakes happened on follow-up
+// builds ("sign-up doesn't work"), and the rule lived in DB_INSTRUCTIONS, which
+// prompt-builder only includes when isFullstackMode is true. The rule was
+// correct, well argued, and never sent.
+//
+// So it now also lives in the agentic block, which is present on every agentic
+// build. These cases pin that placement, not the wording: a rule in the wrong
+// section is the same as no rule.
+{
+  const agentic = prompt.slice(prompt.indexOf("HOW TO BUILD — THIS SECTION WINS"));
+  ok("the agentic block forbids faking a feature", /NEVER fake a feature/i.test(agentic));
+  ok("it names demo mode and localStorage specifically", /demo mode.*localStorage|localStorage stand-in/is.test(agentic));
+  ok(
+    "it tells the model to CHECK the backend claim, not assume it",
+    /read_logs/.test(agentic) && /check_page/.test(agentic),
+  );
+  ok("it names the hardcoded-host trap", /localhost:3001/.test(agentic));
+  ok("and says an honest failure is a result", /is a result/i.test(agentic));
+}
+
 console.log(
   failures === 0
     ? "\nAll JWT-forwarding contract cases passed."
