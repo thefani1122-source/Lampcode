@@ -92,6 +92,29 @@ check("a single-object anon_key shape still works", extractAnonKey({ text: "", d
 check("a bare key in prose is the last resort", extractAnonKey({ text: `your key is ${LEGACY} ok`, data: null }), LEGACY);
 check("a bare publishable key in prose too", extractAnonKey({ text: `key: ${PUBLISHABLE}`, data: null }), PUBLISHABLE);
 
+
+// ── found wherever it sits ───────────────────────────────────────────────────
+// Two deployments were spent guessing WHERE the answer lives — content[].text,
+// then structuredContent — and it was in neither. These pin the third answer:
+// values this distinctive are found by what they ARE.
+
+check(
+  "a key buried in an unexpected envelope is still found",
+  extractAnonKey({ text: JSON.stringify({ result: { data: { items: [{ secret: LEGACY }] } } }), data: null }),
+  LEGACY,
+);
+
+check(
+  "and so is a publishable one",
+  extractAnonKey({ text: JSON.stringify({ weird: { nesting: [[{ k: PUBLISHABLE }]] } }), data: null }),
+  PUBLISHABLE,
+);
+
+ok(
+  "an envelope with no key at all still yields null",
+  extractAnonKey({ text: JSON.stringify({ result: { data: { items: [] } } }), data: null }) === null,
+);
+
 // ── nothing is nothing ───────────────────────────────────────────────────────
 
 ok("an empty result yields null", extractAnonKey({ text: "", data: null }) === null);
