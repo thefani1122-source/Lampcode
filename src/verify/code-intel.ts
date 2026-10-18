@@ -4,6 +4,8 @@ export interface SymbolRef {
   path: string;
   line: number;
   text: string;
+  /** True when this is only a lexical match from a file that did not parse. */
+  degraded?: boolean;
 }
 
 export interface CodeIntelResult {
@@ -35,10 +37,52 @@ function isDeclarationName(node: ts.Identifier): boolean {
     ts.isModuleDeclaration(parent);
 }
 
+function sourceRefAt(source: ts.SourceFile, position: number, path: string, degraded = false): SymbolRef {
+  const linePosition = source.getLineAndCharacterOfPosition(position);
+  const line = source.text.split(/\r?\n/)[linePosition.line] ?? "";
+  return {
+    path,
+    line: linePosition.line + 1,
+    text: line.trim().slice(0, 240),
+    ...(degraded ? { degraded: true } : {}),
+  };
+}
+
 function sourceRef(source: ts.SourceFile, node: ts.Node, path: string): SymbolRef {
-  const position = source.getLineAndCharacterOfPosition(node.getStart(source));
-  const line = source.text.split(/\r?\n/)[position.line] ?? "";
-  return { path, line: position.line + 1, text: line.trim().slice(0, 240) };
+  return sourceRefAt(source, node.getStart(source), path);
+}
+
+/**
+ * A parser failure makes checker identity unreliable for that file. The scanner
+ * still skips comments and strings, so these are only possible code references.
+ */
+function textualReferences(source: ts.SourceFile, symbol: string, path: string): SymbolRef[] {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, source.languageVariant, source.text);
+  const declarationKeywords = new Set<ts.SyntaxKind>([
+    ts.SyntaxKind.FunctionKeyword,
+    ts.SyntaxKind.ClassKeyword,
+    ts.SyntaxKind.InterfaceKeyword,
+    ts.SyntaxKind.TypeKeyword,
+    ts.SyntaxKind.EnumKeyword,
+    ts.SyntaxKind.ConstKeyword,
+    ts.SyntaxKind.LetKeyword,
+    ts.SyntaxKind.VarKeyword,
+  ]);
+  const references: SymbolRef[] = [];
+  let previous: ts.SyntaxKind | undefined;
+  while (true) {
+    const kind = scanner.scan();
+    if (kind === ts.SyntaxKind.EndOfFileToken) break;
+    if (
+      kind === ts.SyntaxKind.Identifier &&
+      scanner.getTokenText() === symbol &&
+      !declarationKeywords.has(previous as ts.SyntaxKind)
+    ) {
+      references.push(sourceRefAt(source, scanner.getTokenPos(), path, true));
+    }
+    previous = kind;
+  }
+  return references;
 }
 
 function symbolAt(checker: ts.TypeChecker, node: ts.Identifier): ts.Symbol | undefined {
@@ -190,6 +234,10 @@ export function codeIntel(
 
   for (const source of sourceFiles) {
     const path = sourcePath(source);
+    if (broken.has(path)) {
+      refs.push(...textualReferences(source, query.symbol, path));
+      continue;
+    }
     const visit = (node: ts.Node): void => {
       const parent = node.parent;
       const importBinding = parent !== undefined && (ts.isImportSpecifier(parent) || ts.isImportClause(parent) ||
@@ -199,9 +247,6 @@ export function codeIntel(
       }
       ts.forEachChild(node, visit);
     };
-    // Parsing diagnostics only degrade that file's AST-derived matches. Any
-    // partial compiler bindings that survive are retained; plain text matches
-    // are deliberately skipped because their identity cannot be proved.
     visit(source);
   }
 
@@ -223,7 +268,7 @@ export function formatCodeIntel(result: CodeIntelResult): string {
   if (!result.definition) return result.degraded ? "No reliable symbol result; analysis was incomplete." : "Symbol not found or ambiguous.";
   return [
     `Definition: ${result.definition.path}:${result.definition.line}`,
-    ...result.references.map((ref) => `Reference: ${ref.path}:${ref.line} ${ref.text}`),
+    ...result.references.map((ref) => `${ref.degraded ? "Possible textual match" : "Reference"}: ${ref.path}:${ref.line} ${ref.text}`),
     ...(result.referencesOmitted ? [`… ${result.referencesOmitted} additional reference(s) omitted.`] : []),
     ...(result.degraded ? ["Analysis was incomplete because at least one source file could not be parsed."] : []),
   ].join("\n");

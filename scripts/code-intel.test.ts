@@ -56,6 +56,48 @@ const sameName = codeIntel({
 }, { symbol: "state" });
 check("ambiguous same-named unrelated locals are not combined", sameName, { references: [], degraded: false });
 
+// ── degraded textual evidence from files that do not parse ────────────────────
+
+const brokenCaller = codeIntel({
+  "src/target.ts": "export function ping() {}",
+  "src/broken-caller.ts": 'import { ping } from "./target"; ping(;',
+}, { symbol: "ping" });
+ok(
+  "a broken caller adds a degraded possible reference without losing the definition",
+  brokenCaller.definition?.path === "src/target.ts" &&
+    brokenCaller.references.some((ref) => ref.path === "src/broken-caller.ts" && ref.degraded === true) &&
+    brokenCaller.degraded,
+);
+
+const ambiguousWithBrokenText = codeIntel({
+  "src/a.ts": "export function read() { const state = 1; return state; }",
+  "src/b.ts": "export function write() { const state = 2; return state; }",
+  "src/broken.ts": "state(;",
+}, { symbol: "state" });
+check(
+  "broken-file spelling cannot resolve ambiguity between valid compiler symbols",
+  ambiguousWithBrokenText,
+  { references: [], degraded: true },
+);
+
+const brokenMany: Record<string, string> = {
+  "src/target.ts": "export function pulse() {}",
+  "src/broken-many.ts": `${Array.from({ length: 45 }, () => "pulse();").join("\n")}\nconst invalid: = ;`,
+};
+const brokenCapped = codeIntel(brokenMany, { symbol: "pulse" });
+check("broken-file matches obey the 40-reference cap and omitted count", [
+  brokenCapped.references.length,
+  brokenCapped.referencesOmitted,
+  brokenCapped.references.every((ref) => ref.degraded === true),
+], [40, 5, true]);
+
+const brokenReversed = Object.fromEntries(Object.entries(brokenMany).reverse());
+check(
+  "broken-file fallback ordering is deterministic",
+  codeIntel(brokenReversed, { symbol: "pulse" }),
+  brokenCapped,
+);
+
 const reversed = Object.fromEntries(Object.entries(files).reverse());
 check("result ordering is independent of object insertion order", codeIntel(reversed, { symbol: "total" }), basic);
 check("empty project does not throw", codeIntel({}, { symbol: "anything" }), { references: [], degraded: false });
