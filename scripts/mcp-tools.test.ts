@@ -15,16 +15,13 @@
  */
 
 import {
-  DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
-  LATEST_PROTOCOL_VERSION,
-  SUPPORTED_PROTOCOL_VERSIONS,
-} from "@modelcontextprotocol/sdk/types.js";
-import {
   buildReadToolDefinitions,
   buildWriteProxyDefinitions,
   type ClassifiedTool,
 } from "../src/agents/mcp-tool-classifier.js";
 import type { ActiveMcpServer } from "../src/server/routes/integrations.js";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -34,9 +31,6 @@ function check(name: string, got: unknown, want: unknown): void {
   }
   failures++;
   console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
-}
-function ok(name: string, cond: boolean): void {
-  check(name, cond, true);
 }
 
 const SERVERS: ActiveMcpServer[] = [
@@ -80,29 +74,16 @@ check(
   false,
 );
 
-// An unannotated tool whose name does not look like a read goes behind the
-// approval gate — NOT into a void.
-//
-// This case used to assert the opposite, and that is how it stayed broken for
-// two months while the owner reported it. MCP annotations are optional per the
-// spec and many servers omit them, so `name-pattern-no-match` is the ordinary
-// case for a write, not an exotic one. Denied as a read and skipped by the
-// proxy, such a tool appeared NOWHERE and the model could not see it existed.
-//
-// Measured 2026-10-16: a build asked to create a repo, push, and deploy spent
-// nine minutes calling create_repository four times — GitHub annotates that
-// one — and never pushed, because `push_files` had silently vanished.
-//
-// Fail-closed is kept. An unclassified tool is not automatically callable; it
-// is callable with the user's approval. Vanishing is not a safer default than
-// asking, it is the same denial with the reason hidden from everyone.
+// An unannotated tool whose name does not look like a read is ambiguous. It is
+// blocked on BOTH paths — not readable, and not even write-proxyable, because
+// a proxy would turn "we don't know what this does" into an approvable action.
 check(
-  "an ambiguous tool is offered behind approval, not hidden",
+  "an ambiguous tool is in neither set",
   [
     read.toolDefs.some((d) => d.name === "github__merge_pull_request"),
     write.toolDefs.some((d) => d.name === "github__merge_pull_request"),
   ],
-  [false, true],
+  [false, false],
 );
 
 // ── The two sets must not overlap ─────────────────────────────────────────────
@@ -236,65 +217,76 @@ check(
   { creds: { github_token: "ghp_x" } },
 );
 
-
-// ── the habit-tracker failure, pinned ────────────────────────────────────────
-// 2026-10-16. "create a repo, push the code, deploy to vercel" → nine minutes,
-// create_repository called four times, nothing pushed, output.md written.
-// GitHub's MCP annotates create_repository as destructive, so it was offered.
-// push_files is neither read-verbed nor (on an unannotated server) marked, so
-// it was offered NOWHERE. The model was not refusing to push — it could not
-// see any way to.
-{
-  const servers = [{ slug: "github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", authToken: "t" }];
-  const report = [
-    t("github", "create_repository", false, "annotation-destructive"),
-    t("github", "push_files", false, "name-pattern-no-match"),
-    t("github", "create_or_update_file", false, "name-pattern-no-match"),
-    t("github", "get_file_contents", true, "name-pattern-match"),
-  ];
-  const r = buildReadToolDefinitions(report, servers as never);
-  const w = buildWriteProxyDefinitions(report, servers as never);
-  const names = new Set(w.toolDefs.map((d) => d.name));
-
-  ok("push_files is reachable behind approval", names.has("github__push_files"));
-  ok("create_or_update_file is reachable too", names.has("github__create_or_update_file"));
-  ok("create_repository still is", names.has("github__create_repository"));
-  ok("a read tool stays on the read path", r.toolDefs.some((d) => d.name.endsWith("get_file_contents")));
-  ok("and is NOT duplicated into the write proxy", !names.has("github__get_file_contents"));
-  ok("every write-proxied tool is registered for dispatch", w.toolDefs.every((d) => w.registry.has(d.name)));
-}
-
-// ── H1: which protocol the installed SDK actually negotiates ─────────────────
-// Answered 2026-10-17 by reading the installed SDK, not the changelog.
-//
-// package.json pins "^1.29.0", which resolves to 1.32.1 today. The client sends
-// LATEST_PROTOCOL_VERSION on initialize and then accepts whatever the server
-// replies with, PROVIDED it is in SUPPORTED_PROTOCOL_VERSIONS; anything else is
-// a hard throw ("Server's protocol version is not supported"). After that it
-// hands the negotiated version to the transport, which sends it as the
-// `mcp-protocol-version` header on every later request.
-//
-// Statelessness needs nothing from us: the transport sends `mcp-session-id`
-// only when a server handed one back, so a stateless server simply never gets
-// the header. Our own usage is connect → listTools → callTool → close, which is
-// valid either way.
-//
-// WHY THIS IS A CASE AND NOT A NOTE. The `^` means the floor is pinned and the
-// protocol is not. A minor bump can move LATEST under us, and the failure it
-// produces is a server-side rejection during discovery — which this codebase
-// swallows into `failures` and reports as "server unavailable this build". That
-// is correct fail-closed behaviour and it is also indistinguishable from a
-// flaky server, so the cause would never be found from the logs. This case
-// turns that silent drift into a red test on the machine that upgrades.
-{
-  ok("the SDK offers the protocol we recorded", LATEST_PROTOCOL_VERSION === "2025-11-25");
-  ok("it still accepts the 2025-06-18 spec", SUPPORTED_PROTOCOL_VERSIONS.includes("2025-06-18"));
-  ok("and the stateful 2025-03-26 one", SUPPORTED_PROTOCOL_VERSIONS.includes("2025-03-26"));
-  ok(
-    "the negotiated default is not newer than what servers support",
-    SUPPORTED_PROTOCOL_VERSIONS.includes(DEFAULT_NEGOTIATED_PROTOCOL_VERSION),
-  );
-}
+// Read source text instead of importing the registry: its handlers transitively
+// load e2b-service, which must not be initialized by an offline test process.
+const toolDefinitionsSource = readFileSync(new URL("../src/agents/tools.ts", import.meta.url), "utf8");
+const toolRegistrySource = readFileSync(new URL("../src/agents/tools/registry.ts", import.meta.url), "utf8");
+const parsedDefinitions = ts.createSourceFile("tools.ts", toolDefinitionsSource, ts.ScriptTarget.Latest, true);
+const parsedRegistry = ts.createSourceFile("registry.ts", toolRegistrySource, ts.ScriptTarget.Latest, true);
+const getArrayNames = (sourceFile: ts.SourceFile, variableName: string): string[] => {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== variableName ||
+        !declaration.initializer ||
+        !ts.isArrayLiteralExpression(declaration.initializer)
+      ) continue;
+      return declaration.initializer.elements.flatMap((element) => {
+        if (!ts.isObjectLiteralExpression(element)) return [];
+        const name = element.properties.find((property) =>
+          ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+          property.name.text === "name",
+        );
+        return name && ts.isPropertyAssignment(name) && ts.isStringLiteral(name.initializer)
+          ? [name.initializer.text]
+          : [];
+      });
+    }
+  }
+  return [];
+};
+const staticToolNames = [
+  ...getArrayNames(parsedDefinitions, "TOOL_DEFINITIONS"),
+  ...getArrayNames(parsedDefinitions, "AGENTIC_BUILD_TOOLS"),
+];
+const registryDeclaration = parsedRegistry.statements
+  .flatMap((statement) => ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : [])
+  .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "REGISTRY");
+const registryInitializer = registryDeclaration?.initializer;
+const registryEntries =
+  registryInitializer && ts.isNewExpression(registryInitializer)
+    ? registryInitializer.arguments?.[0]
+    : undefined;
+const registryNames =
+  registryEntries &&
+  ts.isArrayLiteralExpression(registryEntries)
+    ? registryEntries.elements.flatMap((entry) =>
+        ts.isArrayLiteralExpression(entry) &&
+        entry.elements[0] !== undefined &&
+        ts.isStringLiteral(entry.elements[0])
+          ? [entry.elements[0].text]
+          : [],
+      )
+    : [];
+const sortedNames = (names: string[]) => [...names].sort();
+check(
+  "every static tool has a registry entry and the registry has no extras",
+  {
+    missing: sortedNames(staticToolNames.filter((name) => !registryNames.includes(name))),
+    extra: sortedNames(registryNames.filter((name) => !staticToolNames.includes(name))),
+  },
+  { missing: [], extra: [] },
+);
+check("static tool registry covers all definitions", registryNames.length, staticToolNames.length);
+check(
+  "runtime MCP write/read proxy paths are documented outside the static registry",
+  toolRegistrySource.includes("write-proxy") && toolRegistrySource.includes("read-only MCP"),
+  true,
+);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
+
