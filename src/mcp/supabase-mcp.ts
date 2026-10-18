@@ -85,7 +85,7 @@ export async function fetchSupabaseProjectCreds(
     let url: string | null = null;
     try {
       const r = await client.callTool({ name: "get_project_url", arguments: args });
-      url = textOf(r as never) || null;
+      url = extractProjectUrl(payloadOf(r));
     } catch (err) {
       logger.warn({ err }, "[mcp] get_project_url failed");
     }
@@ -93,33 +93,101 @@ export async function fetchSupabaseProjectCreds(
     let anonKey: string | null = null;
     try {
       const r = await client.callTool({ name: "get_publishable_keys", arguments: args });
-      const text = textOf(r as never);
-      // Result may be a plain key or JSON ({ anon_key } / array of keys).
-      anonKey = extractAnonKey(text);
+      anonKey = extractAnonKey(payloadOf(r));
     } catch (err) {
       logger.warn({ err }, "[mcp] get_publishable_keys failed");
     }
 
+    if (!url || !anonKey) {
+      // Logged at the shape level, never the value. Both calls can SUCCEED and
+      // still yield nothing if the result shape moves, and that is exactly the
+      // failure this function had — silent, with no error to find.
+      logger.warn({ hasUrl: Boolean(url), hasAnonKey: Boolean(anonKey) }, "[mcp] project creds incomplete");
+    }
     return { url, anonKey };
   });
 }
 
-function extractAnonKey(text: string): string | null {
-  if (!text) return null;
-  // JWT-style anon keys start with "eyJ"; grab the first one if present.
+/**
+ * The payload of an MCP tool result, from wherever this server put it.
+ *
+ * MEASURED 2026-10-18. Connecting a Supabase project failed with "the project
+ * returned no URL or anon key" while BOTH tool calls succeeded and nothing was
+ * logged — because the extractor read only `content[].text`, and the server
+ * answers these two tools in `structuredContent`. A tool that returns nothing
+ * and a tool that returns somewhere else look identical from one field.
+ *
+ * So both are read, and the caller gets the parsed object AND the raw text: a
+ * server that returns a bare string and one that returns JSON both work, and a
+ * third shape later degrades to the regex rather than to silence.
+ */
+function payloadOf(result: unknown): { text: string; data: unknown } {
+  const r = result as {
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: unknown;
+  };
+  const text = textOf({ content: r.content ?? [] });
+  let data: unknown = r.structuredContent ?? null;
+  if (data === null && text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      /* a plain string is a valid answer too */
+    }
+  }
+  return { text, data };
+}
+
+function extractProjectUrl({ text, data }: { text: string; data: unknown }): string | null {
+  if (data && typeof data === "object") {
+    const u = (data as Record<string, unknown>)["url"] ?? (data as Record<string, unknown>)["project_url"];
+    if (typeof u === "string" && u.startsWith("http")) return u;
+  }
+  // A bare URL, or one embedded in prose.
+  const m = text.match(/https:\/\/[a-z0-9-]+\.supabase\.co/i);
+  return m ? m[0] : null;
+}
+
+/**
+ * The key a generated app should initialise its Supabase client with.
+ *
+ * The server answers `get_publishable_keys` with a LIST — measured shape:
+ * `{ keys: [ { api_key, name, type, disabled, id }, … ] }`, carrying both the
+ * legacy JWT anon key and a modern `sb_publishable_…` one.
+ *
+ * The legacy anon key is preferred, and that is a decision rather than
+ * nostalgia: everything the prompt teaches about `auth.uid()` and the JWT the
+ * backend forwards is built on it, and it is what a model has seen a million
+ * times. The publishable key is the fallback, so a project that has retired the
+ * legacy key still connects.
+ *
+ * Disabled keys are skipped. Handing out a key that will be refused is the same
+ * class of bug as this whole function had: a confident answer that does not work.
+ */
+export function extractAnonKey({ text, data }: { text: string; data: unknown }): string | null {
+  const rows: Array<Record<string, unknown>> = [];
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    const list = Array.isArray(d["keys"]) ? (d["keys"] as unknown[]) : Array.isArray(data) ? (data as unknown[]) : [];
+    for (const k of list) if (k && typeof k === "object") rows.push(k as Record<string, unknown>);
+
+    // Single-object shapes, kept from the previous implementation.
+    const direct = d["anon_key"] ?? d["anonKey"] ?? d["publishable_key"] ?? d["key"];
+    if (typeof direct === "string" && direct.length > 0) return direct;
+  }
+
+  const usable = rows.filter((k) => k["disabled"] !== true && typeof k["api_key"] === "string");
+  const legacy = usable.find((k) => String(k["api_key"]).startsWith("eyJ"));
+  if (legacy) return String(legacy["api_key"]);
+  const publishable = usable.find((k) => String(k["api_key"]).startsWith("sb_publishable_"));
+  if (publishable) return String(publishable["api_key"]);
+  if (usable[0]) return String(usable[0]["api_key"]);
+
+  // Last resort: the key sitting in prose, which is how this used to work.
   const jwt = text.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
   if (jwt) return jwt[0];
-  try {
-    const parsed = JSON.parse(text);
-    if (typeof parsed === "string") return parsed;
-    if (parsed && typeof parsed === "object") {
-      const cand = parsed.anon_key ?? parsed.anonKey ?? parsed.publishable_key ?? parsed.key;
-      if (typeof cand === "string") return cand;
-    }
-  } catch {
-    /* not JSON */
-  }
-  return null;
+  const pub = text.match(/sb_publishable_[A-Za-z0-9_-]+/);
+  return pub ? pub[0] : null;
 }
 
 /**

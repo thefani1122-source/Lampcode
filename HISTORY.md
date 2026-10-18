@@ -4209,3 +4209,54 @@ the preview" message, which is the thing being corrected.
 - **No build has run on it.** Whether the model complies with the removal, or re-argues for the
   fallback, is unknown — `after.length` is logged and reported to the user for exactly that
   reason.
+
+### The connection that could never have worked — 2026-10-18
+
+Four refusals in a row, with a correct project ref:
+
+```
+POST /api/integrations/supabase/mcp  422
+Supabase MCP connect refused: no preview credentials
+  projectRef="wdzbancieifhheugtxph"  why="the project returned no URL or anon key"
+```
+
+Yesterday's change is what made this visible — before it, the same failure wrote a row saying
+`status: "connected"` and everybody believed it. So the refusal was right and the thing it
+refused was genuinely broken.
+
+**Both MCP calls succeeded. Nothing was logged. Both results came back empty.** `textOf` reads
+only `content[].text`, and this server answers `get_project_url` and `get_publishable_keys` in
+**`structuredContent`**. A tool that returns nothing and a tool that returns somewhere else are
+indistinguishable when you only look in one place — which is why the `try/catch` around each call
+caught nothing and the warnings never fired.
+
+`payloadOf` now reads both, and hands the extractors the parsed object *and* the raw text, so a
+server returning a bare string, JSON in text, or structured content all work, and a fourth shape
+later degrades to a regex rather than to silence. The incomplete case now logs
+`hasUrl`/`hasAnonKey` — the shape, never the value.
+
+`extractAnonKey` was rewritten against the shape the server actually sends:
+
+```json
+{"keys":[{"api_key":"eyJ…","name":"anon","type":"legacy","disabled":false},
+         {"api_key":"sb_publishable_…","name":"default","type":"publishable","disabled":false}]}
+```
+
+The legacy anon key is preferred, as a decision rather than nostalgia: everything the prompt
+teaches about `auth.uid()`, and the JWT the backend now forwards, is built on it. The publishable
+key is the fallback so a project that retired the legacy one still connects. **Disabled keys are
+skipped** — handing out a key that will be refused is the same class of bug as returning nothing:
+a confident answer that does not work.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 12 cases, **built on the real shapes** copied from live calls against `wdzbancieifhheugtxph`,
+  not invented ones. A case built on a guessed shape would have passed while production kept
+  failing — which is precisely what the previous code did.
+
+### Not verified
+
+- **The connect flow has not been re-run.** The fixtures match what the server returned to a
+  different client in this session; whether the backend's own session gets the identical shape is
+  the one thing only a real connect attempt can show.
