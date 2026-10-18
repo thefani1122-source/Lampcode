@@ -15,7 +15,7 @@
  * exactly what the previous code did.
  */
 
-import { extractAnonKey } from "../src/mcp/supabase-mcp.js";
+import { assertNotError, extractAnonKey } from "../src/mcp/supabase-mcp.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -113,6 +113,67 @@ check(
 ok(
   "an envelope with no key at all still yields null",
   extractAnonKey({ text: JSON.stringify({ result: { data: { items: [] } } }), data: null }) === null,
+);
+
+
+// ── a failed tool call is not an empty answer ────────────────────────────────
+// THE bug, found on the third attempt. client.callTool() rejects only on
+// protocol failures; a tool that RAN and FAILED resolves normally with
+// isError: true and the reason in its text. So every try/catch here caught
+// nothing, every warning stayed silent, and two deploys were spent arguing
+// about where the answer lived when there was no answer at all.
+
+check(
+  "an isError result throws instead of reading as empty",
+  (() => {
+    try {
+      assertNotError(
+        { isError: true, content: [{ type: "text", text: "Unauthorized. Check the token scope." }] },
+        "get_project_url",
+      );
+      return "did not throw";
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })(),
+  "get_project_url failed: Unauthorized. Check the token scope.",
+);
+
+ok(
+  "a normal result passes straight through",
+  (() => {
+    try {
+      assertNotError({ content: [{ type: "text", text: "{}" }] }, "x");
+      return true;
+    } catch {
+      return false;
+    }
+  })(),
+);
+
+ok(
+  "isError false is not treated as an error",
+  (() => {
+    try {
+      assertNotError({ isError: false, content: [] }, "x");
+      return true;
+    } catch {
+      return false;
+    }
+  })(),
+);
+
+check(
+  "an isError result with no text still names the tool",
+  (() => {
+    try {
+      assertNotError({ isError: true, content: [] }, "get_publishable_keys");
+      return "did not throw";
+    } catch (e) {
+      return (e as Error).message;
+    }
+  })(),
+  "get_publishable_keys failed: (no message)",
 );
 
 // ── nothing is nothing ───────────────────────────────────────────────────────
