@@ -95,17 +95,26 @@ export function interpretDatabaseAnswer(answer: string | null): "connect" | "dec
   return "unclear";
 }
 
-// Asked at most once per project per process. A person who said no should not
-// be asked again on their next message in the same project — the nag is how a
-// gate turns into something people click past without reading. An in-process
-// Set, like `pending-answers.ts`: a deploy forgetting the refusal costs one
-// repeated question, which is cheaper than a column and a migration.
+// Asked at most once per PERSON per process — not per project.
+//
+// It was keyed on projectId at first, which read as "ask once per app" and
+// behaved as "ask every time", because a new app is a new project. Someone
+// trying three ideas in an afternoon was asked three times for a database they
+// had already decided about, which is how a gate becomes something people
+// click past without reading.
+//
+// The person is the right key: the decision is about their account, the
+// integration is stored against their account, and once they connect one, the
+// caller's `!userSupa` check means this is never reached again at all.
+//
+// An in-process Set, like `pending-answers.ts`: a deploy forgetting a refusal
+// costs one repeated question, which is cheaper than a column and a migration.
 const asked = new Set<string>();
 
-/** True the first time only. */
-export function shouldAskForDatabase(projectId: string): boolean {
-  if (asked.has(projectId)) return false;
-  asked.add(projectId);
+/** True the first time this person is asked in this process. */
+export function shouldAskForDatabase(userId: string): boolean {
+  if (asked.has(userId)) return false;
+  asked.add(userId);
   return true;
 }
 

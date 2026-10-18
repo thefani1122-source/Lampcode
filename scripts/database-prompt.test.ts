@@ -86,12 +86,14 @@ check("something off-topic is unclear", interpretDatabaseAnswer("make it blue"),
 
 {
   resetDatabasePromptMemory();
-  ok("the first build in a project asks", shouldAskForDatabase("proj-a"));
-  ok("the second one does not", !shouldAskForDatabase("proj-a"));
-  ok("and the third does not either", !shouldAskForDatabase("proj-a"));
-  ok("a different project is still asked", shouldAskForDatabase("proj-b"));
+  ok("the first build for a person asks", shouldAskForDatabase("user-a"));
+  ok("the second does not", !shouldAskForDatabase("user-a"));
+  // The case that was wrong before: keyed on the project, a person trying
+  // three ideas in an afternoon was asked three separate times.
+  ok("and a NEW project by the same person does not ask again", !shouldAskForDatabase("user-a"));
+  ok("a different person is still asked", shouldAskForDatabase("user-b"));
   resetDatabasePromptMemory();
-  ok("the memory is per process, not forever", shouldAskForDatabase("proj-a"));
+  ok("the memory is per process, not forever", shouldAskForDatabase("user-a"));
 }
 
 console.log(
