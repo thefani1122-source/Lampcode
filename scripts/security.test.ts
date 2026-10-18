@@ -14,7 +14,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { checkAuth, checkCORS, type FileTree } from "../src/verify/security.js";
+import { checkAuth, checkCORS, checkRlsScoping, type FileTree } from "../src/verify/security.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -305,6 +305,114 @@ check(
   ok("the message names the middleware route to a fix", msg.includes("requireAuth"));
   ok("and the forwarded-identity route", msg.includes("Authorization"));
   ok("and forbids the obvious cheat", /Do not simply rename/i.test(msg));
+}
+
+
+// ── RLS that is enabled, and isolates nobody ─────────────────────────────────
+// checkRLS asks whether row-level security is ON and whether a policy exists.
+// It never asks what the policy SAYS, so USING (true) passes it completely:
+// enabled, present, green. An open door that looks locked — and the most
+// dangerous thing this product can generate, because every gate agrees.
+
+const OWNED_TABLE = `
+CREATE TABLE issues (
+  id uuid primary key,
+  user_id uuid not null,
+  title text
+);
+ALTER TABLE issues ENABLE ROW LEVEL SECURITY;
+`;
+
+check(
+  "a write policy open to everyone fails",
+  checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR ALL USING (true);` })).status,
+  "fail",
+);
+
+check(
+  "a read policy open to everyone on owned data fails",
+  checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR SELECT USING (true);` })).status,
+  "fail",
+);
+
+// The line has to be drawn where a blog does not get shouted at. A products
+// catalogue or a published post SHOULD be world readable — the prompt teaches
+// exactly that — so a table with no owner column is not this check's business.
+check(
+  "a public catalogue stays world-readable without complaint",
+  checkRlsScoping(
+    tree({
+      "src/db/schema.sql": `
+CREATE TABLE products (
+  id uuid primary key,
+  name text
+);
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p ON products FOR SELECT USING (true);`,
+    }),
+  ).status,
+  "pass",
+);
+
+// ...but writing to it must still be scoped.
+check(
+  "writing to that same public table is still refused",
+  checkRlsScoping(
+    tree({
+      "src/db/schema.sql": `
+CREATE TABLE products (
+  id uuid primary key,
+  name text
+);
+CREATE POLICY w ON products FOR INSERT WITH CHECK (true);`,
+    }),
+  ).status,
+  "fail",
+);
+
+check(
+  "the owner-scoped policy the prompt teaches passes",
+  checkRlsScoping(
+    tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR SELECT USING (auth.uid() = user_id);` }),
+  ).status,
+  "pass",
+);
+
+check(
+  "a policy that never mentions who is asking fails on owned data",
+  checkRlsScoping(
+    tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR SELECT USING (title IS NOT NULL);` }),
+  ).status,
+  "fail",
+);
+
+// PATTERN 2 from the prompt: public read with a real predicate is not an open
+// door, and must not be treated as one.
+check(
+  "a published-flag predicate is not an open door",
+  checkRlsScoping(
+    tree({
+      "src/db/schema.sql": `
+CREATE TABLE posts (
+  id uuid primary key,
+  author_id uuid,
+  is_published boolean
+);
+CREATE POLICY r ON posts FOR SELECT USING (is_published = true);
+CREATE POLICY w ON posts FOR INSERT WITH CHECK (auth.uid() = author_id);`,
+    }),
+  ).status,
+  "pass",
+);
+
+check("no SQL at all is skipped, not passed", checkRlsScoping(tree({ "src/App.tsx": "x" })).status, "skip");
+
+{
+  const msg = checkRlsScoping(
+    tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR ALL USING (true);` }),
+  ).message;
+  ok("the message names the fix, not just the fault", msg.includes("auth.uid() = user_id"));
+  ok("and says a public table may stay public", /genuinely public/i.test(msg));
 }
 
 if (failures > 0) {

@@ -4392,3 +4392,54 @@ remediation, not just the violation* — arriving early, on the check that neede
 
 - **No build has run on it.** What is unproven is the thing that matters: whether the repair loop
   now closes this finding on the first attempt instead of giving up on the second.
+
+### RLS that is enabled, and isolates nobody — 2026-10-18
+
+The last link in the chain the owner wrote out:
+
+```
+their Supabase → schema → Auth JWT → backend forwards it → RLS identifies the user
+              → *something proves the isolation actually holds*
+```
+
+`checkRLS` asks two questions: is row-level security ON, and does a policy exist. **It never asks
+what the policy says.** So `CREATE POLICY p ON issues FOR ALL USING (true)` passes it completely
+— enabled, present, green. An open door that looks locked, and the most dangerous thing this
+product can generate, because every gate agrees the app is fine.
+
+`checkRlsScoping` reads the policies. Where the line is drawn, and why there:
+
+- **A write policy that is always true is never acceptable.** `FOR INSERT`, `UPDATE`, `DELETE` or
+  `ALL` with `USING (true)` means any signed-in stranger may change or delete anyone's rows.
+  There is no app where that is the intent.
+- **A read policy that is always true is only wrong on a table holding somebody's data.** A
+  products catalogue or a published post SHOULD be world-readable — the prompt teaches exactly
+  that as PATTERN 2 — so the test is the TABLE's shape: does it carry an owner column
+  (`user_id`, `owner_id`, `author_id`, `created_by`, …)?
+- **A table with an owner column whose policies never mention `auth.uid()`** is unscoped whatever
+  else they say.
+
+Anything looser misses the hole; anything tighter shouts at a blog. Four of the ten cases exist
+only to hold that line: a public catalogue passes, a `USING (is_published = true)` predicate
+passes, and writing to that same public table still fails.
+
+It is **not** in `isHardBlockSecurityCheck`, deliberately. A live credential aborts a build; a
+loose policy is auto-fixable, so it goes to the repair loop — and its message names the
+replacement (`USING (auth.uid() = user_id)`) rather than only the fault, for the reason the auth
+check learned an hour earlier.
+
+This is the static half of G3. Driving two users through a real app is the complete answer and
+needs a build; this costs nothing and catches the same hole in the SQL before anything runs.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 10 cases, four of them false-positive guards.
+
+### Not verified
+
+- **No build has run on it.** Whether the repair loop closes an `rls-scoping` finding, and
+  whether real generated schemas trip it at a sensible rate, are both unmeasured.
+- **The adversarial half (G3 proper) is still absent.** Nothing yet signs in as one user and
+  tries to read another's row. This check reads the SQL; it does not prove the database enforces
+  what the SQL says.

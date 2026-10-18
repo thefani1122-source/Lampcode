@@ -203,6 +203,130 @@ export function checkAuth(files: FileTree): SecurityCheck {
   };
 }
 
+// ── 2b. checkRlsScoping ──────────────────────────────────────────────────────
+//
+// `checkRLS` below asks whether row-level security is ON and whether a policy
+// exists. It never asks what the policy SAYS — so `USING (true)` passes it
+// completely: RLS enabled, policy present, check green. An open door that looks
+// locked, and the most dangerous shape this product can generate, because every
+// gate agrees the app is fine.
+//
+// This is the last link in the chain the owner wrote out:
+//
+//   their Supabase → schema → Auth JWT → backend forwards it → RLS identifies
+//   the user → *something proves the isolation actually holds*
+//
+// Driving two users through a real app (G3) is the complete answer and needs a
+// build. This is the half that costs nothing and catches the same hole in the
+// SQL, before anything runs.
+//
+// The line it draws, and why it is drawn there:
+//
+//   - A WRITE policy that is always true is never acceptable. `FOR INSERT`,
+//     `UPDATE`, `DELETE` or `ALL` with `USING (true)` means any signed-in
+//     stranger may change or delete anyone's rows. There is no app where that
+//     is the intent.
+//   - A READ policy that is always true is only wrong on a table that holds
+//     somebody's data. A products catalogue or a published post SHOULD be world
+//     readable — the prompt teaches exactly that as PATTERN 2 — so the test is
+//     the table's shape, not the policy alone: does it carry an owner column?
+//   - A table with an owner column and no policy mentioning `auth.uid()` is
+//     unscoped whatever else it says.
+//
+// Anything short of that would either miss the hole or shout at a blog.
+
+const OWNER_COLUMN_RE = /\b(user_id|owner_id|author_id|created_by|profile_id|account_id)\b/i;
+/** `USING (true)`, `USING(1=1)`, `WITH CHECK (true)` — a predicate that is not one. */
+const ALWAYS_TRUE_RE = /\b(?:using|with\s+check)\s*\(\s*(?:true|1\s*=\s*1)\s*\)/i;
+const WRITE_ACTION_RE = /\bfor\s+(insert|update|delete|all)\b/i;
+
+/** Each CREATE POLICY statement, with the table it is on and its body. */
+function policyStatements(sql: string): Array<{ table: string; body: string }> {
+  const out: Array<{ table: string; body: string }> = [];
+  const re = /CREATE\s+POLICY\s+[^\s]+\s+ON\s+["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?([\s\S]*?);/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    if (m[1]) out.push({ table: m[1].toLowerCase(), body: m[2] ?? "" });
+  }
+  return out;
+}
+
+/** The body of each CREATE TABLE, so a table's columns can be inspected. */
+function tableBodies(sql: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    if (m[1]) out.set(m[1].toLowerCase(), m[2] ?? "");
+  }
+  return out;
+}
+
+export function checkRlsScoping(files: FileTree): SecurityCheck {
+  const sqlFiles = [...files].filter(([p]) => p.endsWith(".sql"));
+  if (sqlFiles.length === 0) {
+    return {
+      id: "rls-scoping",
+      status: "skip",
+      severity: "critical",
+      message: "No SQL migration files found to check policy scoping",
+    };
+  }
+
+  const allSql = sqlFiles.map(([, c]) => c).join("\n");
+  const bodies = tableBodies(allSql);
+  const policies = policyStatements(allSql);
+  const problems: string[] = [];
+
+  for (const { table, body } of policies) {
+    if (!ALWAYS_TRUE_RE.test(body)) continue;
+    if (WRITE_ACTION_RE.test(body)) {
+      problems.push(`${table}: a write policy allows everyone (USING (true)) — anyone signed in can change or delete anyone's rows`);
+      continue;
+    }
+    // A read policy that is always true, on a table that holds someone's data.
+    if (OWNER_COLUMN_RE.test(bodies.get(table) ?? "")) {
+      problems.push(`${table}: a read policy allows everyone (USING (true)) on a table with an owner column — every user can read every other user's rows`);
+    }
+  }
+
+  // Owner-scoped tables whose policies never mention who is asking.
+  const scopedByTable = new Map<string, boolean>();
+  for (const { table, body } of policies) {
+    scopedByTable.set(table, (scopedByTable.get(table) ?? false) || /auth\.uid\s*\(\s*\)/i.test(body));
+  }
+  for (const [table, cols] of bodies) {
+    if (!OWNER_COLUMN_RE.test(cols)) continue;
+    if (!scopedByTable.has(table)) continue; // no policy at all — checkRLS owns that
+    if (scopedByTable.get(table) === true) continue;
+    problems.push(`${table}: has an owner column but no policy refers to auth.uid(), so nothing ties a row to the user who owns it`);
+  }
+
+  if (problems.length > 0) {
+    return {
+      id: "rls-scoping",
+      status: "fail",
+      severity: "critical",
+      file: sqlFiles[0]?.[0],
+      message:
+        `Row-level security is enabled but does not isolate users: ${problems.join("; ")}. ` +
+        `Replace each one with a policy that compares the row to the caller, e.g. ` +
+        `USING (auth.uid() = user_id). A table that is genuinely public may stay world-readable, ` +
+        `but a write policy must never be USING (true).`,
+    };
+  }
+
+  return {
+    id: "rls-scoping",
+    status: policies.length > 0 ? "pass" : "skip",
+    severity: "critical",
+    message:
+      policies.length > 0
+        ? `All ${policies.length} policy/policies scope access to the caller`
+        : "No policies found to check scoping",
+  };
+}
+
 // ── 2. checkRLS ───────────────────────────────────────────────────────────────
 
 export function checkRLS(files: FileTree): SecurityCheck {
@@ -545,6 +669,7 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkAuth(files),
     checkRLS(files),
+    checkRlsScoping(files),
     ...checkSecrets(files),
     ...checkOWASP(files),
     ...checkPackages(files),
