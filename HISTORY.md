@@ -4163,3 +4163,49 @@ explicitly described as fine, so nobody goes off regenerating a PAT that was nev
   BY reading `vite-error-overlay` from the DOM (`template.ts`, the `page.evaluate` block).
   Turning it off blind would quietly weaken the strongest page check in the product to fix a
   cosmetic problem. It needs the console-error path proven first.
+
+### The fake is now removed, not just reported — 2026-10-18
+
+Detection was not enough. `data-layer.ts` caught the localStorage stand-in on both builds and the
+person still met an app that signs them up, shows their data back and saves nothing — because a
+finding at the end of a build is a note next to a finished product.
+
+`build.ts` now dispatches a **removal** when `fakePersistence` finds anything, positioned
+immediately before the wiring loop. That position is the whole point: everything past it shows
+the files to someone — the storage sync, the `backendReady` emit, the preview sandbox — so a
+removal landing after them is a removal nobody sees. A case asserts that ordering, because it is
+exactly what a later refactor would break without noticing.
+
+What the dispatch demands, and why each line is there:
+
+- **Delete the stand-in entirely** — not behind a flag, an env var or a try/catch. A fallback
+  that can switch on is the same bug waiting for a different day.
+- **Call the real API** through `API_BASE + '/api/...'`.
+- **Replace any hardcoded `http://localhost:3001`** — that is almost always the actual cause,
+  since the preview is served from another origin and the address resolves to nothing.
+- **Show the error if a request genuinely fails.** Do not substitute local data so the screen
+  looks populated.
+- **Keep localStorage where it is not standing in for the server** — a theme, a collapsed panel,
+  an unsent draft.
+
+Three deliberate limits. **One dispatch, not a loop**: the finding is specific and the correct
+fix is known, so a second attempt would mean the model argued rather than missed, and a loop that
+keeps paying to re-ask is how a disagreement becomes a bill. **It cannot fail the build** — a
+fake is wrong, not dangerous, and dying here would take the real work with it. **It only replaces
+files that already exist**: a repair that creates files has misunderstood the finding, and
+letting it add one is how a narrow fix becomes an unreviewed rewrite.
+
+The user is told either way. A silent removal would leave them believing the earlier "it works in
+the preview" message, which is the thing being corrected.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 9 cases on the repair, pinning its position before both the wiring loop and `backendReady`,
+  that it cannot throw, that it respects the cost ceiling, and that it never creates a file.
+
+### Not verified
+
+- **No build has run on it.** Whether the model complies with the removal, or re-argues for the
+  fallback, is unknown — `after.length` is logged and reported to the user for exactly that
+  reason.
