@@ -57,7 +57,7 @@ import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTr
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
-import { findDeadCode, tallyDeadCode } from "../../verify/dead-code.js";
+import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import {
   findWiringGaps,
   tallyWiringGaps,
@@ -2539,6 +2539,151 @@ export async function runFastBuild(
           `[build] wiring session=${sessionId} before=${before} remaining=${remaining} ` +
           `repaired=${wiringRepaired} cost=${wiringCostUsd.toFixed(4)}`,
         );
+      }
+    }
+
+    // ── Cut what the edits left behind ──────────────────────────────────────
+    //
+    // `edit_file(old → new)` is additive by nature: the cheapest way to satisfy
+    // "add X" is to insert X, and removing the path X replaced requires knowing
+    // what just became unreachable — a whole-program property an edit cannot
+    // see. So after a few rounds one feature has two implementations and the
+    // next edit guesses which is live. It guesses wrong. That is what this
+    // removes.
+    //
+    // THE RULE THAT SHAPES ALL OF IT: `dead-code.ts` says of itself that it is
+    // "advisory, never a gate… the analysis is textual, not a real TypeScript
+    // program, so it can be wrong — and the response to a dead-code report is
+    // deleting code, which is the most expensive thing to be wrong about."
+    //
+    // That is a warning written by someone who had thought about it, and it is
+    // honoured here in three ways.
+    //
+    // 1. NOTHING IS CUT THAT CANNOT BE VERIFIED. If there is no sandbox to run
+    //    `tsc` in, the cut does not happen at all. A deletion whose correctness
+    //    nobody checked is exactly the expensive mistake above.
+    //
+    // 2. ONLY TWO OF THE FOUR KINDS ARE ELIGIBLE. `unused-import` and
+    //    `unreferenced-export` are things an edit abandoned. The other two are
+    //    NOT dead code and deleting them destroys work:
+    //      • `never-rendered` — a view nothing renders is as often one the user
+    //        ASKED FOR and the model forgot to wire. The completion audit
+    //        caught precisely that on one build: four requested views, never
+    //        wired, while all three gates passed. Deleting those is deleting
+    //        the feature. Telling superseded from merely unwired needs the
+    //        audit's own criteria, which is D3's job, not a guess here.
+    //      • `orphan-stylesheet` — a stylesheet nothing imports leaves the app
+    //        on the template's greyscale tokens. The fix is to IMPORT it. A
+    //        cut here would delete the design and call the result clean.
+    //
+    // 3. IT IS FULLY REVERSIBLE. The file map is snapshotted before the cut and
+    //    restored byte-for-byte if `tsc` goes from passing to failing — and the
+    //    sandbox is rewritten from the restored copy, so a reverted cut leaves
+    //    nothing behind.
+    //
+    // A cut that breaks the build is not a failure of this loop. It is the loop
+    // working: the analysis was wrong, and nobody found out from a user.
+    let codeCut = 0;
+    let codeCutReverted = false;
+    {
+      const CUTTABLE = new Set<DeadCodeKind>(["unused-import", "unreferenced-export"]);
+      const dead = findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind));
+
+      if (dead.length === 0) {
+        // nothing abandoned — the common case, and it costs one text scan
+      } else if (!hasSandbox(projectId)) {
+        console.log(
+          `[build] cut skipped session=${sessionId} dead=${dead.length} reason=no-sandbox-to-verify-in`,
+        );
+      } else if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+        console.log(`[build] cut skipped session=${sessionId} dead=${dead.length} reason=cost-ceiling`);
+      } else {
+        // The gates must be green BEFORE the cut, or a revert cannot tell
+        // "my deletion broke this" from "it was already broken".
+        const typesBefore = await runTypeCheck(projectId).catch(() => null);
+        if (!typesBefore || typesBefore.ok !== true) {
+          console.log(
+            `[build] cut skipped session=${sessionId} dead=${dead.length} reason=types-not-green-before`,
+          );
+        } else {
+          const snapshot: Record<string, string> = { ...allFiles };
+          const paths = [...new Set(dead.map((d) => d.path))].filter((p) => allFiles[p] !== undefined).slice(0, 8);
+
+          server?.thinking(sessionId, {
+            sessionId,
+            text: `Removing ${dead.length} leftover(s) from earlier edits…`,
+          });
+
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description:
+                  `${formatDeadCode(dead)}\n\n` +
+                  `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+                  `truncation):\n\n` +
+                  paths.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n"),
+                requirements: [
+                  "Delete ONLY the symbols and imports named in the findings.",
+                  "Do NOT delete anything else, do not rename, do not reformat, and do not " +
+                  "'tidy up' while you are in the file — an unrelated change here cannot be " +
+                  "reviewed and will be reverted along with the rest.",
+                  "If a finding looks wrong to you — the symbol IS used somewhere — leave that " +
+                  "one alone and remove the others. Saying so is better than deleting it.",
+                  "Return the COMPLETE corrected file for each file you touch.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+
+            const cut = parseFilesFromContent(fixResult.content ?? "");
+            let touched = 0;
+            for (const [p, code] of Object.entries(cut)) {
+              // Existing files only. A cut that CREATES a file has
+              // misunderstood, and letting it through turns a deletion into an
+              // unreviewed rewrite.
+              if (typeof code === "string" && allFiles[p] !== undefined) {
+                allFiles[p] = code;
+                touched += 1;
+              }
+            }
+
+            if (touched === 0) {
+              console.log(`[build] cut session=${sessionId} dead=${dead.length} touched=0`);
+            } else {
+              await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+              const typesAfter = await runTypeCheck(projectId).catch(() => null);
+              if (typesAfter?.ok === true) {
+                codeCut = dead.length - findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind)).length;
+                console.log(
+                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} removed=${codeCut} verdict=kept`,
+                );
+              } else {
+                codeCutReverted = true;
+                for (const k of Object.keys(allFiles)) delete allFiles[k];
+                Object.assign(allFiles, snapshot);
+                await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+                console.log(
+                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} verdict=REVERTED types-broke`,
+                );
+                server?.thinking(sessionId, {
+                  sessionId,
+                  text: "That removal broke the type check, so I put everything back exactly as it was.",
+                });
+              }
+            }
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Dead-code cut dispatch failed — nothing removed");
+          }
+        }
       }
     }
 

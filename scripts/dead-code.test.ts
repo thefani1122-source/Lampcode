@@ -8,6 +8,7 @@
  * which LOOKS dead is left alone.
  */
 
+import { readFileSync } from "node:fs";
 import {
   findDeadCode,
   tallyDeadCode,
@@ -290,6 +291,51 @@ ok("formatDeadCode names the file and symbol", report.includes("src/OldSidebar.t
 // The analysis is textual, so the reply must tell the model to confirm before
 // deleting. A bare list invites deleting things it has not looked at.
 ok("formatDeadCode tells the model to confirm first", report.includes("read_file"));
+
+
+// ── B8: what may be cut, and what must never be ──────────────────────────────
+// These read build.ts as TEXT. The loop itself needs a sandbox and a dispatch,
+// so what IS testable here is the part a later change would quietly get wrong:
+// which findings are eligible, and whether the cut can run unverified.
+//
+// dead-code.ts says of itself that it is "advisory, never a gate… the response
+// to a dead-code report is deleting code, which is the most expensive thing to
+// be wrong about." Everything below is that sentence turned into assertions.
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const cutAt = build.indexOf("Cut what the edits left behind");
+  const syncAt = build.indexOf("Sync project files to Supabase Storage");
+  const block = build.slice(cutAt, syncAt);
+
+  ok("the cut exists", cutAt > 0);
+  ok("and runs before the files are synced anywhere", cutAt > 0 && cutAt < syncAt);
+
+  // The two that an edit abandoned.
+  ok("unused imports are eligible", /"unused-import"/.test(block));
+  ok("unreferenced exports are eligible", /"unreferenced-export"/.test(block));
+
+  // The two that are NOT dead code. A view nothing renders is as often one the
+  // user asked for and the model forgot to wire — the audit caught exactly
+  // that, four requested views on one build, with all three gates green. And a
+  // stylesheet nothing imports leaves the app on the template's greyscale
+  // tokens; the fix is to import it, not to delete the design and call the
+  // result clean.
+  ok("a never-rendered view is NOT eligible", !/CUTTABLE[\s\S]{0,200}"never-rendered"/.test(block));
+  ok("an orphan stylesheet is NOT eligible", !/CUTTABLE[\s\S]{0,200}"orphan-stylesheet"/.test(block));
+
+  // Nothing is cut that cannot be checked.
+  ok("it refuses to cut with no sandbox to verify in", /hasSandbox\(projectId\)/.test(block));
+  ok("it requires the type check GREEN before cutting", /types-not-green-before/.test(block));
+  ok("it type-checks again after cutting", (block.match(/runTypeCheck\(projectId\)/g) ?? []).length >= 2);
+
+  // Reversible, and the sandbox goes back too — otherwise a reverted cut
+  // leaves the broken copy running behind a restored file map.
+  ok("it restores the snapshot when the check breaks", /Object\.assign\(allFiles, snapshot\)/.test(block));
+  ok("and rewrites the sandbox from the restored copy", /REVERTED[\s\S]{0,400}|writeFilesToSandbox[\s\S]{0,200}REVERTED/.test(block));
+  ok("it only replaces files that already exist", /allFiles\[p\] !== undefined/.test(block));
+  ok("it cannot fail the build", !/throw |buildFailed/.test(block));
+  ok("it respects the cost ceiling", /MAX_BUILD_COST_USD/.test(block));
+}
 
 console.log(failures === 0 ? "\nAll dead-code cases passed." : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

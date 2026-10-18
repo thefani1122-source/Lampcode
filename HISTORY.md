@@ -4443,3 +4443,59 @@ needs a build; this costs nothing and catches the same hole in the SQL before an
 - **The adversarial half (G3 proper) is still absent.** Nothing yet signs in as one user and
   tries to read another's row. This check reads the SQL; it does not prove the database enforces
   what the SQL says.
+
+### B8 — cutting what the edits left behind — 2026-10-18
+
+`edit_file(old → new)` is additive by nature. The cheapest way to satisfy "add X" is to insert X,
+and removing the path X replaced needs a whole-program property an edit cannot see. So after a
+few rounds one feature has two implementations and the next edit guesses which is live. It
+guesses wrong. That is what this removes.
+
+**The constraint that shaped every decision** is `dead-code.ts`'s own words:
+
+> "It is advisory, never a gate… the analysis is textual, not a real TypeScript program, so it
+> can be wrong — and the response to a dead-code report is deleting code, which is the most
+> expensive thing to be wrong about."
+
+That warning was written by someone who had thought about it. It is honoured three ways.
+
+**1. Nothing is cut that cannot be verified.** No sandbox to run `tsc` in → the cut does not
+happen. The type check must also be GREEN *before* the cut, or a revert cannot tell "my deletion
+broke this" from "it was already broken".
+
+**2. Only two of the four kinds are eligible.** `unused-import` and `unreferenced-export` are
+things an edit abandoned. The other two are **not dead code**, and deleting them destroys work:
+
+- **`never-rendered`** — a view nothing renders is as often one the user ASKED FOR and the model
+  forgot to wire. The completion audit caught exactly that: four requested views on one build,
+  never wired, with all three gates passing. Deleting those deletes the feature. Telling
+  superseded from merely unwired needs the audit's own criteria — D3's job, not a guess here.
+- **`orphan-stylesheet`** — a stylesheet nothing imports leaves the app on the template's
+  greyscale tokens. The fix is to IMPORT it. A cut would delete the design and call it clean.
+
+**3. It is fully reversible.** The file map is snapshotted, and on a broken type check it is
+restored byte-for-byte **and the sandbox is rewritten from the restored copy** — otherwise a
+reverted cut leaves the broken files running behind a restored map.
+
+The dispatch is told that if a finding looks wrong — the symbol IS used — it should leave that
+one and remove the others. Saying so is better than deleting it.
+
+**A cut that breaks the type check is not a failure of this loop. It is the loop working:** the
+analysis was wrong, and nobody found out from a user.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 14 cases reading `build.ts` as text — the loop needs a sandbox and a dispatch, so what is
+  pinned is the part a later change would quietly get wrong: **that `never-rendered` and
+  `orphan-stylesheet` are not eligible**, that the cut refuses to run unverified, that it
+  type-checks on both sides, and that a revert restores the sandbox too.
+
+### Not verified
+
+- **Neither half of "done" has happened.** PLAN asks for a real build where a cut happens and the
+  gates stay green, AND one where a cut is reverted. The log line
+  `[build] cut … verdict=kept|REVERTED` is what will show each, and it has never printed.
+- **How often this fires is unknown.** If `unused-import` findings are common and
+  `unreferenced-export` rare, this is mostly cosmetic; the whole argument above is about the rare
+  one.
