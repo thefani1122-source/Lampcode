@@ -968,7 +968,7 @@ export async function runFastBuild(
       // socket there is nobody to ask, and consuming the single ask on a
       // question that was never shown would mean the person is never asked at
       // all — a gate that silently spends itself is worse than no gate.
-      if (!userSupa && server && shouldAskForDatabase(projectId)) {
+      if (!userSupa && server && shouldAskForDatabase(userId)) {
         const { question, options } = buildDatabaseQuestion();
         const toolCallId = `db-gate:${randomUUID()}`;
         const answer = await new Promise<string | null>((resolve) => {
