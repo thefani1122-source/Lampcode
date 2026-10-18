@@ -16,6 +16,7 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
+import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
@@ -76,6 +77,7 @@ import {
   shouldAudit,
   extractCriteria,
   auditCompletion,
+  discountFakedEvidence,
   unverifiedAudit,
   formatAuditForUser,
   formatCriteriaForUser,
@@ -1475,6 +1477,14 @@ export async function runFastBuild(
       console.log(`[build] copied ${copied} existing files to new outputDir`);
     }
 
+    // Keep the build-start snapshot for diff_since while removing these paths from current output.
+    for (const deletedPath of result.deletedFiles) {
+      const fullPath = resolve(outputDir, deletedPath);
+      if (fullPath !== outputDir && fullPath.startsWith(outputDir + sep)) {
+        await rm(fullPath, { force: true });
+      }
+    }
+
     // In agentic mode the model is told to write files through write_files
     // rather than printing ```filename fences, so the file set normally comes
     // back from the dispatch. Normally — but not every model actually calls
@@ -1784,7 +1794,7 @@ export async function runFastBuild(
           // validateSyntax stays on filesToWrite alone — only new code needs
           // checking, and re-parsing untouched files would be wasted work.
           orphans = findOrphanExports({
-            ...existingFiles,
+            ...currentProjectFiles(existingFiles, result.generatedFiles, new Set(result.deletedFiles)),
             ...Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
           });
         } catch {
@@ -2127,6 +2137,8 @@ export async function runFastBuild(
         allFiles[f.path] = f.code;
       }
     }
+
+    for (const deletedPath of result.deletedFiles) delete allFiles[deletedPath];
 
     // Store the generated code the moment it exists, before the gates below it.
     // Five repair loops run between here and the end-of-build sync — security,
@@ -2540,6 +2552,7 @@ export async function runFastBuild(
         const syncMap: Record<string, string> = hasExistingCode
           ? { ...existingFiles, ...allFiles }
           : { ...allFiles };
+        for (const deletedPath of result.deletedFiles) delete syncMap[deletedPath];
         await uploadProjectFiles(projectId, syncMap);
         console.log(`[storage] synced ${Object.keys(syncMap).length} files project=${projectId}`);
       } catch (err) {
@@ -3252,6 +3265,22 @@ export async function runFastBuild(
       // coverage when the extraction cap dropped requirements before it ran.
       if (extracted.dropped && extracted.dropped > 0) {
         completionAudit = { ...completionAudit, criteriaDropped: extracted.dropped };
+      }
+
+      // A requirement cited to a file that fakes it is not proven. Re-measured
+      // over the FINAL file set rather than reusing the earlier result: the
+      // removal dispatch above runs between the two, so a stand-in it took out
+      // must not go on discounting a verdict that is now honestly proven.
+      const fakedNow = fakePersistence(allFiles).map((f) => f.path);
+      if (fakedNow.length > 0) {
+        const before = completionAudit.proven;
+        completionAudit = discountFakedEvidence(completionAudit, fakedNow);
+        if (completionAudit.proven !== before) {
+          console.log(
+            `[build] audit discounted session=${sessionId} proven ${before} → ` +
+            `${completionAudit.proven} (evidence in faked file(s))`,
+          );
+        }
       }
 
       cumulativeCostUsd += extracted.costUsd + completionAudit.costUsd;

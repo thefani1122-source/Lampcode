@@ -119,6 +119,58 @@ export async function persistFilesAsWritten(
   }
 }
 
+/** Strict persistence for revert operations; normal writes keep their forgiving API above. */
+export async function persistFilesStrictly(
+  projectId: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const entries = Object.entries(files);
+  if (entries.length === 0) return;
+  for (const [relativePath] of entries) {
+    if (
+      !relativePath || relativePath.startsWith("/") || relativePath.startsWith("\\") ||
+      relativePath.includes("..") || relativePath.includes("\\0")
+    ) {
+      throw new Error(`refused to persist unsafe stored path "${relativePath}"`);
+    }
+  }
+  await ensureBucket();
+  const sb = getSupabaseAdmin();
+  const results = await Promise.allSettled(entries.map(async ([relativePath, content]) => {
+    const storagePath = `${projectId}/${relativePath}`;
+    const { error } = await sb.storage.from(BUCKET).upload(
+      storagePath,
+      Buffer.from(content, "utf8"),
+      { contentType: "text/plain; charset=utf-8", upsert: true },
+    );
+    if (error) throw new Error(`[project-files] upload failed ${storagePath}: ${error.message}`);
+  }));
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+/** Remove a persisted build file so a later restore cannot bring it back. */
+export async function deletePersistedProjectFile(
+  projectId: string,
+  relativePath: string,
+): Promise<void> {
+  if (
+    !relativePath ||
+    relativePath.startsWith("/") ||
+    relativePath.startsWith("\\") ||
+    relativePath.includes("..") ||
+    relativePath.includes("\0")
+  ) {
+    throw new Error(`refused to delete unsafe stored path "${relativePath}"`);
+  }
+
+  await ensureBucket();
+  const { error } = await getSupabaseAdmin()
+    .storage.from(BUCKET)
+    .remove([`${projectId}/${relativePath}`]);
+  if (error) throw new Error(`[project-files] delete failed: ${error.message}`);
+}
+
 // ── Download ──────────────────────────────────────────────────────────────────
 
 /**

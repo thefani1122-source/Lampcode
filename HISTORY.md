@@ -4260,3 +4260,84 @@ a confident answer that does not work.
 - **The connect flow has not been re-run.** The fixtures match what the server returned to a
   different client in this session; whether the backend's own session gets the identical shape is
   the one thing only a real connect attempt can show.
+
+### code_intel and impact_analysis reach the model — 2026-10-18
+
+Codex delivered three of batch 2 and 3 while the Supabase connect was being chased: the tool
+registry (`I1`), `code-intel.ts` (`D1`) and `impact.ts` (`D2`). All three are green on Linux.
+
+The registry is doing exactly what it was asked for. Adding these two tools cost **one file each
+plus two lines** in `src/agents/tools/registry.ts`, where before they would have landed in the
+middle of a 965-line `executeTool` and made every tool's diff touch the same function.
+
+Both were specified as exported-but-unwired on purpose, because a tool's description is prompt
+text and prompt-vs-reality drift is this repo's top bug class. The descriptions say what the
+model should reach for them FOR, not what they return:
+
+- **`code_intel`** — "prefer this over `search_code` whenever the question is about MEANING";
+  `search_code` finds the word in comments and strings too, this finds the actual thing. Use it
+  before renaming or changing a signature, so every caller changes rather than the one in view.
+- **`impact_analysis`** — the description puts `untested` in capitals, because that is the field
+  that earns the tool. A change inside covered code is cheap to get wrong; the same change where
+  nothing covers it is how a build ships broken with every gate passing.
+
+**No new case was needed, which is the happy version of this.** Codex's registry task already
+parses both `tools.ts` and `registry.ts` with the TypeScript AST and asserts that every defined
+tool has a handler and the registry has no extras — so wiring these two was checked by a case
+written before they existed. That is what that case was for.
+
+Worth recording for the next person: importing `src/agents/tools.ts` from a scratch script hangs
+(trap 9 — it pulls config, Redis and the E2B SDK). The AST-over-text approach is the way to
+assert anything about the tool surface, and it is already there.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux with Codex's three modules
+  and both wirings in place.
+
+### Not verified
+
+- **No build has used either tool.** Whether the model reaches for `code_intel` instead of
+  re-reading files, and whether `impact_analysis` changes what it edits, is exactly the claim —
+  and it needs a real build to see.
+
+### A gate that asks "does it work" will bless a good fake — 2026-10-18
+
+Build `bab33bcc`, the same one where the localStorage stand-in was shipped. The completion audit
+marked a requirement **proven**, citing as its evidence:
+
+> "demo mode provides clear error messages like 'User already exists' instead of network failures"
+
+It was reading honestly. The file really does show that message, the message really is clear, and
+nothing in the audit's view said the data went nowhere. That is the shape of the problem, and it
+is not a bug in the audit's prompt: **every gate here asks whether the app works, and a good fake
+works.** The audit is the product's differentiator, and on this build it certified the one thing
+the product exists to catch.
+
+`discountFakedEvidence` now downgrades any `proven` verdict whose evidence is a file
+`data-layer.ts` found faking persistence — to **`unverified`, not `contradicted`**, deliberately.
+A requirement like "show clear errors" may genuinely be met in a file that also holds a stand-in;
+what is certain is only that THIS file cannot prove it. `unverified` says exactly that, and is
+already the audit's most valuable output.
+
+Two details that are easy to get wrong and are pinned by cases:
+
+- **It is re-measured over the FINAL file set**, not the earlier finding list. The removal
+  dispatch runs between the two, so a stand-in that was taken out must not go on discounting a
+  verdict that is now honestly proven.
+- **Only `proven` is touched.** Rewriting an already-`unverified` verdict's note would bury the
+  real reason it was unverified.
+
+The tallies are recomputed through `tallyVerdicts` rather than adjusted by hand, so a downgrade
+cannot leave `proven` saying one thing and the verdict list another.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 9 cases, including the two above, a leading `./` on either side, and "nothing faked leaves the
+  audit byte-identical".
+
+### Not verified
+
+- **No build has produced a discounted verdict.** The log line
+  `[build] audit discounted … proven N → M` is what will show it, and it has never printed.

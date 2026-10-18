@@ -14,6 +14,8 @@
  * user's GitHub or Railway account.
  */
 
+import { readFileSync } from "node:fs";
+import ts from "typescript";
 import {
   DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
   LATEST_PROTOCOL_VERSION,
@@ -295,6 +297,77 @@ check(
     SUPPORTED_PROTOCOL_VERSIONS.includes(DEFAULT_NEGOTIATED_PROTOCOL_VERSION),
   );
 }
+
+// Read source text instead of importing the registry: its handlers transitively
+// load e2b-service, which must not be initialized by an offline test process.
+const toolDefinitionsSource = readFileSync(new URL("../src/agents/tools.ts", import.meta.url), "utf8");
+const toolRegistrySource = readFileSync(new URL("../src/agents/tools/registry.ts", import.meta.url), "utf8");
+const parsedDefinitions = ts.createSourceFile("tools.ts", toolDefinitionsSource, ts.ScriptTarget.Latest, true);
+const parsedRegistry = ts.createSourceFile("registry.ts", toolRegistrySource, ts.ScriptTarget.Latest, true);
+const getArrayNames = (sourceFile: ts.SourceFile, variableName: string): string[] => {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== variableName ||
+        !declaration.initializer ||
+        !ts.isArrayLiteralExpression(declaration.initializer)
+      ) continue;
+      return declaration.initializer.elements.flatMap((element) => {
+        if (!ts.isObjectLiteralExpression(element)) return [];
+        const name = element.properties.find((property) =>
+          ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+          property.name.text === "name",
+        );
+        return name && ts.isPropertyAssignment(name) && ts.isStringLiteral(name.initializer)
+          ? [name.initializer.text]
+          : [];
+      });
+    }
+  }
+  return [];
+};
+const staticToolNames = [
+  ...getArrayNames(parsedDefinitions, "TOOL_DEFINITIONS"),
+  ...getArrayNames(parsedDefinitions, "AGENTIC_BUILD_TOOLS"),
+];
+const registryDeclaration = parsedRegistry.statements
+  .flatMap((statement) => ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : [])
+  .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "REGISTRY");
+const registryInitializer = registryDeclaration?.initializer;
+const registryEntries =
+  registryInitializer && ts.isNewExpression(registryInitializer)
+    ? registryInitializer.arguments?.[0]
+    : undefined;
+const registryNames =
+  registryEntries &&
+  ts.isArrayLiteralExpression(registryEntries)
+    ? registryEntries.elements.flatMap((entry) =>
+        ts.isArrayLiteralExpression(entry) &&
+        entry.elements[0] !== undefined &&
+        ts.isStringLiteral(entry.elements[0])
+          ? [entry.elements[0].text]
+          : [],
+      )
+    : [];
+const sortedNames = (names: string[]) => [...names].sort();
+check(
+  "every static tool has a registry entry and the registry has no extras",
+  {
+    missing: sortedNames(staticToolNames.filter((name) => !registryNames.includes(name))),
+    extra: sortedNames(registryNames.filter((name) => !staticToolNames.includes(name))),
+  },
+  { missing: [], extra: [] },
+);
+check("static tool registry covers all definitions", registryNames.length, staticToolNames.length);
+check(
+  "runtime MCP write/read proxy paths are documented outside the static registry",
+  toolRegistrySource.includes("write-proxy") && toolRegistrySource.includes("read-only MCP"),
+  true,
+);
+
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

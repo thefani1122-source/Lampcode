@@ -39,6 +39,7 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
 import type { RenderReport } from "../verify/render.js";
+import type { Checkpoint } from "../verify/checkpoints.js";
 
 // Workspace root: one directory per project
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
@@ -168,6 +169,8 @@ export interface DispatchResult {
    *  same shape the fence-parsing path produces — so every downstream gate
    *  consumes it unchanged. Empty on all non-agentic dispatches. */
   generatedFiles: Record<string, string>;
+  /** Paths deleted during this dispatch; projectFiles remains the build-start snapshot. */
+  deletedFiles: string[];
   /** How many model round-trips the tool loop actually used. 1 on every
    *  non-tool dispatch. Recorded so a build can be scored afterwards: rounds
    *  is the difference between a model that wrote and verified once and one
@@ -191,7 +194,7 @@ export interface DispatchResult {
    *  between new files, whole-file replacements and surgical edits. `removed`
    *  near zero while `added` climbs is an edit bolting a new path on beside the
    *  old one, which is the shape that makes a project grow forever. */
-  churn: { added: number; removed: number; created: number; replaced: number; edited: number };
+  churn: { added: number; removed: number; created: number; replaced: number; edited: number; deleted: number };
   /** What find_dead_code reported, if the model called it. `called: false`
    *  means it never asked — a different fact from "it asked and found none". */
   deadCode: { called: boolean; unusedImports: number; unreferencedExports: number; neverRendered: number };
@@ -558,7 +561,7 @@ export class AgentDispatcher {
     // Once per build — see ToolContext.interactionsProbed.
     const interactionsProbed = { value: false };
     const writeCounter = { value: 0 };
-    const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0 };
+    const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0, deleted: 0 };
     const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
     const review = {
       called: false, deep: 0, total: 0, unreviewed: 0, findings: 0, dropped: 0, costUsd: 0,
@@ -570,6 +573,8 @@ export class AgentDispatcher {
     // this cap only stops a model that never declares itself finished.
     const maxRounds = agenticBuild ? config.AGENTIC_MAX_TURNS : MAX_TOOL_ROUNDTRIPS;
     const generatedFiles: Record<string, string> = {};
+    const deletedFiles = new Set<string>();
+    const checkpoints = new Map<string, Checkpoint>();
 
     for (let round = 1; round <= maxRounds; round++) {
       roundsUsed = round;
@@ -705,6 +710,8 @@ export class AgentDispatcher {
             ? {
                 projectId,
                 generatedFiles,
+                deletedFiles,
+                checkpoints,
                 onLog: options.onSandboxLog,
                 projectFiles: options.projectFiles,
                 gateResults,
@@ -804,6 +811,7 @@ export class AgentDispatcher {
       rounds: roundsUsed,
       gateResults,
       churn,
+      deletedFiles: [...deletedFiles],
       deadCode,
       review,
       reasoning: "",

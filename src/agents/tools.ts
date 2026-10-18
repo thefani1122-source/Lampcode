@@ -1,38 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "fs/promises";
-import { join } from "path";
 import type { ToolDefinition } from "./model-gateway.js";
-import { parseSkillFrontmatter, ALL_SKILL_NAMES } from "./prompt-builder.js";
-import { logger } from "../server/logger.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
-import { createPendingAnswer, resolveAnswer, ANSWER_TIMEOUT_MS } from "./pending-answers.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import { findDeadCode, tallyDeadCode, formatDeadCode } from "../verify/dead-code.js";
-import { findWiringGaps, formatWiringGaps, declaredRoutes } from "../verify/wiring.js";
-import { routesToVisit, formatRenderForAgent, allRoutesOk } from "../verify/render.js";
-import { autoCheckReason } from "../verify/auto-check.js";
-import { formatInteractions } from "../verify/interactions.js";
-import type { RenderReport } from "../verify/render.js";
-import { deployToVercel, formatDeployForUser } from "../deploy/vercel.js";
-import { reviewProject, formatReview } from "../verify/code-review.js";
-import type { AgentDispatcher } from "./dispatcher.js";
-import {
-  writeFilesToSandbox,
-  verifyBrowserRender,
-  checkInteractions,
-  checkRender,
-  runTypeCheck,
-  runTests,
-  readProjectFile,
-  listProjectFiles,
-  readSandboxLogs,
-  fetchReferenceDesign,
-  isFetchableReferenceUrl,
-  isTemplateOwnedFile,
-} from "../preview/e2b-service.js";
-import { persistFilesAsWritten } from "../storage/project-files.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 import { callMcpTool } from "../mcp/call-tool.js";
+import { DEFERRED_STATIC_HANDLERS, REGISTRY } from "./tools/registry.js";
+import type { Checkpoint } from "../verify/checkpoints.js";
+import type { RenderReport } from "../verify/render.js";
+import type { AgentDispatcher } from "./dispatcher.js";
+
+const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types"]);
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
@@ -104,6 +81,49 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // outside with fixed if-statements. Each one delegates to an e2b-service export
 // that the existing fix loops already use, so nothing new touches the sandbox.
 export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
+  {
+    name: "checkpoint",
+    description:
+      "Save a named snapshot of the current project files for this build. Checkpoints are " +
+      "private to this build and do not change files or verification results. Keep the label " +
+      "short and use it later with revert if an experiment should be undone.",
+    input_schema: {
+      type: "object",
+      properties: { label: { type: "string", description: "A short name for this snapshot." } },
+      required: ["label"],
+    },
+  },
+  {
+    name: "revert",
+    description:
+      "Restore the project to a named checkpoint. This restores changed or deleted files and " +
+      "removes files created after the checkpoint. The checkpoint remains available after a " +
+      "restore. If any live or stored file operation fails, the tool rolls back its attempted " +
+      "changes and reports incomplete paths.",
+    input_schema: {
+      type: "object",
+      properties: { label: { type: "string", description: "The exact checkpoint label to restore." } },
+      required: ["label"],
+    },
+  },
+  {
+    name: "diff_since",
+    description:
+      "Show a unified diff of the current project against the build-start files, or against " +
+      "an exact named checkpoint. This reads only the in-memory project state and works even " +
+      "while the sandbox is unavailable. It does not change files or verification results. " +
+      "If output or safety limits omit changes, the result says whether its counts are exact " +
+      "or cover only the computed portion.",
+    input_schema: {
+      type: "object",
+      properties: {
+        checkpoint: { type: "string", description: "Optional exact checkpoint label to compare from." },
+        context: { type: "number", description: "Context lines around changes; defaults to 3." },
+        max_chars: { type: "number", description: "Output character budget; defaults to 12000 and is capped at 24000." },
+      },
+      required: [],
+    },
+  },
   {
     name: "ask_user",
     description:
@@ -183,6 +203,25 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
         },
       },
       required: ["files"],
+    },
+  },
+  {
+    name: "delete_file",
+    description:
+      "Remove one or more files from the current project. Pass project-relative paths in " +
+      "paths. Template-owned files and the app entry point are protected. Missing files are " +
+      "reported as already absent; each path reports whether live and stored deletion both " +
+      "succeeded.",
+    input_schema: {
+      type: "object",
+      properties: {
+        paths: {
+          type: "array",
+          description: "Project-relative paths to remove.",
+          items: { type: "string" },
+        },
+      },
+      required: ["paths"],
     },
   },
   {
@@ -327,6 +366,70 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "code_intel",
+    description:
+      "Ask what a symbol IS and who uses it, resolved by the TypeScript compiler rather than " +
+      "by text matching. Give `symbol` for its definition and every real reference, or `path` " +
+      "for what that file exports.\n" +
+      "Prefer this over search_code whenever the question is about MEANING — \"where does this " +
+      "come from\", \"who calls this\", \"what does this file give me\". search_code finds the " +
+      "word in comments and strings too; this finds the actual thing. Use it BEFORE renaming " +
+      "or changing a signature, so you change every caller rather than the one you were " +
+      "looking at.\n" +
+      "A file that does not parse is handled with a text fallback instead of failing the " +
+      "call, and the result says when that happened — so a mid-edit broken file does not cost " +
+      "you the answer about the rest of the project.",
+    input_schema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The function, component, type or variable to resolve." },
+        path: { type: "string", description: "A file whose exported symbols you want listed instead." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "impact_analysis",
+    description:
+      "Before you change a symbol, find out what else depends on it: the callers, the routes " +
+      "and endpoints in the files that reach it, whether the change crosses from client code " +
+      "into server or database code, and — the part that matters most — WHICH OF THOSE FILES " +
+      "HAVE NO TEST.\n" +
+      "That last list is the point. A change inside well-tested code is cheap to get wrong " +
+      "because something will say so; the same change in a file nothing covers is how a build " +
+      "ships broken while every gate passes. Use it before renaming a field, changing a " +
+      "function's arguments, or altering anything shared, and let it tell you where to look " +
+      "rather than guessing which files were affected.",
+    input_schema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The symbol you are about to change." },
+      },
+      required: ["symbol"],
+    },
+  },
+  {
+    name: "search_code",
+    description:
+      "Search the current project source already held in this build, without reading from " +
+      "the sandbox or disk. Use this to find definitions, usages, or related code across " +
+      "files instead of opening files one at a time. Literal search is the default; set " +
+      "is_regex to true to use a regular expression. Results include the matching line and " +
+      "up to two nearby lines. Vendor, build, oversized, and binary-like files are skipped, " +
+      "and the result says how many files were skipped. Invalid regular expressions are " +
+      "reported as an ordinary error.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Text to find, or a regular expression when regex is true." },
+        is_regex: { type: "boolean", description: "Treat query as a regular expression instead of literal text." },
+        path_glob: { type: "string", description: "Optional project-relative glob, e.g. \"src/**/*.ts\"." },
+        max_results: { type: "number", description: "Maximum matches to return. Defaults to 40." },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "read_file",
     description:
       "Read one project file's current contents from the sandbox. This is the real file on " +
@@ -379,12 +482,7 @@ export type GateOutcome = "pass" | "fail" | "unavailable";
  *  after writing none has been handed proof it never earned. */
 export type TestGateOutcome = GateOutcome | "none";
 
-const SKILLS_DIR = join(process.cwd(), "src", "skills");
 
-// Allowlist check before touching the filesystem — `name` is a model-chosen
-// string derived from user input, so this is defense in depth against path
-// traversal even though ALL_SKILL_NAMES already constrains what's meaningful.
-const KNOWN_SKILL_NAMES = new Set<string>(ALL_SKILL_NAMES);
 
 
 export interface ToolExecutionContext {
@@ -422,6 +520,10 @@ export interface ToolExecutionContext {
    *  caller ends up with the same file map the old fence-parsing path produced
    *  and every downstream gate keeps working unchanged. */
   generatedFiles?: Record<string, string> | undefined;
+  /** Paths removed this dispatch; projectFiles remains the build-start snapshot. */
+  deletedFiles?: Set<string> | undefined;
+  /** Named snapshots live only for this agentic dispatch. */
+  checkpoints?: Map<string, Checkpoint> | undefined;
   /** Forwards sandbox/dev-server output to the client's build log. */
   onLog?: ((line: string) => void) | undefined;
   /** Where the verification tools record what they found, so the build can be
@@ -466,7 +568,7 @@ export interface ToolExecutionContext {
    *  answer — and an unmeasured problem stays unmanaged. `removed` staying near
    *  zero while `added` climbs is the signature of an edit that bolts a new
    *  path on beside the old one. */
-  churn?: { added: number; removed: number; created: number; replaced: number; edited: number } | undefined;
+  churn?: { added: number; removed: number; created: number; replaced: number; edited: number; deleted: number } | undefined;
   /** What find_dead_code reported, and whether the model called it at all.
    *  `called: false` is its own fact — the same distinction build_outcome keeps
    *  between a gate that failed and a gate nobody ran. */
@@ -508,129 +610,6 @@ export interface ToolExecutionContext {
     | undefined;
 }
 
-function lineCount(text: string): number {
-  if (text === "") return 0;
-  return text.split("\n").length;
-}
-
-/**
- * Record the size of one change.
- *
- * For `edit_file` this is exact: the replaced text out, the new text in. For
- * `write_files` on an existing file it counts the whole old file as removed and
- * the whole new one as added, which is literally what that tool does — it
- * replaces the file — so the useful figure there is the NET, not either side.
- */
-function noteChurn(
-  ctx: ToolExecutionContext,
-  before: string,
-  after: string,
-  kind: "created" | "replaced" | "edited",
-): void {
-  const c = ctx.churn;
-  if (!c) return;
-  c.removed += lineCount(before);
-  c.added += lineCount(after);
-  c[kind] += 1;
-}
-
-/**
- * Record that the project changed, which dates every gate verdict held so far.
- *
- * A gate is only evidence about the code that existed when it ran. On
- * 2026-10-04 a build wrote files, called check_page, wrote more files, and then
- * told the user "the page renders without errors" — true of what it looked at,
- * false of what it shipped, and nothing anywhere could tell the two apart.
- */
-function noteWrite(ctx: ToolExecutionContext): void {
-  if (ctx.writeCounter) ctx.writeCounter.value += 1;
-  const g = ctx.gateResults;
-  if (!g) return;
-  if (g.checkPage) g.writesAfterCheckPage = (g.writesAfterCheckPage ?? 0) + 1;
-  if (g.checkTypes) g.writesAfterCheckTypes = (g.writesAfterCheckTypes ?? 0) + 1;
-  if (g.checkTests) g.writesAfterCheckTests = (g.writesAfterCheckTests ?? 0) + 1;
-}
-
-/**
- * Open every route the project declares and report what each one renders.
- *
- * Shared by `check_page` and by the automatic check that rides along with a
- * write, so the model gets the same evidence either way — if the two could
- * drift, the automatic one would be the one nobody noticed had rotted.
- *
- * Returns null when the sweep could not run, which the callers must report as
- * "not checked" rather than as a pass. Saying the pages rendered fine when the
- * browser never opened them is the failure this whole module exists to end.
- */
-async function runPageSweep(
-  ctx: ToolExecutionContext,
-  projectId: string,
-  trigger: "asked" | "never" | "stale",
-): Promise<string | null> {
-  const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-  const declared = new Set<string>();
-  for (const code of Object.values(files)) {
-    for (const r of declaredRoutes(code)) declared.add(r);
-  }
-  const routes = routesToVisit([...declared]);
-
-  const { report, ran } = await checkRender(projectId, routes);
-  if (!ran || !report) return null;
-
-  if (ctx.gateResults) {
-    ctx.gateResults.checkPage = allRoutesOk(report) ? "pass" : "fail";
-    ctx.gateResults.writesAfterCheckPage = 0;
-  }
-
-  // Only what moved since last time. The sweep costs the same either way; what
-  // this saves is the tokens every later round pays to carry a repeat of the
-  // same working pages.
-  const previous = ctx.lastRender?.report ?? null;
-  if (ctx.lastRender) ctx.lastRender.report = report;
-  let out = formatRenderForAgent(report, previous);
-
-  // Pages render — so now ask whether anything on them WORKS.
-  //
-  // This is the question the render sweep cannot answer and the one the owner
-  // keeps asking: buttons that are there and do nothing. The probe already
-  // existed, but it ran at the end of finishPreview, after the build was
-  // delivered, so the model never saw a word of it. A finding the builder
-  // cannot act on is a report, not a check.
-  //
-  // Gated twice on purpose. Only when every route renders — a dead button and
-  // a page that never loaded are indistinguishable otherwise — and only ONCE
-  // per build, because driving a real browser over several pages costs seconds
-  // and the answer rarely changes twice.
-  if (allRoutesOk(report) && ctx.interactionsProbed && !ctx.interactionsProbed.value) {
-    ctx.interactionsProbed.value = true;
-    const routes = report.routes.map((r) => r.route);
-    const { findings, ran } = await checkInteractions(projectId, routes);
-    console.log(
-      `[tools] interactions in-build trigger=${trigger} routes=${routes.length} ` +
-      `ran=${ran} findings=${findings.length}`,
-    );
-    if (ran && findings.length > 0) {
-      out += `\n\n${formatInteractions(findings)}`;
-    } else if (ran) {
-      out += `\n\nI also operated the controls on those pages: every button, link and form I ` +
-        `could try produced a visible response.`;
-    }
-  }
-
-  // This tool's result goes to the MODEL and nowhere else, so without this
-  // line there is no way to tell from outside whether the sweep ran, how many
-  // pages it saw, or whether the diff is doing its job. `chars` is the figure
-  // the cost argument rests on.
-  console.log(
-    `[tools] page sweep trigger=${trigger} routes=${report.routes.length} ` +
-    `broken=${report.routes.filter((r) => !r.ok).length} ` +
-    `unreachable=${report.unreachable.length} ` +
-    `repeat=${previous !== null} chars=${out.length}`,
-  );
-  return out;
-}
-
-/** Execute one tool call and return the text to send back as its tool_result. */
 export async function executeTool(
   name: string,
   argsJson: string,
@@ -643,610 +622,16 @@ export async function executeTool(
     return "Error: could not parse tool arguments as JSON.";
   }
 
-  if (name === "load_skill") {
-    const skillName = typeof args["name"] === "string" ? args["name"] : "";
-    if (!KNOWN_SKILL_NAMES.has(skillName)) {
-      return `Error: "${skillName}" is not a known skill. Available: ${ALL_SKILL_NAMES.join(", ")}.`;
+  const handler = REGISTRY.get(name);
+  if (handler && !DEFERRED_STATIC_HANDLERS.has(name)) {
+    if (SANDBOX_REQUIRED.has(name) && !ctx.projectId) {
+      return "Error: no project sandbox is attached to this build.";
     }
-    try {
-      const raw = await readFile(join(SKILLS_DIR, `${skillName}.md`), "utf-8");
-      const { body } = parseSkillFrontmatter(raw, skillName);
-      return body;
-    } catch {
-      return `Error: skill "${skillName}" is listed but its file could not be read.`;
-    }
+    return handler(args, ctx);
   }
 
-  if (name === "read_project_file") {
-    const path = typeof args["path"] === "string" ? args["path"] : "";
-    const file = ctx.contextFiles?.find((f) => f.path === path);
-    return file ? file.content : `Error: "${path}" is not part of this project's current context.`;
-  }
-
-  // ── Agentic build tools ───────────────────────────────────────────────────
-
-  if (
-    name === "write_files" ||
-    name === "edit_file" ||
-    name === "check_page" ||
-    name === "check_types" ||
-    name === "run_tests" ||
-    name === "list_files" ||
-    name === "read_file" ||
-    name === "read_logs" ||
-    name === "find_dead_code" ||
-    name === "find_wiring_gaps" ||
-    name === "deploy_app" ||
-    name === "review_code" ||
-    name === "fetch_reference"
-  ) {
-    // Handled before the sandbox check on purpose: this one reads the file set
-    // this build already holds, so it works on a cold sandbox and costs
-    // nothing. Requiring a projectId would make it unavailable in exactly the
-    // early rounds where the model is deciding what to keep.
-    if (name === "find_dead_code") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-      if (Object.keys(files).length === 0) {
-        return (
-          "There are no files to analyse yet. Call this after you have written or changed " +
-          "code, not before."
-        );
-      }
-      const findings = findDeadCode(files);
-      if (ctx.deadCode) {
-        const t = tallyDeadCode(findings);
-        ctx.deadCode.unusedImports = t.unusedImports;
-        ctx.deadCode.unreferencedExports = t.unreferencedExports;
-        ctx.deadCode.neverRendered = t.neverRendered;
-        ctx.deadCode.called = true;
-      }
-      return formatDeadCode(findings);
-    }
-
-    // Same placement and the same reason: it reads the file set this build
-    // already holds, so it works on a cold sandbox and costs nothing. Nothing is
-    // recorded on ctx — unlike find_dead_code, the end-of-build tally for this
-    // runs unconditionally over the delivered files, so "did the model ask?" is
-    // not the fact that decides whether the number exists.
-    if (name === "find_wiring_gaps") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-      if (Object.keys(files).length === 0) {
-        return (
-          "There are no files to analyse yet. Call this once the pages and controls exist, " +
-          "not before."
-        );
-      }
-      return formatWiringGaps(findWiringGaps(files));
-    }
-
-    // Also before the sandbox check: a deploy reads the file set this build
-    // holds and talks to Vercel, not to the sandbox. It is the one tool here
-    // that changes something OUTSIDE this build — it publishes to an account
-    // that belongs to the user — so each precondition is answered as a sentence
-    // the model can pass on rather than as an error to retry.
-    if (name === "deploy_app") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-      if (Object.keys(files).length === 0) {
-        return "There is nothing to deploy yet — build the app first.";
-      }
-      if (!ctx.deploy) {
-        // Not an error. The remedy is the user's and this is how they learn it.
-        return (
-          "This app is ready to deploy, but no Vercel account is connected yet. The user needs " +
-          "to connect Vercel in their integrations settings (it takes a Vercel account token). " +
-          "Tell them that and stop — do not try again."
-        );
-      }
-      const outcome = await deployToVercel({
-        auth: {
-          accessToken: ctx.deploy.vercelToken,
-          ...(ctx.deploy.teamId === undefined ? {} : { teamId: ctx.deploy.teamId }),
-        },
-        files,
-        projectName: ctx.deploy.projectName,
-      });
-      ctx.onLog?.(
-        outcome.ok
-          ? `Deployed: ${outcome.url ?? "(no url)"}`
-          : `Deploy not successful: ${outcome.error ?? outcome.state ?? "unknown"}`,
-      );
-      // The user-facing lines, plus the one fact the MODEL needs that they do
-      // not: whether it may describe this as done.
-      return (
-        `${formatDeployForUser(outcome).join("\n")}\n\n` +
-        (outcome.ok
-          ? "This deploy is verified — the URL was checked and answered. You may tell the user it is live."
-          : "Do NOT describe this as deployed and working. Report exactly what is above.")
-      );
-    }
-
-    // Also before the sandbox check: the review reads the file set, not the
-    // running app. It is the one tool here that costs real money, so it needs
-    // the dispatcher and the identity to bill against, and it refuses rather
-    // than silently doing nothing when either is missing.
-    if (name === "review_code") {
-      const files = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-      if (Object.keys(files).length === 0) {
-        return "There is no code to review yet.";
-      }
-      if (!ctx.dispatcher || !ctx.userId) {
-        return "Error: the review pass is not available in this build.";
-      }
-      const maxUnits = typeof args["max_files"] === "number" && args["max_files"] > 0
-        ? Math.min(Math.floor(args["max_files"]), 60)
-        : undefined;
-      const result = await reviewProject({
-        dispatcher: ctx.dispatcher,
-        files,
-        sessionId: ctx.sessionId ?? "",
-        userId: ctx.userId,
-        projectId: ctx.projectId ?? "",
-        provider: ctx.provider ?? "modal",
-        ...(maxUnits === undefined ? {} : { maxUnits }),
-        onProgress: (done, total, path) =>
-          ctx.onLog?.(`Reviewing ${done}/${total}: ${path}`),
-      });
-      if (ctx.review) {
-        ctx.review.called = true;
-        ctx.review.deep = result.coverage.deep;
-        ctx.review.total = result.coverage.total;
-        ctx.review.unreviewed = result.coverage.unreviewed;
-        ctx.review.findings = result.findings.length;
-        ctx.review.dropped = result.droppedUncorroborated;
-        ctx.review.costUsd = result.costUsd;
-      }
-      return formatReview(result);
-    }
-
-    const projectId = ctx.projectId;
-    if (!projectId) return "Error: no project sandbox is attached to this build.";
-
-    if (name === "write_files") {
-      noteWrite(ctx);
-      const raw = Array.isArray(args["files"]) ? (args["files"] as unknown[]) : [];
-      const files: Record<string, string> = {};
-      for (const entry of raw) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const e = entry as Record<string, unknown>;
-        if (typeof e["path"] === "string" && typeof e["content"] === "string") {
-          files[e["path"]] = e["content"];
-        }
-      }
-      if (Object.keys(files).length === 0) {
-        return "Error: no valid files provided. Each entry needs a string `path` and string `content`.";
-      }
-
-      // Merge into the running set first, then write the WHOLE set. The
-      // sandbox's own writer skips template-owned files (package.json,
-      // vite.config, etc.) on its own, so the model can't break the scaffold.
-      // Recorded BEFORE the write deliberately: if the sandbox write fails,
-      // the model still authored this content, and the caller writes the set
-      // to disk and pushes it through the normal preview path afterwards.
-      // Dropping it on a sandbox hiccup would throw away real work; the model
-      // is told about the failure either way and can retry.
-      // Refuse template-owned paths here, out loud, instead of accepting them
-      // and letting them be dropped further down. A model asked for scroll
-      // animations wrote them into src/styles.css, was told "Wrote 2 files",
-      // and reported the animations as done — while the file was discarded on
-      // the way in and the page never changed. Silent rejection is how an agent
-      // ends up honestly describing work that does not exist.
-      // Refuse fragments carrying unresolved edit markers. Those belong to the
-      // pipeline, where file-parser.ts splices them into the existing file;
-      // here the content IS the file, so writing it destroys the real one. The
-      // prompt no longer offers markers on this path, but a model can still
-      // reach for them, and the cost of being wrong is a working app replaced
-      // by a syntax error. build.ts's validateAppTsx refuses the same thing on
-      // the pipeline side.
-      const marked = Object.keys(files).filter((p) =>
-        /\/\/\s*(BEGIN_EDIT|END_EDIT)\b/.test(files[p] ?? ""),
-      );
-      if (marked.length > 0) {
-        return (
-          `Nothing was written. ${marked.join(", ")} contained // BEGIN_EDIT or // END_EDIT ` +
-          `markers.\n` +
-          `write_files replaces a file entirely — nothing splices those markers, so writing a ` +
-          `fragment would destroy the rest of the file. Send the COMPLETE content of each file ` +
-          `you are changing, every line, including the parts you are not changing.`
-        );
-      }
-
-      const refused = Object.keys(files).filter((p) => isTemplateOwnedFile(p));
-      for (const p of refused) delete files[p];
-      if (Object.keys(files).length === 0) {
-        return (
-          `Nothing was written. ${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} ` +
-          `owned by the project template and cannot be changed.\n` +
-          `For custom CSS, create your own stylesheet — e.g. src/app.css — and import it from ` +
-          `src/App.tsx. It will be picked up normally. Do not put it in src/styles.css.`
-        );
-      }
-
-      // Measured before the merge, while the previous content is still
-      // reachable. A path this build has not seen before counts as created
-      // rather than replaced, so a new project does not read as churn.
-      for (const [path, content] of Object.entries(files)) {
-        const before = (ctx.generatedFiles ?? {})[path] ?? (ctx.projectFiles ?? {})[path];
-        noteChurn(ctx, before ?? "", content, before === undefined ? "created" : "replaced");
-      }
-
-      if (ctx.generatedFiles) Object.assign(ctx.generatedFiles, files);
-      // The sandbox gets the WHOLE project, not just this turn's files. On an
-      // edit the model writes only what it changed (correctly — that is what
-      // preserves everything else), but the sandbox may be a fresh template,
-      // and checking a template with three edited files dropped into it tells
-      // the model nothing about the real app. Existing files first so this
-      // turn's writes win on any path they both have.
-      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? files) };
-
-      let url: string | undefined;
-      let writeError: string | undefined;
-      try {
-        url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
-      } catch (err) {
-        writeError = err instanceof Error ? err.message : String(err);
-      }
-
-      // Store them NOW, not at the end of the build. A build that dies partway
-      // — the cost ceiling mid-dispatch, a provider error, a restart — used to
-      // leave a sandbox full of working files and nothing recoverable. Done
-      // even when the sandbox write failed: the model authored this content,
-      // and the same reasoning that records it in generatedFiles above applies
-      // to keeping it.
-      await persistFilesAsWritten(projectId, files);
-
-      if (writeError !== undefined) return `Error writing files: ${writeError}`;
-
-      const note = refused.length > 0
-        ? `\nNOT written: ${refused.join(", ")} — owned by the project template. ` +
-          `Put custom CSS in your own file (e.g. src/app.css) and import it from src/App.tsx.`
-        : "";
-      const head =
-        `Wrote ${Object.keys(files).length} file(s): ${Object.keys(files).join(", ")}.${note}`;
-
-      // The page check rides along rather than waiting to be asked.
-      //
-      // Telling the model to "call check_page" was the whole mechanism before
-      // this, and a real build showed what that is worth: three writes and one
-      // edit, a single check_page call, and a finishing verdict of "pass" about
-      // code three writes older than what shipped. A weaker model is worse
-      // still — one spent five rounds without calling the write tool at all.
-      // Guidance in a sentence does not survive a long build; the environment
-      // doing it does.
-      //
-      // Fires only when the verdict is missing or stale (see autoCheckReason),
-      // so a model that checks after its own writes never pays for this twice.
-      const reason = autoCheckReason(ctx.gateResults);
-      if (reason !== null) {
-        const swept = await runPageSweep(ctx, projectId, reason);
-        if (swept !== null) {
-          return `${head}\n\nThe app is running at ${url}. I opened it for you:\n\n${swept}`;
-        }
-        // The sweep could not run. Say so rather than staying silent, because
-        // silence here reads as "and everything was fine".
-        return (
-          `${head}\nThe app is running at ${url}. ` +
-          `I could not open it to check — call check_page yourself; do not assume it renders.`
-        );
-      }
-
-      return `${head}\nThe app is running at ${url}. Call check_page to see what it renders.`;
-    }
-
-    // Reads resolve newest-first: what the model wrote this turn, then the
-    // project as it stood when the build started, then the sandbox. The first
-    // two are already in memory and authoritative, so an edit doesn't have to
-    // wait on a sandbox that may still be warming — and can't be misled into
-    // thinking the project is empty because it asked a second too early.
-    const known = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? {}) };
-
-    // "No sandbox" must never read as "tools don't work here". On a brand-new
-    // build the sandbox is still warming while the model takes its first turn,
-    // and these reads legitimately have nothing to show yet. Reporting that as
-    // a bare error made a model conclude the harness was unavailable — its own
-    // words were "No sandbox; output files in reply per task format" — and
-    // abandon the tools for the rest of the build. Every message below keeps it
-    // on the tool path.
-    const NOT_READY =
-      "The sandbox is still starting, so there is nothing to read yet. This is normal at " +
-      "the beginning of a new build — go ahead and write your files with write_files, " +
-      "then read and check afterwards.";
-    const isNoSandbox = (e: unknown): boolean =>
-      e instanceof Error && e.message.includes("no live sandbox");
-
-    if (name === "edit_file") {
-      noteWrite(ctx);
-      const path = typeof args["path"] === "string" ? args["path"].trim() : "";
-      const oldString = typeof args["old_string"] === "string" ? args["old_string"] : "";
-      const newString = typeof args["new_string"] === "string" ? args["new_string"] : "";
-
-      if (!path) return "Error: `path` is required.";
-      if (oldString === "") {
-        return (
-          "Error: `old_string` is required and cannot be empty. To create a new file, use " +
-          "write_files instead."
-        );
-      }
-      if (oldString === newString) {
-        return "Nothing was changed: `old_string` and `new_string` are identical.";
-      }
-      if (isTemplateOwnedFile(path)) {
-        return (
-          `${path} is owned by the project template and cannot be changed.\n` +
-          `For custom CSS, create your own stylesheet — e.g. src/app.css — and import it from ` +
-          `src/App.tsx.`
-        );
-      }
-
-      // Same precedence as read_file: what this turn wrote, then the project as
-      // it stood at build start, then the sandbox. Editing anything staler than
-      // that would silently undo the model's own previous edit.
-      const current =
-        (ctx.generatedFiles ?? {})[path] ??
-        (ctx.projectFiles ?? {})[path] ??
-        (await readProjectFile(projectId, path).catch((err: unknown) => {
-          if (isNoSandbox(err)) return null;
-          return undefined;
-        }));
-
-      if (current === null) return NOT_READY;
-      if (current === undefined) {
-        return (
-          `Could not read ${path}. Call list_files to see what the project actually contains, ` +
-          `or use write_files if this file does not exist yet.`
-        );
-      }
-
-      // Exact match, and it has to be unambiguous. Replacing the first of
-      // several matches is how an edit tool quietly changes the wrong line.
-      const occurrences = current.split(oldString).length - 1;
-      if (occurrences === 0) {
-        return (
-          `No change made: that exact text does not appear in ${path}. It must match the ` +
-          `file character for character, including indentation and line breaks. Call ` +
-          `read_file on ${path} and copy the text from what it returns.`
-        );
-      }
-      if (occurrences > 1) {
-        return (
-          `No change made: that text appears ${occurrences} times in ${path}, so it is ` +
-          `ambiguous. Include more of the surrounding lines until it identifies exactly one ` +
-          `place.`
-        );
-      }
-
-      // A FUNCTION replacement, not a string one: in String.replace a literal
-      // replacement treats $&, $1, $` and $' as substitution patterns, so new
-      // text containing them would be silently mangled — and generated code
-      // contains them often, in exactly the regex replacements this tool would
-      // be used to edit. Verified: replacing with "[$&]" writes "[1]" the
-      // naive way and "[$&]" this way.
-      const updated = current.replace(oldString, () => newString);
-      // Exact here, unlike write_files: only the replaced span changed, so this
-      // is the one measurement that cleanly answers whether an edit removed
-      // anything or only added.
-      noteChurn(ctx, oldString, newString, "edited");
-      if (ctx.generatedFiles) ctx.generatedFiles[path] = updated;
-
-      // Write the WHOLE project, as write_files does: the sandbox may be a fresh
-      // template, and checking one edited file dropped into it would tell the
-      // model nothing about the real app.
-      const toWrite = { ...(ctx.projectFiles ?? {}), ...(ctx.generatedFiles ?? { [path]: updated }) };
-      let url: string | undefined;
-      let writeError: string | undefined;
-      try {
-        url = await writeFilesToSandbox(projectId, toWrite, ctx.onLog);
-      } catch (err) {
-        writeError = err instanceof Error ? err.message : String(err);
-      }
-
-      // Same reason as write_files: store the edited file now, so a build that
-      // dies later is still recoverable. Only this one file — uploads are
-      // upserts keyed on path, so the stored project stays whole.
-      await persistFilesAsWritten(projectId, { [path]: updated });
-
-      if (writeError !== undefined) return `Error writing ${path}: ${writeError}`;
-      const removed = newString === "";
-      return (
-        `Edited ${path} — ${removed ? "removed" : "replaced"} 1 occurrence.\n` +
-        `The app is running at ${url}. Call check_page to see what it actually renders.`
-      );
-    }
-
-    if (name === "list_files") {
-      const inMemory = Object.keys(known).sort();
-      if (inMemory.length > 0) {
-        return `${inMemory.length} file(s) in the project:\n${inMemory.join("\n")}`;
-      }
-      try {
-        const files = await listProjectFiles(projectId);
-        if (files.length === 0) {
-          return "The project has no source files yet — this is a new build. Write them with write_files.";
-        }
-        return `${files.length} file(s) in the project:\n${files.join("\n")}`;
-      } catch (err) {
-        if (isNoSandbox(err)) return NOT_READY;
-        return `Could not list files: ${err instanceof Error ? err.message : String(err)}. You can still write files with write_files.`;
-      }
-    }
-
-    if (name === "read_file") {
-      const path = typeof args["path"] === "string" ? args["path"].trim() : "";
-      if (!path) return "Error: `path` is required.";
-      const inMemory = known[path] ?? known[path.replace(/^\.\//, "")];
-      if (inMemory !== undefined) {
-        return inMemory.trim() === "" ? `${path} exists but is empty.` : `${path}:\n${inMemory}`;
-      }
-      try {
-        const content = await readProjectFile(projectId, path);
-        if (content.trim() === "") return `${path} exists but is empty.`;
-        return `${path}:\n${content}`;
-      } catch (err) {
-        if (isNoSandbox(err)) return NOT_READY;
-        // Covers both "refused" (see safeProjectPath) and a genuine miss. Says
-        // what to do next rather than just failing, so a wrong guess at a path
-        // costs one turn instead of derailing the build.
-        return (
-          `Could not read ${path}: ${err instanceof Error ? err.message : String(err)}. ` +
-          `Call list_files to see what the project actually contains.`
-        );
-      }
-    }
-
-    if (name === "fetch_reference") {
-      const url = typeof args["url"] === "string" ? args["url"].trim() : "";
-      if (!url) return "Error: `url` is required.";
-      if (!isFetchableReferenceUrl(url)) {
-        return `Refused to open ${url}. Only public http(s) pages can be used as a reference.`;
-      }
-      try {
-        const brief = await fetchReferenceDesign(projectId, url);
-        if (typeof brief["error"] === "string") {
-          return (
-            `Could not read ${url}: ${brief["error"]}. Build from the user's description ` +
-            `instead, and say in your final reply that you could not open the reference.`
-          );
-        }
-        // Framed as data, and as a style guide rather than a target to copy:
-        // everything below came off someone else's page, including any text.
-        return (
-          `Design brief from ${url} (reference only — match the feel, write your own ` +
-          `content and layout):\n${JSON.stringify(brief, null, 2)}\n` +
-          `The section headings above show how the page is structured. They are the other ` +
-          `site's words — use them to decide what sections to include, not what to write.`
-        );
-      } catch (err) {
-        if (isNoSandbox(err)) return NOT_READY;
-        return (
-          `Could not open ${url}: ${err instanceof Error ? err.message : String(err)}. ` +
-          `Build from the user's description instead.`
-        );
-      }
-    }
-
-    if (name === "read_logs") {
-      const logs = readSandboxLogs(projectId);
-      if (!logs) return NOT_READY;
-      const parts: string[] = [];
-      if (logs.dev.length > 0) parts.push(`Dev server output:\n${logs.dev.join("\n")}`);
-      if (logs.backend.length > 0) parts.push(`Backend output:\n${logs.backend.join("\n")}`);
-      if (parts.length === 0) {
-        return "Nothing has been logged yet — the servers may still be starting.";
-      }
-      return parts.join("\n\n");
-    }
-
-    if (name === "check_page") {
-      try {
-        // Every route the project declares, not just `/`. The old check opened
-        // one URL, so every other page in a multi-page app was unobserved by
-        // construction — which is the owner's standing complaint about pages
-        // that do nothing, and it was true: nothing ever looked at them.
-        const swept = await runPageSweep(ctx, projectId, "asked");
-        if (swept !== null) return swept;
-
-        // Fall back to the single-route check rather than reporting nothing.
-        // That one is proven in production, so this change cannot leave the
-        // model with less than it had; it only ever adds. A fallback that
-        // reported "unavailable" on any hiccup in the new path would be a
-        // regression dressed as a feature.
-        const { ok, issues, unavailable } = await verifyBrowserRender(projectId);
-        // Report "couldn't check" as itself. Saying the page rendered fine when
-        // the browser never opened it is how an agent ships a blank app while
-        // believing it verified one.
-        if (unavailable) {
-          if (ctx.gateResults) ctx.gateResults.checkPage = "unavailable", ctx.gateResults.writesAfterCheckPage = 0;
-          return "The page check could not run (the sandbox did not respond). Nothing was verified — do not treat this as a pass.";
-        }
-        if (ok || issues.length === 0) {
-          if (ctx.gateResults) ctx.gateResults.checkPage = "pass", ctx.gateResults.writesAfterCheckPage = 0;
-          return "The page rendered successfully with no console errors.";
-        }
-        if (ctx.gateResults) ctx.gateResults.checkPage = "fail", ctx.gateResults.writesAfterCheckPage = 0;
-        return (
-          `The page has problems:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}\n` +
-          `Call read_logs if you need the dev server's own account of what happened.`
-        );
-      } catch (err) {
-        return `Error checking the page: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    }
-
-    if (name === "run_tests") {
-      try {
-        const run = await runTests(projectId);
-        if (ctx.gateResults) {
-          ctx.gateResults.writesAfterCheckTests = 0;
-          ctx.gateResults.checkTests =
-            run.outcome === "passed" ? "pass"
-            : run.outcome === "failed" ? "fail"
-            : run.outcome;
-        }
-        if (run.outcome === "unavailable") {
-          return (
-            `The tests could not be run: ${run.reason ?? "unknown reason"}. Nothing was ` +
-            `verified — do not treat this as a pass. Carry on with the build and rely on ` +
-            `check_page and check_types instead.`
-          );
-        }
-        if (run.outcome === "none") {
-          return (
-            "There are no tests in this project yet, so nothing was verified. If this app " +
-            "has logic whose correctness isn't obvious by reading it, write a test file " +
-            "next to that code (e.g. src/lib/totals.test.ts), then call run_tests again."
-          );
-        }
-        if (run.outcome === "passed") {
-          return `All ${run.total} test(s) passed.`;
-        }
-        // Cap the detail: a broken shared module can fail fifty tests with the
-        // same message, and fifty copies of it crowds out the context the model
-        // needs to fix the one cause.
-        const shown = run.failures.slice(0, 10);
-        const omitted = run.failures.length - shown.length;
-        return (
-          `${run.failed} of ${run.total} test(s) failed.\n` +
-          shown.map((f) => `- ${f.test}\n  ${f.message.replace(/\n/g, "\n  ")}`).join("\n") +
-          (omitted > 0 ? `\n…and ${omitted} more failing test(s), likely the same cause.` : "") +
-          `\nFix the code, not the test — unless the test itself asserts the wrong thing.`
-        );
-      } catch (err) {
-        return `Error running the tests: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    }
-
-    try {
-      const { ok, issues, unavailable } = await runTypeCheck(projectId);
-      if (unavailable) {
-        if (ctx.gateResults) ctx.gateResults.checkTypes = "unavailable", ctx.gateResults.writesAfterCheckTypes = 0;
-        return "The type check could not run (tsc was unreachable in the sandbox). Nothing was verified — do not treat this as a pass.";
-      }
-      if (ok || issues.length === 0) {
-        if (ctx.gateResults) ctx.gateResults.checkTypes = "pass", ctx.gateResults.writesAfterCheckTypes = 0;
-        return "No type errors.";
-      }
-      if (ctx.gateResults) ctx.gateResults.checkTypes = "fail", ctx.gateResults.writesAfterCheckTypes = 0;
-      return `Type errors:\n${issues.map((i) => `- ${i.source}: ${i.message}`).join("\n")}`;
-    } catch (err) {
-      return `Error running the type check: ${err instanceof Error ? err.message : String(err)}`;
-    }
-  }
-
-  if (name === "request_write_action") {
-    const service = typeof args["service"] === "string" ? args["service"] : "that service";
-    const description = typeof args["description"] === "string" ? args["description"] : "the requested action";
-    return (
-      `Write/destructive actions on ${service} aren't available for that operation. ` +
-      `I can't ${description} on ${service} from here. ` +
-      `Continuing with the rest of your request if there's a buildable part.`
-    );
-  }
-
-  // ── Write-proxy tool gate ─────────────────────────────────────────────────
-  // Tools named "<serverSlug>__<toolName>" were dynamically added by dispatcher
-  // from write/destructive MCP tools that require explicit user approval before
-  // the backend executes them. This branch handles the pause-approve-execute flow.
-
-  if (ctx.writeMcpRegistry?.has(name)) {
+  // Keep runtime MCP dispatch here: write proxies must pass the existing approval gate.
+if (ctx.writeMcpRegistry?.has(name)) {
     const meta = ctx.writeMcpRegistry.get(name)!;
     const toolCallId = ctx.toolCallId ?? randomUUID();
     const sessionId = ctx.sessionId ?? "";
@@ -1320,67 +705,15 @@ export async function executeTool(
     return callMcpTool(meta, args, "lampcode-write-proxy");
   }
 
-  if (name === "ask_user") {
-    const question = typeof args["question"] === "string" ? args["question"].trim() : "";
-    if (!question) return "Error: ask_user needs a question.";
-    const sessionId = ctx.sessionId;
-    const toolCallId = ctx.toolCallId;
-    // Same precondition as the write proxies: with no session to ask through,
-    // there is nobody to answer, and inventing one would defeat the tool.
-    if (!sessionId || !toolCallId) {
-      return "Could not ask: no live session. Decide it yourself and say which assumption you made.";
-    }
+  // Preserve the existing write-proxy precedence for ask_user, then allow other static handlers.
+  if (handler) return handler(args, ctx);
 
-    const rawOptions = Array.isArray(args["options"]) ? args["options"] : [];
-    const options = rawOptions
-      .filter((o): o is Record<string, unknown> => typeof o === "object" && o !== null)
-      .map((o) => ({
-        label: String(o["label"] ?? ""),
-        description: typeof o["description"] === "string" ? o["description"] : "",
-        recommended: o["recommended"] === true,
-      }))
-      .filter((o) => o.label.length > 0)
-      .slice(0, 4);
-
-    const pending = createPendingAnswer(toolCallId, sessionId);
-    try {
-      getWebSocketServer().emitToRoom(sessionId, "build:question_asked", {
-        toolCallId,
-        question,
-        options,
-        timeoutMs: ANSWER_TIMEOUT_MS,
-        sessionId,
-      });
-    } catch {
-      // No websocket means the prompt never reaches anyone. Resolve the entry
-      // rather than leaving it in the Map, and tell the model to proceed.
-      resolveAnswer(toolCallId, sessionId, "");
-      return "Could not ask: no live session. Decide it yourself and say which assumption you made.";
-    }
-
-    const timeout = new Promise<null>((resolve) =>
-      setTimeout(() => {
-        resolveAnswer(toolCallId, sessionId, "");
-        resolve(null);
-      }, ANSWER_TIMEOUT_MS),
-    );
-    const answer = await Promise.race([pending, timeout]);
-
-    if (answer === null || answer === "") {
-      return (
-        "No answer — the person did not reply in time. Do NOT ask again. Pick the most " +
-        "reasonable option yourself, build it, and state in your summary which assumption you made."
-      );
-    }
-    return `The person answered: ${answer}`;
-  }
-
-  // Read-only MCP tools, on a gateway that cannot run them itself. Deliberately
-  // AFTER the write branch: if a name somehow appeared in both registries the
-  // write path claims it first, so this can never become a way around approval.
-  if (ctx.readMcpRegistry?.has(name)) {
+  // Read-only MCP tools remain runtime dispatch, separate from static handlers.
+if (ctx.readMcpRegistry?.has(name)) {
     return callMcpTool(ctx.readMcpRegistry.get(name)!, args, "lampcode-mcp-read");
   }
 
   return `Error: unknown tool "${name}".`;
+
 }
+
