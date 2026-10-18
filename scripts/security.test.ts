@@ -249,6 +249,64 @@ check(
   ok("no service key is ever VITE_-prefixed", !/VITE_SUPABASE_SERVICE/.test(previewSrc));
 }
 
+
+// ── a check that cannot be satisfied ─────────────────────────────────────────
+// MEASURED on a real build, 2026-10-18. checkAuth matched four literal guard
+// names. G5 had just changed what a correct Supabase backend looks like — a
+// per-request client carrying the caller's Authorization header, so auth.uid()
+// resolves and RLS decides access — and that shape contains none of those
+// words. The prompt taught one thing, the check demanded another, two repair
+// dispatches were spent, and the app shipped with "try a follow-up prompt".
+//
+// A check that cannot be satisfied is worse than no check: it costs money and
+// ends in the same place.
+
+const G5_BACKEND = `
+import { createClient } from '@supabase/supabase-js'
+function dbFor(c) {
+  const token = c.req.header('Authorization') || ''
+  return createClient(URL, ANON, { global: { headers: { Authorization: token } } })
+}
+app.get('/api/riders', (c) => dbFor(c).from('riders').select('*'))
+app.post('/api/riders', (c) => dbFor(c).from('riders').insert(x))
+`;
+
+check(
+  "forwarding the caller's identity counts as protected",
+  checkAuth(tree({ "src/server/routes/api.ts": G5_BACKEND })).status,
+  "pass",
+);
+
+// The named-guard shape must keep working — this is an addition, not a swap.
+check(
+  "a named requireAuth guard still counts",
+  checkAuth(
+    tree({
+      "src/server/routes/api.ts": `import { requireAuth } from './auth'\napp.use('/api/*', requireAuth)\napp.get('/api/x', h)`,
+    }),
+  ).status,
+  "pass",
+);
+
+// And the check must still BITE. A backend that neither guards nor forwards
+// anything is the thing this exists to catch.
+check(
+  "a wide-open backend still fails",
+  checkAuth(
+    tree({ "src/server/routes/api.ts": `app.get('/api/x', (c) => db.from('x').select('*'))\napp.post('/api/x', h)` }),
+  ).status,
+  "fail",
+);
+
+// Naming the remedy is what makes the finding fixable in one attempt rather
+// than unfixable in two.
+{
+  const msg = checkAuth(tree({ "src/server/routes/api.ts": `app.get('/api/x', h)\napp.post('/api/x', h)` })).message;
+  ok("the message names the middleware route to a fix", msg.includes("requireAuth"));
+  ok("and the forwarded-identity route", msg.includes("Authorization"));
+  ok("and forbids the obvious cheat", /Do not simply rename/i.test(msg));
+}
+
 if (failures > 0) {
   console.error(`\n${failures} security case(s) FAILED`);
   process.exit(1);

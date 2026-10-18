@@ -4341,3 +4341,54 @@ cannot leave `proven` saying one thing and the verdict list another.
 
 - **No build has produced a discounted verdict.** The log line
   `[build] audit discounted … proven N → M` is what will show it, and it has never printed.
+
+### A security check nobody could satisfy — 2026-10-18
+
+Visible in the owner's own screenshot, and the clearest instance of trap 4 this project has
+produced:
+
+```
+Fixing 2 security issue(s)…
+Fixing 1 security issue(s)…
+Some security issues remain: 1 route file(s) expose /api/ routes without auth middleware:
+src/server/index.ts. Try a follow-up prompt to fix them.
+```
+
+The repair loop was working exactly as designed — two attempts, fingerprint check, give up. What
+it could not do was succeed, because `checkAuth` matched **four literal strings**:
+`requireAuth`, `authenticate`, `verifyToken`, `isAuthenticated`. The finding's message named
+none of them. A model cannot satisfy a string match it has not been shown, so it wrote
+reasonable auth under a different name and failed again.
+
+**And G5 made it worse, yesterday, by being right.** G5 changed what a correct Supabase backend
+looks like: a client built per request carrying the caller's `Authorization` header, so
+`auth.uid()` resolves and the database's own RLS policies decide what that user may read. That
+is a stronger boundary than a middleware proving a token exists — and it contains none of the
+four words. **The prompt was teaching one thing while the check demanded another, and a model
+doing exactly as it was told still failed.**
+
+A check that cannot be satisfied is worse than no check: it costs two dispatches and ends in the
+same place, with the app shipped and the person told to write a follow-up prompt.
+
+Two changes:
+
+- **The G5 shape counts as protected** — a route file that forwards the caller's identity into
+  its database client (`global: { headers: { Authorization … } }`, `dbFor(`, `postgrest.auth(`)
+  passes. A wide-open backend still fails; this is an addition, not a widening.
+- **The message carries its remedy.** It now names BOTH accepted shapes and says plainly "do not
+  simply rename something to requireAuth", because the cheapest way to satisfy a string match is
+  to satisfy only the string.
+
+This is the rule written into the E5 Codex task — *every finding's message carries its
+remediation, not just the violation* — arriving early, on the check that needed it most.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 6 new cases: the G5 shape passes, the named guard still passes, a wide-open backend still
+  **fails**, and the message names both routes to a fix plus the cheat it forbids.
+
+### Not verified
+
+- **No build has run on it.** What is unproven is the thing that matters: whether the repair loop
+  now closes this finding on the first attempt instead of giving up on the second.
