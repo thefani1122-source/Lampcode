@@ -366,6 +366,49 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "code_intel",
+    description:
+      "Ask what a symbol IS and who uses it, resolved by the TypeScript compiler rather than " +
+      "by text matching. Give `symbol` for its definition and every real reference, or `path` " +
+      "for what that file exports.\n" +
+      "Prefer this over search_code whenever the question is about MEANING — \"where does this " +
+      "come from\", \"who calls this\", \"what does this file give me\". search_code finds the " +
+      "word in comments and strings too; this finds the actual thing. Use it BEFORE renaming " +
+      "or changing a signature, so you change every caller rather than the one you were " +
+      "looking at.\n" +
+      "A file that does not parse is handled with a text fallback instead of failing the " +
+      "call, and the result says when that happened — so a mid-edit broken file does not cost " +
+      "you the answer about the rest of the project.",
+    input_schema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The function, component, type or variable to resolve." },
+        path: { type: "string", description: "A file whose exported symbols you want listed instead." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "impact_analysis",
+    description:
+      "Before you change a symbol, find out what else depends on it: the callers, the routes " +
+      "and endpoints in the files that reach it, whether the change crosses from client code " +
+      "into server or database code, and — the part that matters most — WHICH OF THOSE FILES " +
+      "HAVE NO TEST.\n" +
+      "That last list is the point. A change inside well-tested code is cheap to get wrong " +
+      "because something will say so; the same change in a file nothing covers is how a build " +
+      "ships broken while every gate passes. Use it before renaming a field, changing a " +
+      "function's arguments, or altering anything shared, and let it tell you where to look " +
+      "rather than guessing which files were affected.",
+    input_schema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The symbol you are about to change." },
+      },
+      required: ["symbol"],
+    },
+  },
+  {
     name: "search_code",
     description:
       "Search the current project source already held in this build, without reading from " +

@@ -4260,3 +4260,43 @@ a confident answer that does not work.
 - **The connect flow has not been re-run.** The fixtures match what the server returned to a
   different client in this session; whether the backend's own session gets the identical shape is
   the one thing only a real connect attempt can show.
+
+### code_intel and impact_analysis reach the model — 2026-10-18
+
+Codex delivered three of batch 2 and 3 while the Supabase connect was being chased: the tool
+registry (`I1`), `code-intel.ts` (`D1`) and `impact.ts` (`D2`). All three are green on Linux.
+
+The registry is doing exactly what it was asked for. Adding these two tools cost **one file each
+plus two lines** in `src/agents/tools/registry.ts`, where before they would have landed in the
+middle of a 965-line `executeTool` and made every tool's diff touch the same function.
+
+Both were specified as exported-but-unwired on purpose, because a tool's description is prompt
+text and prompt-vs-reality drift is this repo's top bug class. The descriptions say what the
+model should reach for them FOR, not what they return:
+
+- **`code_intel`** — "prefer this over `search_code` whenever the question is about MEANING";
+  `search_code` finds the word in comments and strings too, this finds the actual thing. Use it
+  before renaming or changing a signature, so every caller changes rather than the one in view.
+- **`impact_analysis`** — the description puts `untested` in capitals, because that is the field
+  that earns the tool. A change inside covered code is cheap to get wrong; the same change where
+  nothing covers it is how a build ships broken with every gate passing.
+
+**No new case was needed, which is the happy version of this.** Codex's registry task already
+parses both `tools.ts` and `registry.ts` with the TypeScript AST and asserts that every defined
+tool has a handler and the registry has no extras — so wiring these two was checked by a case
+written before they existed. That is what that case was for.
+
+Worth recording for the next person: importing `src/agents/tools.ts` from a scratch script hangs
+(trap 9 — it pulls config, Redis and the E2B SDK). The AST-over-text approach is the way to
+assert anything about the tool surface, and it is already there.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux with Codex's three modules
+  and both wirings in place.
+
+### Not verified
+
+- **No build has used either tool.** Whether the model reaches for `code_intel` instead of
+  re-reading files, and whether `impact_analysis` changes what it edits, is exactly the claim —
+  and it needs a real build to see.

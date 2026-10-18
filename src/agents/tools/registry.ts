@@ -17,6 +17,8 @@ import { checkTypesHandler } from "./check-types.js";
 import { runTestsHandler } from "./run-tests.js";
 import { listFilesHandler } from "./list-files.js";
 import { searchCodeHandler } from "./search-code.js";
+import { codeIntelHandler } from "./code-intel.js";
+import { impactAnalysisHandler } from "./impact-analysis.js";
 import { readFileHandler } from "./read-file.js";
 import { fetchReferenceHandler } from "./fetch-reference.js";
 import { readLogsHandler } from "./read-logs.js";
@@ -54,6 +56,8 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["run_tests", runTestsHandler],
   ["list_files", listFilesHandler],
   ["search_code", searchCodeHandler],
+  ["code_intel", codeIntelHandler],
+  ["impact_analysis", impactAnalysisHandler],
   ["read_file", readFileHandler],
   ["fetch_reference", fetchReferenceHandler],
   ["read_logs", readLogsHandler],
