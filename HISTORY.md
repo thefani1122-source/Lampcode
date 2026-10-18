@@ -4092,3 +4092,74 @@ this the same app reports as a clean app that simply stores nothing.
 - **The preview URL question is separate and NOT reproduced.** The logs show the sandbox
   returning one normally — `url=https://5173-ifvryukwcxcr1hc3dep6q.e2b.app` at both 15:51:15 and
   16:00:32 — so whatever the user saw is not the sandbox failing to produce a URL. Open.
+
+### Why the anti-fake rule did nothing, and a connection that lied — 2026-10-18
+
+The fix from yesterday was live (deploy `f2034206`, SUCCESS 16:10 UTC) eleven hours before this
+build. **The model faked the feature again anyway**, on project `3697199a`:
+
+> "the frontend is trying to connect to a backend server that isn't running in the sandbox
+> preview. I need to add a fallback demo mode using localStorage"
+
+and then, in its summary to the user: *"Stores users and issues in localStorage (`demo_users`,
+`demo_issues` keys)… now work fully in the preview without any backend."*
+
+**The rule was never sent.** `prompt-builder.ts` builds `dbInstruction` as
+`isFullstackMode ? DB_INSTRUCTIONS[db] : ""`, and both fakes happened on FOLLOW-UP builds
+("sign-up doesn't work"), where that flag is false. A correct, carefully argued rule in a section
+the failing path never includes is the same as no rule.
+
+It now also lives in the agentic block, which is present on every agentic build, and five cases
+pin that placement rather than its wording.
+
+**The detector did its job both times**, which is the only reason this is a finding and not a
+shipped app:
+
+```
+[build] data layer findings=3 kinds=[fake-persistence,table-never-declared,schema-never-applied]
+[build] data layer findings=2 kinds=[fake-persistence,schema-never-applied]
+```
+
+The completion audit, by contrast, was **fooled**: it marked a requirement `proven` citing
+"demo mode provides clear error messages like 'User already exists'". A gate that asks whether
+the app works will always bless a good fake.
+
+**And the MCP relevance fix works:** `[build] mcp relevance kept=[] dropped=[github,vercel]`.
+
+### The connection that said "connected" and carried nothing
+
+The owner connected Supabase and every build still said to connect a database. The row explains
+it:
+
+```
+provider=supabase  status=connected  supabaseUrl=ABSENT  encryptedAnonKey=ABSENT
+```
+
+`POST /api/integrations/supabase/mcp` fetched the project URL and anon key **only when a
+`projectRef` was supplied**, swallowed any failure with `.catch(() => creds)`, and then wrote
+`status: "connected"` regardless. So the UI showed a connected integration,
+`getUserSupabasePreviewCreds` correctly returned null, every build logged `ownSupabase=false`,
+and the person was told to connect a database they had already connected. Nothing anywhere said
+why.
+
+A Supabase connection that cannot give a preview its URL and anon key does not do the job it was
+connected for, so it no longer claims to: the endpoint now refuses with `MCP_NO_PROJECT_CREDS`
+and a message naming which of the three things was missing — no project selected, the API
+settings could not be read (with the error), or the project returned nothing. The token itself is
+explicitly described as fine, so nobody goes off regenerating a PAT that was never the problem.
+
+### Verified
+
+- `npm run typecheck`, `npm test` (976 cases) and `npm run build` pass on Linux.
+- The failure above is read from production logs and the production row, not inferred.
+
+### Not verified, and one deliberate non-change
+
+- **No build has run on either fix.** Whether the rule in its new position actually stops the
+  model is exactly what is unproven — the detector remains the net under it.
+- **The Vite error overlay is still shown to the user**, and was deliberately not disabled. It
+  can be turned off with `server.hmr.overlay: false`, but that is a BAKED template file, so it
+  needs a rebuild plus `verify-template.ts` — and `check_page` currently detects a broken page
+  BY reading `vite-error-overlay` from the DOM (`template.ts`, the `page.evaluate` block).
+  Turning it off blind would quietly weaken the strongest page check in the product to fix a
+  cosmetic problem. It needs the console-error path proven first.

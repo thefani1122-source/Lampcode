@@ -1966,6 +1966,25 @@ export class PromptBuilder {
         "replaced by what follows. Where the two disagree, this section is correct.\n" +
         "You are not writing a reply that contains code. You are building the app " +
         "directly in a live sandbox, and you can see the result of your own work.\n" +
+        // Measured twice, 2026-10-17 and 2026-10-18. Asked to fix a broken
+        // sign-up, the model decided "the backend isn't available in the
+        // sandbox" — false both times — and shipped a localStorage demo mode,
+        // reporting it as a fix. The rule existed in DB_INSTRUCTIONS, which is
+        // only included when isFullstackMode is true; both failures happened on
+        // FOLLOW-UP builds, where it was never sent. It lives here now because
+        // this block is always present, and this is the one failure where being
+        // slightly wordy twice is cheaper than being right once.
+        "- NEVER fake a feature to make it look fixed. No demo mode, no mock data, no " +
+        "in-memory or localStorage stand-in because a call is failing. That ships something " +
+        "that LOOKS like it works and saves nothing, which is worse than leaving it broken.\n" +
+        "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
+        "the backend's own output and check_page shows the browser's. The preview always runs " +
+        "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
+        "http://localhost:3001 in frontend code — the preview is served from a different " +
+        "origin, so that address resolves to nothing and every call fails exactly as if no " +
+        "backend existed. Calls must go through API_BASE + '/api/...'.\n" +
+        "- If you truly cannot fix it, say so plainly and leave the real code in place. " +
+        "'Sign-up is not working because X' is a result. A working-looking fake is not.\n" +
         "- write_files(files): writes whole files into the running project — use it for files " +
         "that do not exist yet. Code you print in your reply instead of writing here does NOT " +
         "exist and will be lost.\n" +

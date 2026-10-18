@@ -210,10 +210,43 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
     throw new AppError(422, "Connected but the MCP server returned no tools — check the token's scope", "MCP_NO_TOOLS");
   }
 
-  // Best-effort: fetch the project's public URL + anon key for previews.
+  // The project's public URL + anon key. NOT best-effort any more.
+  //
+  // MEASURED 2026-10-18. A row existed with provider=supabase, status=connected
+  // and a config holding NO supabaseUrl and NO anon key — because `projectRef`
+  // was absent, so this block never ran, and the row was written as "connected"
+  // regardless. The result was the worst shape available: the UI showed the
+  // integration as connected, `getUserSupabasePreviewCreds` correctly returned
+  // null, and every build logged `ownSupabase=false` and told the person to
+  // connect a database they had already connected. Nobody could see why.
+  //
+  // A Supabase connection that cannot give a preview its URL and anon key does
+  // not do the job it was connected for, so it no longer claims to.
   let creds: { url: string | null; anonKey: string | null } = { url: null, anonKey: null };
+  let credsError: string | null = null;
   if (projectRef) {
-    creds = await fetchSupabaseProjectCreds({ accessToken, projectRef }).catch(() => creds);
+    creds = await fetchSupabaseProjectCreds({ accessToken, projectRef }).catch((err: unknown) => {
+      credsError = err instanceof Error ? err.message : String(err);
+      return creds;
+    });
+  }
+  if (!creds.url || !creds.anonKey) {
+    // The token itself is fine — it just listed tools. What is missing is the
+    // project, so the message says exactly that and exactly what to do, rather
+    // than "connection failed", which would send someone to regenerate a token
+    // that was never the problem.
+    const why = !projectRef
+      ? "no project was selected"
+      : credsError
+        ? `the project's API settings could not be read (${credsError})`
+        : "the project returned no URL or anon key";
+    logger.warn({ userId, projectRef, why }, "Supabase MCP connect refused: no preview credentials");
+    throw new AppError(
+      422,
+      `Your token works, but ${why}, so previews cannot use this project yet. ` +
+        `Pick the Supabase project you want your apps to use and connect again.`,
+      "MCP_NO_PROJECT_CREDS",
+    );
   }
 
   const patEnc = encrypt(accessToken);
