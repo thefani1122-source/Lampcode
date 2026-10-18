@@ -42,7 +42,7 @@ import { capturePreviewScreenshot, checkInteractions, createPreviewSandbox, kill
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
-import { findDataLayerGaps, formatDataLayerForUser } from "../../verify/data-layer.js";
+import { fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps } from "../../verify/data-layer.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
 import {
@@ -2266,6 +2266,111 @@ export async function runFastBuild(
         } catch (fixErr) {
           logger.error({ sessionId, fixErr }, "Security fix dispatch failed");
           break;
+        }
+      }
+    }
+
+    // ── Take the fake out before anyone sees it ─────────────────────────────
+    //
+    // Measured twice, 2026-10-17 and 2026-10-18. Asked to fix a broken sign-up,
+    // the model concluded "the backend isn't running in the sandbox" — false
+    // both times, and on the first occasion it had itself confirmed the
+    // opposite nine minutes earlier — and replaced the API layer with
+    // localStorage, reporting it as a fix. `data-layer.ts` caught it both
+    // times, and reporting was not enough: the user still met an app that
+    // signs them up, shows their data back, and saves nothing anywhere.
+    //
+    // So this is a repair, not a report. Unlike the wiring loop it gets ONE
+    // dispatch, not two: the finding is specific and the correct fix is known,
+    // so a second attempt would mean the model argued with it rather than
+    // missed something — and a loop that keeps paying to re-ask is how a
+    // disagreement becomes a bill.
+    //
+    // It never fails the build, for the same reason wiring does not: a fake is
+    // wrong, not dangerous, and a build that dies here would take the real work
+    // with it.
+    let fakeRepaired = 0;
+    {
+      const before = fakePersistence(allFiles);
+      if (before.length > 0 && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+        const paths = before.map((f) => f.path).filter((p) => allFiles[p] !== undefined);
+        const included = paths.slice(0, 6);
+        if (included.length > 0) {
+          logger.warn(
+            { sessionId, projectId, findings: before.length, files: included },
+            "Faked persistence found — dispatching removal",
+          );
+          server?.thinking(sessionId, {
+            sessionId,
+            text: "Found code that stores data in the browser instead of saving it — taking it out…",
+          });
+
+          const fixDescription =
+            `${formatDataLayerGaps(before)}\n\n` +
+            `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+            `truncation):\n\n` +
+            included.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n");
+
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description: fixDescription,
+                requirements: [
+                  "DELETE the demo/mock/localStorage stand-in entirely. Do not keep it behind a " +
+                  "flag, an environment variable or a try/catch — a fallback that can switch on " +
+                  "is the same bug waiting for a different day.",
+                  "Call the real API instead, through API_BASE + '/api/...' where " +
+                  "API_BASE = import.meta.env.VITE_API_URL ?? ''.",
+                  "If any file hardcodes http://localhost:3001 or any other host, replace it with " +
+                  "API_BASE. That is almost always why the call appeared to fail: the preview is " +
+                  "served from a different origin, so localhost resolves to nothing.",
+                  "If a request genuinely fails, SHOW the error to the user. Do not substitute " +
+                  "local data so the screen looks populated.",
+                  "Keep localStorage ONLY where it is not standing in for the server — a theme, a " +
+                  "collapsed panel, an unsent draft.",
+                  "Change ONLY what the findings name — leave unrelated logic alone.",
+                  "Return the COMPLETE corrected file for each file you touch.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+            const fixed = parseFilesFromContent(fixResult.content ?? "");
+            // Only files that already exist are replaced. A repair that
+            // CREATES files is a repair that has misunderstood the finding —
+            // nothing here needs a new file, and letting it add one is how a
+            // narrow fix turns into an unreviewed rewrite.
+            for (const [p, code] of Object.entries(fixed)) {
+              if (typeof code === "string" && allFiles[p] !== undefined) allFiles[p] = code;
+            }
+            const after = fakePersistence(allFiles);
+            fakeRepaired = Math.max(0, before.length - after.length);
+            console.log(
+              `[build] fake persistence session=${sessionId} before=${before.length} ` +
+              `after=${after.length} repaired=${fakeRepaired}`,
+            );
+            // Said out loud either way. A removal the user is not told about
+            // leaves them believing the earlier "it works in the preview"
+            // message, which is the thing being corrected.
+            server?.thinking(sessionId, {
+              sessionId,
+              text:
+                after.length === 0
+                  ? "Removed it — the app now talks to the real backend instead of the browser."
+                  : "I could not fully remove it. Part of this app still stores data in the browser, " +
+                    "so it will look like it saved and will not have.",
+            });
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Fake-persistence repair dispatch failed");
+          }
         }
       }
     }

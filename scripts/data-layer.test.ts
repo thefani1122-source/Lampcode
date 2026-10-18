@@ -13,6 +13,7 @@
  * gets buried.
  */
 
+import { readFileSync } from "node:fs";
 import {
   declaredTables,
   findDataLayerGaps,
@@ -270,6 +271,35 @@ ok(
     ),
   )[0]?.includes("pretends to save") === true,
 );
+
+
+// ── the repair, and the one property a refactor could silently break ─────────
+// Detection was not enough: it caught the fake both times and the user still
+// met an app that saves nothing. So there is now a removal dispatch — and its
+// POSITION is the whole point. Everything after the wiring loop shows files to
+// someone: the storage sync, the backendReady emit, the preview sandbox. A
+// removal that lands after those is a removal the user never sees.
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const fakeAt = build.indexOf("Take the fake out before anyone sees it");
+  const wiringAt = build.indexOf("Wire up what renders but does nothing");
+  const syncAt = build.indexOf("server?.backendReady(");
+
+  ok("the repair exists", fakeAt > 0);
+  ok("the repair runs before the wiring loop", fakeAt > 0 && fakeAt < wiringAt);
+  ok("and before anything shows the files to the user", fakeAt > 0 && fakeAt < syncAt);
+
+  const block = build.slice(fakeAt, wiringAt);
+  // The source wraps this sentence across concatenated strings, so match the
+  // intent across the break rather than one literal line.
+  ok("it refuses a fallback kept behind a flag", /fallback that can switch on/i.test(block));
+  ok("it names the hardcoded-host cause", /localhost:3001/.test(block));
+  ok("it keeps legitimate localStorage", /theme, a\n.*collapsed panel|collapsed panel/s.test(block));
+  ok("it respects the cost ceiling", /MAX_BUILD_COST_USD/.test(block));
+  ok("it cannot fail the build", !/throw |AppError/.test(block));
+  // A repair that creates files has misunderstood the finding.
+  ok("it only replaces files that already exist", /allFiles\[p\] !== undefined/.test(block));
+}
 
 // ── output ───────────────────────────────────────────────────────────────────
 
