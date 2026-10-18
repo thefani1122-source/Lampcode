@@ -4499,3 +4499,69 @@ analysis was wrong, and nobody found out from a user.
 - **How often this fires is unknown.** If `unused-import` findings are common and
   `unreferenced-export` rare, this is mostly cosmetic; the whole argument above is about the rare
   one.
+
+### G2 — what must not be possible in THIS app — 2026-10-18
+
+`security.ts` asks the questions that are the same for every app: auth middleware, RLS on,
+secrets committed, CORS open. Those are worth asking and they are not the dangerous ones. The
+dangerous ones are specific:
+
+```
+"a clinic booking app"   → only the patient and their own clinician may read an appointment
+"a team expense tracker" → an employee may submit a claim and may not approve their own
+"a public poll"          → anyone may vote once; nobody may see who voted for what
+```
+
+No pattern matcher knows any of that, because none of it is in the code's shape — it is in the
+sentence the person typed. So `threat-model.ts` applies the completion-audit's trick to security:
+a pass that **cannot write code** turns the request into rules, and something else tries to break
+them later.
+
+**The failure this is designed against is not a missing threat — it is twelve true, useless
+sentences.** Ask any model for security requirements and it offers "use HTTPS", "validate all
+user input", "hash passwords", "prevent SQL injection". Every one is correct, every one is
+already covered by `security.ts` or is not ours to decide, and a list of them buries the one rule
+that belongs to this app.
+
+So `isGenericThreat` is a **deterministic denylist** — not a "specificity score". A score is a
+number nobody can argue with and everybody has to tune; a denylist is a list someone can read,
+disagree with and correct. It means PLAN's definition of done — *different prompts produce
+genuinely different checks* — is partly enforced with no LLM in the loop at all.
+
+The hard half of that filter is the false positives, and the cases are written in both
+directions. These must SURVIVE even though they contain denylisted words:
+
+- "Validate the claim amount is positive and under the team's limit"
+- "Implement rate limiting per voter so one person cannot stuff the poll"
+- "Require authentication before a doctor can open a patient record"
+- "The audit log must be readable only by an account owner"
+
+A filter that eats a real finding is worse than no filter, because it looks like it worked.
+
+**The threats reach the model BEFORE it writes anything.** Telling it "a clinician may only read
+their own patients' appointments" up front costs one sentence; catching the opposite afterwards
+costs a repair dispatch and may not be fixable without rewriting the data layer. Extraction runs
+in parallel from well above the dispatch, so in practice this waits for little — and a 20-second
+race means a wedged extraction can never hold a build hostage. It is an improvement to the
+prompt, not a prerequisite for it.
+
+Only fullstack or auth builds get one. A landing page has no threat model worth a dispatch, and
+asking for one produces exactly the boilerplate the filter exists to discard.
+
+The user is told what was **understood**, never what was guaranteed — nothing is verified at this
+point, and a case asserts the word "secure" never appears in that line.
+
+### Verified
+
+- `npm run typecheck`, `npm test` (1129 cases) and `npm run build` pass on Linux.
+- 46 cases: 15 boilerplate rejections, 10 specific survivals including the four hard ones above,
+  the parser's renumbering/dedupe/cap, five never-throws paths, and six on the instruction's own
+  wording.
+
+### Not verified
+
+- **No build has run one.** Whether a real model produces app-specific rules or boilerplate is
+  the entire question, and the log line `[build] threats … kept=N generic=M` is what answers it:
+  a high `generic` means the instruction is not working, which no amount of filtering fixes.
+- **Nothing verifies the threats yet.** That is G3, whose static half shipped this morning and
+  whose adversarial half needs a real build with two users.

@@ -43,6 +43,7 @@ import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpSer
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps } from "../../verify/data-layer.js";
+import { extractThreats, formatThreatsForModel, formatThreatsForUser, type ThreatExtractResult, type ThreatRequirement } from "../../verify/threat-model.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
 import {
@@ -1285,6 +1286,38 @@ export async function runFastBuild(
       })
       .catch((err) => logger.warn({ sessionId, err }, "Could not show extracted requirements in chat"));
 
+    // ── What must NOT be possible in this app (G2) ──────────────────────────
+    // The same trick as the audit above, aimed at security: a pass that cannot
+    // write code turns the request into rules, and something else tries to
+    // break them later.
+    //
+    // It reads the RAW prompt for the same reason the audit does, and it runs
+    // beside it rather than after it — two short JSON passes in parallel cost
+    // one pass of latency.
+    //
+    // Only for builds that store or guard something. A landing page has no
+    // threat model worth a dispatch, and asking for one produces exactly the
+    // boilerplate the filter exists to throw away.
+    const wantsThreatModel = shouldAudit() && (isFullstackBuild || needsAuth(prompt));
+    const threatsPromise: Promise<ThreatExtractResult> = wantsThreatModel
+      ? extractThreats({ dispatcher, prompt, sessionId, userId, projectId, provider })
+          .catch(() => ({ threats: [], costUsd: 0, reason: "extraction threw" }))
+      : Promise.resolve({ threats: [], costUsd: 0, reason: "not a build that guards anything" });
+
+    void threatsPromise
+      .then((result) => {
+        if (result.threats.length > 0) {
+          console.log(
+            `[build] threats session=${sessionId} kept=${result.threats.length} ` +
+            `generic=${result.generic ?? 0} dropped=${result.dropped ?? 0}`,
+          );
+        }
+        for (const line of formatThreatsForUser(result.threats)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      })
+      .catch((err) => logger.warn({ sessionId, err }, "Could not show the threat model in chat"));
+
     // Fetched unconditionally now — there's no upfront keyword gate deciding
     // whether this build might need a connected service; the model decides
     // that itself once these are attached to the dispatch. Cheap (single DB
@@ -1373,12 +1406,37 @@ export async function runFastBuild(
       };
     }
 
+    // The threat model, if it arrived in time, goes to the model BEFORE it
+    // writes anything.
+    //
+    // Telling it "a clinician may only read their own patients' appointments"
+    // up front is worth far more than catching the opposite afterwards: the
+    // first costs one sentence, the second costs a repair dispatch and may not
+    // be fixable without rewriting the data layer.
+    //
+    // It has been running in parallel since well above this line, so in
+    // practice this waits for little or nothing. The timeout exists so that a
+    // slow or wedged extraction can never hold a build hostage — it is an
+    // improvement to the prompt, not a prerequisite for it.
+    const threatsForBuild = wantsThreatModel
+      ? await Promise.race([
+          threatsPromise.then((r) => r.threats).catch(() => []),
+          new Promise<ThreatRequirement[]>((resolve) => setTimeout(() => resolve([]), 20_000)),
+        ])
+      : [];
+    const threatBlock = formatThreatsForModel(threatsForBuild);
+    if (threatBlock) {
+      console.log(`[build] threats in-prompt session=${sessionId} count=${threatsForBuild.length}`);
+    }
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       usageCategory: "build",
       provider,
       task: {
-        description: buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription,
+        description:
+          (buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription) +
+          (threatBlock ? `\n\n${threatBlock}` : ""),
         requirements: effectiveRequirements,
         outputFormat: "code",
         hasReferenceImage,
