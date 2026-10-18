@@ -255,7 +255,8 @@ function duplicateCandidates(files: Record<string, string>): Candidate[] {
     const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKind);
     // Mid-edit parse failures make exact body boundaries uncertain; skip this
     // file instead of sending a repair for a guessed duplicate.
-    if (source.parseDiagnostics.length > 0) continue;
+    const parseDiagnostics = (source as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics;
+    if (!parseDiagnostics || parseDiagnostics.length > 0) continue;
     const visit = (node: ts.Node): void => {
       if (
         (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
