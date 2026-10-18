@@ -69,6 +69,47 @@ check("generated source is excluded", byKind({ "src/generated/large.ts": repeate
 check("template-owned baked source is excluded", byKind({ "src/lib/utils.ts": repeatedLines(601) }, "file-too-large").length, 0);
 check("clean project produces no findings", findings({ "src/App.tsx": `export default function App() { return <main />; }` }).length, 0);
 
+// E3: exact token-normalised bodies only; tests and generated boilerplate stay quiet.
+const firstBody = `function calculate(input: number) {
+  const value = input;
+  let result = value;
+  result += 1;
+  result += 2;
+  result += 3;
+  result += 4;
+  result += 5;
+  result += 6;
+  return result;
+}`;
+const renamedBody = `function compute(seed: number) {
+  // The comment and spacing are irrelevant to body identity.
+  const item = seed;
+  let total = item; total += 1; total += 2;
+  total += 3; total += 4; total += 5; total += 6;
+  return total;
+}`;
+const exactPair = { "src/one.ts": firstBody, "src/two.ts": renamedBody };
+check("renamed locals and whitespace still match exactly", byKind(exactPair, "duplicate-logic").length, 1);
+ok("duplicate finding recommends src/lib extraction", byKind(exactPair, "duplicate-logic")[0]?.detail.includes("src/lib/") ?? false);
+const short = `function a(x: number) { let y = x; y++; y++; y++; return y; }`;
+check("five-statement bodies are below the floor", byKind({ "src/a.ts": short, "src/b.ts": short.replace("function a", "function b") }, "duplicate-logic").length, 0);
+const changedBody = firstBody.replace("result += 6;", "result += 7;");
+check("one changed statement prevents an exact match", byKind({ "src/a.ts": firstBody, "src/b.ts": changedBody.replace("calculate", "compute") }, "duplicate-logic").length, 0);
+check("identical test bodies are excluded", byKind({ "src/a.test.ts": firstBody, "src/b.test.ts": firstBody.replace("calculate", "compute") }, "duplicate-logic").length, 0);
+check("literal and JSX return boilerplate is excluded", byKind({
+  "src/a.tsx": `function a(x: number) { return <div>{x}</div>; }`,
+  "src/b.tsx": `function b(y: number) { return <div>{y}</div>; }`,
+}, "duplicate-logic").length, 0);
+const thirdBody = renamedBody.replace("compute", "calculateAgain").replaceAll("seed", "initial").replaceAll("item", "current").replaceAll("total", "sum");
+const triple = byKind({ "src/a.ts": firstBody, "src/b.ts": renamedBody, "src/c.ts": thirdBody }, "duplicate-logic");
+check("three matching bodies are grouped in one finding", triple.length, 1);
+ok("grouped duplicate names every location", ["src/a.ts:", "src/b.ts:", "src/c.ts:"].every((path) => triple[0]?.detail.includes(path)));
+check("switch-only boilerplate is excluded", byKind({
+  "src/a.ts": `function a(x: number) { switch (x) { case 1: return 1; default: return 0; } }`,
+  "src/b.ts": `function b(y: number) { switch (y) { case 1: return 1; default: return 0; } }`,
+}, "duplicate-logic").length, 0);
+check("clean E3 project stays quiet", byKind({ "src/App.tsx": `export default function App() { return <main />; }` }, "duplicate-logic").length, 0);
+
 const formatted = formatArchitectureGaps(findings(twoCycle));
 ok("formatted output includes an actionable remediation", formatted.includes("Break this import cycle"));
 
