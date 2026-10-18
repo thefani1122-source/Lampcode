@@ -59,6 +59,7 @@ import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, pers
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
+import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import {
   findWiringGaps,
   tallyWiringGaps,
@@ -2600,6 +2601,88 @@ export async function runFastBuild(
       }
     }
 
+    // ── Imports that point at nothing ───────────────────────────────────────
+    //
+    // Session dc1fbc17, 2026-10-18: the model rewrote src/App.tsx to import
+    // ./pages/HomePage, ./pages/HabitsPage and ./pages/StatsPage, and never
+    // wrote them. The person saw Vite's red overlay and, in the chat beside
+    // it, "I've built a complete habit tracker app" with a feature list.
+    //
+    // Nothing downstream was broken. The page sweep had run and passed BEFORE
+    // the rewrite; the completion audit caught it honestly at the end — "the
+    // pages that would wire up the onAdd handler are not in the file list" —
+    // but the build had already been reported complete. Both were right and
+    // both were too late.
+    //
+    // This is the same fact available with no browser and no model, the moment
+    // the files exist, and it is exactly decidable. It runs before everything
+    // that shows the app to anyone.
+    {
+      const broken = findBrokenImports(allFiles);
+      if (broken.length > 0) {
+        console.log(
+          `[build] broken imports session=${sessionId} count=${broken.length} ` +
+          `first=${broken[0]?.path}→${broken[0]?.specifier}`,
+        );
+        if (cumulativeCostUsd < MAX_BUILD_COST_USD) {
+          server?.thinking(sessionId, {
+            sessionId,
+            text: `${broken.length} import(s) point at files that were never written — writing them now…`,
+          });
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description:
+                  `${formatBrokenImports(broken)}\n\n` +
+                  `Here is the file that imports them:\n\n` +
+                  [...new Set(broken.map((b) => b.path))]
+                    .slice(0, 3)
+                    .map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``)
+                    .join("\n\n"),
+                requirements: [
+                  "WRITE the missing files. Each must export exactly the name it is imported by.",
+                  "Build them from what the importing file expects of them — the props it passes " +
+                  "and the behaviour its surrounding code implies.",
+                  "Do NOT fix this by deleting the import unless the feature genuinely does not " +
+                  "belong in this app. The person asked for it; a missing page is not surplus.",
+                  "Return the COMPLETE file for each one you write.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+            // New files ARE allowed here — writing them is the entire point,
+            // which is why this loop and the cut above take opposite rules.
+            for (const [p, code] of Object.entries(parseFilesFromContent(fixResult.content ?? ""))) {
+              if (typeof code === "string" && (code as string).trim().length > 0) allFiles[p] = code;
+            }
+            const after = findBrokenImports(allFiles);
+            console.log(
+              `[build] broken imports session=${sessionId} before=${broken.length} after=${after.length}`,
+            );
+            if (after.length > 0) {
+              server?.thinking(sessionId, {
+                sessionId,
+                text:
+                  `${after.length} of those are still missing, so parts of the app will not load. ` +
+                  `Ask me again and I will write them.`,
+              });
+            }
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Broken-import repair dispatch failed");
+          }
+        }
+      }
+    }
+
     // ── Cut what the edits left behind ──────────────────────────────────────
     //
     // `edit_file(old → new)` is additive by nature: the cheapest way to satisfy
@@ -2715,7 +2798,17 @@ export async function runFastBuild(
             }
 
             if (touched === 0) {
-              console.log(`[build] cut session=${sessionId} dead=${dead.length} touched=0`);
+              // MEASURED 2026-10-18, session dc1fbc17: `dead=23 touched=0` —
+              // a removal dispatch paid for and not one file changed, because
+              // the reply came back as prose rather than fenced files. The
+              // loop was harmless and useless at the same time, which is the
+              // worst value for money available. Logged loudly so a run of
+              // these is visible rather than mistaken for "nothing to cut".
+              logger.warn(
+                { sessionId, projectId, dead: dead.length },
+                "Cut dispatch returned no usable files — paid for nothing",
+              );
+              console.log(`[build] cut session=${sessionId} dead=${dead.length} touched=0 verdict=no-op`);
             } else {
               await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
               const typesAfter = await runTypeCheck(projectId).catch(() => null);

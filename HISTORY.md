@@ -4565,3 +4565,99 @@ point, and a case asserts the word "secure" never appears in that line.
   a high `generic` means the instruction is not working, which no amount of filtering fixes.
 - **Nothing verifies the threats yet.** That is G3, whose static half shipped this morning and
   whose adversarial half needs a real build with two users.
+
+## SESSION dc1fbc17 — WHAT BROKE, WHO DID NOT DO IT, AND THE RED SCREEN — 2026-10-18
+
+A build finished, said "Build complete", and showed the person a full-screen red Vite stack
+trace instead of their app. Three separate things were wrong, and only one of them was the one
+that was visible.
+
+### B8 did not do it
+
+The obvious suspect was the dead-code cut that shipped hours earlier: it is the newest thing
+that deletes. The log settles it:
+
+```
+[build] cut session=dc1fbc17 dead=23 touched=0
+```
+
+`touched=0`. It found 23 candidates, removed nothing, and the file set it handed on was byte for
+byte the one it was given. It cannot have caused a broken import because it did not write a
+file.
+
+What it DID do is burn a dispatch to achieve that, which is real money for a no-op. So the line
+now says `verdict=no-op` out loud and a `logger.warn` fires on it, because "the cut ran" and
+"the cut changed something" had looked identical in the record, and that is exactly the
+ambiguity that made it the first suspect here.
+
+### What actually did it
+
+`App.tsx` was rewritten at 15:38:21, late, importing `./pages/HomePage`, `./pages/MenuPage` and
+two more. **Those files were never written.** Vite could not resolve them, so the page was a red
+overlay and nothing else.
+
+The page sweep had already passed — *before* the rewrite. The completion audit caught it
+honestly and reported it, *after* the message that said the build was done. So every gate
+behaved correctly and the person still got a broken app, because the last write happened after
+the last check.
+
+The fix is deterministic and costs nothing: `findBrokenImports` in `src/verify/import-graph.ts`
+walks every relative import in the final file set and resolves it the way the bundler does
+(extension-less, `/index`, the `.js`→`.ts` rewrite), and a repair loop in `build.ts` runs on
+what it finds, before the preview is shown.
+
+**That loop WRITES THE MISSING FILES. It does not delete the import.** Deleting the import makes
+the error go away and removes a page the person asked for, which is the same failure as the
+hollow app with better optics. It is the one repair loop allowed to create files.
+
+Measured against the real failure: it reproduces `dc1fbc17` exactly, and over the 98
+hand-written frontend files of `vibe-coder-suite` it reports **zero**. Two things were needed to
+get there — query suffixes (`?url`, `?raw`) are stripped before resolving, and non-code
+extensions are skipped, because `src/styles.css` is baked by the template and is not in the
+generated file set at all. Both are cases now.
+
+### The red screen itself: HIDDEN, not disabled
+
+> "yeh cheez bhoat galat hai user ko yeh na dikhe"
+
+Correct. Raw Vite internals are not an answer to give anybody, whatever is wrong underneath.
+
+The obvious change is `server.hmr.overlay: false`, and **it is the wrong one.** `check_page`
+detects a module-resolution failure by querying `vite-error-overlay` in the DOM and reading its
+shadow root — that class of failure never reaches the console as an error, so the element is the
+only evidence there is. Turning the overlay off would have blinded the strongest page check in
+the product in order to fix a cosmetic problem, and this very session is the proof of how much
+that evidence is worth.
+
+So the element stays in the DOM and goes off the screen:
+
+```css
+vite-error-overlay { display: none !important; }
+```
+
+It is in `INDEX_HTML` in `e2b-template/template.ts` for the next image, and — because
+`index.html` is a baked file that already exists in every live sandbox — `hideViteOverlay()` in
+`e2b-service.ts` patches it at runtime too, the same pattern `VITE_ENV_DTS` uses so that
+existing sandboxes need no rebuild. It reads, skips if already present, inserts before
+`</head>`, and is never fatal: a hidden overlay is nice, a sandbox that boots is the job.
+
+Four cases pin the distinction, including the two that assert `overlay: false` appears **nowhere
+in either file** (with comments stripped, since both files explain at length why it must not) and
+two that assert the checker still queries the element and still reads its shadow root. If those
+ever fail, the page check has gone blind.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` all pass.
+- `findBrokenImports`: reproduces the session's failure; 0 findings over 98 real files.
+- The overlay rule is present in both the template and the runtime path, and
+  `server.hmr.overlay: false` is absent from both.
+
+### Not verified
+
+- **The E2B template was NOT rebuilt.** There is no `E2B_API_KEY` in this environment, so
+  `Template.build()` could not run. The fix reaches live sandboxes through the runtime patch;
+  `template.ts` carries the identical rule for whoever builds the next image, and per CLAUDE.md
+  trap 6 that person must run `cd e2b-template && npx tsx verify-template.ts` afterwards.
+- **No build has run the broken-import loop.** Its detection half is measured; whether the model
+  reliably writes a sensible missing page when told to is not.

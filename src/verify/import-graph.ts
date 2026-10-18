@@ -139,3 +139,74 @@ export function buildImportGraph(files: Record<string, string>): ImportGraph {
 
   return { imports, importedBy, unresolved };
 }
+
+/**
+ * Project imports that point at a file which is not there.
+ *
+ * MEASURED 2026-10-18, session `dc1fbc17`. The model rewrote `src/App.tsx` to
+ * import `./pages/HomePage`, `./pages/HabitsPage` and `./pages/StatsPage`, and
+ * never wrote those files. The preview showed Vite's red overlay —
+ * "Failed to resolve import ./pages/HomePage" — while the chat said "I've
+ * built a complete habit tracker app" with a feature list.
+ *
+ * Everything downstream behaved correctly and none of it helped in time. The
+ * page sweep had run earlier and passed; the rewrite came after it. The
+ * completion audit caught it honestly at the end — "the pages that would wire
+ * up the onAdd handler are not in the file list" — but by then the build was
+ * already reported complete.
+ *
+ * This is the same fact, available the instant the files exist, with no
+ * browser and no model: a project file imports a project file that was never
+ * written. It is the single most common cause of a blank or broken preview,
+ * and it is exactly decidable — `resolveSpecifier` already knows every way a
+ * path may legitimately be written, so a specifier it cannot resolve is
+ * genuinely absent rather than merely unusual.
+ *
+ * Bare package specifiers are not this function's business: `resolveSpecifier`
+ * returns null for them too, and an uninstalled package is a different problem
+ * with a different fix.
+ */
+export function findBrokenImports(
+  files: Record<string, string>,
+): Array<{ path: string; specifier: string }> {
+  const names = new Set(Object.keys(files).map((p) => p.replace(/^\.?\//, "")));
+  const out: Array<{ path: string; specifier: string }> = [];
+  const seen = new Set<string>();
+
+  for (const [rawPath, code] of Object.entries(files)) {
+    const path = rawPath.replace(/^\.?\//, "");
+    if (!/\.(tsx?|jsx?|mts|mjs)$/.test(path)) continue;
+    for (const spec of importSpecifiers(code)) {
+      // Only project-relative specifiers can be "missing from the project".
+      if (!spec.startsWith("./") && !spec.startsWith("../") && !spec.startsWith("@/") && !spec.startsWith("/")) {
+        continue;
+      }
+      // Vite query suffixes — `./styles.css?url`, `./logo.svg?raw` — are part
+      // of the loader, not the path.
+      const bare = spec.split("?")[0] ?? spec;
+      // Only CODE is checked. An asset import is a different question with a
+      // different answer: `src/styles.css` and the rest of BAKED_FILES belong
+      // to the template and are deliberately absent from a build's file map,
+      // so flagging them would report every generated app as broken. Measured
+      // here: this was the one false positive over 98 hand-written files.
+      const ext = /\.[a-z0-9]+$/i.exec(bare)?.[0]?.toLowerCase();
+      if (ext && !/^\.(tsx?|jsx?|mts|mjs)$/.test(ext)) continue;
+      if (resolveSpecifier(path, bare, names) !== null) continue;
+      const key = `${path}|${bare}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ path, specifier: bare });
+    }
+  }
+  return out;
+}
+
+/** One line per broken import, written for whoever has to fix it. */
+export function formatBrokenImports(broken: Array<{ path: string; specifier: string }>): string {
+  if (broken.length === 0) return "";
+  return (
+    `${broken.length} import(s) point at a file that does not exist — the app cannot render ` +
+    `until each is written or the import is removed:\n` +
+    broken.map((b) => `- ${b.path} imports "${b.specifier}"`).join("\n")
+  );
+}
