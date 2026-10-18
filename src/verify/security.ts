@@ -127,14 +127,36 @@ export function checkAuth(files: FileTree): SecurityCheck {
     if (!declaresRoutes) continue;
     scanned += 1;
 
-    const hasAuthGuard =
+    // A named guard — the shape this check has always looked for.
+    const hasNamedGuard =
       content.includes("requireAuth") ||
       content.includes("authenticate") ||
       content.includes("verifyToken") ||
       content.includes("isAuthenticated") ||
       /\.use\s*\([^)]*auth/i.test(content);
 
-    if (!hasAuthGuard) unprotected.push(path);
+    // The OTHER shape, and the reason this check needed revisiting.
+    //
+    // G5 (2026-10-17) changed what a correct Supabase backend looks like: it
+    // builds its database client PER REQUEST carrying the caller's
+    // Authorization header, so `auth.uid()` resolves inside the RLS policies
+    // and the database itself decides what that user may read. That is a real
+    // authorization boundary — a stronger one than a middleware that only
+    // proves a token exists — and it contains none of the words above.
+    //
+    // So the prompt was teaching one thing while this check demanded another,
+    // and a model doing exactly as it was told still failed. Measured on a real
+    // build: two repair dispatches spent, neither able to satisfy it, and the
+    // app shipped with a warning telling the person to write a follow-up
+    // prompt. A check that cannot be satisfied is worse than no check — it
+    // costs money and ends in the same place.
+    const forwardsCallerIdentity =
+      /Authorization["']?\s*:\s*(token|auth|c\.req\.header)/.test(content) ||
+      /global\s*:\s*\{\s*headers/.test(content) ||
+      /\bdbFor\s*\(/.test(content) ||
+      /postgrest\.auth\s*\(/.test(content);
+
+    if (!hasNamedGuard && !forwardsCallerIdentity) unprotected.push(path);
   }
 
   if (unprotected.length > 0) {
@@ -144,7 +166,20 @@ export function checkAuth(files: FileTree): SecurityCheck {
       severity: "critical",
       file: unprotected[0],
       line: 1,
-      message: `${unprotected.length} route file(s) expose /api/ routes without auth middleware: ${unprotected.join(", ")}`,
+      // The message carries its REMEDY, not just its complaint.
+      //
+      // Without this it said only that the routes were unprotected, and the
+      // repair loop dispatched that sentence twice. A model cannot satisfy a
+      // string match it has not been shown, so it wrote perfectly reasonable
+      // auth under a different name and failed again. Naming both accepted
+      // shapes is what makes the finding fixable in one attempt instead of
+      // unfixable in two.
+      message:
+        `${unprotected.length} route file(s) expose /api/ routes without auth: ${unprotected.join(", ")}. ` +
+        `Fix it in ONE of two ways: add a requireAuth middleware that verifies the caller's token ` +
+        `and apply it to the mutating routes; OR build the database client per request from the ` +
+        `caller's Authorization header (global: { headers: { Authorization: token } }) so RLS ` +
+        `decides what that user may read. Do not simply rename something to requireAuth.`,
     };
   }
   // "Nothing to check" is not "checked and fine". A browser-only build has no
