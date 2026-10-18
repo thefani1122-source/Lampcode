@@ -100,14 +100,6 @@ export async function fetchSupabaseProjectCreds(
     let lastUrlResult: unknown = null;
     let lastKeysResult: unknown = null;
 
-    // Carried out to the caller, because the person connecting needs to read
-    // what Supabase actually said. A reason that only reaches a log line is a
-    // silent failure wearing a different hat — which is the bug this whole
-    // function has had twice.
-    let failure: string | undefined;
-    let lastUrlResult: unknown = null;
-    let lastKeysResult: unknown = null;
-
     let url: string | null = null;
     try {
       const r = await client.callTool({ name: "get_project_url", arguments: args });
