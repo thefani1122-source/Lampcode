@@ -102,7 +102,6 @@ Supabase — the owner included. Every one of the 416 projects was built without
 |---|---|---|---|
 | **P0.1** | **`build_messages` RLS.** 3253 rows of user prompts and model output, RLS disabled, on a table reachable by the public anon key that ships in the frontend bundle. Verified still open on 2026-10-17. `ALTER TABLE "public"."build_messages" ENABLE ROW LEVEL SECURITY;` with no policies — checked: the only reader/writer goes through Drizzle over `DATABASE_URL`, the backend's Supabase client uses the service key, and the frontend never queries it | **owner runs it** | `list_tables` reports `rls_enabled: true` and a build still records messages |
 | **P0.2** | **`diff_since` erases real edits.** Reproduced 2026-10-17: four 11,000-line created files plus a one-line edit → `filesChanged=0, added=0, removed=0` and the edit absent. One large file is fine. Cause: a pure create or delete still runs Myers, spending budget on a diff that needs no search, and starving every file after it. The reporting is honest that counts are incomplete, so this is not a silent lie — but the model cannot see its own change. Fix: when one side is absent, emit all-add or all-remove without calling Myers | **Codex** (its module) | The probe above returns the small edit; a case pins it |
-| **P0.3** | **G5 — the generated backend has no user identity.** Its Supabase client is built once with a key and no auth header, so a service key bypasses every RLS policy the prompt teaches and an anon key leaves `auth.uid()` null, denying every owner-scoped policy. Forward the caller's JWT per request | **Claude** (prompt text — trap 4) | A real build where a user reads their own row and NOT another user's |
 | **P0.4** | **G6 — finish the database flow.** The gate is built: a full-stack build stops and asks, the option opens `/mcp?connect=supabase`, the workspace polls and answers. Decision settled — the data lives in the USER's Supabase. What remains is proof and the paid alternative | **Claude** | One real full-stack build connects a Supabase and persists a row |
 | **P0.5** | **Prove B2–B5 on one real build.** Four tools merged without a single build between them. One build exercising search, delete, checkpoint/revert and diff closes all four | **Claude** | Each tool appears in a real build's log having done its job |
 
@@ -114,20 +113,16 @@ Nothing here exists yet. These are what separate Lampcode from a coding agent wi
 
 | # | Task | Owner | Done means |
 |---|---|---|---|
-| **D1** | `code_intel` — definition, references, symbols over the in-memory files via the TypeScript compiler API, with a regex fallback for files that do not parse | **Codex** | Cases including unparseable files; proven against real generated output |
-| **D2** | `impact_analysis(symbol)` — callers, routes, endpoints, tests, auth-boundary crossings, and **which touched files have no test** | **Codex** | Cases on a fixture project; proven on a real build's files |
 | **E1** | Circular imports. **Cheaper than it looks: `src/verify/import-graph.ts` already builds the graph** (`buildImportGraph`, `resolveSpecifier`, `importSpecifiers`). Only the cycle walk is missing | **Codex** | Cases for self, two-cycle, long cycle, no cycle |
 | **E2** | Layer rule: `src/components/**` must not import `src/db/**` or `src/server/**` | **Codex** | Cases both directions |
 | **E3** | Duplicate business logic — normalised function bodies compared | **Codex** | Cases for exact, whitespace-different, genuinely different |
 | **E4** | File-size ceiling | **Codex** | Cases for the boundary |
 | **E5** | One architecture gate over all eight rules, reported like `wiring` — **and every message carries its remediation**, not just the violation | **Claude** (prompt-adjacent) | A real build reports a finding whose message names the fix |
-| **B8** | Safe stale-code cutting: checkpoint → remove provably unreachable → re-run gates → revert if broken. **Unblocked now** — `delete_file`, `checkpoint`/`revert` and `diff_since` all exist | **Claude** | A real build where a cut happens and the gates stay green; and one where a cut is reverted |
 | **D3** | Journeys derived from the criteria the completion audit already extracts: run before and after a fix, store the pair as proof | **Claude** | `unverified` becomes "we drove it and it did not happen" on a real build |
 | **B6+** | Scripted `browser_interact` — arbitrary click/type/wait/assert. Today's probe operates buttons, links and forms on every route, which is **not** the same thing | **Claude** | A real build drives a multi-step flow, including typing and signing in |
 | **G2** | Threat-model extraction: task-specific security checks derived from the user's prompt, by a pass that cannot write code | **Claude** | Different prompts produce genuinely different checks |
-| **G3** | Verify each check — statically where possible, by driving the app where not (sign in as B, request A's resource), plus an adversarial pass | **Claude** | A seeded authorization hole is caught on a real build |
+| **G3** | **Adversarial half only — the static half shipped 2026-10-18.** `checkRlsScoping` reads the policies and catches `USING (true)` and owner tables whose policies never mention `auth.uid()`. What remains is driving it: sign in as B, request A\'s row, on a real build | **Claude** | A seeded authorization hole is caught on a real build |
 | **G4** | Retire the pattern checks, **keeping** `checkPackages` (slopsquatting) and `checkSecrets`. No longer blocked — G1 is decided | **Codex** | Cases prove the kept two still fire; the removed ones are gone, not disabled |
-| **I1** | Tool registry: `Map<string, ToolHandler>`, one file per tool. **Re-measured 2026-10-17: `executeTool` is 965 lines and 21 branches** — the old note said 758 and 29, so it is growing. Worth doing before the P1 tools land | **Codex** | Existing tools pass unchanged; a new tool costs one file |
 
 ---
 
