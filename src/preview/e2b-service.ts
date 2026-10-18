@@ -553,7 +553,45 @@ declare module '*.woff';
 declare module '*.woff2';
 `;
 
+/**
+ * Vite's error overlay, taken off the screen and left in the DOM.
+ *
+ * MEASURED 2026-10-18. A person watching their build met a full-screen red
+ * stack trace — "Failed to resolve import ./pages/HomePage" — next to a chat
+ * message saying the app was complete. Raw Vite internals are not an answer to
+ * give anybody.
+ *
+ * It must STAY IN THE DOM. `check_page` detects a module-resolution failure by
+ * querying `vite-error-overlay` and reading its shadow root, and the comment
+ * there records why: such a failure never reaches the console as an error, so
+ * that element is the only evidence there is. `server.hmr.overlay: false`
+ * removes the element and would blind the strongest page check in the product
+ * in order to fix a cosmetic problem. `display: none` changes nothing for
+ * `querySelector` or `textContent`.
+ *
+ * Written at RUNTIME rather than only baked into the image, for the same
+ * reason `VITE_ENV_DTS` is: every sandbox already running gets it, and nothing
+ * waits on a template rebuild. `template.ts` carries the identical rule so a
+ * future image has it from the start — the two are kept in sync deliberately,
+ * exactly as that file's own comment instructs.
+ */
+const OVERLAY_HIDE_STYLE = "<style>vite-error-overlay{display:none !important}</style>";
+
+async function hideViteOverlay(sandbox: Sandbox): Promise<void> {
+  try {
+    const path = `${PROJECT_DIR}/index.html`;
+    const html = await sandbox.files.read(path);
+    if (typeof html !== "string" || html.includes("vite-error-overlay")) return;
+    await sandbox.files.write(path, html.replace("</head>", `  ${OVERLAY_HIDE_STYLE}\n  </head>`));
+  } catch (err) {
+    // Never fatal. The overlay showing is a bad experience; a sandbox that
+    // fails to start because of a cosmetic patch is a worse one.
+    logger.warn({ err }, "[e2b] could not hide the Vite error overlay");
+  }
+}
+
 async function patchSandboxTypeShims(sandbox: Sandbox, log: PreviewLogCallback): Promise<void> {
+  await hideViteOverlay(sandbox);
   try {
     await sandbox.files.write(`${PROJECT_DIR}/src/vite-env.d.ts`, VITE_ENV_DTS);
   } catch (err) {

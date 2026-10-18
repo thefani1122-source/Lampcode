@@ -14,6 +14,7 @@
  */
 
 import { importedPackages } from "../src/preview/e2b-service.js";
+import { findBrokenImports, formatBrokenImports } from "../src/verify/import-graph.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -23,6 +24,11 @@ function check(name: string, got: unknown, want: unknown): void {
   }
   failures++;
   console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
+}
+
+/** For assertions that are already a boolean. */
+function ok(name: string, cond: boolean): void {
+  check(name, cond, true);
 }
 const sorted = (files: Record<string, string>) => importedPackages(files).sort();
 
@@ -128,6 +134,80 @@ check(
 );
 check("no files means no packages", sorted({}), []);
 check("an empty file means no packages", sorted({ "src/a.tsx": "" }), []);
+
+
+// ── imports that point at nothing ────────────────────────────────────────────
+// Session dc1fbc17, 2026-10-18. The model rewrote src/App.tsx to import
+// ./pages/HomePage, ./pages/HabitsPage and ./pages/StatsPage and never wrote
+// them. The person saw Vite's red overlay and, beside it, "I've built a
+// complete habit tracker app".
+//
+// Nothing downstream was broken — the page sweep had passed BEFORE the
+// rewrite, and the completion audit caught it honestly at the end, after the
+// build was already reported complete. Both were right and both were late.
+
+check(
+  "the dc1fbc17 failure, exactly",
+  findBrokenImports({
+    "src/App.tsx": `import { HomePage } from "./pages/HomePage";\nimport { HabitsPage } from "./pages/HabitsPage";`,
+  }).map((b) => b.specifier),
+  ["./pages/HomePage", "./pages/HabitsPage"],
+);
+
+check(
+  "an import that resolves is not reported",
+  findBrokenImports({
+    "src/App.tsx": `import { HomePage } from "./pages/HomePage";`,
+    "src/pages/HomePage.tsx": "export const HomePage = () => null;",
+  }),
+  [],
+);
+
+check("the @/ alias resolves", findBrokenImports({
+  "src/App.tsx": `import { Button } from "@/components/ui/button";`,
+  "src/components/ui/button.tsx": "export const Button = () => null;",
+}), []);
+
+check("an index file resolves", findBrokenImports({
+  "src/App.tsx": `import { x } from "./lib";`,
+  "src/lib/index.ts": "export const x = 1;",
+}), []);
+
+// A bare package is a different problem with a different fix, and not this
+// function's business.
+check("a bare package is never reported", findBrokenImports({ "src/App.tsx": `import React from "react";` }), []);
+
+// THE false positive that matters. src/styles.css and the rest of BAKED_FILES
+// belong to the template and are deliberately absent from a build's file map,
+// so flagging asset imports would report every generated app as broken. This
+// was the single finding over 98 hand-written files before it was excluded.
+check("a template-owned stylesheet is not reported", findBrokenImports({
+  "src/main.tsx": `import "./styles.css";`,
+}), []);
+check("a Vite query suffix is not a path", findBrokenImports({
+  "src/root.tsx": `import css from "../styles.css?url";`,
+}), []);
+check("an image import is not reported", findBrokenImports({
+  "src/App.tsx": `import logo from "./assets/logo.svg";`,
+}), []);
+
+check(
+  "the same missing import twice is reported once",
+  findBrokenImports({
+    "src/App.tsx": `import { A } from "./missing";\nimport { B } from "./missing";`,
+  }).length,
+  1,
+);
+
+check("an empty project reports nothing", findBrokenImports({}), []);
+
+ok(
+  "the message says what to do, not just what is wrong",
+  /written or the import is removed/.test(
+    formatBrokenImports([{ path: "src/App.tsx", specifier: "./pages/HomePage" }]),
+  ),
+);
+check("nothing broken formats to nothing", formatBrokenImports([]), "");
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

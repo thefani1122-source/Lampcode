@@ -5,6 +5,7 @@
  * reported as working. Both are the failure this module exists to end — the old
  * check answered "did it crash" and a quiet crash-free empty page was its blind
  * spot, which is what shipped ROTA. */
+import { readFileSync } from "node:fs";
 import {
   routesToVisit,
   parseRenderReport,
@@ -240,6 +241,48 @@ ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.la
 ok("the script resets errors per route", RENDER_SCRIPT.includes("errors = []"));
 ok("the script prints the marker", RENDER_SCRIPT.includes("LAMPCODE_RENDER:"));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
+
+
+// ── the overlay is hidden, never disabled ────────────────────────────────────
+// MEASURED 2026-10-18: a person watching their build met a full-screen red
+// stack trace next to a chat message saying the app was complete. Raw Vite
+// internals are not an answer to give anybody.
+//
+// But check_page detects a module-resolution failure by querying
+// vite-error-overlay and reading its shadow root — such a failure never
+// reaches the console as an error, so that element is the only evidence there
+// is. server.hmr.overlay:false removes the element and would blind the
+// strongest page check in the product to fix a cosmetic problem.
+//
+// These pin the distinction, because "just turn the overlay off" is the
+// obvious change and it is the wrong one.
+{
+  const svc = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  const tpl = readFileSync(new URL("../e2b-template/template.ts", import.meta.url), "utf8");
+
+  ok("the overlay is hidden with CSS", /vite-error-overlay\s*\{\s*display:\s*none/.test(svc));
+  ok("and in the template too, so a rebuilt image keeps it", /vite-error-overlay\s*\{\s*display:\s*none/.test(tpl));
+
+  // The one that matters. If either of these ever fails, the page check has
+  // gone blind. Comments are stripped first — both files EXPLAIN why
+  // `server.hmr.overlay: false` is wrong, and matching that prose would make
+  // the case fail for saying the right thing.
+  const code = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  ok("hmr.overlay is NOT disabled in the template", !/overlay\s*:\s*false/.test(code(tpl)));
+  ok("nor anywhere in the preview service", !/overlay\s*:\s*false/.test(code(svc)));
+
+  // Still read by the checker.
+  ok(
+    "the page check still queries the element",
+    /querySelector\(["'`]vite-error-overlay/.test(tpl),
+  );
+  ok("and still reads its shadow root", /shadowRoot/.test(tpl));
+
+  ok("hiding it can never fail a sandbox", /could not hide the Vite error overlay/.test(svc));
+  ok("it is applied at runtime, not only baked", /hideViteOverlay\(sandbox\)/.test(svc));
+}
 
 console.log(failures === 0 ? "\nAll render cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);

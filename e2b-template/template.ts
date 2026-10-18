@@ -153,6 +153,27 @@ const INDEX_HTML = `<!DOCTYPE html>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>App</title>
+    <style>
+      /* Vite's error overlay, kept in the DOM and taken off the screen.
+       *
+       * It must STAY in the DOM. check_page detects a module-resolution
+       * failure by querying \`vite-error-overlay\` and reading its shadow root,
+       * and the comment there records why: such a failure never reaches the
+       * console as an error, so that element is the only evidence there is.
+       * Measured 2026-10-04 — three builds shipped behind a full-screen
+       * "Failed to resolve import" while the agent reported the page fine.
+       * \`server.hmr.overlay: false\` would remove the element and blind the
+       * strongest page check in the product to fix a cosmetic problem.
+       *
+       * So it is hidden, not disabled. \`display: none\` leaves
+       * querySelector and textContent working exactly as before while the
+       * person sees their app instead of a wall of stack traces, and
+       * Lampcode tells them what is wrong in its own words. Measured
+       * 2026-10-18 — a person watching a build met a red overlay about
+       * "./pages/HomePage" next to a message saying the app was complete.
+       */
+      vite-error-overlay { display: none !important; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
