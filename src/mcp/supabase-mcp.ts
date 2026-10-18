@@ -78,10 +78,15 @@ export async function listSupabaseMcpTools(
  */
 export async function fetchSupabaseProjectCreds(
   auth: SupabaseMcpAuth,
-): Promise<{ url: string | null; anonKey: string | null }> {
+): Promise<{ url: string | null; anonKey: string | null; error?: string }> {
   return withSupabaseMcp(auth, true, async (client) => {
     const args = auth.projectRef ? { project_id: auth.projectRef } : {};
 
+    // Carried out to the caller, because the person connecting needs to read
+    // what Supabase actually said. A reason that only reaches a log line is a
+    // silent failure wearing a different hat — which is the bug this whole
+    // function has had twice.
+    let failure: string | undefined;
     let lastUrlResult: unknown = null;
     let lastKeysResult: unknown = null;
 
@@ -89,8 +94,10 @@ export async function fetchSupabaseProjectCreds(
     try {
       const r = await client.callTool({ name: "get_project_url", arguments: args });
       lastUrlResult = r;
+      assertNotError(r, "get_project_url");
       url = extractProjectUrl(payloadOf(r));
     } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
       logger.warn({ err }, "[mcp] get_project_url failed");
     }
 
@@ -98,8 +105,10 @@ export async function fetchSupabaseProjectCreds(
     try {
       const r = await client.callTool({ name: "get_publishable_keys", arguments: args });
       lastKeysResult = r;
+      assertNotError(r, "get_publishable_keys");
       anonKey = extractAnonKey(payloadOf(r));
     } catch (err) {
+      failure ??= err instanceof Error ? err.message : String(err);
       logger.warn({ err }, "[mcp] get_publishable_keys failed");
     }
 
@@ -119,7 +128,7 @@ export async function fetchSupabaseProjectCreds(
         "[mcp] project creds incomplete",
       );
     }
-    return { url, anonKey };
+    return { url, anonKey, ...(failure ? { error: failure } : {}) };
   });
 }
 
@@ -189,6 +198,29 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
  * array lengths — enough to find where an answer lives, and nothing that is
  * worth stealing.
  */
+/**
+ * Turn a tool result that FAILED into a thrown error.
+ *
+ * MEASURED 2026-10-18, after two wrong guesses. `client.callTool()` rejects
+ * only on protocol failures. A tool that ran and failed comes back as an
+ * ordinary resolved result with `isError: true` and the reason in its text —
+ * so every `try/catch` here caught nothing, every warning stayed silent, and
+ * two deployments were spent asking whether the answer lived in
+ * `content[].text` or in `structuredContent`. There was no answer to find. The
+ * shape log is what finally said so: `isError:boolean`, and both calls
+ * returning the identical 219-character text.
+ *
+ * The message is a server-side error string, not a credential, so it IS
+ * logged — that is the whole point. Without it this is a silent failure with a
+ * different name.
+ */
+export function assertNotError(result: unknown, toolName: string): void {
+  const r = result as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
+  if (r?.isError !== true) return;
+  const reason = textOf({ content: r.content ?? [] }).slice(0, 400) || "(no message)";
+  throw new Error(`${toolName} failed: ${reason}`);
+}
+
 function describeShape(v: unknown, depth = 0): string {
   if (v === null || v === undefined) return String(v);
   if (Array.isArray(v)) {

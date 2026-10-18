@@ -222,7 +222,7 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
   //
   // A Supabase connection that cannot give a preview its URL and anon key does
   // not do the job it was connected for, so it no longer claims to.
-  let creds: { url: string | null; anonKey: string | null } = { url: null, anonKey: null };
+  let creds: { url: string | null; anonKey: string | null; error?: string } = { url: null, anonKey: null };
   let credsError: string | null = null;
   if (projectRef) {
     creds = await fetchSupabaseProjectCreds({ accessToken, projectRef }).catch((err: unknown) => {
@@ -230,6 +230,7 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
       return creds;
     });
   }
+  if (creds.error) credsError = creds.error;
   if (!creds.url || !creds.anonKey) {
     // The token itself is fine — it just listed tools. What is missing is the
     // project, so the message says exactly that and exactly what to do, rather
