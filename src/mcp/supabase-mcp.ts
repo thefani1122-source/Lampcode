@@ -82,9 +82,13 @@ export async function fetchSupabaseProjectCreds(
   return withSupabaseMcp(auth, true, async (client) => {
     const args = auth.projectRef ? { project_id: auth.projectRef } : {};
 
+    let lastUrlResult: unknown = null;
+    let lastKeysResult: unknown = null;
+
     let url: string | null = null;
     try {
       const r = await client.callTool({ name: "get_project_url", arguments: args });
+      lastUrlResult = r;
       url = extractProjectUrl(payloadOf(r));
     } catch (err) {
       logger.warn({ err }, "[mcp] get_project_url failed");
@@ -93,16 +97,27 @@ export async function fetchSupabaseProjectCreds(
     let anonKey: string | null = null;
     try {
       const r = await client.callTool({ name: "get_publishable_keys", arguments: args });
+      lastKeysResult = r;
       anonKey = extractAnonKey(payloadOf(r));
     } catch (err) {
       logger.warn({ err }, "[mcp] get_publishable_keys failed");
     }
 
     if (!url || !anonKey) {
-      // Logged at the shape level, never the value. Both calls can SUCCEED and
-      // still yield nothing if the result shape moves, and that is exactly the
-      // failure this function had — silent, with no error to find.
-      logger.warn({ hasUrl: Boolean(url), hasAnonKey: Boolean(anonKey) }, "[mcp] project creds incomplete");
+      // The SHAPE, never the values — and enough of it that a third failure
+      // does not cost another guess. Two deployments were spent asking "is it
+      // in content, or in structuredContent?" when the result itself could
+      // have said so the first time. Key names and types only: a Supabase PAT
+      // and an anon key must never reach a log line.
+      logger.warn(
+        {
+          hasUrl: Boolean(url),
+          hasAnonKey: Boolean(anonKey),
+          urlShape: describeShape(lastUrlResult),
+          keysShape: describeShape(lastKeysResult),
+        },
+        "[mcp] project creds incomplete",
+      );
     }
     return { url, anonKey };
   });
@@ -135,7 +150,56 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
       /* a plain string is a valid answer too */
     }
   }
-  return { text, data };
+  // The whole result, serialised. Read `raw` for why this is here.
+  let raw = "";
+  try {
+    raw = JSON.stringify(result) ?? "";
+  } catch {
+    /* circular or otherwise unserialisable — the fields above still apply */
+  }
+  return { text: text || raw, data };
+}
+
+/**
+ * Everything above is the tidy path: named fields, in the places a server is
+ * expected to put them. `payloadOf` falls back to the ENTIRE serialised result
+ * as its text, and that is deliberate.
+ *
+ * MEASURED 2026-10-18, twice. First `content[].text` was read and the answer
+ * was not there. Then `structuredContent` was added — and the answer was not
+ * there either: four more attempts, `hasUrl=false hasAnonKey=false`, and still
+ * not one error, because the calls kept succeeding. Two guesses at a schema,
+ * two deployments, two rounds of the owner retrying by hand.
+ *
+ * So the third attempt stops guessing where. The three values this function
+ * needs have shapes nothing else has — `https://<ref>.supabase.co`, a JWT
+ * beginning `eyJ`, and `sb_publishable_…` — and a value that distinctive can
+ * be found by what it IS rather than by where it sits. Knowing the schema is
+ * nicer; working whatever the schema turns out to be is worth more here, and
+ * the structured path is still tried first so a well-formed answer is read
+ * properly rather than scraped.
+ */
+
+
+/**
+ * A result's structure, with every value removed.
+ *
+ * A Supabase PAT and an anon key must never reach a log line, and "log the
+ * response so we can see it" is how they do. This prints key names, types and
+ * array lengths — enough to find where an answer lives, and nothing that is
+ * worth stealing.
+ */
+function describeShape(v: unknown, depth = 0): string {
+  if (v === null || v === undefined) return String(v);
+  if (Array.isArray(v)) {
+    return depth >= 3 ? `array(${v.length})` : `[${v.length}: ${describeShape(v[0], depth + 1)}]`;
+  }
+  if (typeof v === "object") {
+    if (depth >= 3) return "object";
+    const keys = Object.keys(v as object).slice(0, 12);
+    return `{${keys.map((k) => `${k}:${describeShape((v as Record<string, unknown>)[k], depth + 1)}`).join(",")}}`;
+  }
+  return typeof v === "string" ? `string(${v.length})` : typeof v;
 }
 
 function extractProjectUrl({ text, data }: { text: string; data: unknown }): string | null {
