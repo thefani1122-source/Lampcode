@@ -19,6 +19,7 @@ import {
   parseCriteria,
   parseVerdicts,
   tallyVerdicts,
+  discountFakedEvidence,
   unverifiedAudit,
   formatAuditForUser,
   formatCriteriaForUser,
@@ -570,6 +571,60 @@ ok("formatFilesForAudit: a small file survives next to a 400 KB one",
 ok("formatFilesForAudit: the huge file is truncated, not dropped",
   withHuge.includes("--- src/huge.ts ---") && withHuge.includes("(truncated)"));
 ok("formatFilesForAudit: total stays within budget", withHuge.length < 120_000);
+
+// ── a fake is not proof ──────────────────────────────────────────────────────
+// MEASURED 2026-10-18, build bab33bcc. The model had replaced the API layer
+// with a localStorage stand-in and the audit marked a requirement PROVEN,
+// citing "demo mode provides clear error messages like 'User already exists'".
+//
+// It was reading honestly — the file does show that message. The problem is
+// structural: a gate that asks whether the app works will bless a good fake,
+// because a good fake works.
+{
+  const base = {
+    criteria: [],
+    verdicts: [
+      { id: "R1", status: "proven" as const, evidence: "src/lib/api.ts", note: "demo mode shows clear errors" },
+      { id: "R2", status: "proven" as const, evidence: "src/pages/Login.tsx", note: "renders a form" },
+      { id: "R3", status: "unverified" as const, evidence: "", note: "never checked" },
+    ],
+    proven: 2,
+    contradicted: 0,
+    unverified: 1,
+    costUsd: 0,
+  };
+
+  const out = discountFakedEvidence(base, ["src/lib/api.ts"]);
+  check("a verdict citing a faked file is no longer proven", out.verdicts[0]?.status, "unverified");
+  check("a verdict citing a clean file is untouched", out.verdicts[1]?.status, "proven");
+  check("the tallies are recomputed, not left stale", [out.proven, out.unverified], [1, 2]);
+  ok(
+    "the note says why, and keeps what was claimed",
+    (out.verdicts[0]?.note ?? "").includes("cannot prove this") &&
+      (out.verdicts[0]?.note ?? "").includes("Previously reported as proven"),
+  );
+
+  // Downgraded to unverified and NOT contradicted on purpose: "show clear
+  // errors" may genuinely be met in a file that also holds a stand-in. What is
+  // certain is only that this file cannot prove it.
+  ok("it is never upgraded to contradicted", out.verdicts.every((v) => v.status !== "contradicted"));
+
+  check("nothing faked leaves the audit identical", discountFakedEvidence(base, []), base);
+  check(
+    "a faked file nothing cites changes nothing",
+    discountFakedEvidence(base, ["src/other.ts"]).proven,
+    2,
+  );
+  check(
+    "a leading ./ on either side still matches",
+    discountFakedEvidence(base, ["./src/lib/api.ts"]).proven,
+    1,
+  );
+  // Only `proven` is downgraded: an already-unverified verdict has nothing to
+  // lose and rewriting its note would bury the real reason it was unverified.
+  check("an already-unverified verdict keeps its own note", discountFakedEvidence(base, ["src/lib/api.ts"]).verdicts[2]?.note, "never checked");
+}
+
 
 console.log(failures === 0 ? "\nAll completion-audit cases passed." : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

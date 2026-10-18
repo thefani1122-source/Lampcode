@@ -308,6 +308,55 @@ export function tallyVerdicts(verdicts: CriterionVerdict[]): {
 }
 
 /**
+ * A requirement is not proven by a file that fakes it.
+ *
+ * MEASURED 2026-10-18, build `bab33bcc`. The model had replaced the API layer
+ * with a localStorage stand-in, and the audit marked a requirement **proven**,
+ * citing as evidence: *"demo mode provides clear error messages like 'User
+ * already exists' instead of network failures."*
+ *
+ * It was reading honestly. The file really does show that message, the message
+ * really is clear, and nothing in the audit's view said the data went nowhere.
+ * That is the shape of the whole problem: **a gate that asks whether the app
+ * works will bless a good fake**, because a good fake works.
+ *
+ * So the verdict is downgraded wherever its evidence is a file `data-layer.ts`
+ * found faking persistence — to `unverified` rather than `contradicted`,
+ * deliberately. A requirement like "show clear errors" may well be met in a
+ * file that also contains a stand-in; what is certain is only that THIS file
+ * cannot prove it. `unverified` says exactly that, and is already the audit's
+ * most valuable output.
+ *
+ * Pure, so the correction is covered by cases rather than happening at an emit
+ * site nobody can check.
+ */
+export function discountFakedEvidence(
+  audit: CompletionAudit,
+  fakedPaths: Iterable<string>,
+): CompletionAudit {
+  const faked = new Set<string>();
+  for (const p of fakedPaths) faked.add(p.replace(/^\.?\//, ""));
+  if (faked.size === 0) return audit;
+
+  let changed = 0;
+  const verdicts = audit.verdicts.map((v) => {
+    if (v.status !== "proven") return v;
+    if (!faked.has(v.evidence.replace(/^\.?\//, ""))) return v;
+    changed += 1;
+    return {
+      ...v,
+      status: "unverified" as const,
+      note:
+        `${v.evidence} stores data in the browser instead of saving it, so it cannot prove this. ` +
+        (v.note ? `Previously reported as proven: ${v.note}` : "Previously reported as proven."),
+    };
+  });
+  if (changed === 0) return audit;
+
+  return { ...audit, verdicts, ...tallyVerdicts(verdicts) };
+}
+
+/**
  * The lines the user actually reads. Deliberately shaped so that a build with
  * something unverified cannot be summarised as finished.
  *

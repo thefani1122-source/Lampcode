@@ -77,6 +77,7 @@ import {
   shouldAudit,
   extractCriteria,
   auditCompletion,
+  discountFakedEvidence,
   unverifiedAudit,
   formatAuditForUser,
   formatCriteriaForUser,
@@ -3264,6 +3265,22 @@ export async function runFastBuild(
       // coverage when the extraction cap dropped requirements before it ran.
       if (extracted.dropped && extracted.dropped > 0) {
         completionAudit = { ...completionAudit, criteriaDropped: extracted.dropped };
+      }
+
+      // A requirement cited to a file that fakes it is not proven. Re-measured
+      // over the FINAL file set rather than reusing the earlier result: the
+      // removal dispatch above runs between the two, so a stand-in it took out
+      // must not go on discounting a verdict that is now honestly proven.
+      const fakedNow = fakePersistence(allFiles).map((f) => f.path);
+      if (fakedNow.length > 0) {
+        const before = completionAudit.proven;
+        completionAudit = discountFakedEvidence(completionAudit, fakedNow);
+        if (completionAudit.proven !== before) {
+          console.log(
+            `[build] audit discounted session=${sessionId} proven ${before} → ` +
+            `${completionAudit.proven} (evidence in faked file(s))`,
+          );
+        }
       }
 
       cumulativeCostUsd += extracted.costUsd + completionAudit.costUsd;

@@ -4300,3 +4300,44 @@ assert anything about the tool surface, and it is already there.
 - **No build has used either tool.** Whether the model reaches for `code_intel` instead of
   re-reading files, and whether `impact_analysis` changes what it edits, is exactly the claim —
   and it needs a real build to see.
+
+### A gate that asks "does it work" will bless a good fake — 2026-10-18
+
+Build `bab33bcc`, the same one where the localStorage stand-in was shipped. The completion audit
+marked a requirement **proven**, citing as its evidence:
+
+> "demo mode provides clear error messages like 'User already exists' instead of network failures"
+
+It was reading honestly. The file really does show that message, the message really is clear, and
+nothing in the audit's view said the data went nowhere. That is the shape of the problem, and it
+is not a bug in the audit's prompt: **every gate here asks whether the app works, and a good fake
+works.** The audit is the product's differentiator, and on this build it certified the one thing
+the product exists to catch.
+
+`discountFakedEvidence` now downgrades any `proven` verdict whose evidence is a file
+`data-layer.ts` found faking persistence — to **`unverified`, not `contradicted`**, deliberately.
+A requirement like "show clear errors" may genuinely be met in a file that also holds a stand-in;
+what is certain is only that THIS file cannot prove it. `unverified` says exactly that, and is
+already the audit's most valuable output.
+
+Two details that are easy to get wrong and are pinned by cases:
+
+- **It is re-measured over the FINAL file set**, not the earlier finding list. The removal
+  dispatch runs between the two, so a stand-in that was taken out must not go on discounting a
+  verdict that is now honestly proven.
+- **Only `proven` is touched.** Rewriting an already-`unverified` verdict's note would bury the
+  real reason it was unverified.
+
+The tallies are recomputed through `tallyVerdicts` rather than adjusted by hand, so a downgrade
+cannot leave `proven` saying one thing and the verdict list another.
+
+### Verified
+
+- `npm run typecheck`, `npm test` and `npm run build` pass on Linux.
+- 9 cases, including the two above, a leading `./` on either side, and "nothing faked leaves the
+  audit byte-identical".
+
+### Not verified
+
+- **No build has produced a discounted verdict.** The log line
+  `[build] audit discounted … proven N → M` is what will show it, and it has never printed.
