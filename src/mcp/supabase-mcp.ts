@@ -15,11 +15,21 @@ export interface SupabaseMcpAuth {
   projectRef?: string | undefined;
 }
 
-function buildUrl(projectRef?: string, readOnly = false): URL {
+export function buildSupabaseMcpUrl(projectRef?: string, readOnly = false): URL {
   const url = new URL(SUPABASE_MCP_URL);
   if (projectRef) url.searchParams.set("project_ref", projectRef);
   if (readOnly) url.searchParams.set("read_only", "true");
   return url;
+}
+
+/** Project-scoped credential tools receive project_id through the MCP URL scope. */
+export function buildSupabaseProjectCredentialArgs(): Record<string, never> {
+  return {};
+}
+
+/** Migration operations inherit project scope from the MCP URL. */
+export function buildSupabaseMigrationArgs(name: string, query: string): { name: string; query: string } {
+  return { name, query };
 }
 
 /**
@@ -32,7 +42,7 @@ async function withSupabaseMcp<T>(
   readOnly: boolean,
   fn: (client: Client) => Promise<T>,
 ): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(buildUrl(auth.projectRef, readOnly), {
+  const transport = new StreamableHTTPClientTransport(buildSupabaseMcpUrl(auth.projectRef, readOnly), {
     requestInit: {
       headers: { Authorization: `Bearer ${auth.accessToken}` },
     },
@@ -80,7 +90,7 @@ export async function fetchSupabaseProjectCreds(
   auth: SupabaseMcpAuth,
 ): Promise<{ url: string | null; anonKey: string | null; error?: string }> {
   return withSupabaseMcp(auth, true, async (client) => {
-    const args = auth.projectRef ? { project_id: auth.projectRef } : {};
+    const args = buildSupabaseProjectCredentialArgs();
 
     // Carried out to the caller, because the person connecting needs to read
     // what Supabase actually said. A reason that only reaches a log line is a
@@ -300,11 +310,7 @@ export async function applySupabaseSchema(
     return await withSupabaseMcp(auth, false, async (client) => {
       const r = await client.callTool({
         name: "apply_migration",
-        arguments: {
-          ...(auth.projectRef ? { project_id: auth.projectRef } : {}),
-          name,
-          query: sql,
-        },
+        arguments: buildSupabaseMigrationArgs(name, sql),
       });
       const res = r as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
       if (res.isError) return { ok: false, error: textOf(res) || "migration failed" };

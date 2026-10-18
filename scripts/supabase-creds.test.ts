@@ -15,7 +15,13 @@
  * exactly what the previous code did.
  */
 
-import { assertNotError, extractAnonKey } from "../src/mcp/supabase-mcp.js";
+import {
+  assertNotError,
+  buildSupabaseMigrationArgs,
+  buildSupabaseMcpUrl,
+  buildSupabaseProjectCredentialArgs,
+  extractAnonKey,
+} from "../src/mcp/supabase-mcp.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -40,6 +46,21 @@ const KEYS_PAYLOAD = {
     { api_key: PUBLISHABLE, name: "default", type: "publishable", disabled: false, id: "22cc38cd" },
   ],
 };
+
+// ── project-scoped MCP call construction ─────────────────────────────────────
+
+const scopedReadUrl = buildSupabaseMcpUrl("project-ref", true);
+check("project_ref stays on the scoped MCP URL", scopedReadUrl.searchParams.get("project_ref"), "project-ref");
+check("read-only discovery keeps read_only=true", scopedReadUrl.searchParams.get("read_only"), "true");
+
+const projectCredentialArgs = buildSupabaseProjectCredentialArgs();
+check("get_project_url sends no project_id in a scoped session", projectCredentialArgs, {});
+check("get_publishable_keys sends no project_id in a scoped session", projectCredentialArgs, {});
+check(
+  "apply_migration sends only name and query in a scoped session",
+  buildSupabaseMigrationArgs("initial_schema", "create table public.items (id int);"),
+  { name: "initial_schema", query: "create table public.items (id int);" },
+);
 
 // ── the regression ───────────────────────────────────────────────────────────
 
