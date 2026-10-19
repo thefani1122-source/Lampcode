@@ -4849,3 +4849,69 @@ table through supabase-js, then enabled RLS with no policies. Confirmed on produ
 ### Not verified
 
 - See the real-build section appended below for what one build did and did not prove.
+
+### The real build — one fullstack prompt, one follow-up edit, 2026-10-19
+
+Driven through the deployed API at `b6231b2` by `scripts/launch-proof.ts` (not the eval harness:
+its tasks must never change, none is a fullstack app with auth, and it has no notion of a second
+message to the same project). Prompt: a team expense tracker — sign in, submit a claim, see only
+your own, an approvals page where nobody may approve their own, "claims persist in the database
+so they survive a reload". Then an edit: add a status filter and a submitted date.
+
+**Both succeeded. $0.0673 + $0.0375 = $0.105 for two builds.**
+
+What the record holds:
+
+| | build 1 | build 2 (edit) |
+|---|---|---|
+| rounds | 11 | 9 |
+| files written | 10 | 1 |
+| page / types / tests | pass / pass / never | pass / pass / never |
+| staleness | 0 / 0 / 0 | 0 / 0 / 0 |
+| events persisted | 57, ordered | 46, ordered |
+| architecture | 3 circular imports | 3 circular imports |
+| storage | ran, source=interaction, 1 local key | same |
+| interactions | ran, 0 findings | ran, 0 findings |
+| audit | 10 proven, 0 unverified | 0 proven, **2 unverified** |
+
+**C1/C2 works on a real build.** Build 1's stream, by `seq`: `plan/ready` (10 files) → 11
+`turn/start`/`turn/end` pairs → 13 `tool/call`/`tool/result` pairs → `files/written` at 16 (10
+paths, +1247 lines) → `verification/result` types=pass at 21 → `files/written` at 38 and 45 (the
+two `edit_file` calls) → `verification/result` page=pass at 50 and types=pass at 53 →
+`repair/applied` broken-imports at 56 → `build/end` at 57 with churn, cost and duration. The
+order is the evidence: the model's own re-checks landed AFTER its edits, which is why staleness
+is legitimately 0.
+
+**`look_at_page` was called** (build 2, seq 20) and the build carried on: vision is off, the tool
+refused in words, the model continued. The refusal path is proven; the image-delivery half is
+not, and cannot be until a model that accepts images is reachable.
+
+**Two defects the build exposed, both fixed in the same pass:**
+
+1. **The honest fullstack status did not fire** — and this was the case it exists for. The
+   classifier called the prompt a frontend build, zero backend files were written, the app shipped
+   four hardcoded users and `localStorage`, and the closing message read *"The team expense
+   tracker is now complete and fully functional"*. The trigger was "did this build produce a
+   backend", which is exactly backwards: the request that most needs an honest sentence is the one
+   that asked for a server and did not get one. It now also triggers on `needsAuth(prompt)`, and
+   `fullstack.browserOnlyPersistence` is measured from the delivered code (a `setItem` call, no
+   backend, no connected database) so the user is told "your data is saved in this browser only".
+2. **Repair loops outside the preview chain did not invalidate gate verdicts.** The
+   broken-import loop rewrote files at `seq 56`, after page and types had passed at 50 and 53, and
+   the record still said `staleCheckPage=0`. Only the three loops inside the chain were emitting
+   `files/written`. All of them do now — fake-removal, wiring, broken-imports and the dead-code
+   cut included.
+
+**What this build did NOT prove**, kept apart from what it did:
+
+- **No real backend, database or auth was exercised.** The prompt asked for one; the build made a
+  localStorage app, so G6/P0.4 is still unproven and that is now the single largest gap.
+- **The freshness RE-RUN never fired.** `[build] freshness … revalidated=[] stillStale=[]
+  sandbox=true` — the gate ran, found nothing stale, and had nothing to do. With defect 2 fixed a
+  build whose repair lands after a verdict will exercise it; this one did not.
+- **`code_intel` and `impact_analysis` were available and unused** (neither appears in
+  `toolCalls`). Availability is structural — one tool list serves both provider paths — and
+  forcing a call to tick a box would have proved nothing.
+- **`web_search` was not called**, correctly: nothing in either prompt needed a lookup.
+- **No MCP tool ran**, so the tier escalation was not exercised on a live server; its cases drive
+  the real `executeTool` approval path instead.

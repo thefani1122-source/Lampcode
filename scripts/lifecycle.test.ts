@@ -123,4 +123,45 @@ check("a file the fake detector flagged cannot prove auth", build.includes("!fak
 check("an overrun is recorded", build.includes('kind: "post-generation-phase-overran"'));
 check("and told to the user", build.includes("The preview checks ran out of time"));
 
+
+// ── What the real build exposed, 2026-10-19 ─────────────────────────────────
+// The launch-proof build asked for sign-in and for claims that "persist in the
+// database". It got four hardcoded users and localStorage, and the closing
+// message said "now complete and fully functional". Two defects, both here:
+
+check(
+  "the honest status fires on what was ASKED, not only on what was built",
+  build.includes("|| needsAuth(prompt);") && build.includes("the case that most needs an honest"),
+);
+check(
+  "browser-only persistence is measured from the delivered code",
+  build.includes("const writesBrowserStorage = Object.entries(allFiles).some(") &&
+    build.includes("browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0"),
+);
+check(
+  "and the user is told their data lives in one browser",
+  build.includes("Your data is saved in this browser only"),
+);
+
+// Every repair loop that mutates allFiles must emit files/written, or its
+// writes invalidate a gate verdict silently. On the real build the
+// broken-import loop rewrote files after check_page and check_types had passed
+// and the record still read staleCheckPage=0.
+check(
+  "every pre-preview repair loop records its writes",
+  (build.match(/recorder\.record\(\{ type: "files\/written"/g) ?? []).length >= 7,
+);
+for (const [label, marker] of [
+  ["fake-removal", "paths: rewritten,"],
+  ["wiring", "paths: wired,"],
+  ["broken-imports", "paths: created,"],
+  ["dead-code-cut", "paths: cutPaths,"],
+] as const) {
+  check(`${label} says which files it changed`, build.includes(marker));
+}
+check(
+  "and the measurement that forced it is written down",
+  build.includes("the record still said staleCheckPage=0"),
+);
+
 console.log(`\n${checks} lifecycle checks passed`);

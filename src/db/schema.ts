@@ -311,6 +311,11 @@ export type BuildOutcome = {
     tablesQueried: number;
     /** Files that fake persistence — a demo-mode branch, a mock fallback. */
     fakePersistenceFiles: number;
+    /** The delivered code writes to localStorage/sessionStorage and there is no
+     *  backend and no connected database — so the app's data lives in one
+     *  browser. Measured on the delivered files, not inferred from the prompt.
+     *  This is the state a request for "saved data" most often actually got. */
+    browserOnlyPersistence: boolean;
     /** Auth was asked for, and a real auth call was found rather than a mock. */
     authRequested: boolean;
     authReal: boolean;

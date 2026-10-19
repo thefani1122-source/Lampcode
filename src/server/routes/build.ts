@@ -2437,8 +2437,18 @@ export async function runFastBuild(
             // CREATES files is a repair that has misunderstood the finding —
             // nothing here needs a new file, and letting it add one is how a
             // narrow fix turns into an unreviewed rewrite.
+            const rewritten: string[] = [];
             for (const [p, code] of Object.entries(fixed)) {
-              if (typeof code === "string" && allFiles[p] !== undefined) allFiles[p] = code;
+              if (typeof code === "string" && allFiles[p] !== undefined) { allFiles[p] = code; rewritten.push(p); }
+            }
+            // MEASURED on the launch-proof build 2026-10-19: the broken-import
+            // loop rewrote files after check_page and check_types had passed,
+            // and the record still said staleCheckPage=0. Only the three loops
+            // inside the preview chain were emitting this event, so a repair
+            // that ran EARLIER invalidated a verdict silently. Every loop that
+            // mutates allFiles says so now.
+            if (rewritten.length > 0) {
+              recorder.record({ type: "files/written", paths: rewritten, added: 0, removed: 0 });
             }
             const after = fakePersistence(allFiles);
             fakeRepaired = Math.max(0, before.length - after.length);
@@ -2602,10 +2612,15 @@ export async function runFastBuild(
           // case: the backend entry gains a route, the router gains a path.
           const knownPaths = new Set(Object.keys(allFiles));
           let applied = 0;
+          const wired: string[] = [];
           for (const f of fixedParsed) {
             if (!knownPaths.has(f.path)) continue;
             allFiles[f.path] = f.code;
             applied += 1;
+            wired.push(f.path);
+          }
+          if (wired.length > 0) {
+            recorder.record({ type: "files/written", paths: wired, added: 0, removed: 0 });
           }
           if (applied === 0) {
             logger.warn(
@@ -2691,10 +2706,14 @@ export async function runFastBuild(
             cumulativeCostUsd += fixResult.costUsd ?? 0;
             // New files ARE allowed here — writing them is the entire point,
             // which is why this loop and the cut above take opposite rules.
+            const created: string[] = [];
             for (const [p, code] of Object.entries(parseFilesFromContent(fixResult.content ?? ""))) {
-              if (typeof code === "string" && (code as string).trim().length > 0) allFiles[p] = code;
+              if (typeof code === "string" && (code as string).trim().length > 0) { allFiles[p] = code; created.push(p); }
             }
             recorder.record({ type: "repair/applied", kind: "broken-imports" });
+            if (created.length > 0) {
+              recorder.record({ type: "files/written", paths: created, added: 0, removed: 0 });
+            }
             const after = findBrokenImports(allFiles);
             console.log(
               `[build] broken imports session=${sessionId} before=${broken.length} after=${after.length}`,
@@ -2818,6 +2837,7 @@ export async function runFastBuild(
 
             const cut = parseFilesFromContent(fixResult.content ?? "");
             let touched = 0;
+            const cutPaths: string[] = [];
             for (const [p, code] of Object.entries(cut)) {
               // Existing files only. A cut that CREATES a file has
               // misunderstood, and letting it through turns a deletion into an
@@ -2825,7 +2845,11 @@ export async function runFastBuild(
               if (typeof code === "string" && allFiles[p] !== undefined) {
                 allFiles[p] = code;
                 touched += 1;
+                cutPaths.push(p);
               }
+            }
+            if (cutPaths.length > 0) {
+              recorder.record({ type: "files/written", paths: cutPaths, added: 0, removed: 0 });
             }
 
             if (touched === 0) {
@@ -4021,11 +4045,23 @@ export async function runFastBuild(
     // was connected, what the data-layer scan found, and the fake-persistence
     // detector — rather than from another keyword heuristic over the model's
     // prose. Each part is proven or it is not, and the message below says which.
-    // A follow-up edit is not classified "fullstack" — `isFullstackBuild` is
-    // new-builds-only by design — but an edit to an app that HAS a backend is
-    // still a build whose honesty depends on this. So either signal counts, and
-    // `requested` below records which one it was.
-    const fullstackRequested = isFullstackBuild || backendFileCount > 0;
+    // MEASURED 2026-10-19, the launch-proof build. The prompt asked for people
+    // to "sign in" and for claims that "persist in the database so they survive
+    // a reload". The classifier called it a frontend build, zero backend files
+    // were written, the app kept everything in localStorage with four hardcoded
+    // users — and the closing message read "now complete and fully functional".
+    //
+    // This block did not fire, because it only triggered on the build having a
+    // backend. That is the wrong test: the case that most needs an honest
+    // sentence is exactly the one where the request implied a server and the
+    // build did not produce one. So the trigger is what was ASKED as well as
+    // what was built, using the auth signal that already exists rather than a
+    // new keyword list.
+    //
+    // (A follow-up edit is also never classified "fullstack" — that flag is
+    // new-builds-only by design — so an edit to an app that HAS a backend has
+    // always needed the second clause.)
+    const fullstackRequested = isFullstackBuild || backendFileCount > 0 || needsAuth(prompt);
     const fakeFiles = fullstackRequested ? fakePersistence(allFiles).map((f) => f.path) : [];
     const declared = fullstackRequested ? declaredTables(allFiles) : new Set<string>();
     const queried = fullstackRequested ? queriedTables(allFiles) : [];
@@ -4037,9 +4073,17 @@ export async function runFastBuild(
         !fakeFiles.includes(path) &&
         /supabase\.auth\.|signInWithPassword|signInWithOAuth|auth\.getUser\(|getSession\(/.test(code),
     );
+    // An observation of the DELIVERED CODE, not of the prompt: this app's data
+    // lives in one browser. Said plainly because a person reading "complete and
+    // fully functional" has no way to know their data is not on a server, will
+    // not be on their phone, and is gone if they clear their browser.
+    const writesBrowserStorage = Object.entries(allFiles).some(
+      ([path, code]) => /\.(tsx?|jsx?)$/.test(path) && /\b(localStorage|sessionStorage)\s*\.\s*setItem\b/.test(code),
+    );
     const fullstackEvidence = fullstackRequested
       ? {
           requested: isFullstackBuild,
+          browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && !ownSupabaseConnected,
           backendFiles: backendFileCount,
           databaseConnected: ownSupabaseConnected,
           tablesDeclared: declared.size,
@@ -4054,7 +4098,8 @@ export async function runFastBuild(
         `[build] fullstack evidence session=${sessionId} backendFiles=${fullstackEvidence.backendFiles} ` +
         `db=${fullstackEvidence.databaseConnected} declared=${fullstackEvidence.tablesDeclared} ` +
         `queried=${fullstackEvidence.tablesQueried} fake=${fullstackEvidence.fakePersistenceFiles} ` +
-        `authWanted=${fullstackEvidence.authRequested} authReal=${fullstackEvidence.authReal}`,
+        `authWanted=${fullstackEvidence.authRequested} authReal=${fullstackEvidence.authReal} ` +
+        `browserOnly=${fullstackEvidence.browserOnlyPersistence}`,
       );
     }
 
@@ -4183,6 +4228,12 @@ export async function runFastBuild(
             ? `• Backend code: written (${fs.backendFiles} file(s)).`
             : "• Backend: none was written — this is a frontend-only app.",
         );
+        if (fs.browserOnlyPersistence) {
+          closingLines.push(
+            "• Your data is saved in this browser only. It will not be there on another device " +
+              "or for another person, and clearing the browser clears it.",
+          );
+        }
         closingLines.push(
           fs.databaseConnected
             ? "• Database: your own Supabase is connected."
