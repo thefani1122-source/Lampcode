@@ -111,6 +111,106 @@ check("staleness follows event chronology even when round metadata is out of ord
   terminal,
 ]).staleCheckPage, 1);
 
+
+// ── The seven sequences the launch pass asked for ───────────────────────────
+// Each is a full stream, terminal event included, because the projection
+// refuses to answer without one — a half-recorded build must never read as a
+// measured one.
+
+const END = { type: "build/end", turnsExhausted: false, filesWritten: 3, costUsd: 0.1, durationMs: 1000 } as const;
+
+{
+  // check → write → the verdict is about code the build no longer has.
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "tool/call", name: "check_page", round: 1 },
+    { type: "verification/result", gate: "page", status: "pass" },
+    { type: "files/written", paths: ["src/App.tsx"], added: 10, removed: 2 },
+    END,
+  ]);
+  ok("check → write leaves the page verdict stale", outcome.checkPage === "pass" && outcome.staleCheckPage === 1);
+  ok("a gate that was never called is not made stale by the same write", outcome.checkTypes === "never" && outcome.staleCheckTypes === 0);
+}
+
+{
+  // check → write → recheck: the re-run clears it.
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "verification/result", gate: "page", status: "pass" },
+    { type: "files/written", paths: ["src/App.tsx"], added: 10, removed: 2 },
+    { type: "verification/result", gate: "page", status: "pass" },
+    END,
+  ]);
+  ok("check → write → recheck resets staleness", outcome.staleCheckPage === 0 && outcome.checkPage === "pass");
+}
+
+{
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "files/written", paths: ["src/App.tsx"], added: 1, removed: 0 },
+    END,
+  ]);
+  ok("a missing check is \"never\", not a pass", outcome.checkPage === "never" && outcome.checkTypes === "never" && outcome.checkTests === "never");
+}
+
+{
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "verification/result", gate: "types", status: "unavailable" },
+    END,
+  ]);
+  ok("unavailable stays unavailable and is not upgraded", outcome.checkTypes === "unavailable");
+}
+
+{
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "verification/result", gate: "tests", status: "none" },
+    END,
+  ]);
+  ok("a runner with no tests reports \"none\", never \"pass\"", outcome.checkTests === "none");
+}
+
+{
+  // A failed build keeps every piece of evidence it had reached.
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "tool/call", name: "write_files", round: 1 },
+    { type: "verification/result", gate: "types", status: "fail" },
+    { type: "repair/applied", kind: "type-check" },
+    { type: "build/failed", reason: "sandbox died", turnsExhausted: false, filesWritten: 4, costUsd: 0.2, durationMs: 900 },
+  ]);
+  ok("a failed build keeps its gate verdicts", outcome.checkTypes === "fail");
+  ok("and its tool calls", outcome.toolCalls["write_files"] === 1);
+  ok("and its cost and duration", outcome.costUsd === 0.2 && outcome.durationMs === 900);
+}
+
+{
+  // An empty files/written must not invent staleness — a tool that touched
+  // nothing did not invalidate anything.
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "verification/result", gate: "page", status: "pass" },
+    { type: "files/written", paths: [], added: 0, removed: 0 },
+    END,
+  ]);
+  ok("a write of no files leaves the verdict fresh", outcome.staleCheckPage === 0);
+}
+
+{
+  // Several writes after one check count individually: the number is how far
+  // the build has outrun the verdict, not a boolean.
+  const outcome = projectOutcome([
+    { type: "turn/start", round: 1 },
+    { type: "verification/result", gate: "page", status: "pass" },
+    { type: "files/written", paths: ["a.tsx"], added: 1, removed: 0 },
+    { type: "files/written", paths: ["b.tsx"], added: 1, removed: 0 },
+    { type: "files/written", paths: ["c.tsx"], added: 1, removed: 0 },
+    END,
+  ]);
+  ok("staleness counts every write after the verdict", outcome.staleCheckPage === 3);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} outcome projection case(s) FAILED`);
   process.exit(1);

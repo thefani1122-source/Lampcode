@@ -16,6 +16,15 @@ const envSchema = z.object({
   // Internal platform-level MCP tools — loaded automatically, not user-configured
   FIRECRAWL_API_KEY: z.string().min(1).optional(),
   EXA_API_KEY: z.string().min(1).optional(),
+  // Whether the configured model accepts image input (F2). Unset means "not
+  // known to", and a screenshot is never sent — measured 2026-10-18, the live
+  // model answers HTTP 400 "Model does not support image modality" to a request
+  // carrying one, so an optimistic default would fail builds rather than
+  // degrade. Set it to true only for a model that has been shown to accept one.
+  LLM_SUPPORTS_IMAGES: z
+    .union([z.literal("true"), z.literal("false")])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === "true")),
   // Supabase project whose URL + anon key get injected into every preview
   // sandbox so generated Supabase-direct apps can initialise their client and
   // render. The anon key is public (RLS-protected) — safe to embed in previews.

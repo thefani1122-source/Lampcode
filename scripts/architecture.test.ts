@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /** Focused cases for the deterministic architecture signals. */
 
 import {
@@ -112,6 +113,39 @@ check("clean E3 project stays quiet", byKind({ "src/App.tsx": `export default fu
 
 const formatted = formatArchitectureGaps(findings(twoCycle));
 ok("formatted output includes an actionable remediation", formatted.includes("Break this import cycle"));
+
+
+// ── Wiring (E5): the gate runs on a real build, and only reports ────────────
+// The module existed and nothing called it. These pin the decisions in how it
+// is wired, which are as load-bearing as the detection itself.
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+
+  ok("the gate is called on the delivered file set", build.includes("findArchitectureGaps(allFiles)"));
+  ok("after the repair chain, so it describes the final code", build.indexOf("await withTimeout(previewWork") < build.indexOf("findArchitectureGaps(allFiles)"));
+  ok("it reaches the record", build.includes("architecture: architectureTally"));
+
+  // ADVISORY. No repair dispatch, no revert, no churn to satisfy a style rule.
+  const start = build.indexOf("findArchitectureGaps(allFiles)");
+  const region = build.slice(start - 2200, start + 2200);
+  ok("no model is dispatched over an architecture finding", !/dispatcher\.dispatch\(/.test(region));
+  ok("and the decision to stay advisory is written down", build.includes("ADVISORY, and that is a decision rather than an omission"));
+  ok("duplicate-logic and file-size are named as the clearest advisory cases", build.includes("`duplicate-logic` and") && build.includes("a judgement about a codebase"));
+
+  // Every finding carries its fix; the formatter is what carries it.
+  ok("findings are formatted with their remediation", build.includes("formatArchitectureGaps(architectureFindings)"));
+  ok("it logs on a clean build too, so \"ran\" and \"never ran\" differ", build.includes("[build] architecture session="));
+}
+
+// Every finding's own detail must contain its remediation, not just a verdict.
+{
+  const findings = findArchitectureGaps({
+    "src/components/Card.tsx": "import { db } from '../db/client';\nexport const Card = () => <div>{db}</div>;",
+    "src/db/client.ts": "export const db = 1;",
+  });
+  ok("a layer violation is found", findings.some((f) => f.kind === "layer-violation"));
+  ok("and it says what to do about it", findings.every((f) => f.detail.length > 30 && /[a-z]/.test(f.detail)));
+}
 
 if (failures > 0) {
   console.error(`\n${failures} architecture case(s) failed`);

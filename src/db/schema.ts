@@ -265,6 +265,77 @@ export type BuildOutcome = {
    *  it never earned, and nothing here could previously tell that apart from a
    *  real green run. Free and deterministic, measured over the delivered files.
    *  Absent on builds from before it existed. */
+  /** The shape of the codebase, not its behaviour (E5). Import cycles, a
+   *  component reaching into the server or the database, a file past being
+   *  readable, and function bodies that are identical character for character.
+   *
+   *  ADVISORY by design. Every other repair loop fixes something a user would
+   *  hit; these four are about how the code reads, and rewriting working code
+   *  to satisfy a style rule is churn that invalidates every gate above it.
+   *  Recorded so the question "is a long project rotting as it grows?" has data
+   *  behind it instead of an opinion. Absent on builds from before it existed —
+   *  absent and zero are different facts, as everywhere else in this record. */
+  /** Client state the delivered app had actually stored, observed in the
+   *  preview (F3). `ran` first, as everywhere else: zeros with ran=false mean
+   *  nothing was read, which is not the same fact as an app that stores
+   *  nothing. `source` matters as much — "interaction" was taken from inside
+   *  the page after its own controls were clicked, which is evidence that a
+   *  USER ACTION persisted something; "page-load" only saw what the app writes
+   *  on mount. Counts of keys, never the keys or their values: this record goes
+   *  to the eval and to triage, and a localStorage value can be a token. */
+  storage?: {
+    ran: boolean;
+    source: "interaction" | "page-load";
+    localKeys: number;
+    sessionKeys: number;
+    indexedDbs: number;
+  };
+  /** What a FULLSTACK request actually got, each part proven separately.
+   *
+   *  Measured 2026-10-18 on a real build: the model's closing message called a
+   *  "complete E-commerce Store" done while the same build also said
+   *  "Login/Signup (mock authentication)". Both sentences were the model's; one
+   *  of them was true. This record exists so the final message can be built
+   *  from evidence rather than from prose, and so the question "did fullstack
+   *  builds actually get a backend?" has an answer that is not a search through
+   *  chat logs. Absent on frontend-only requests. */
+  fullstack?: {
+    /** The request was classified as needing a backend. */
+    requested: boolean;
+    /** Server-side files were written. */
+    backendFiles: number;
+    /** A database the USER connected was in play for this build. */
+    databaseConnected: boolean;
+    /** Tables the generated code declares, and tables it actually queries. */
+    tablesDeclared: number;
+    tablesQueried: number;
+    /** Files that fake persistence — a demo-mode branch, a mock fallback. */
+    fakePersistenceFiles: number;
+    /** Auth was asked for, and a real auth call was found rather than a mock. */
+    authRequested: boolean;
+    authReal: boolean;
+  };
+  /** Tool names the model TYPED as text instead of calling. Normally absent.
+   *  Present means a round produced another harness's tool syntax as prose —
+   *  it was kept out of the user's chat and nothing ran. See pseudo-tools.ts. */
+  pseudoToolCalls?: string[];
+  /** Gates whose verdict was outrun by a later write and COULD NOT be re-run,
+   *  because the sandbox was gone. The matching `check*` field is the old
+   *  verdict and the matching `stale*` count says how many writes passed it.
+   *  Listed here so "we could not check this again" is a fact in the record
+   *  rather than something a reader has to infer from two other fields. */
+  unverifiedGates?: string[];
+  /** Events the recorder could not persist. Non-zero means the stored stream is
+   *  incomplete, so a projection recomputed from the database will not match
+   *  this record. Absent is the normal case. */
+  eventsLost?: number;
+  architecture?: {
+    circularImports: number;
+    layerViolations: number;
+    filesTooLarge: number;
+    duplicateLogic: number;
+    total: number;
+  };
   hollowTests?: {
     noAssertions: number;
     literalAssertions: number;
@@ -1001,4 +1072,42 @@ export const buildMessages = pgTable(
 export const buildMessagesRelations = relations(buildMessages, ({ one }) => ({
   session: one(buildSessions, { fields: [buildMessages.sessionId], references: [buildSessions.id] }),
   project: one(projects, { fields: [buildMessages.projectId], references: [projects.id] }),
+}));
+
+// ── The ordered record of what a build did (C1/C2) ──────────────────────────
+//
+// `build_outcome` says how a build ENDED. This says in what order it happened,
+// and that difference is the whole point: every stale-verdict bug in this
+// product has been an ordering bug — a gate passed, a file was written after
+// it, and the record kept only the verdict. `projectOutcome()` folds these rows
+// into the outcome shape, so staleness is DERIVED from the order rather than
+// remembered by a mutable object.
+//
+// Note on build_messages' own comment above, which argues against an event log
+// as the chat's durable record: that argument still holds and this is not that.
+// These rows are never replayed to a user and carry no preview URL; they are
+// evidence about the build, for the projection and for triage.
+//
+// Payloads stay narrow on purpose — tool NAMES, counts, gate verdicts, paths.
+// A tool result can contain an access token, so no tool result goes in here.
+export const buildEvents = pgTable(
+  "build_events",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => buildSessions.id, { onDelete: "cascade" }),
+    // Monotonic within a session, assigned by the recorder rather than the
+    // database: timestamps collide inside a millisecond and the projection
+    // needs a total order it can trust.
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("build_events_session_seq_idx").on(t.sessionId, t.seq)],
+);
+
+export const buildEventsRelations = relations(buildEvents, ({ one }) => ({
+  session: one(buildSessions, { fields: [buildEvents.sessionId], references: [buildSessions.id] }),
 }));

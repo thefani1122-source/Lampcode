@@ -47,7 +47,30 @@ export type ChatRole = "system" | "user" | "assistant";
 export interface TextContentBlock { type: "text"; text: string }
 export interface ToolUseContentBlock { type: "tool_use"; id: string; name: string; input: unknown }
 export interface ToolResultContentBlock { type: "tool_result"; tool_use_id: string; content: string }
-export type MessageContentBlock = TextContentBlock | ToolUseContentBlock | ToolResultContentBlock;
+/**
+ * An image the MODEL is meant to look at (F2) — a screenshot of the app it is
+ * building, not a reference the user supplied.
+ *
+ * Declared in Anthropic's own shape because that is the gateway this type was
+ * written for; `toOpenAiMessages` translates it to `image_url` with a data URI
+ * for the OpenAI-compatible path.
+ *
+ * NOT every model accepts one. Measured 2026-10-18 against the live gateway:
+ * `minimax.minimax-m2.5` answers HTTP 400 `"Model does not support image
+ * modality"` to a request carrying an image part, and answers 200 to the
+ * identical request without it. So a caller must ask `visionSupported()` first
+ * — a block sent to a text-only model fails the whole request, which would
+ * turn a screenshot into a failed build.
+ */
+export interface ImageContentBlock {
+  type: "image";
+  source: { type: "base64"; media_type: string; data: string };
+}
+export type MessageContentBlock =
+  | TextContentBlock
+  | ToolUseContentBlock
+  | ToolResultContentBlock
+  | ImageContentBlock;
 
 export interface ChatMessage {
   role: ChatRole;

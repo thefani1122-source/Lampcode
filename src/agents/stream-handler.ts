@@ -3,6 +3,7 @@ import { dirname } from "node:path"
 import type { WebSocketServer } from "../websocket/server.js"
 import type { StreamChunk } from "./model-gateway.js"
 import { parseFilesFromContent } from "./file-parser.js"
+import { PseudoToolFilter } from "./pseudo-tools.js"
 
 // Re-export so dispatcher.ts can still do:
 //   import { type StreamChunk as HandlerStreamChunk } from "./stream-handler.js"
@@ -20,6 +21,10 @@ export interface StreamResult {
   stopReason?: string | undefined
   toolCalls: Array<{ id: string; name: string; arguments: string }>
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>
+  /** Tool names the model TYPED as text instead of calling. Empty is the normal
+   *  case; non-empty means a round produced pseudo-tool markup, which was kept
+   *  out of the user's chat and is a lost round. See pseudo-tools.ts. */
+  pseudoToolNames: string[]
 }
 
 export async function handleAgentStream(
@@ -93,6 +98,12 @@ export async function handleAgentStream(
   let lastEmittedWritingFile = ""
   let lastFenceCount = 0
 
+  // Tool-call syntax the model types instead of calling. Filtered on the way
+  // to the chat, never on the way into fullContent: the raw output is still
+  // written to disk for replay, and the parser must see exactly what arrived.
+  const pseudoFilter = new PseudoToolFilter()
+  const pseudoReasoning = new PseudoToolFilter()
+
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   narrate("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
 
@@ -105,7 +116,8 @@ export async function handleAgentStream(
         // Reasoning / thinking tokens (DeepSeek R1, o1, etc.)
         case "reasoning":
           if (chunk.reasoning) {
-            narrate("build:thinking", { text: chunk.reasoning, sessionId })
+            const safe = pseudoReasoning.push(chunk.reasoning)
+            if (safe) narrate("build:thinking", { text: safe, sessionId })
           }
           break
 
@@ -130,8 +142,11 @@ export async function handleAgentStream(
           }
 
           if (!codeStarted) {
-            // Forward pre-code planning/explanation text to the thinking panel
-            narrate("build:thinking", { text, sessionId })
+            // Forward pre-code planning/explanation text to the thinking panel,
+            // with typed tool-call syntax held back — see pseudo-tools.ts for
+            // the production leak this exists to stop.
+            const safe = pseudoFilter.push(text)
+            if (safe) narrate("build:thinking", { text: safe, sessionId })
           } else {
             // Detect file transitions — scan only when fence count may have changed
             const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
@@ -202,6 +217,21 @@ export async function handleAgentStream(
     throw err
   }
 
+  // Release anything the filter was holding. Empty when the model left a
+  // pseudo-tool region open, which is the right answer: there is nothing in an
+  // unterminated <tool_code> block for a person to read.
+  for (const trailing of [pseudoFilter.flush(), pseudoReasoning.flush()]) {
+    if (trailing.trim()) narrate("build:thinking", { text: trailing, sessionId })
+  }
+
+  const typedToolNames = [...new Set([...pseudoFilter.names(), ...pseudoReasoning.names()])]
+  if (typedToolNames.length > 0) {
+    console.warn(
+      `[stream] model TYPED tool calls instead of calling them: ${typedToolNames.join(", ")} ` +
+      `— kept out of the chat; the round produced ${toolCalls.length} real tool call(s)`,
+    )
+  }
+
   console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length} stopReason=${stopReason}`)
 
   // Close the last file that was being written
@@ -258,5 +288,5 @@ export async function handleAgentStream(
     // Emitting here too caused a duplicate event reaching the frontend.
   }
 
-  return { content: fullContent, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, stopReason, toolCalls, mcpToolCalls }
+  return { content: fullContent, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, stopReason, toolCalls, mcpToolCalls, pseudoToolNames: typedToolNames }
 }
