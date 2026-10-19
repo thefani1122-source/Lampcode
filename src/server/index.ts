@@ -26,7 +26,7 @@ import { envRouter } from "./routes/env.js";
 import { billingRouter } from "./routes/billing.js";
 import { contextRouter } from "./routes/context.js";
 import { webhooksRouter } from "./routes/webhooks.js";
-import { integrationsRouter } from "./routes/integrations.js";
+import { integrationsRouter, mcpOAuthCallbackRouter } from "./routes/integrations.js";
 import { adminRouter } from "./routes/admin.js";
 import { createWebSocketServer } from "../websocket/server.js";
 import { killAllSandboxes } from "../preview/e2b-service.js";
@@ -95,6 +95,7 @@ app.route("/api/users/me/settings", userSettingsRouter);
 app.route("/api/users/me/billing", billingRouter);
 app.route("/api/context", contextRouter);
 app.route("/api/webhooks", webhooksRouter);
+app.route("/api/integrations", mcpOAuthCallbackRouter);
 app.route("/api/integrations", integrationsRouter);
 app.route("/api/admin", adminRouter);
 
@@ -132,3 +133,4 @@ process.on("SIGTERM", () => {
 });
 
 export { app };
+

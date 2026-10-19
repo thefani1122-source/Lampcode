@@ -311,11 +311,6 @@ export type BuildOutcome = {
     tablesQueried: number;
     /** Files that fake persistence — a demo-mode branch, a mock fallback. */
     fakePersistenceFiles: number;
-    /** The delivered code writes to localStorage/sessionStorage and there is no
-     *  backend and no connected database — so the app's data lives in one
-     *  browser. Measured on the delivered files, not inferred from the prompt.
-     *  This is the state a request for "saved data" most often actually got. */
-    browserOnlyPersistence: boolean;
     /** Auth was asked for, and a real auth call was found rather than a mock. */
     authRequested: boolean;
     authReal: boolean;
@@ -881,6 +876,22 @@ export const userMcpConnections = pgTable("user_mcp_connections", {
 
 export type UserMcpConnection = typeof userMcpConnections.$inferSelect;
 
+/** One-use, encrypted state for the MCP OAuth browser round trip. */
+export const mcpOAuthTransactions = pgTable("mcp_oauth_transactions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  providerSlug: text("provider_slug").notNull(),
+  serverUrl: text("server_url").notNull(),
+  stateHash: text("state_hash").notNull(),
+  encryptedData: text("encrypted_data").notNull(),
+  encryptedDataIv: text("encrypted_data_iv").notNull(),
+  encryptedDataTag: text("encrypted_data_tag").notNull(),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("mcp_oauth_transactions_state_hash_idx").on(t.stateHash)]);
+
+export type McpOAuthTransaction = typeof mcpOAuthTransactions.$inferSelect;
+
 // ── Encrypted project env vars ────────────────────────────────────────────────
 
 export const envEnvironmentEnum = pgEnum("env_environment", [
@@ -1116,3 +1127,4 @@ export const buildEvents = pgTable(
 export const buildEventsRelations = relations(buildEvents, ({ one }) => ({
   session: one(buildSessions, { fields: [buildEvents.sessionId], references: [buildSessions.id] }),
 }));
+

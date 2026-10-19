@@ -1,20 +1,48 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt } from "drizzle-orm";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db } from "../../db/client.js";
-import { userIntegrations, userMcpConnections } from "../../db/schema.js";
+import { mcpOAuthTransactions, userIntegrations, userMcpConnections } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { encrypt, decrypt } from "../env-crypto.js";
 import { logger } from "../logger.js";
 import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
 import { getProvider } from "../../mcp/providers/index.js";
-import { getMcpProvider } from "../../mcp/registry.js";
+import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
 import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
+import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession } from "../../mcp/oauth-client.js";
+import { config } from "../config.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
+
+// This narrowly scoped callback is authenticated by its one-use, expiring
+// OAuth state rather than a browser session. It is mounted before the private
+// integrations router in index.ts.
+export const mcpOAuthCallbackRouter = new Hono();
+const OAUTH_PENDING_TTL_MS = 10 * 60 * 1000;
+
+function encryptOAuthSession(session: McpOAuthSession) {
+  return encrypt(JSON.stringify(session));
+}
+
+function decryptOAuthSession(row: { encryptedData: string; encryptedDataIv: string; encryptedDataTag: string }): McpOAuthSession {
+  return JSON.parse(decrypt({ encrypted: row.encryptedData, iv: row.encryptedDataIv, tag: row.encryptedDataTag })) as McpOAuthSession;
+}
+
+function oauthCallbackUrl(): string {
+  const value = config.MCP_OAUTH_REDIRECT_URL;
+  if (!value) throw new AppError(503, "MCP OAuth callback is not configured", "OAUTH_UNAVAILABLE");
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.pathname !== "/api/integrations/mcp/oauth/callback") {
+    throw new AppError(503, "MCP OAuth callback URL must be the configured HTTPS callback endpoint", "OAUTH_UNAVAILABLE");
+  }
+  return url.toString();
+}
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -578,12 +606,137 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
 
 // ── MCP Provider routes ────────────────────────────────────────────────────────
 
+integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  const provider = getMcpProvider(slug);
+  if (!provider || !provider.supportsRealMCP) throw new AppError(404, "Unknown MCP provider", "UNKNOWN_PROVIDER");
+  if (provider.authType !== "oauth") throw new AppError(400, "This provider does not use OAuth", "AUTH_METHOD_MISMATCH");
+  const redirectUrl = oauthCallbackUrl();
+  const serverUrl = resolveServerUrl(provider, {});
+  if (!serverUrl) throw new AppError(422, "Provider MCP URL is not configured", "INVALID_MCP_URL");
+
+  const transactionId = randomUUID();
+  const initial = encryptOAuthSession({});
+  await db.insert(mcpOAuthTransactions).values({
+    id: transactionId,
+    userId,
+    providerSlug: slug,
+    serverUrl,
+    stateHash: hashOAuthState(randomUUID()),
+    encryptedData: initial.encrypted,
+    encryptedDataIv: initial.iv,
+    encryptedDataTag: initial.tag,
+    expiresAt: new Date(Date.now() + OAUTH_PENDING_TTL_MS),
+  });
+
+  const session: McpOAuthSession = {};
+  const saveSession = async (value: McpOAuthSession) => {
+    const enc = encryptOAuthSession(value);
+    await db.update(mcpOAuthTransactions).set({
+      encryptedData: enc.encrypted,
+      encryptedDataIv: enc.iv,
+      encryptedDataTag: enc.tag,
+    }).where(eq(mcpOAuthTransactions.id, transactionId));
+  };
+  const oauth = createMcpOAuthProvider({
+    serverUrl,
+    redirectUrl,
+    session,
+    persist: saveSession,
+    saveStateHash: async (stateHash) => {
+      await db.update(mcpOAuthTransactions).set({ stateHash }).where(eq(mcpOAuthTransactions.id, transactionId));
+    },
+  });
+  const client = new Client({ name: "lampcode-oauth-connect", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: oauth.provider });
+  try {
+    // The MCP SDK performs protected-resource discovery, client registration,
+    // state and PKCE generation. Redirect interception returns control to the UI.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await client.connect(transport as any);
+    const { tools } = await client.listTools();
+    if (tools.length === 0) throw new Error("empty_tool_list");
+    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens?.access_token }));
+    await db.insert(userMcpConnections).values({
+      id: randomUUID(), userId, providerSlug: slug,
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+      set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date() },
+    });
+    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
+    return c.json({ slug, status: "connected", toolCount: tools.length }, 201);
+  } catch {
+    const authorizationUrl = oauth.authorizationUrl();
+    if (authorizationUrl) return c.json({ slug, status: "authorization_required", authorizationUrl: authorizationUrl.toString() }, 200);
+    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
+    logger.warn({ provider: slug, category: "oauth_start_failed" }, "MCP OAuth start failed");
+    throw new AppError(422, "The provider could not start MCP authorization", "OAUTH_START_FAILED");
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+});
+
+mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
+  const state = c.req.query("state");
+  const code = c.req.query("code");
+  if (!state) return c.json({ error: "Invalid or expired MCP authorization state" }, 400);
+  const now = new Date();
+  const rows = await db.delete(mcpOAuthTransactions).where(and(
+    eq(mcpOAuthTransactions.stateHash, hashOAuthState(state)),
+    gt(mcpOAuthTransactions.expiresAt, now),
+  )).returning();
+  const pending = rows[0];
+  if (!pending) return c.json({ error: "Invalid or expired MCP authorization state" }, 400);
+  if (c.req.query("error") || !code) return c.json({ error: "MCP authorization was not completed" }, 400);
+  const provider = getMcpProvider(pending.providerSlug);
+  if (!provider || provider.authType !== "oauth") return c.json({ error: "MCP provider is unavailable" }, 400);
+  const session = decryptOAuthSession(pending);
+  const redirectUrl = oauthCallbackUrl();
+  const oauth = createMcpOAuthProvider({
+    serverUrl: pending.serverUrl,
+    redirectUrl,
+    session,
+    persist: async () => undefined,
+    saveStateHash: async () => undefined,
+  });
+  const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(pending.serverUrl), { authProvider: oauth.provider });
+  try {
+    await transport.finishAuth(code);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await client.connect(transport as any);
+    const { tools } = await client.listTools();
+    if (tools.length === 0 || !session.tokens?.access_token) {
+      return c.json({ error: "Authorization succeeded, but the MCP server exposed no usable tools" }, 422);
+    }
+    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens.access_token }));
+    await db.insert(userMcpConnections).values({
+      id: randomUUID(), userId: pending.userId, providerSlug: pending.providerSlug,
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+      set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date() },
+    });
+    return c.json({ provider: pending.providerSlug, status: "connected", toolCount: tools.length });
+  } catch {
+    logger.warn({ provider: pending.providerSlug, category: "oauth_callback_failed" }, "MCP OAuth callback failed");
+    return c.json({ error: "MCP authorization could not be completed; reconnect and try again" }, 422);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+});
+
 // POST /api/integrations/mcp/:slug/connect
 integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   const { id: userId } = c.get("authUser");
   const slug = c.req.param("slug");
   const provider = getMcpProvider(slug);
   if (!provider) throw new AppError(404, `Unknown provider: ${slug}`, "UNKNOWN_PROVIDER");
+  if (provider.authType === "oauth") throw new AppError(400, "Start the provider's OAuth flow instead", "OAUTH_REQUIRED");
 
   const body = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR");

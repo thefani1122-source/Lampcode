@@ -55,6 +55,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),
+  MCP_OAUTH_REDIRECT_URL: z.string().url().optional(),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
@@ -262,3 +263,4 @@ export const ALLOWED_ORIGINS = [
   ...(process.env["FRONTEND_ORIGIN"] ? [process.env["FRONTEND_ORIGIN"]] : []),
   ...(process.env["FRONTEND_URL"] ? [process.env["FRONTEND_URL"]] : []),
 ].filter(Boolean) as string[];
+
