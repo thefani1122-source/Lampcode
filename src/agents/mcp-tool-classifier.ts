@@ -39,6 +39,7 @@ export interface WriteMcpMeta {
   serverUrl: string;
   /** null when the token is embedded in the URL (mcp_url authType). */
   authToken: string | null;
+  authHeaders?: Record<string, string> | undefined;
   /** Original tool name on the MCP server (without the serverSlug__ prefix). */
   mcpToolName: string;
   /** How dangerous this call is taken to be (H2/H3). The strongest of what the
@@ -81,7 +82,7 @@ async function discoverServerTools(
   failures: McpDiscoveryFailure[],
 ): Promise<ClassifiedTool[]> {
   const client = new Client({ name: "lampcode-discovery", version: "1.0.0" });
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(server.authHeaders ?? {}) };
   if (server.authToken) headers["Authorization"] = `Bearer ${server.authToken}`;
 
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
@@ -220,6 +221,7 @@ export function buildReadToolDefinitions(
       serverSlug: t.serverSlug,
       serverUrl: server.url,
       authToken: server.authToken,
+      authHeaders: server.authHeaders,
       mcpToolName: t.toolName,
       tier: "read",
       capability,
@@ -304,6 +306,7 @@ export function buildWriteProxyDefinitions(
       serverSlug: t.serverSlug,
       serverUrl: server.url,
       authToken: server.authToken,
+      authHeaders: server.authHeaders,
       mcpToolName: t.toolName,
       tier,
       capability,
@@ -328,3 +331,4 @@ export function buildWriteProxyDefinitions(
 
   return { toolDefs, registry };
 }
+

@@ -10,7 +10,8 @@ import { encrypt, decrypt } from "../env-crypto.js";
 import { logger } from "../logger.js";
 import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
 import { getProvider } from "../../mcp/providers/index.js";
-import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
+import { getMcpProvider } from "../../mcp/registry.js";
+import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
@@ -671,6 +672,8 @@ export interface ActiveMcpServer {
   url: string;
   /** null for mcp_url authType — the token is already embedded in the URL */
   authToken: string | null;
+  /** Fully resolved auth headers shared by discovery and local execution. */
+  authHeaders?: Record<string, string> | undefined;
 }
 
 export interface ConnectedRestProvider {
@@ -735,9 +738,20 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       if (row.isCustom) {
         const url = creds["mcpServerUrl"];
         if (!url) continue;
-        const authType = creds["authType"] ?? "bearer_token";
-        const authToken = authType !== "none" && creds["token"] ? creds["token"] : null;
-        servers.push({ slug: row.providerSlug, name: creds["name"] ?? row.providerSlug, url, authToken });
+        const resolved = resolveCustomMcpAuth({
+          url,
+          authType: creds["authType"],
+          token: creds["token"],
+          headerName: creds["authHeader"],
+        });
+        if (!resolved) continue;
+        servers.push({
+          slug: row.providerSlug,
+          name: creds["name"] ?? row.providerSlug,
+          url: resolved.url,
+          authToken: null,
+          authHeaders: resolved.headers,
+        });
         continue;
       }
 
@@ -751,34 +765,12 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
         continue;
       }
 
-      const url = resolveServerUrl(provider, creds);
-      if (!url) {
+      const resolved = resolveMcpAuth(provider, creds);
+      if (!resolved) {
         logger.warn({ userId, slug: row.providerSlug }, "[mcp] could not resolve a server URL — skipped");
         continue;
       }
-
-      // mcp_url: token is embedded in the URL — no separate authorization_token
-      if (provider.authType === "mcp_url") {
-        servers.push({ slug: row.providerSlug, name: provider.name, url, authToken: null });
-        continue;
-      }
-
-      // All other real-MCP types: find the password field for the bearer token
-      const tokenKey =
-        provider.credentialFields.find((f) => f.type === "password")?.key ?? "api_key";
-      const authToken = creds[tokenKey] ?? "";
-      if (!authToken) {
-        // The silent version of this cost a full diagnostic cycle: the row was
-        // present, decryption worked, and the server still never reached a
-        // build. Names only — never the value.
-        logger.warn(
-          { userId, slug: row.providerSlug, expectedKey: tokenKey, storedKeys: Object.keys(creds) },
-          "[mcp] no credential under the expected key — skipped",
-        );
-        continue;
-      }
-
-      servers.push({ slug: row.providerSlug, name: provider.name, url, authToken });
+      servers.push({ slug: row.providerSlug, name: provider.name, url: resolved.url, authToken: null, authHeaders: resolved.headers });
     } catch (err) {
       logger.warn({ userId, slug: row.providerSlug, err }, "Failed to decrypt MCP creds");
     }
@@ -829,3 +821,4 @@ export async function getConnectedRestProviders(userId: string): Promise<Connect
 
   return providers;
 }
+

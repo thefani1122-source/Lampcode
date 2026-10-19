@@ -22,7 +22,7 @@ export interface McpProvider {
    *  admin_api    — platform-specific admin API, prompt-only
    *  basic_auth   — HTTP Basic auth, prompt-only
    */
-  authType: "bearer_token" | "api_key" | "mcp_url" | "webhook_url" | "rest_api" | "admin_api" | "basic_auth";
+  authType: "bearer_token" | "api_key" | "mcp_url" | "oauth" | "none" | "webhook_url" | "rest_api" | "admin_api" | "basic_auth";
   /** Custom HTTP header name when the server doesn't use Authorization: Bearer. */
   authHeader?: string;
   credentialFields: Array<{
@@ -73,16 +73,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "💳",
     description: "Manage payments, customers, subscriptions, and products via the Stripe MCP server",
     mcpServerUrl: "https://mcp.stripe.com",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "stripe_key",
-        label: "Stripe API Key",
-        type: "password",
-        placeholder: "sk_live_... or rk_live_...",
-        help: "Use a Restricted Key from dashboard.stripe.com/apikeys for least privilege",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -92,7 +84,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     category: "devtools",
     icon: "📋",
     description: "Create and manage issues, projects, and cycles via the Linear MCP server",
-    mcpServerUrl: "https://mcp.linear.app/sse",
+    mcpServerUrl: "https://mcp.linear.app/mcp",
     authType: "bearer_token",
     credentialFields: [
       {
@@ -113,7 +105,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "▲",
     description: "Deploy projects, manage domains, and view deployments via the Vercel MCP server",
     mcpServerUrl: "https://mcp.vercel.com",
-    authType: "bearer_token",
+    authType: "oauth",
     credentialFields: [
       {
         key: "vercel_token",
@@ -132,7 +124,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     category: "devtools",
     icon: "🌥️",
     description: "Manage Workers, KV, R2, and DNS records via the Cloudflare MCP server",
-    mcpServerUrl: "https://mcp.cloudflare.com/sse",
+    mcpServerUrl: "https://mcp.cloudflare.com/mcp",
     authType: "bearer_token",
     credentialFields: [
       {
@@ -153,16 +145,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🪲",
     description: "Query errors, manage issues, and view performance data via the Sentry MCP server",
     mcpServerUrl: "https://mcp.sentry.dev/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "sentry_token",
-        label: "Sentry Internal Integration Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create an Internal Integration at sentry.io/settings/ → Integrations",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -173,16 +157,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "📝",
     description: "Read and write pages, databases, and blocks via the Notion MCP server",
     mcpServerUrl: "https://mcp.notion.com/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "notion_token",
-        label: "Notion Integration Token",
-        type: "password",
-        placeholder: "secret_...",
-        help: "Create an integration at notion.com/profile/integrations and share pages with it",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -193,7 +169,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "⚙️",
     description: "Trigger and manage n8n workflows via your self-hosted n8n MCP endpoint",
     mcpServerUrl: (creds: Record<string, string>) =>
-      `${(creds["instance_url"] ?? "").replace(/\/+$/, "")}/mcp`,
+      `${(creds["instance_url"] ?? "").replace(/\/+$/, "")}/mcp-server/http`,
     authType: "bearer_token",
     credentialFields: [
       {
@@ -261,16 +237,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🎨",
     description: "Read Figma files, components, and design tokens via the Figma MCP server",
     mcpServerUrl: "https://mcp.figma.com/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "figma_access_token",
-        label: "Figma Personal Access Token",
-        type: "password",
-        placeholder: "figd_...",
-        help: "Create at figma.com → Account → Personal Access Tokens",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -281,17 +249,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🧵",
     description: "Generate UI designs from prompts and extract production-ready code",
     mcpServerUrl: "https://stitch.googleapis.com/mcp",
-    authType: "api_key",
-    authHeader: "X-Goog-Api-Key",
-    credentialFields: [
-      {
-        key: "stitch_api_key",
-        label: "Google Stitch API Key",
-        type: "password",
-        placeholder: "AIza...",
-        help: "console.cloud.google.com → APIs → Enable Stitch API → Credentials → Create API Key",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -526,7 +485,7 @@ export const INTERNAL_MCP_PROVIDERS: Record<string, McpProvider> = {
     category: "devtools",
     icon: "🔥",
     description: "Scrape and crawl any URL, extract structured data, search the web",
-    mcpServerUrl: "https://mcp.firecrawl.dev",
+    mcpServerUrl: "https://mcp.firecrawl.dev/v2/mcp",
     authType: "bearer_token",
     credentialFields: [{ key: "firecrawl_api_key", label: "Firecrawl API Key", type: "password", placeholder: "fc-..." }],
     supportsRealMCP: true,
@@ -540,8 +499,8 @@ export const INTERNAL_MCP_PROVIDERS: Record<string, McpProvider> = {
     icon: "🔍",
     description: "Semantic web search and content retrieval optimised for AI agents",
     mcpServerUrl: "https://mcp.exa.ai/mcp",
-    authType: "bearer_token",
-    credentialFields: [{ key: "exa_api_key", label: "Exa API Key", type: "password", placeholder: "..." }],
+    authType: "none",
+    credentialFields: [],
     supportsRealMCP: true,
     internal: true,
   },
@@ -562,3 +521,4 @@ export function resolveServerUrl(
   }
   return provider.mcpServerUrl;
 }
+

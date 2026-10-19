@@ -27,6 +27,7 @@ export interface McpCallTarget {
   serverUrl: string;
   /** null when the token is embedded in the URL (mcp_url authType). */
   authToken: string | null;
+  authHeaders?: Record<string, string> | undefined;
   /** The tool's real name on the server, without the serverSlug__ prefix. */
   mcpToolName: string;
 }
@@ -37,7 +38,7 @@ export async function callMcpTool(
   clientName = "lampcode-mcp",
 ): Promise<string> {
   const client = new Client({ name: clientName, version: "1.0.0" });
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(target.authHeaders ?? {}) };
   if (target.authToken !== null) headers["Authorization"] = `Bearer ${target.authToken}`;
   const transport = new StreamableHTTPClientTransport(new URL(target.serverUrl), {
     requestInit: { headers },
@@ -86,3 +87,4 @@ export async function callMcpTool(
     await client.close().catch(() => undefined);
   }
 }
+
