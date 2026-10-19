@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { formatImpact, impactAnalysis } from "../src/verify/impact.js";
 
 let failures = 0;
@@ -85,5 +86,47 @@ if (failures > 0) {
   console.error(`\n${failures} impact case(s) failed.`);
   process.exit(1);
 }
+
+// ── D1/D2 wiring: available on both provider paths, bounded, current files ──
+// Verified rather than rebuilt: both tools already existed. What was never
+// pinned is that the model can actually reach them, that they read the files as
+// they are NOW, and that neither can flood a round with output.
+{
+  const registry = readFileSync(new URL("../src/agents/tools/registry.ts", import.meta.url), "utf8");
+  const defs = readFileSync(new URL("../src/agents/tools.ts", import.meta.url), "utf8");
+  const dispatcher = readFileSync(new URL("../src/agents/dispatcher.ts", import.meta.url), "utf8");
+
+  for (const name of ["code_intel", "impact_analysis"]) {
+    ok(`${name} is executable`, registry.includes(`["${name}", `));
+    ok(`${name} is offered to agentic builds`, defs.indexOf(`name: "${name}"`) > defs.indexOf("export const AGENTIC_BUILD_TOOLS"));
+  }
+
+  // One tool list serves BOTH providers — the modal branch and the gateway
+  // branch read the same `gatewayRequest.tools`. That is why these tools are
+  // reachable on the OpenAI-compatible path that every build currently uses,
+  // and a second list would be a second place for one to go missing.
+  ok(
+    "one tool list is built for both provider branches",
+    dispatcher.includes("...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])") &&
+      dispatcher.includes('effectiveProvider === "modal"\n        ? modalStream(gatewayRequest'),
+  );
+  ok("and what was offered is logged, so availability is checkable afterwards", dispatcher.includes("Gateway request: tools offered"));
+
+  // Current files, not the build-start snapshot: an edit build that reasoned
+  // about the version it started from would answer confidently and wrongly.
+  for (const file of ["code-intel.ts", "impact-analysis.ts"]) {
+    const handler = readFileSync(new URL(`../src/agents/tools/${file}`, import.meta.url), "utf8");
+    ok(`${file} reads the current in-memory files`, handler.includes("currentProjectFiles(ctx.projectFiles, ctx.generatedFiles, ctx.deletedFiles)"));
+    ok(`${file} says so when there is nothing to read yet`, /no project files/i.test(handler));
+  }
+
+  // Bounded output, with the omission counted rather than hidden.
+  const intel = readFileSync(new URL("../src/verify/code-intel.ts", import.meta.url), "utf8");
+  const impact = readFileSync(new URL("../src/verify/impact.ts", import.meta.url), "utf8");
+  ok("code_intel caps its references", intel.includes("MAX_REFERENCES = 40") && intel.includes("referencesOmitted"));
+  ok("and clips each line", intel.includes("slice(0, 240)"));
+  ok("impact_analysis caps each list", impact.includes("MAX_ITEMS = 25") && impact.includes("omitted:"));
+}
+
 console.log("\nAll impact cases passed.");
 
