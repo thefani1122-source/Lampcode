@@ -1,7 +1,8 @@
 import type { BuildOutcome } from "../db/schema.js";
 
 type Gate = "page" | "types" | "tests";
-type GateStatus = "pass" | "fail" | "unavailable" | "none";
+type NonTestGateStatus = Exclude<BuildOutcome["checkPage"], "never">;
+type TestGateStatus = Exclude<BuildOutcome["checkTests"], "never">;
 
 type TerminalEvidence = {
   turnsExhausted: boolean;
@@ -22,7 +23,8 @@ export type BuildEvent =
   | { type: "tool/call"; name: string; round: number }
   | { type: "tool/result"; name: string; ok: boolean; round: number }
   | { type: "files/written"; paths: string[]; added: number; removed: number }
-  | { type: "verification/result"; gate: Gate; status: GateStatus }
+  | { type: "verification/result"; gate: "page" | "types"; status: NonTestGateStatus }
+  | { type: "verification/result"; gate: "tests"; status: TestGateStatus }
   | { type: "repair/applied"; kind: string }
   | { type: "turn/end"; round: number; costUsd: number }
   | ({ type: "build/end" } & TerminalEvidence)
@@ -53,7 +55,11 @@ export function projectOutcome(events: BuildEvent[]): BuildOutcome {
 
   const rounds = new Set<number>();
   const toolCalls: Record<string, number> = {};
-  const checks: Record<Gate, BuildOutcome["checkPage"] | BuildOutcome["checkTests"]> = {
+  const checks: {
+    page: BuildOutcome["checkPage"];
+    types: BuildOutcome["checkTypes"];
+    tests: BuildOutcome["checkTests"];
+  } = {
     page: "never",
     types: "never",
     tests: "never",
@@ -76,7 +82,9 @@ export function projectOutcome(events: BuildEvent[]): BuildOutcome {
         plannedFiles = event.files.length;
         break;
       case "verification/result":
-        checks[event.gate] = event.status;
+        if (event.gate === "page") checks.page = event.status;
+        else if (event.gate === "types") checks.types = event.status;
+        else checks.tests = event.status;
         stale[event.gate] = 0;
         break;
       case "files/written":
