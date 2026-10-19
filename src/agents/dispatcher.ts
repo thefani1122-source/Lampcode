@@ -15,6 +15,9 @@ import {
 import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
+import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
+import { visionSupported } from "./vision.js";
+import type { BuildEvent } from "../verify/outcome-projection.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import {
   TOOL_DEFINITIONS,
@@ -87,6 +90,11 @@ export const dispatchOptionsSchema = z.object({
 export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   contextFiles?: Array<{ path: string; content: string }> | undefined;
   enableTools?: boolean | undefined;
+  /** Where to record the ordered build-event stream (C1/C2). Called at the real
+   *  points in the loop — a round starting and ending, a tool asked for and a
+   *  tool answered — because order is the whole value of the stream and only
+   *  this loop knows it. Never allowed to throw into the loop. */
+  onEvent?: ((event: BuildEvent) => void) | undefined;
   /** Required when enableTools is true — lets the in-loop cost check see the
    *  build's spend so far, not just this dispatch's own turns. */
   costGuard?: { cumulativeUsd: number; maxUsd: number } | undefined;
@@ -171,6 +179,11 @@ export interface DispatchResult {
   generatedFiles: Record<string, string>;
   /** Paths deleted during this dispatch; projectFiles remains the build-start snapshot. */
   deletedFiles: string[];
+  /** Tool names the model TYPED as text instead of calling, across every
+   *  round. Normally empty. Non-empty means a round produced another harness's
+   *  tool syntax as prose: it was kept out of the user's chat, nothing ran,
+   *  and the model was told once how tools work here. See pseudo-tools.ts. */
+  pseudoToolCalls: string[];
   /** How many model round-trips the tool loop actually used. 1 on every
    *  non-tool dispatch. Recorded so a build can be scored afterwards: rounds
    *  is the difference between a model that wrote and verified once and one
@@ -382,6 +395,7 @@ export class AgentDispatcher {
     let readToolDefs: typeof TOOL_DEFINITIONS = [];
     let readMcpRegistry: WriteProxyRegistry = new Map();
     let mcpToolsOmitted = 0;
+    const mcpEscalated: string[] = [];
     if (enableTools && mcpServers && mcpServers.length > 0) {
       for (const s of mcpServers) {
         mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
@@ -420,6 +434,11 @@ export class AgentDispatcher {
       if (effectiveProvider === "modal") {
         const readTools = buildReadToolDefinitions(report, mcpServers);
         readMcpRegistry = readTools.registry;
+        // Tools the classifier called read-only that the capability map says
+        // are destructive. They are not dropped — they moved to the approval
+        // gate (H2/H3 escalates, never relaxes). Logged because a tool silently
+        // changing path is exactly the kind of thing nobody notices.
+        if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
         const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
         readToolDefs = cappedReads.kept;
         mcpToolsOmitted += cappedReads.omitted;
@@ -433,6 +452,7 @@ export class AgentDispatcher {
           writeProxyCount: writeProxyDefs.length,
           readToolCount: readToolDefs.length,
           mcpToolsOmitted,
+          mcpEscalated,
         },
         "MCP tool classification for this dispatch",
       );
@@ -574,10 +594,22 @@ export class AgentDispatcher {
     const maxRounds = agenticBuild ? config.AGENTIC_MAX_TURNS : MAX_TOOL_ROUNDTRIPS;
     const generatedFiles: Record<string, string> = {};
     const deletedFiles = new Set<string>();
+    const pseudoToolCalls: string[] = [];
+    // Screenshots a tool took for the model to LOOK at (F2). Drained into the
+    // next user turn after each round; only ever filled when the provider has
+    // been shown to accept images.
+    const pendingImages = { value: [] as Array<{ mediaType: string; dataBase64: string; label: string }> };
+    let pseudoCorrected = false;
+    // Guarded: an event sink must never be able to fail a build.
+    const emitEvent = (event: BuildEvent): void => {
+      if (!options.onEvent) return;
+      try { options.onEvent(event); } catch { /* evidence, not part of the build */ }
+    };
     const checkpoints = new Map<string, Checkpoint>();
 
     for (let round = 1; round <= maxRounds; round++) {
       roundsUsed = round;
+      emitEvent({ type: "turn/start", round });
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
@@ -654,7 +686,53 @@ export class AgentDispatcher {
         }
       }
 
+      emitEvent({
+        type: "turn/end",
+        round,
+        costUsd: this.tracker.computeUsage(
+          effectiveProvider === "modal"
+            ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? "openai-compatible")
+            : model,
+          streamResult.inputTokens, streamResult.outputTokens, streamResult.cachedInputTokens,
+          streamResult.cacheWriteTokens,
+        ).costUsd,
+      });
+
       const wantsTools = streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
+
+      // A round that TYPED a tool call made no tool call. The markup never
+      // reached the user (stream-handler filters it), but the round produced
+      // nothing else either — no fences, no tool_use — so breaking here ends
+      // the build on a turn where the model believed it was using a tool.
+      // Correct it once and let it try again; bounded to a single retry and
+      // still inside the cost guard above. A round that typed markup AND wrote
+      // files is left alone: that one has usable output and a retry would only
+      // cost a round.
+      if (streamResult.pseudoToolNames.length > 0) {
+        for (const n of streamResult.pseudoToolNames) {
+          if (!pseudoToolCalls.includes(n)) pseudoToolCalls.push(n);
+        }
+      }
+      if (
+        !wantsTools &&
+        streamResult.pseudoToolNames.length > 0 &&
+        !pseudoCorrected &&
+        round < maxRounds &&
+        !/```/.test(streamResult.content)
+      ) {
+        pseudoCorrected = true;
+        logger.warn(
+          { sessionId, agentType, round, typed: streamResult.pseudoToolNames },
+          "Tool loop: the model typed tool-call syntax instead of calling a tool — correcting once",
+        );
+        messages.push({
+          role: "assistant",
+          content: streamResult.content || "(no output)",
+        });
+        messages.push({ role: "user", content: PSEUDO_TOOL_CORRECTION });
+        continue;
+      }
+
       if (!wantsTools) break; // model is done — this round's content is final
 
       if (round === maxRounds) {
@@ -699,6 +777,14 @@ export class AgentDispatcher {
       // turn that can issue fresh write requests if earlier ones were approved.
       const writeDenied = { value: false };
       for (const tc of streamResult.toolCalls) {
+        emitEvent({ type: "tool/call", name: tc.name, round });
+        // Snapshots for the event stream: what this one tool changed, so a
+        // write that lands after a gate is recorded in that ORDER rather than
+        // inferred later from a mutable object with one slot per gate.
+        // References, not copies — a handler assigns a new string on write, so
+        // identity is enough and nothing large is duplicated per tool call.
+        const filesBefore = new Map(Object.entries(generatedFiles));
+        const deletedBefore = new Set(deletedFiles);
         const result = await executeTool(tc.name, tc.arguments, {
           contextFiles,
           sessionId,
@@ -717,6 +803,7 @@ export class AgentDispatcher {
                 gateResults,
                 lastRender,
                 interactionsProbed,
+                pendingImages,
                 writeCounter,
                 churn,
                 deadCode,
@@ -734,6 +821,37 @@ export class AgentDispatcher {
         }).catch(
           (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
         );
+        emitEvent({ type: "tool/result", name: tc.name, ok: !result.startsWith("Error:"), round });
+
+        // A gate's verdict, at the moment it was given.
+        // GateOutcome already excludes "never" — the absence of a value IS
+        // "the model never called it", which is why these are optional.
+        if (tc.name === "check_page" && gateResults.checkPage) {
+          emitEvent({ type: "verification/result", gate: "page", status: gateResults.checkPage });
+        } else if (tc.name === "check_types" && gateResults.checkTypes) {
+          emitEvent({ type: "verification/result", gate: "types", status: gateResults.checkTypes });
+        } else if (tc.name === "run_tests" && gateResults.checkTests) {
+          emitEvent({ type: "verification/result", gate: "tests", status: gateResults.checkTests });
+        }
+
+        // What this tool actually changed. Emitted for ANY tool that touched a
+        // file, not only the write tools: the point is that a verdict above is
+        // now about code the build no longer has.
+        const touched = Object.keys(generatedFiles).filter(
+          (path) => filesBefore.get(path) !== generatedFiles[path],
+        );
+        const gone = [...deletedFiles].filter((path) => !deletedBefore.has(path));
+        if (touched.length > 0 || gone.length > 0) {
+          const lines = (text: string | undefined): number => (text ? text.split("\n").length : 0);
+          emitEvent({
+            type: "files/written",
+            paths: [...touched, ...gone],
+            added: touched.reduce((sum, path) => sum + lines(generatedFiles[path]), 0),
+            removed:
+              touched.reduce((sum, path) => sum + lines(filesBefore.get(path)), 0) +
+              gone.reduce((sum, path) => sum + lines(filesBefore.get(path)), 0),
+          });
+        }
         resultBlocks.push({ type: "tool_result", tool_use_id: tc.id, content: result });
         try {
           getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
@@ -752,6 +870,22 @@ export class AgentDispatcher {
           // WS server unavailable — non-fatal, matches the ws() helper's fallback in build.ts
         }
       }
+      // Any screenshot a tool took this round rides along with the results, as
+      // its own image block. The label is the text beside it: an image with no
+      // question attached is not an instruction to look at anything.
+      if (pendingImages.value.length > 0) {
+        if (visionSupported()) {
+          for (const shot of pendingImages.value) {
+            resultBlocks.push({
+              type: "image",
+              source: { type: "base64", media_type: shot.mediaType, data: shot.dataBase64 },
+            });
+            resultBlocks.push({ type: "text", text: `Above: ${shot.label}.` });
+          }
+        }
+        pendingImages.value.length = 0;
+      }
+
       messages.push({ role: "user", content: resultBlocks });
     }
 
@@ -809,6 +943,7 @@ export class AgentDispatcher {
       finalContent: lastRoundContent,
       turnsExhausted,
       rounds: roundsUsed,
+      pseudoToolCalls,
       gateResults,
       churn,
       deletedFiles: [...deletedFiles],

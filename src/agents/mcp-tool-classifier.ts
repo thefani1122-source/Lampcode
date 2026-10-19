@@ -2,6 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
+import { mapTool, type Capability } from "../mcp/capabilities.js";
+import { describeTier, destructiveByName, needsApproval, strongestTier, tierFor, type Tier } from "../mcp/tiers.js";
 import type { ToolDefinition } from "./model-gateway.js";
 
 // ── Read-only classification ──────────────────────────────────────────────────
@@ -39,6 +41,14 @@ export interface WriteMcpMeta {
   authToken: string | null;
   /** Original tool name on the MCP server (without the serverSlug__ prefix). */
   mcpToolName: string;
+  /** How dangerous this call is taken to be (H2/H3). The strongest of what the
+   *  classifier established and what the capability map says — escalation only,
+   *  see strongestTier(). Read tools carry "read"; everything in the write
+   *  registry carries "approval" or "strong-approval". */
+  tier: Tier;
+  /** The capability the map recognised, or null when it has never heard of this
+   *  tool. Null does NOT remove the tool and does not weaken its tier. */
+  capability: Capability | null;
 }
 
 /** Maps proxy tool name (e.g. "github__create_issue") → execution metadata. */
@@ -171,13 +181,35 @@ export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<Mc
 export function buildReadToolDefinitions(
   report: ClassifiedTool[],
   servers: ActiveMcpServer[],
-): { toolDefs: ToolDefinition[]; registry: WriteProxyRegistry } {
+): { toolDefs: ToolDefinition[]; registry: WriteProxyRegistry; escalated: string[] } {
   const serversBySlug = new Map(servers.map((s) => [s.slug, s]));
   const toolDefs: ToolDefinition[] = [];
   const registry: WriteProxyRegistry = new Map();
+  const escalated: string[] = [];
 
   for (const t of report) {
     if (!t.allowed) continue;
+
+    // ── H2/H3: escalation only ────────────────────────────────────────────
+    // This tool reached here because the server annotated it read-only or its
+    // name matched a read verb. If the capability map independently says it is
+    // destructive — `deploy.rollback`, or a name carrying delete/drop/destroy/
+    // rollback/force — then one of the two is wrong about a call that cannot be
+    // undone, and the safe reading wins: it leaves the auto-executed read path
+    // and goes behind the approval gate instead.
+    //
+    // An UNMAPPED tool is left exactly as the classifier had it. `tierFor`
+    // answers "approval" for a null capability, which is right as its own
+    // contract — nothing proved the tool safe — but applying that here would
+    // put an approval prompt in front of every `get_*` on every connected
+    // service, because the map covers four tools. That is a fact about the map.
+    const capability = mapTool(t.serverSlug, t.toolName);
+    const escalation = capability === null ? "read" : tierFor(capability, t.toolName);
+    const tier = strongestTier(escalation, destructiveByName(t.toolName) ? "strong-approval" : "read");
+    if (needsApproval(tier)) {
+      escalated.push(`${t.serverSlug}__${t.toolName}:${tier}`);
+      continue;
+    }
     const server = serversBySlug.get(t.serverSlug);
     if (!server) continue;
 
@@ -189,6 +221,8 @@ export function buildReadToolDefinitions(
       serverUrl: server.url,
       authToken: server.authToken,
       mcpToolName: t.toolName,
+      tier: "read",
+      capability,
     });
     toolDefs.push({
       name: toolName,
@@ -200,7 +234,13 @@ export function buildReadToolDefinitions(
     });
   }
 
-  return { toolDefs, registry };
+  if (escalated.length > 0) {
+    logger.warn(
+      { escalated },
+      "[mcp-tool-classifier] read-classified tool(s) escalated behind the approval gate by capability/tier",
+    );
+  }
+  return { toolDefs, registry, escalated };
 }
 
 /**
@@ -246,17 +286,39 @@ export function buildWriteProxyDefinitions(
 
     // Prefix with serverSlug to prevent name collisions across servers.
     const proxyName = `${t.serverSlug}__${t.toolName}`;
+    // Everything here already requires approval. The capability map can only
+    // make that STRONGER: `deploy.rollback`, or a name carrying delete/drop/
+    // destroy/rollback/force, is a call that may not be undoable, and the
+    // record and the approval payload both say so. There is no weaker outcome
+    // available on this path — an unmapped tool stays at "approval", which is
+    // exactly where it already was.
+    const capability = mapTool(t.serverSlug, t.toolName);
+    // `tierFor` short-circuits on a null capability before it looks at the
+    // name, so the name is asked separately — an unmapped `rollback_deployment`
+    // must not read like an unmapped `create_label`.
+    const tier = strongestTier(
+      strongestTier("approval", tierFor(capability, t.toolName)),
+      destructiveByName(t.toolName) ? "strong-approval" : "approval",
+    );
     registry.set(proxyName, {
       serverSlug: t.serverSlug,
       serverUrl: server.url,
       authToken: server.authToken,
       mcpToolName: t.toolName,
+      tier,
+      capability,
     });
     toolDefs.push({
       name: proxyName,
       description:
-        `[Requires user approval] Execute ${t.toolName} on the ${t.serverSlug} connected service. ` +
-        `You will be paused until the user approves or denies this action.`,
+        (tier === "strong-approval"
+          ? `[Requires explicit user approval — POSSIBLY IRREVERSIBLE] `
+          : `[Requires user approval] `) +
+        `Execute ${t.toolName} on the ${t.serverSlug} connected service. ` +
+        `You will be paused until the user approves or denies this action.` +
+        (tier === "strong-approval"
+          ? ` ${describeTier(tier)} Say what it will do and why before you call it.`
+          : ""),
       input_schema: {
         type: "object",
         ...(t.inputSchema ?? {}),

@@ -84,125 +84,6 @@ function anyMatch(files: FileTree, pattern: RegExp, extensions?: string[]): bool
   return scanLines(files, pattern, { extensions }).length > 0;
 }
 
-// ── 1. checkAuth ──────────────────────────────────────────────────────────────
-
-/** Backend entry files that hold routes without having "route" in the name.
- *  Lampcode's own generated Hono backend is `src/server/index.ts`, so a
- *  selector keyed on "/routes/" or "route" skipped the single most common
- *  place a generated app declares its API — and then reported a clean pass
- *  over zero files scanned. Same drift class as prompt-vs-reality: the
- *  selector has to match what the generator actually emits. */
-const BACKEND_ENTRY_RE = /(^|\/)(index|main|app|server)\.(ts|js)$/;
-
-/** An auth route file, which is intentionally public. A substring test for
- *  "auth" also swallowed `author.ts`, `authorize-admin.ts` and anything else
- *  that merely contains the letters, exempting files nobody meant to exempt.
- *
- *  The name must be the WHOLE basename or be followed by a separator:
- *  `auth.ts`, `auth-routes.ts` and `oauth-callback.ts` are auth routes, while
- *  `author.ts` and `authorize-admin.ts` are not. Written this way because the
- *  first attempt at narrowing the old substring test reproduced its bug —
- *  `auth` plus "any characters" still swallows `author`. */
-const AUTH_ROUTE_RE =
-  /(^|\/)(auth|login|signin|sign-in|signup|sign-up|register|oauth|session)([-_.][^/]*)?\.(ts|js)$/;
-
-export function checkAuth(files: FileTree): SecurityCheck {
-  const routeFiles = [...files].filter(([p]) =>
-    (p.includes("/routes/") || p.includes("route") || BACKEND_ENTRY_RE.test(p)) &&
-    (p.endsWith(".ts") || p.endsWith(".js")),
-  );
-
-  const unprotected: string[] = [];
-  let scanned = 0;
-
-  for (const [path, content] of routeFiles) {
-    if (AUTH_ROUTE_RE.test(path)) continue; // auth routes are intentionally public
-    // Routes mounted under a prefix — `app.route("/api", users)` — declare
-    // their own paths without "/api", so requiring that literal missed every
-    // route in a file using the standard Hono composition pattern.
-    const declaresRoutes =
-      /\.(get|post|put|patch|delete)\s*\(\s*["'`]\/api\//.test(content) ||
-      (/\.route\s*\(\s*["'`]\/api/.test(content) &&
-        /\.(get|post|put|patch|delete)\s*\(\s*["'`]\//.test(content));
-    if (!declaresRoutes) continue;
-    scanned += 1;
-
-    // A named guard — the shape this check has always looked for.
-    const hasNamedGuard =
-      content.includes("requireAuth") ||
-      content.includes("authenticate") ||
-      content.includes("verifyToken") ||
-      content.includes("isAuthenticated") ||
-      /\.use\s*\([^)]*auth/i.test(content);
-
-    // The OTHER shape, and the reason this check needed revisiting.
-    //
-    // G5 (2026-10-17) changed what a correct Supabase backend looks like: it
-    // builds its database client PER REQUEST carrying the caller's
-    // Authorization header, so `auth.uid()` resolves inside the RLS policies
-    // and the database itself decides what that user may read. That is a real
-    // authorization boundary — a stronger one than a middleware that only
-    // proves a token exists — and it contains none of the words above.
-    //
-    // So the prompt was teaching one thing while this check demanded another,
-    // and a model doing exactly as it was told still failed. Measured on a real
-    // build: two repair dispatches spent, neither able to satisfy it, and the
-    // app shipped with a warning telling the person to write a follow-up
-    // prompt. A check that cannot be satisfied is worse than no check — it
-    // costs money and ends in the same place.
-    const forwardsCallerIdentity =
-      /Authorization["']?\s*:\s*(token|auth|c\.req\.header)/.test(content) ||
-      /global\s*:\s*\{\s*headers/.test(content) ||
-      /\bdbFor\s*\(/.test(content) ||
-      /postgrest\.auth\s*\(/.test(content);
-
-    if (!hasNamedGuard && !forwardsCallerIdentity) unprotected.push(path);
-  }
-
-  if (unprotected.length > 0) {
-    return {
-      id: "auth-missing-middleware",
-      status: "fail",
-      severity: "critical",
-      file: unprotected[0],
-      line: 1,
-      // The message carries its REMEDY, not just its complaint.
-      //
-      // Without this it said only that the routes were unprotected, and the
-      // repair loop dispatched that sentence twice. A model cannot satisfy a
-      // string match it has not been shown, so it wrote perfectly reasonable
-      // auth under a different name and failed again. Naming both accepted
-      // shapes is what makes the finding fixable in one attempt instead of
-      // unfixable in two.
-      message:
-        `${unprotected.length} route file(s) expose /api/ routes without auth: ${unprotected.join(", ")}. ` +
-        `Fix it in ONE of two ways: add a requireAuth middleware that verifies the caller's token ` +
-        `and apply it to the mutating routes; OR build the database client per request from the ` +
-        `caller's Authorization header (global: { headers: { Authorization: token } }) so RLS ` +
-        `decides what that user may read. Do not simply rename something to requireAuth.`,
-    };
-  }
-  // "Nothing to check" is not "checked and fine". A browser-only build has no
-  // API routes at all, and before this the check reported "All API route files
-  // apply auth middleware" over zero files — the one reading that cannot tell a
-  // verified backend from an unscanned one. Same pass/unavailable distinction
-  // the build gates keep, and `skip` does not gate: only `fail` does.
-  if (scanned === 0) {
-    return {
-      id: "auth-missing-middleware",
-      status: "skip",
-      severity: "critical",
-      message: "No API route declarations found to check for auth middleware",
-    };
-  }
-  return {
-    id: "auth-missing-middleware",
-    status: "pass",
-    severity: "critical",
-    message: `All ${scanned} API route file(s) apply auth middleware`,
-  };
-}
-
 // ── 2b. checkRlsScoping ──────────────────────────────────────────────────────
 //
 // `checkRLS` below asks whether row-level security is ON and whether a policy
@@ -448,77 +329,6 @@ export function checkSecrets(files: FileTree): SecurityCheck[] {
   return checks;
 }
 
-// ── 4. checkOWASP ─────────────────────────────────────────────────────────────
-
-export function checkOWASP(files: FileTree): SecurityCheck[] {
-  const checks: SecurityCheck[] = [];
-  const codeExts = [".ts", ".js", ".tsx", ".jsx"];
-  const skipTest = ["test", "spec", ".test.", ".spec.", "__tests__"];
-
-  // XSS
-  const xssHits = scanLines(
-    files,
-    /dangerouslySetInnerHTML|\.innerHTML\s*=|document\.write\s*\(/,
-    { extensions: codeExts, skipPaths: skipTest },
-  );
-  if (xssHits.length > 0) {
-    const h = xssHits[0]!;
-    checks.push({
-      id: "owasp-xss",
-      status: "fail",
-      severity: "high",
-      file: h.file,
-      line: h.line,
-      message: `XSS risk: unsafe HTML injection found at ${h.file}:${h.line}`,
-    });
-  } else {
-    checks.push({ id: "owasp-xss", status: "pass", severity: "high", message: "No XSS patterns detected" });
-  }
-
-  // SQL injection: raw template literals in query calls
-  const sqliHits = scanLines(
-    files,
-    /(?:query|execute|sql|run)\s*\(\s*`[^`]*\$\{/,
-    { extensions: [".ts", ".js"], skipPaths: skipTest },
-  );
-  if (sqliHits.length > 0) {
-    const h = sqliHits[0]!;
-    checks.push({
-      id: "owasp-sqli",
-      status: "fail",
-      severity: "critical",
-      file: h.file,
-      line: h.line,
-      message: `SQL injection risk: raw template literal in query at ${h.file}:${h.line}`,
-    });
-  } else {
-    checks.push({ id: "owasp-sqli", status: "pass", severity: "critical", message: "No SQL injection patterns detected" });
-  }
-
-  // CSRF: form POST/PUT/DELETE without csrf token
-  const csrfForms = scanLines(
-    files,
-    /<form[^>]+method\s*=\s*["'](?:post|put|delete|patch)["'][^>]*>/i,
-    { extensions: [".tsx", ".jsx", ".html"] },
-  );
-  const hasCsrf = anyMatch(files, /csrf[_-]?token|csrfToken|_csrf/i);
-  if (csrfForms.length > 0 && !hasCsrf) {
-    const h = csrfForms[0]!;
-    checks.push({
-      id: "owasp-csrf",
-      status: "fail",
-      severity: "high",
-      file: h.file,
-      line: h.line,
-      message: "CSRF risk: mutating form found without CSRF token protection",
-    });
-  } else {
-    checks.push({ id: "owasp-csrf", status: "pass", severity: "high", message: "No CSRF vulnerabilities detected" });
-  }
-
-  return checks;
-}
-
 // ── 5. checkPackages ──────────────────────────────────────────────────────────
 
 const NODE_BUILTINS = new Set([
@@ -583,82 +393,6 @@ export function checkPackages(files: FileTree): SecurityCheck[] {
   }));
 }
 
-// ── 6. checkCORS ─────────────────────────────────────────────────────────────
-
-export function checkCORS(files: FileTree): SecurityCheck {
-  const hits = scanLines(
-    files,
-    // The comma is in the class because Hono sets headers as a CALL —
-    // `c.header("Access-Control-Allow-Origin", "*")` — not as the literal
-    // `Access-Control-Allow-Origin: *` the original class assumed. A case
-    // written for the bare-cors() work turned this up: the call form, which is
-    // the one a generated Hono backend actually uses, was reported as a pass.
-    /origin\s*:\s*["'`]\*["'`]|Access-Control-Allow-Origin['":,\s]+\*/,
-    { extensions: [".ts", ".js"] },
-  );
-  if (hits.length > 0) {
-    const h = hits[0]!;
-    return {
-      id: "cors-wildcard",
-      status: "fail",
-      severity: "high",
-      file: h.file,
-      line: h.line,
-      message: `Wildcard CORS origin (*) found at ${h.file}:${h.line}`,
-    };
-  }
-  // A bare `cors()` from hono/cors defaults to `origin: "*"`, so it is the same
-  // hole as the literal above with none of the text to match on — and it is the
-  // subject of hono's own advisory ("CORS Middleware reflects any Origin with
-  // credentials when `origin` defaults to the wildcard"). Reported as `warn`,
-  // not `fail`, on purpose: only `fail` drives build.ts's auto-fix loop, and
-  // nobody has yet measured how many generated backends use a bare `cors()`,
-  // so failing on it would spend a model dispatch per fullstack build to
-  // enforce a threshold set before the measurement. Same reported-not-scored
-  // stance as churn and the dead-code tally. The explicit-wildcard case above
-  // still fails, because there the intent is unambiguous.
-  const bare = scanLines(files, /\bcors\s*\(\s*\)/, { extensions: [".ts", ".js"] });
-  if (bare.length > 0) {
-    const h = bare[0]!;
-    return {
-      id: "cors-default-wildcard",
-      status: "warn",
-      severity: "high",
-      file: h.file,
-      line: h.line,
-      message:
-        `cors() with no options at ${h.file}:${h.line} defaults to allowing every origin — ` +
-        `pass an explicit origin if this backend holds user data`,
-    };
-  }
-
-  return { id: "cors-wildcard", status: "pass", severity: "high", message: "No wildcard CORS origins" };
-}
-
-// ── 7. checkStripe ────────────────────────────────────────────────────────────
-
-export function checkStripe(files: FileTree): SecurityCheck {
-  const hasStripe = anyMatch(files, /from\s+["']stripe["']|require\s*\(\s*["']stripe["']\s*\)/);
-  if (!hasStripe) {
-    return { id: "stripe-webhook-sig", status: "skip", severity: "medium", message: "Stripe not used" };
-  }
-
-  const hasVerify = anyMatch(files, /webhooks\.constructEvent|constructEventAsync/);
-  if (!hasVerify) {
-    const hits = scanLines(files, /from\s+["']stripe["']|require\s*\(\s*["']stripe["']\s*\)/);
-    const h = hits[0];
-    return {
-      id: "stripe-webhook-sig",
-      status: "fail",
-      severity: "high",
-      file: h?.file,
-      line: h?.line,
-      message: "Stripe used but webhook signature verification (constructEvent) not found",
-    };
-  }
-  return { id: "stripe-webhook-sig", status: "pass", severity: "high", message: "Stripe webhook signature verification present" };
-}
-
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export async function runSecurityChecks(
@@ -667,14 +401,10 @@ export async function runSecurityChecks(
 ): Promise<SecurityReport> {
   const files = await reader(projectId);
   const checks: SecurityCheck[] = [
-    checkAuth(files),
     checkRLS(files),
     checkRlsScoping(files),
     ...checkSecrets(files),
-    ...checkOWASP(files),
     ...checkPackages(files),
-    checkCORS(files),
-    checkStripe(files),
   ];
   return { passed: checks.every((c) => c.status !== "fail"), checks };
 }

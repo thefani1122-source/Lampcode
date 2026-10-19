@@ -22,6 +22,8 @@ import { impactAnalysisHandler } from "./impact-analysis.js";
 import { readFileHandler } from "./read-file.js";
 import { fetchReferenceHandler } from "./fetch-reference.js";
 import { readLogsHandler } from "./read-logs.js";
+import { webSearchHandler } from "./web-search.js";
+import { lookAtPageHandler } from "./look-at-page.js";
 
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -61,5 +63,7 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["read_file", readFileHandler],
   ["fetch_reference", fetchReferenceHandler],
   ["read_logs", readLogsHandler],
+  ["web_search", webSearchHandler],
+  ["look_at_page", lookAtPageHandler],
 ]);
 

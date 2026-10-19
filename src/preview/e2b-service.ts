@@ -11,6 +11,8 @@ import type { FullstackFramework } from "../agents/prompt-builder.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
 import type { InteractionFinding } from "../verify/interactions.js";
 import { RENDER_SCRIPT, parseRenderReport } from "../verify/render.js";
+import { STORAGE_SCRIPT } from "../verify/storage-script.js";
+import { parseStorageSnapshot, type StorageSnapshot } from "../verify/storage.js";
 import type { RenderReport } from "../verify/render.js";
 
 /**
@@ -924,19 +926,69 @@ export async function checkRender(
 export async function checkInteractions(
   projectId: string,
   routes: string[] = ["/"],
-): Promise<{ findings: InteractionFinding[]; ran: boolean }> {
+): Promise<{ findings: InteractionFinding[]; ran: boolean; storage: StorageSnapshot }> {
   const sandbox = sandboxes.get(projectId);
-  if (!sandbox) return { findings: [], ran: false };
+  if (!sandbox) return { findings: [], ran: false, storage: EMPTY_STORAGE };
   try {
     await sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT);
     const r = await sandbox.commands.run(
       `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))}`,
       { timeoutMs: 90_000 },
     );
-    return { findings: parseInteractionReport(r.stdout), ran: true };
+    // The probe prints its findings, then — on a second line behind a marker —
+    // what the app had persisted at the moment it finished clicking. Split
+    // rather than parsed together, so the findings line keeps the exact shape
+    // parseInteractionReport already has cases for.
+    const { report, storage } = splitInteractionStdout(r.stdout);
+    return { findings: parseInteractionReport(report), ran: true, storage };
   } catch (err) {
     logger.warn({ projectId, err }, "[e2b] interaction probe unavailable — controls remain unverified");
-    return { findings: [], ran: false };
+    return { findings: [], ran: false, storage: EMPTY_STORAGE };
+  }
+}
+
+const EMPTY_STORAGE: StorageSnapshot = { local: [], session: [], indexedDb: [], ran: false };
+
+/** Separate the findings line from the `STORAGE:`-marked snapshot line. */
+export function splitInteractionStdout(stdout: string): { report: string; storage: StorageSnapshot } {
+  if (typeof stdout !== "string") return { report: "", storage: EMPTY_STORAGE };
+  const kept: string[] = [];
+  let storage = EMPTY_STORAGE;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.startsWith("STORAGE:")) {
+      // Last one wins; the probe prints at most one, and a partial line parses
+      // to ran:false rather than throwing.
+      storage = parseStorageSnapshot(line.slice("STORAGE:".length));
+      continue;
+    }
+    kept.push(line);
+  }
+  return { report: kept.join("\n"), storage };
+}
+
+/**
+ * Read stored client state from a fresh page load.
+ *
+ * The interaction probe's snapshot is strictly better evidence — it sees what a
+ * CLICK persisted — so this is the fallback for when that probe did not run. A
+ * fresh browser only observes what the app writes on load, and the caller
+ * records which of the two produced the snapshot rather than treating them as
+ * the same fact. Never throws, never fails a build.
+ */
+export async function captureStorage(projectId: string, route = "/"): Promise<StorageSnapshot> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return EMPTY_STORAGE;
+  try {
+    await sandbox.files.write(`${TOOLS_DIR}/lampcode-storage.mjs`, STORAGE_SCRIPT);
+    const framework = sandboxFrameworks.get(projectId) ?? "react";
+    const r = await sandbox.commands.run(
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-storage.mjs http://localhost:${devPort(framework)} ${JSON.stringify(route)}`,
+      { timeoutMs: 60_000 },
+    );
+    return parseStorageSnapshot(r.stdout.trim().split(/\r?\n/).at(-1) ?? "");
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] storage capture unavailable — client state remains unobserved");
+    return EMPTY_STORAGE;
   }
 }
 

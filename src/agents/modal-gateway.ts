@@ -13,6 +13,7 @@
  * at the dispatcher level (see dispatcher.ts), not as a hidden internal path.
  */
 
+import { noteImageRejection } from "./vision.js";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import {
@@ -92,6 +93,15 @@ function toOpenAiTools(tools: ToolDefinition[]): unknown[] {
  * Mirrors exactly the message construction dispatcher.ts's tool round-trip
  * loop does (assistantBlocks/resultBlocks — see dispatcher.ts:429-473).
  */
+/** True when an outgoing OpenAI-shaped message carries an image part. */
+function hasImagePart(message: unknown): boolean {
+  const content = (message as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return false;
+  return content.some(
+    (part) => (part as { type?: unknown } | null)?.type === "image_url",
+  );
+}
+
 function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
   const out: unknown[] = [];
 
@@ -128,14 +138,36 @@ function toOpenAiMessages(messages: ChatMessage[]): unknown[] {
     // blocks (not produced by dispatcher.ts today, handled defensively) become
     // a plain user message appended after.
     const textParts: string[] = [];
+    const imageParts: unknown[] = [];
     for (const b of blocks) {
       if (b.type === "tool_result") {
         out.push({ role: "tool", tool_call_id: b.tool_use_id, content: b.content });
       } else if (b.type === "text") {
         textParts.push(b.text);
+      } else if (b.type === "image") {
+        // The OpenAI-compatible vision shape: a data URI in an image_url part.
+        // Dropping this silently is what the function used to do, and a
+        // screenshot the model never received would have looked exactly like a
+        // model that could not see anything wrong with the page.
+        imageParts.push({
+          type: "image_url",
+          image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` },
+        });
       }
     }
-    if (textParts.length > 0) out.push({ role: "user", content: textParts.join("") });
+    if (imageParts.length > 0) {
+      // A multi-part user message: the images plus whatever text came with
+      // them. Both are needed — an image with no instruction is not a question.
+      out.push({
+        role: "user",
+        content: [
+          ...imageParts,
+          ...(textParts.length > 0 ? [{ type: "text", text: textParts.join("") }] : []),
+        ],
+      });
+    } else if (textParts.length > 0) {
+      out.push({ role: "user", content: textParts.join("") });
+    }
   }
 
   return out;
@@ -343,6 +375,13 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
   if (!response.ok || !response.body) {
     clearTimeout(timeout);
     const text = await response.text().catch(() => "");
+    // A model that cannot see refuses the whole request rather than ignoring
+    // the image — measured 2026-10-18: HTTP 400 "Model does not support image
+    // modality". Remembering it here means one failed request per process
+    // instead of one per build, and the next `visionSupported()` says no.
+    if (response.status === 400 && body.messages?.some?.(hasImagePart)) {
+      noteImageRejection(text || response.statusText);
+    }
     throw mapModalError(
       response.status,
       text || response.statusText,

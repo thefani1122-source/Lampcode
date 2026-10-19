@@ -126,6 +126,12 @@ check(
     serverUrl: "https://api.githubcopilot.com/mcp/",
     authToken: "tok-gh",
     mcpToolName: "list_issues",
+    // H2/H3: the tier the call will be treated as, and the capability the map
+    // recognised. `null` here is honest — TOOL_CAPABILITIES has never heard of
+    // list_issues — and it is exactly the case that must NOT change the tier of
+    // a tool the classifier independently established as read-only.
+    tier: "read",
+    capability: null,
   },
 );
 

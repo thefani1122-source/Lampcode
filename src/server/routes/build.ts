@@ -38,11 +38,11 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, checkInteractions, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
-import { fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps } from "../../verify/data-layer.js";
+import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables } from "../../verify/data-layer.js";
 import { extractThreats, formatThreatsForModel, formatThreatsForUser, type ThreatExtractResult, type ThreatRequirement } from "../../verify/threat-model.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
@@ -60,6 +60,9 @@ import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
+import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
+import { BuildEventRecorder } from "../build-events.js";
+import { projectOutcome } from "../../verify/outcome-projection.js";
 import {
   findWiringGaps,
   tallyWiringGaps,
@@ -74,6 +77,7 @@ import {
   formatHollowTestsForUser,
 } from "../../verify/hollow-tests.js";
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
+import type { StorageSnapshot } from "../../verify/storage.js";
 import { routesToVisit } from "../../verify/render.js";
 import {
   shouldAudit,
@@ -756,6 +760,16 @@ function countToolCalls(calls: Array<{ name: string }>): Record<string, number> 
   return counts;
 }
 
+/**
+ * Thrown to skip the post-completion reconciliation, never to fail anything.
+ *
+ * The reconciliation exists only for the old ordering, where the record was
+ * written before the repair loops ran. A named sentinel rather than a flag
+ * check at every step: the block is a single try/catch and this keeps the
+ * "nothing to do" path from being mistaken for a failed write in the log.
+ */
+class SkipReconciliation extends Error {}
+
 // ── Background build runner ───────────────────────────────────────────────────
 
 export async function runFastBuild(
@@ -783,6 +797,12 @@ export async function runFastBuild(
   // build that FAILED is the case you most want rounds and gate results for,
   // and the completion block never runs on that path.
   let outcomeDraft: BuildOutcome | null = null;
+
+  // The ordered record of what this build did (C1/C2). Appended to as the build
+  // runs and flushed at each boundary, so a build that dies — a redeploy, an
+  // OOM, a throw past the catch — still leaves the evidence it had reached.
+  // Folded into the outcome's core at the end by projectOutcome().
+  const recorder = new BuildEventRecorder(sessionId);
 
   // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
   // routing outright — without it a paid or admin account can never exercise
@@ -1241,6 +1261,10 @@ export async function runFastBuild(
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;
       if (buildPlan) {
+        // Only when a plan was really produced: "planned" and "tried to plan
+        // and got nothing" are different facts, and the projection reads the
+        // presence of this event as the first one.
+        recorder.record({ type: "plan/ready", files: buildPlan.files.map((f) => f.path) });
         console.log(
           `[build] planned ${buildPlan.files.length} file(s) session=${sessionId} ` +
           `cost=$${planCostUsd.toFixed(4)}`,
@@ -1458,6 +1482,11 @@ export async function runFastBuild(
       costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
       agenticBuild,
       userPrompt: prompt,
+      // Only this loop knows the ORDER of its rounds, tool calls, gate verdicts
+      // and writes — which is the one thing the outcome could never reconstruct
+      // afterwards, and the reason a gate verdict used to outlive the write
+      // that invalidated it.
+      onEvent: (event) => recorder.record(event),
       // Only on an edit — on a new build there is no prior project, and an
       // empty map would make list_files fall through to the sandbox anyway.
       ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
@@ -2592,6 +2621,7 @@ export async function runFastBuild(
       }
 
       wiringRepaired = Math.max(0, before - remaining);
+      if (wiringRepaired > 0) recorder.record({ type: "repair/applied", kind: "wiring" });
       wiringCostUsd = cumulativeCostUsd - costBeforeWiring;
       if (before > 0) {
         console.log(
@@ -2664,6 +2694,7 @@ export async function runFastBuild(
             for (const [p, code] of Object.entries(parseFilesFromContent(fixResult.content ?? ""))) {
               if (typeof code === "string" && (code as string).trim().length > 0) allFiles[p] = code;
             }
+            recorder.record({ type: "repair/applied", kind: "broken-imports" });
             const after = findBrokenImports(allFiles);
             console.log(
               `[build] broken imports session=${sessionId} before=${broken.length} after=${after.length}`,
@@ -2814,6 +2845,7 @@ export async function runFastBuild(
               const typesAfter = await runTypeCheck(projectId).catch(() => null);
               if (typesAfter?.ok === true) {
                 codeCut = dead.length - findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind)).length;
+                if (codeCut > 0) recorder.record({ type: "repair/applied", kind: "dead-code-cut" });
                 console.log(
                   `[build] cut session=${sessionId} dead=${dead.length} files=${touched} removed=${codeCut} verdict=kept`,
                 );
@@ -2951,15 +2983,17 @@ export async function runFastBuild(
         "Note: I ran out of steps before I could finish verifying this — tell me if anything is off.";
     }
 
-    server?.buildComplete(sessionId, {
-      sessionId,
-      files: frontendFiles,       // Sandpack-safe: no Node.js imports
-      backendFiles: allFiles,
-      backendFileCount,           // >0 signals fullstack build to the client
-      previewUrl: null,
-      totalFiles: Object.keys(allFiles).length,
-      ...(buildSummary ? { summary: buildSummary } : {}),
-    });
+    // The summary-bearing build:complete used to fire HERE, which is before the
+    // sandbox has even started and long before the repair loops, the interaction
+    // probe, the freshness re-runs and the completion audit. The frontend latches
+    // the first build:complete it sees (`completedRef`), so that one was final:
+    // the user was told "App ab chal raha hai!" and every repair message after it
+    // arrived underneath a build that already read as done.
+    //
+    // It is emitted at the very end now, once nothing can change the code any
+    // more. Nothing is lost by waiting: files reach the file tree through
+    // build:file_write as they are written, and the preview URL arrives on its
+    // own build:preview_url event the moment the sandbox serves.
 
     // ── Async preview thumbnail — never blocks the build ──────────────────
     // Runs after the sandbox has had time to serve the finished app. A failure
@@ -3010,6 +3044,38 @@ export async function runFastBuild(
         }
       })()
     })
+
+    // ── The post-generation phase is AWAITED now ────────────────────────────
+    // It used to be fire-and-forget. `finishPreview` says so in its own first
+    // comment: "Everything in here runs AFTER the build session has been
+    // recorded success." That is what produced the ShopHub ordering — the
+    // model's "App ab chal raha hai!" reached the chat, the session was
+    // recorded successful, and only then did the browser-render repair, the
+    // interaction probe and the dead-code cut run, mutating the delivered files
+    // underneath a build the user had already been told was finished.
+    //
+    // So the preview chain is a promise now, awaited below with a bound, before
+    // anything authoritative is written or said. The user still sees the app
+    // early — `emitPreviewUrl` fires from inside the chain the moment the
+    // sandbox serves — but "complete" waits for the last thing that can change
+    // the code.
+    let previewWork: Promise<void> = Promise.resolve();
+    // Filled in by the chain, read by the final outcome. They used to be
+    // written straight into the database from inside it, with a read-modify-
+    // write, because the record already existed by then. It does not any more.
+    // A holder rather than four `let`s: TypeScript's flow analysis does not see
+    // an assignment made inside a closure, so a `let` filled in by the chain
+    // below still reads as `null` at the use site and narrows to `never`.
+    const previewEvidence: {
+      interactions: BuildOutcome["interactions"] | null;
+      hollow: ReturnType<typeof tallyHollowTests> | null;
+      storage: StorageSnapshot | null;
+      storageSource: "interaction" | "page-load" | null;
+    } = { interactions: null, hollow: null, storage: null, storageSource: null };
+    // True once the authoritative record has been written. The reconciliation
+    // blocks inside the chain exist only for the old ordering; with the chain
+    // awaited they would be patching a row that is about to be written anyway.
+    let outcomeRecorded = false;
 
     // ── E2B cloud sandbox preview ───────────────────────────────────────────
     // All builds use E2B — React/Vite via lampcode-vite template, fullstack via
@@ -3086,8 +3152,14 @@ export async function runFastBuild(
             projectId,
           });
           cumulativeCostUsd += fix.costUsd;
+          const repaired: string[] = [];
           for (const f of parseFilesFromContent(fix.content)) {
-            if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; }
+            if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+          }
+          // Every gate verdict above now describes code this build no longer
+          // has. The event says so; the projection turns it into staleness.
+          if (repaired.length > 0) {
+            recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
           }
         } catch (fixErr) {
           logger.error({ sessionId, fixErr }, "Backend agentic fix dispatch failed");
@@ -3095,6 +3167,7 @@ export async function runFastBuild(
         }
         if (fixedCount === 0) break;
         repairedAfterCompletion = true;
+        recorder.record({ type: "repair/applied", kind: "backend-start" });
         // Write the fix back — this restarts the backend with the new code.
         await writeFilesToSandbox(projectId, allFiles, (line) =>
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
@@ -3196,8 +3269,12 @@ export async function runFastBuild(
               projectId,
             });
             cumulativeCostUsd += fix.costUsd;
+            const repaired: string[] = [];
             for (const f of parseFilesFromContent(fix.content)) {
-              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; }
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+            }
+            if (repaired.length > 0) {
+              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
             }
           } catch (fixErr) {
             logger.error({ sessionId, fixErr }, "Type-check fix dispatch failed");
@@ -3205,6 +3282,7 @@ export async function runFastBuild(
           }
           if (fixedCount === 0) break;
           repairedAfterCompletion = true;
+          recorder.record({ type: "repair/applied", kind: "type-check" });
           await writeFilesToSandbox(projectId, allFiles, (line) =>
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
           ).catch(() => {});
@@ -3289,8 +3367,12 @@ export async function runFastBuild(
               projectId,
             });
             cumulativeCostUsd += fix.costUsd;
+            const repaired: string[] = [];
             for (const f of parseFilesFromContent(fix.content)) {
-              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; }
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+            }
+            if (repaired.length > 0) {
+              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
             }
           } catch (fixErr) {
             logger.error({ sessionId, fixErr }, "Browser-render fix dispatch failed");
@@ -3298,6 +3380,7 @@ export async function runFastBuild(
           }
           if (fixedCount === 0) break;
           repairedAfterCompletion = true;
+          recorder.record({ type: "repair/applied", kind: "browser-render" });
           await writeFilesToSandbox(projectId, allFiles, (line) =>
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
           ).catch(() => {});
@@ -3330,7 +3413,19 @@ export async function runFastBuild(
         await persistFilesAsWritten(projectId, allFiles);
 
         const repairCostUsd = cumulativeCostUsd - costBeforeRepairs;
+        // Only when the record was already written — which, now that this chain
+        // is awaited before that write, means the bounded wait below gave up on
+        // it and the build finished without it. In the normal path there is
+        // nothing to reconcile: usageUsd is computed from cumulativeCostUsd
+        // after this returns, so it already includes these dispatches.
         try {
+          if (!outcomeRecorded) {
+            logger.info(
+              { sessionId, projectId, repairCostUsd },
+              "Post-generation repairs landed before the record was written — no reconciliation needed",
+            );
+            throw new SkipReconciliation();
+          }
           // Read-modify-write rather than a blind set: this races the main
           // body's own finalizing update in principle. In practice the repair
           // dispatches above take seconds, so that write has long landed —
@@ -3354,10 +3449,12 @@ export async function runFastBuild(
               .where(eq(buildSessions.id, sessionId));
           }
         } catch (err) {
-          logger.warn(
-            { sessionId, projectId, err },
-            "Post-completion repair cost reconciliation failed — usageUsd under-reports this build",
-          );
+          if (!(err instanceof SkipReconciliation)) {
+            logger.warn(
+              { sessionId, projectId, err },
+              "Post-completion repair cost reconciliation failed — usageUsd under-reports this build",
+            );
+          }
         }
 
         logger.info(
@@ -3411,6 +3508,47 @@ export async function runFastBuild(
       // costs nothing but accuracy.
       const hollowNow = tallyHollowTests(findHollowTests(allFiles));
 
+      // ── What the app had actually stored when the clicking stopped (F3) ────
+      // The probe reads localStorage/sessionStorage/IndexedDB from inside the
+      // page it just operated, because a browser of its own would start empty
+      // and could never see what a CLICK persisted. Values are redacted in the
+      // page before they reach stdout.
+      //
+      // `ran` is load-bearing here exactly as it is for the interaction counts:
+      // zeros with ran=false mean nothing was read, which is not the same fact
+      // as an app that stores nothing. The source is recorded too — a snapshot
+      // from a fresh page load is weaker evidence than one taken after a click,
+      // and conflating them would turn "the app writes a theme on mount" into
+      // "the user's actions persist".
+      if (interaction.ran && interaction.storage.ran) {
+        previewEvidence.storage = interaction.storage;
+        previewEvidence.storageSource = "interaction";
+      } else {
+        const loaded = await captureStorage(projectId, interactionRoutes[0] ?? "/");
+        if (loaded.ran) {
+          previewEvidence.storage = loaded;
+          previewEvidence.storageSource = "page-load";
+        }
+      }
+      const captured = previewEvidence.storage;
+      if (captured) {
+        console.log(
+          `[build] storage session=${sessionId} ran=${captured.ran} source=${previewEvidence.storageSource} ` +
+          `local=${captured.local.length} session=${captured.session.length} ` +
+          `indexedDb=${captured.indexedDb.length}`,
+        );
+      } else {
+        console.log(`[build] storage session=${sessionId} ran=false source=none`);
+      }
+
+      // Handed back rather than written from here. The record does not exist
+      // yet — this chain is awaited before it — so the final outcome below
+      // carries these, and the read-modify-write underneath is now only the
+      // fallback for a chain that overran its bound.
+      previewEvidence.interactions = { ran: interaction.ran, ...interactionTally };
+      previewEvidence.hollow = hollowNow;
+      if (!outcomeRecorded) return;
+
       // Read-modify-write, like the cost reconciliation above and for the same
       // reason: build_outcome was written when the build was recorded complete,
       // which is before this point. A blind set would discard every other field
@@ -3447,7 +3585,7 @@ export async function runFastBuild(
       if (sandboxAlreadyRunning) {
         // Live in this process — push files straight in (Vite HMR refreshes).
         console.log(`[E2B] Follow-up build — writing files directly to running sandbox for project=${projectId}`);
-        void writeFilesToSandbox(projectId, allFiles, (line) => {
+        previewWork = writeFilesToSandbox(projectId, allFiles, (line) => {
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
         })
           .then((url) => {
@@ -3461,7 +3599,7 @@ export async function runFastBuild(
             console.warn(`[E2B] Sandbox file write FAILED for project=${projectId} — falling back to full sandbox creation:`, err instanceof Error ? err.message : err);
             logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed — falling back to createPreviewSandbox");
             server?.emitPreviewLoading(sessionId, { sessionId });
-            void withTimeout(
+            return withTimeout(
               createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
                 server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
               }),
@@ -3484,9 +3622,12 @@ export async function runFastBuild(
         // snapshot (or creates fresh for a brand-new fullstack build).
         console.log(`[E2B] Preview needed — queueing createPreviewSandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
         server?.emitPreviewLoading(sessionId, { sessionId });
-        setImmediate(() => {
-          console.log(`[E2B] setImmediate fired — calling createPreviewSandbox for session=${sessionId}`);
-          void withTimeout(
+        // Was setImmediate + void: the point was to let the main body run on
+        // without waiting. The main body now waits on purpose, so the chain is
+        // simply started and kept.
+        previewWork = (async () => {
+          console.log(`[E2B] calling createPreviewSandbox for session=${sessionId}`);
+          return withTimeout(
             createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
               server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
             }),
@@ -3503,9 +3644,99 @@ export async function runFastBuild(
               logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
               server?.emitPreviewError(sessionId, { sessionId, message });
             });
-        });
+        })();
       }
     }
+
+    // ── Wait for everything that can still change the delivered code ────────
+    // This is the boundary the ShopHub build did not have. Past this line no
+    // repair loop runs, so the observations, the audit, the record and the
+    // user's "it is done" all describe the same files.
+    //
+    // Bounded, because a wedged sandbox must not hold a build open forever. On
+    // a timeout the chain keeps running in the background — it is already
+    // started and its own reconciliation path still works — and the build
+    // completes with what it has, saying so. A bound that silently swallowed
+    // the overrun would be the same lie in a different place.
+    const POST_BUILD_WAIT_MS = 240_000;
+    let postBuildOverran = false;
+    try {
+      await withTimeout(previewWork, POST_BUILD_WAIT_MS, `post-generation phase exceeded ${POST_BUILD_WAIT_MS}ms`);
+    } catch (err) {
+      postBuildOverran = true;
+      logger.warn(
+        { sessionId, projectId, err },
+        "Post-generation phase did not finish in time — completing the build without its evidence",
+      );
+      recorder.record({ type: "repair/applied", kind: "post-generation-phase-overran" });
+    }
+    await recorder.flush();
+
+    // ── A verdict is only about the code it looked at ───────────────────────
+    // Every repair loop above mutates the delivered files, and each one emitted
+    // a files/written event — so the projection already knows which gate
+    // verdicts the build has outrun. This is where that is acted on instead of
+    // reported: re-run what went stale, against the code that is actually
+    // shipping, and record the fresh verdict through the same event stream.
+    //
+    // Re-running is better than reporting staleness, but only if it is real: a
+    // gate needs a live sandbox, and without one the staleness stands and is
+    // said out loud rather than quietly turned into a pass. The ShopHub run
+    // showed "Checking app loads — Done" followed by later edits; this is the
+    // half of that fix that produces evidence rather than a disclaimer.
+    //
+    // Note on what `checkPage`/`checkTypes`/`checkTests` now mean: the LAST
+    // verdict anyone obtained, not only the model's own calls. "The model never
+    // looked" stays derivable — `toolCalls` counts check_page, check_types and
+    // run_tests — and the counters below only reset when a real run happened.
+    const staleBefore = projectOutcome([
+      ...recorder.events(),
+      { type: "build/end", turnsExhausted: false, filesWritten: 0, costUsd: 0, durationMs: 0 },
+    ]);
+    const revalidated: string[] = [];
+    const stillStale: string[] = [];
+    if (hasSandbox(projectId)) {
+      if ((staleBefore.staleCheckTypes ?? 0) > 0) {
+        const types = await runTypeCheck(projectId).catch(() => null);
+        if (types && !types.unavailable) {
+          recorder.record({ type: "verification/result", gate: "types", status: types.ok ? "pass" : "fail" });
+          revalidated.push("types");
+        } else stillStale.push("types");
+      }
+      if ((staleBefore.staleCheckPage ?? 0) > 0) {
+        const page = await verifyBrowserRender(projectId).catch(() => null);
+        if (page && !page.unavailable) {
+          recorder.record({ type: "verification/result", gate: "page", status: page.ok ? "pass" : "fail" });
+          revalidated.push("page");
+        } else stillStale.push("page");
+      }
+      if ((staleBefore.staleCheckTests ?? 0) > 0) {
+        const tests = await runTests(projectId).catch(() => null);
+        if (tests && tests.outcome !== "unavailable") {
+          recorder.record({
+            type: "verification/result",
+            gate: "tests",
+            // "none" is its own verdict and must survive: a suite that does not
+            // exist has not passed.
+            status: tests.outcome === "none" ? "none" : tests.outcome === "passed" ? "pass" : "fail",
+          });
+          revalidated.push("tests");
+        } else stillStale.push("tests");
+      }
+    } else {
+      for (const gate of ["page", "types", "tests"] as const) {
+        const count =
+          gate === "page" ? staleBefore.staleCheckPage
+          : gate === "types" ? staleBefore.staleCheckTypes
+          : staleBefore.staleCheckTests;
+        if ((count ?? 0) > 0) stillStale.push(gate);
+      }
+    }
+    console.log(
+      `[build] freshness session=${sessionId} revalidated=[${revalidated.join(",")}] ` +
+      `stillStale=[${stillStale.join(",")}] sandbox=${hasSandbox(projectId)}`,
+    );
+    if (revalidated.length > 0) await recorder.flush();
 
     // ── Update build session ────────────────────────────────────────────────
     // creditsUsed is deprecated (see schema.ts) and kept only additively,
@@ -3708,6 +3939,55 @@ export async function runFastBuild(
       );
     }
 
+    // ── Is the shape of this codebase going wrong? (E5) ─────────────────────
+    // Four structural signals over the delivered files: import cycles, a
+    // component reaching into the server or the database, a file that has grown
+    // past being readable, and function bodies that are character-for-character
+    // identical.
+    //
+    // ADVISORY, and that is a decision rather than an omission. Every other
+    // repair loop in this file fixes something a USER would hit — a button that
+    // does nothing, an import that points at nothing. These four are about how
+    // the code reads, and a repair dispatch that rewrites working code to
+    // satisfy a style rule is churn: it costs money, invalidates every gate
+    // above it, and risks breaking an app that worked. `duplicate-logic` and
+    // `file-too-large` are the clearest cases — "extract this into src/lib" is
+    // a judgement about a codebase nobody has to maintain yet.
+    //
+    // Every finding carries its own remediation in `detail`, so the model (on a
+    // follow-up) and the record both get the fix and not just the complaint.
+    const architectureFindings = findArchitectureGaps(allFiles);
+    const architectureTally = {
+      circularImports: architectureFindings.filter((f) => f.kind === "circular-import").length,
+      layerViolations: architectureFindings.filter((f) => f.kind === "layer-violation").length,
+      filesTooLarge: architectureFindings.filter((f) => f.kind === "file-too-large").length,
+      duplicateLogic: architectureFindings.filter((f) => f.kind === "duplicate-logic").length,
+      total: architectureFindings.length,
+    };
+    // Logged on every build, including the clean one: "the gate ran and found
+    // nothing" and "the gate never ran" are different facts, and only the first
+    // is evidence. Same reason `interactions.ran` exists.
+    console.log(
+      `[build] architecture session=${sessionId} total=${architectureTally.total} ` +
+      `cycles=${architectureTally.circularImports} layer=${architectureTally.layerViolations} ` +
+      `large=${architectureTally.filesTooLarge} duplicate=${architectureTally.duplicateLogic} ` +
+      `files=${Object.keys(allFiles).length}`,
+    );
+    if (architectureFindings.length > 0) {
+      // The remediation goes with the finding — this is the formatter that
+      // carries `detail`, so nothing reaches the record or a later round as a
+      // bare complaint.
+      logger.info(
+        {
+          sessionId,
+          projectId,
+          kinds: [...new Set(architectureFindings.map((f) => f.kind as ArchitectureKind))],
+          findings: formatArchitectureGaps(architectureFindings),
+        },
+        "[build] architecture findings — advisory, each carries its fix",
+      );
+    }
+
     const deadFindings = findDeadCode(allFiles);
     const deadTally = tallyDeadCode(deadFindings);
     if (deadFindings.length > 0) {
@@ -3730,18 +4010,129 @@ export async function runFastBuild(
     // dispatcher.ts. This only makes the record match what was spent.
     const usageUsd = cumulativeCostUsd * config.USAGE_MARGIN_MULTIPLIER;
 
-    const outcome: BuildOutcome = {
-      ...outcomeDraft,
+    // ── What a fullstack request ACTUALLY got ───────────────────────────────
+    // Measured 2026-10-18 on a real build: the closing message called a
+    // "complete E-commerce Store" finished while the same build also said
+    // "Login/Signup (mock authentication)" and "TanStack Query ready". Both
+    // sentences came from the model. One of them was true.
+    //
+    // So the final status is assembled from evidence that already exists —
+    // the build's own classification, the files it wrote, whether a database
+    // was connected, what the data-layer scan found, and the fake-persistence
+    // detector — rather than from another keyword heuristic over the model's
+    // prose. Each part is proven or it is not, and the message below says which.
+    // A follow-up edit is not classified "fullstack" — `isFullstackBuild` is
+    // new-builds-only by design — but an edit to an app that HAS a backend is
+    // still a build whose honesty depends on this. So either signal counts, and
+    // `requested` below records which one it was.
+    const fullstackRequested = isFullstackBuild || backendFileCount > 0;
+    const fakeFiles = fullstackRequested ? fakePersistence(allFiles).map((f) => f.path) : [];
+    const declared = fullstackRequested ? declaredTables(allFiles) : new Set<string>();
+    const queried = fullstackRequested ? queriedTables(allFiles) : [];
+    const authWanted = needsAuth(prompt);
+    // A real auth call, not a mocked one: the shapes the prompt actually tells
+    // the model to use, and never counted from a file the fake detector flagged.
+    const authReal = Object.entries(allFiles).some(
+      ([path, code]) =>
+        !fakeFiles.includes(path) &&
+        /supabase\.auth\.|signInWithPassword|signInWithOAuth|auth\.getUser\(|getSession\(/.test(code),
+    );
+    const fullstackEvidence = fullstackRequested
+      ? {
+          requested: isFullstackBuild,
+          backendFiles: backendFileCount,
+          databaseConnected: ownSupabaseConnected,
+          tablesDeclared: declared.size,
+          tablesQueried: new Set(queried.map((q) => q.table)).size,
+          fakePersistenceFiles: fakeFiles.length,
+          authRequested: authWanted,
+          authReal: authWanted ? authReal : false,
+        }
+      : null;
+    if (fullstackEvidence) {
+      console.log(
+        `[build] fullstack evidence session=${sessionId} backendFiles=${fullstackEvidence.backendFiles} ` +
+        `db=${fullstackEvidence.databaseConnected} declared=${fullstackEvidence.tablesDeclared} ` +
+        `queried=${fullstackEvidence.tablesQueried} fake=${fullstackEvidence.fakePersistenceFiles} ` +
+        `authWanted=${fullstackEvidence.authRequested} authReal=${fullstackEvidence.authReal}`,
+      );
+    }
+
+    // Shaped once here so the record's own narrowing is unambiguous.
+    const snap: StorageSnapshot | null = previewEvidence.storage;
+    const snapSource = previewEvidence.storageSource;
+    const storageEvidence =
+      snap && snapSource
+        ? {
+            ran: snap.ran,
+            source: snapSource,
+            localKeys: snap.local.length,
+            sessionKeys: snap.session.length,
+            indexedDbs: snap.indexedDb.length,
+          }
+        : null;
+
+    // ── The outcome, folded from the event stream (C3) ──────────────────────
+    // The CORE of this record is now derived rather than remembered. Rounds,
+    // tool calls, gate verdicts and — the reason this exists — how many writes
+    // landed after each verdict come from folding the ordered events, so
+    // staleness is computed from what happened instead of being tracked by a
+    // mutable object with one slot per gate.
+    //
+    // THE SECOND HALF IS NOT EVENT-DERIVED AND IS NOT PRESENTED AS IF IT WERE.
+    // deadCode, wiring, hollowTests, architecture, interactions, storage,
+    // review and the completion audit are single observations of the FINAL
+    // state, measured once, just now, over the files that are shipping. Turning
+    // each into an "evidence event" would have made the projection look purer
+    // while adding a layer that invents an ordering nothing actually has.
+    // They are attached, separately and deliberately, below the fold.
+    //
+    // `review` and the plan flags still come from outcomeDraft: the review
+    // dispatches run inside the tool loop and the plan ran before it, and
+    // neither is reconstructible from the events emitted today.
+    recorder.record({
+      type: "build/end",
+      turnsExhausted: result.turnsExhausted,
       filesWritten: writtenPaths.length,
+      costUsd: cumulativeCostUsd,
+      durationMs: Date.now() - buildStartedMs,
+      ...(result.churn === undefined ? {} : { churn: result.churn }),
+    });
+    await recorder.flush();
+
+    const projected = projectOutcome(recorder.events());
+    const outcome: BuildOutcome = {
+      // Fields the events cannot carry, kept from the draft.
+      ...outcomeDraft,
+      // Everything the fold owns, over the top of it.
+      ...projected,
+      // Final-state observations. Not event-derived; see above.
       deadCode: deadTally,
       wiring: { ...wiringTally, repaired: wiringRepaired, costUsd: wiringCostUsd },
-      hollowTests: hollowTally,
+      hollowTests: previewEvidence.hollow ?? hollowTally,
+      architecture: architectureTally,
+      ...(previewEvidence.interactions ? { interactions: previewEvidence.interactions } : {}),
+      ...(storageEvidence ? { storage: storageEvidence } : {}),
       ...(completionAudit
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),
-      costUsd: cumulativeCostUsd,
-      durationMs: Date.now() - buildStartedMs,
+      ...(fullstackEvidence ? { fullstack: fullstackEvidence } : {}),
+      ...(result.pseudoToolCalls.length > 0 ? { pseudoToolCalls: result.pseudoToolCalls } : {}),
+      ...(stillStale.length > 0 ? { unverifiedGates: stillStale } : {}),
+      ...(recorder.lostCount() > 0 ? { eventsLost: recorder.lostCount() } : {}),
     };
+
+    // The projection refuses to invent what it was not told, so a stream that
+    // lost its rows would throw rather than report zeroes as measurements —
+    // which is why the terminal event is flushed before this point and why a
+    // short stream is recorded as `eventsLost` rather than smoothed over.
+    console.log(
+      `[build] outcome session=${sessionId} source=projection events=${recorder.events().length} ` +
+      `rounds=${outcome.rounds} tools=${Object.keys(outcome.toolCalls).length} ` +
+      `page=${outcome.checkPage}/${outcome.staleCheckPage ?? 0} ` +
+      `types=${outcome.checkTypes}/${outcome.staleCheckTypes ?? 0} ` +
+      `tests=${outcome.checkTests}/${outcome.staleCheckTests ?? 0} lost=${recorder.lostCount()}`,
+    );
 
     await db
       .update(buildSessions)
@@ -3760,8 +4151,85 @@ export async function runFastBuild(
       .update(projects)
       .set({ status: "live" })
       .where(eq(projects.id, projectId));
+    outcomeRecorded = true;
 
-    // ── Emit complete ───────────────────────────────────────────────────────
+    // ── Emit complete — the last word, and only now ─────────────────────────
+    // Everything above has finished: generation, the deterministic audits, every
+    // repair loop, the freshness re-runs over what those loops changed, the
+    // final observations and the completion audit. This is the first point at
+    // which "it is done" is true.
+    //
+    // The model's own summary is kept — it describes the app better than
+    // anything generated from a file list — but it is no longer the only thing
+    // said. What follows it is assembled from evidence, because the model's
+    // prose is where "complete E-commerce Store" and "mock authentication"
+    // appeared in the same build.
+    const closingLines: string[] = [];
+    if (fullstackEvidence) {
+      const fs = fullstackEvidence;
+      const real =
+        fs.backendFiles > 0 &&
+        fs.databaseConnected &&
+        fs.tablesQueried > 0 &&
+        fs.fakePersistenceFiles === 0;
+      closingLines.push(
+        real
+          ? "This has a real backend: server code, a connected database, and queries against it."
+          : "What is real, and what is not, in this build:",
+      );
+      if (!real) {
+        closingLines.push(
+          fs.backendFiles > 0
+            ? `• Backend code: written (${fs.backendFiles} file(s)).`
+            : "• Backend: none was written — this is a frontend-only app.",
+        );
+        closingLines.push(
+          fs.databaseConnected
+            ? "• Database: your own Supabase is connected."
+            : "• Database: not connected, so nothing is saved on a server. Connect one and I will wire it up.",
+        );
+        if (fs.tablesDeclared > 0 || fs.tablesQueried > 0) {
+          closingLines.push(
+            `• Tables: ${fs.tablesDeclared} declared, ${fs.tablesQueried} actually queried by the app.`,
+          );
+        }
+        if (fs.fakePersistenceFiles > 0) {
+          closingLines.push(
+            `• ${fs.fakePersistenceFiles} file(s) fall back to demo data when the backend is missing — those screens are not reading real data.`,
+          );
+        }
+        if (fs.authRequested) {
+          closingLines.push(
+            fs.authReal
+              ? "• Sign-in: real — it calls the auth service."
+              : "• Sign-in: not real yet. The screens are there; nothing checks a password.",
+          );
+        }
+      }
+    }
+    if (stillStale.length > 0) {
+      closingLines.push(
+        `• Not re-checked after the last fixes: ${stillStale.join(", ")}. The preview had already stopped, so I could not run those again — treat them as unverified.`,
+      );
+    }
+    if (postBuildOverran) {
+      closingLines.push(
+        "• The preview checks ran out of time, so some of the usual verification is missing from this build.",
+      );
+    }
+
+    const finalSummary = [buildSummary, ...closingLines].filter(Boolean).join("\n");
+
+    server?.buildComplete(sessionId, {
+      sessionId,
+      files: frontendFiles,       // Sandpack-safe: no Node.js imports
+      backendFiles: allFiles,
+      backendFileCount,           // >0 signals fullstack build to the client
+      previewUrl: null,
+      totalFiles: Object.keys(allFiles).length,
+      ...(finalSummary ? { summary: finalSummary } : {}),
+    });
+
     server?.progress(sessionId, {
       sessionId,
       percent: 100,
@@ -3786,6 +4254,20 @@ export async function runFastBuild(
 
     const errorMsg = err instanceof Error ? err.message : String(err);
     logger.error({ sessionId, err: errorMsg }, "Fast build failed");
+
+    // The stream gets its terminal event on this path too. Without one the
+    // projection refuses to produce an outcome at all — deliberately, so a
+    // half-recorded build can never be read as a measured one — and a failed
+    // build is the case the evidence is most wanted for.
+    recorder.record({
+      type: "build/failed",
+      reason: errorMsg,
+      turnsExhausted: false,
+      filesWritten: 0,
+      costUsd: 0,
+      durationMs: Date.now() - buildStartedMs,
+    });
+    await recorder.flush();
 
     await db
       .update(buildSessions)

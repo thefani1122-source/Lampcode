@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { describeTier } from "../mcp/tiers.js";
+import { logger } from "../server/logger.js";
 import type { ToolDefinition } from "./model-gateway.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { getWebSocketServer } from "../websocket/server.js";
@@ -9,7 +11,7 @@ import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 
-const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types"]);
+const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page"]);
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
@@ -466,6 +468,48 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "look_at_page",
+    description:
+      "LOOK at the page you built — a screenshot, which you will see in the next message.\n" +
+      "Use this when the problem is visual: layout, spacing, contrast, something overlapping or " +
+      "cut off, or a design the user described that you want to compare against. check_page reads " +
+      "the DOM and the console, so it catches a blank page or a crash but can never see that the " +
+      "header sits on top of the hero.\n" +
+      "Expensive in tokens — an image is not cheap. Call it when you have a visual question, not " +
+      "after every write. If it tells you the model cannot see images, believe it and stop.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "web_search",
+    description:
+      "Look something up on the web. Use this ONLY when you need information you do not " +
+      "already have: an unfamiliar package's real API, the meaning of an error message you " +
+      "have not seen before, or whether a library still works the way you remember.\n" +
+      "Do NOT use it for anything about THIS project — `search_code` finds text in these " +
+      "files, `code_intel` says what a symbol is and who uses it, and `impact_analysis` says " +
+      "what a change would break. Those are free and exact; the web knows nothing about this " +
+      "codebase.\n" +
+      "If you already have the URL, use `fetch_reference` instead — it reads the page.\n" +
+      "You get at most 5 results with short snippets. One search, then get on with the build: " +
+      "if it returns nothing useful, continue with what you know and say so in your reply.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "What to look up, as you would type it into a search box. Be specific — include " +
+            "the package name and version, or the exact error text.",
+        },
+        limit: {
+          type: "number",
+          description: "How many results you want, 1-5. Defaults to 5.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "read_logs",
     description:
       "Read recent output from the running dev server and, if the app has one, its backend. " +
@@ -504,6 +548,11 @@ export interface ToolExecutionContext {
    *  Subsequent write-proxy calls in the same turn auto-deny without prompting,
    *  preventing partial execution of a multi-step write sequence. */
   writeDenied?: { value: boolean } | undefined;
+  /** Screenshots a tool took for the MODEL to look at (F2). A tool result is a
+   *  string, so an image has to travel as its own content block in the next
+   *  turn — the dispatch loop drains this after each round. Only ever filled
+   *  when `visionSupported()` is true. */
+  pendingImages?: { value: Array<{ mediaType: string; dataBase64: string; label: string }> } | undefined;
   /** Anthropic tool_use block ID — used as the pending-approval correlation key. */
   toolCallId?: string | undefined;
   /** Required by the agentic build tools — identifies the live sandbox. */
@@ -655,14 +704,36 @@ if (ctx.writeMcpRegistry?.has(name)) {
 
     let emitSucceeded = false;
     try {
+      // `tier` and `tierNote` are carried for the client; today's UI renders
+      // neither, and NOTHING here pretends it does. A separate, stronger
+      // confirmation for an irreversible action is a frontend change that has
+      // not been made — so the stronger classification is enforced on this
+      // side (it is in the registry, in the tool's own description, and in the
+      // log below), and the user still answers through the one explicit
+      // approval prompt that exists. Inventing a second prompt the client
+      // cannot show would be worse than saying so.
       getWebSocketServer().emitToRoom(sessionId, "build:write_action_approval_required", {
         toolCallId,
         serverSlug: meta.serverSlug,
         toolName: meta.mcpToolName,
         toolInput: args,
         timeoutMs: APPROVAL_TIMEOUT_MS,
+        tier: meta.tier,
+        tierNote: describeTier(meta.tier),
         sessionId,
       });
+      logger.info(
+        {
+          sessionId,
+          tool: meta.mcpToolName,
+          server: meta.serverSlug,
+          tier: meta.tier,
+          capability: meta.capability,
+        },
+        meta.tier === "strong-approval"
+          ? "[mcp] asking the user to approve a POSSIBLY IRREVERSIBLE action"
+          : "[mcp] asking the user to approve a write action",
+      );
       emitSucceeded = true;
     } catch {
       // WS unavailable — can't deliver prompt to user, must deny.

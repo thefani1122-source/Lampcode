@@ -1,0 +1,16 @@
+-- P0.1, open since build_messages shipped and closed 2026-10-19.
+--
+-- 3,253 rows of user prompts and model output sat in a table with RLS DISABLED,
+-- in a project whose anon key ships inside the frontend bundle. PostgREST
+-- exposes `public`, so the rows were readable by anyone who opened the app and
+-- read its JavaScript.
+--
+-- No policy is added, which denies every anon and authenticated request
+-- outright. Verified before applying: the only reader and writer is
+-- src/websocket/message-recorder.ts over Drizzle/DATABASE_URL, which is not
+-- subject to RLS; the frontend never queries this table, and no supabase-js
+-- client in either repo references it.
+--
+-- Applied to production on 2026-10-19 and confirmed by pg_class.relrowsecurity
+-- = true with zero policies.
+ALTER TABLE "public"."build_messages" ENABLE ROW LEVEL SECURITY;

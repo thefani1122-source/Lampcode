@@ -1,3 +1,5 @@
+import { stripPseudoToolMarkup } from "./pseudo-tools.js";
+
 export interface ParsedFile {
   path: string;
   code: string;
@@ -557,7 +559,10 @@ export function validateSandpackFiles(files: Record<string, string>): {
  * actually wrote the code is the one that knows what it built.
  */
 export function extractBuildSummary(content: string): string {
-  const lines = content.split("\n");
+  // Typed tool-call syntax never belongs in the closing message. The narration
+  // path filters it on the way to the chat; this is the other door into the
+  // user's chat, and the ShopHub leak came through both.
+  const lines = stripPseudoToolMarkup(content).text.split("\n");
   const out: string[] = [];
   let inFence = false;
 

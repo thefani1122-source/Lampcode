@@ -1,3 +1,4 @@
+import { STORAGE_BROWSER_SNIPPET } from "./storage-script.js";
 /**
  * What happened when the preview's controls were actually operated.
  *
@@ -22,7 +23,15 @@ export type InteractionFinding = {
  * must not move the next selector to another page or leave its modal open.
  * This isolates browser storage, not server-side effects of operating controls.
  */
-export const INTERACTION_SCRIPT = String.raw`
+/**
+ * The storage inventory runs INSIDE this probe's own page, not in a browser of
+ * its own. Each control is operated in a fresh context that is closed right
+ * after, so anything a click wrote to localStorage dies with it — the snapshot
+ * has to be taken before that close, from the page that did the clicking. A
+ * separate browser would start empty, so "a user action persisted something"
+ * could never be observed from one.
+ */
+const INTERACTION_BODY = String.raw`
 const entries = [];
 let browser;
 let printed = false;
@@ -34,10 +43,28 @@ const deadline = Date.now() + 45000;
 // would consume it and every later route would report "not attempted" — the
 // same blindness this change exists to remove, just moved one step along.
 const PER_ROUTE = Math.max(3, Math.floor(12 / Math.max(1, routes.length)));
+let storageSnapshot = null;
+function mergeStorage(next) {
+  if (!next || typeof next !== "object") return;
+  if (!storageSnapshot) { storageSnapshot = next; return; }
+  // Keep the richest view across contexts: a later control may write a key an
+  // earlier one did not, and each context only ever sees its own.
+  const byKey = (list) => new Map((Array.isArray(list) ? list : []).map((e) => [e && e.key, e]));
+  for (const field of ["local", "session"]) {
+    const merged = byKey(storageSnapshot[field]);
+    for (const [k, v] of byKey(next[field])) if (k && !merged.has(k)) merged.set(k, v);
+    storageSnapshot[field] = [...merged.values()];
+  }
+  storageSnapshot.indexedDb = [...new Set([...(storageSnapshot.indexedDb || []), ...(next.indexedDb || [])])];
+  storageSnapshot.ran = Boolean(storageSnapshot.ran || next.ran);
+}
 function print() {
   if (printed) return;
   printed = true;
   process.stdout.write(JSON.stringify(entries) + "\n");
+  // Second line, behind a marker, so the findings line keeps its exact shape
+  // and parseInteractionReport stays untouched. Absent when nothing was read.
+  if (storageSnapshot) process.stdout.write("STORAGE:" + JSON.stringify(storageSnapshot) + "\n");
 }
 // If Chromium itself stops responding, keep completed observations and mark
 // pending controls skipped. A killed command with no output proves nothing.
@@ -92,9 +119,12 @@ try {
     const entry = entries[offset + index];
     if (Date.now() >= deadline) { entry.reason = "time budget exhausted"; continue; }
     let context;
+    // Hoisted so the finally below can take the storage snapshot from the page
+    // that did the clicking, before the context is destroyed.
+    let page;
     try {
       context = await browser.newContext();
-      const page = await open(context, route);
+      page = await open(context, route);
       const controls = await page.$$(selector);
       const observed = (await Promise.all(controls.map((el) => el.evaluate(describe)))).slice(0, PER_ROUTE);
       // Index alone is unsafe after a reload: a dynamic list can reorder and
@@ -163,6 +193,12 @@ try {
       // contexts do not establish whether the control worked.
       entry.reason = "control could not be observed reliably";
     } finally {
+      // Before the context dies: whatever this control just persisted. Values
+      // are redacted in the page by the shared snippet, so nothing
+      // credential-shaped reaches stdout. Never allowed to affect the probe.
+      if (page) {
+        try { mergeStorage(await page.evaluate(STORAGE_SNIPPET)); } catch {}
+      }
       if (context) await context.close().catch(() => {});
     }
   }
@@ -175,6 +211,10 @@ try {
   print();
 }
 `;
+
+/** The probe, with the shared browser-side storage snippet bound in. */
+export const INTERACTION_SCRIPT =
+  `const STORAGE_SNIPPET = ${JSON.stringify(STORAGE_BROWSER_SNIPPET)};\n` + INTERACTION_BODY;
 
 const MAX_REPORTED = 30;
 const NO_CHANGE: Record<string, InteractionKind> = {
