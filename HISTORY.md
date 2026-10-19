@@ -4661,3 +4661,191 @@ ever fail, the page check has gone blind.
   trap 6 that person must run `cd e2b-template && npx tsx verify-template.ts` afterwards.
 - **No build has run the broken-import loop.** Its detection half is measured; whether the model
   reliably writes a sensible missing page when told to is not.
+
+## THE LAUNCH-PROOF PASS — WIRING WHAT WAS ALREADY BUILT — 2026-10-19
+
+Eight modules existed, passed their cases, and were imported by nothing. A tool the model
+cannot call and a check nobody runs cost exactly what writing them cost and return nothing. This
+pass wired them, and fixed the two ordering bugs a real build had just exposed.
+
+### The ShopHub ordering bug was structural, not a misplaced line
+
+The build told the user, in this order:
+
+```
+"Maine aapke liye … build kar di hai"
+"App ab chal raha hai!"
+Wiring in 31 component(s) that aren't used anywhere…
+2 control(s) render but don't do anything yet…
+Removing 21 leftover(s) from earlier edits…
+```
+
+Three mutating repair steps ran AFTER the success message. The cause is in `finishPreview`'s own
+first comment, which has said so since it was written: *"Everything in here runs AFTER the build
+session has been recorded success."* The entire post-generation phase — sandbox, backend-start
+repair, type-check repair, browser-render repair, the interaction probe — was launched with
+`void …then()` and `setImmediate`, while the main body carried on to the completion audit and the
+record. The frontend latches the first `build:complete` it receives (`completedRef.current`), so
+the summary emitted at line 2954, **before the sandbox had even started**, was final.
+
+It was also a race: those loops mutate `allFiles` while the completion audit and the dead-code
+and wiring tallies read it.
+
+The phase is now an awaited promise with a 240s bound. Past that boundary nothing can change the
+delivered code, and the authoritative DB state (`status: "success"`, `projects.status: "live"`)
+and the summary-bearing `build:complete` both sit behind it. Nothing is lost by waiting: files
+reach the file tree through `build:file_write` as they are written and the preview URL arrives on
+its own `build:preview_url` event, so the user still sees the app early — they are simply no
+longer told it is finished while it is still being changed.
+
+On an overrun the chain keeps running (it still has its own reconciliation path, now guarded by
+`outcomeRecorded`), the build completes with what it has, and the user is told that the preview
+checks ran out of time. A bound that swallowed the overrun would be the same lie in a new place.
+
+**41 cases pin the order** by reading the source and comparing positions. Crude, and exactly
+right for the failure: the regression to catch is someone moving the completion emit back up.
+
+### Freshness: re-run, or say it is unverified
+
+The same run showed "Checking app loads — Done" followed by later edits. Each repair loop now
+emits a `files/written` event, so the projection knows which verdicts the build outran, and the
+stale gates are **re-run** against the shipping code at the final boundary. What cannot be re-run
+— no live sandbox — is listed in `outcome.unverifiedGates` and said in the chat: *"treat them as
+unverified"*. Nothing is upgraded to a pass.
+
+`checkPage`/`checkTypes`/`checkTests` therefore now mean "the last verdict anyone obtained"
+rather than "what the model's own gate call said". The older fact survives: `toolCalls` counts
+`check_page`, `check_types` and `run_tests`, so "the model never looked" is still derivable.
+
+### C1/C2/C3 — the outcome is folded, and says which half is which
+
+`build_events`: `session_id` → `build_sessions(id)` ON DELETE CASCADE, unique `(session_id,
+seq)`, RLS enabled **in the migration that creates it**. Applied to production and verified
+(`relrowsecurity = true`, 0 policies, `confdeltype = 'c'`).
+
+The dispatch loop emits `turn/start`, `tool/call`, `tool/result`, `verification/result`,
+`files/written`, `turn/end`, because only it knows their order; `build.ts` emits `plan/ready`,
+`repair/applied` and the terminal `build/end` or `build/failed`. Writes are detected by
+comparing file-reference identity across each tool call, so a write is recorded whichever tool
+made it. Events flush at every boundary and in the catch — buffering to the end would lose
+exactly the evidence a dying build is wanted for — and anything that could not be persisted is
+recorded as `eventsLost` rather than smoothed over.
+
+`projectOutcome()` now produces the record's core. **The final-state observations are NOT
+event-derived and are not presented as if they were**: `deadCode`, `wiring`, `hollowTests`,
+`architecture`, `interactions`, `storage`, `review` and the completion audit are each measured
+once, over the shipping files, and attached separately with a comment saying so. Inventing an
+"evidence event" for each would have made the projection look purer while fabricating an ordering
+nothing actually has.
+
+### Completion stops overclaiming
+
+The same real build said *"complete E-commerce Store"* and *"Login/Signup (mock
+authentication)"*. Both sentences were the model's; one was true. The closing message is now
+assembled from evidence already in the build — the classification, backend file count,
+`ownSupabaseConnected`, `declaredTables`/`queriedTables`, the `fake-persistence` detector, and
+whether a real auth call exists in a file the fake detector did NOT flag — and recorded in
+`outcome.fullstack`. "Real" requires all of: backend files, a connected database, at least one
+table actually queried, and zero faking. Short of that the user is told, line by line, which
+part is not real. The model's prose is kept (it describes the app better than a file list) but it
+is no longer the last word.
+
+### The `<tool_code>` leak was a lost round, not a rendering bug
+
+The visible reasoning contained `<tool_code><tool name="filesystem_list_allowed_directories">`.
+Root cause: the model TYPED another harness's tool-call syntax as prose, and `stream-handler`
+forwards prose to the chat verbatim. Nothing executed — `executeTool` would have answered
+`Error: unknown tool` — because no tool call was ever made.
+
+Stripping it in the UI would have been wrong twice: the text also stays in `content`, which
+`extractBuildSummary` turns into the final message, and a model typing tool calls is a model NOT
+calling tools. So: a streaming filter on the narration path (holding back partial markers across
+chunk boundaries, and showing nothing of an unterminated region), the same strip on the summary
+path, the attempted names logged, and the model corrected **once** per dispatch with the real
+mechanism — but only when the round produced no fences either, so a round with usable output is
+never retried. 32 cases, including six innocent strings that must survive untouched: a filter
+that eats real reasoning is worse than the leak.
+
+### F2 — measured first, and it is off
+
+Probed the live gateway twice with the same request:
+
+```
+with an image part → 400 {"code":"validation_error","message":"Model does not support image modality"}
+without it         → 200
+```
+
+So on `minimax.minimax-m2.5` a screenshot is not ignored, it **fails the request**. The path is
+built and real — an `ImageContentBlock` in the message union, Anthropic shape passed through,
+translated to `image_url` with a data URI on the OpenAI path, and `look_at_page` handing the
+existing `capturePreviewScreenshot` output to the model through the next turn — and it is gated
+on `visionSupported()`, which defaults to NO. A provider refusal naming the image modality is
+remembered for the process, so the worst case is one failed request rather than one per build.
+`LLM_SUPPORTS_IMAGES=true` is the switch, for a model that has been probed. **No build has used
+it**, and F2 must not be called proven until one has.
+
+### H2/H3 — escalation only
+
+`tierFor(null)` answers `"approval"`, which is right as its own contract and wrong as the last
+word: `TOOL_CAPABILITIES` maps four tools, so applying it at the integration layer would put an
+approval prompt in front of every `get_*` on every connected service. The integration takes
+`strongestTier(classifierVerdict, capabilityVerdict)`:
+
+- a read-classified tool the map has never heard of stays exactly where the classifier put it;
+- a read-classified tool that is destructive by capability or by name (`delete`, `drop`,
+  `destroy`, `rollback`, `force`) **leaves the auto-run path** for the approval gate;
+- write tools stay at `approval` and rise to `strong-approval` when irreversible.
+
+`tierFor` cannot see the name when the capability is null (it short-circuits first), so
+`destructiveByName` was added beside it rather than changing its contract.
+
+`strong-approval` is enforced server-side — in the registry, in the tool's own description, in
+the log — and carried to the client as `tier`/`tierNote`. **The UI has no separate prompt for it
+and this code does not pretend otherwise**; the user answers through the one explicit approval
+path that exists. A case asserts that comment is still there.
+
+### F3 — storage, read from the page that did the clicking
+
+`STORAGE_SCRIPT` could not run anywhere: it read `localStorage` and wrote to `process.stdout`.
+Split into the browser snippet (redaction unchanged, still on the browser side) and a Playwright
+driver. The snippet is evaluated **inside the interaction probe's own page, before each context
+closes** — the probe operates every control in a fresh context and destroys it, so a separate
+browser would always report empty storage and nothing a click persisted could ever be seen. A
+plain page-load capture is the fallback, and `storage.source` keeps the two apart: `"interaction"`
+is evidence that a user action persisted something, `"page-load"` only that the app writes on
+mount.
+
+### E5 — advisory, deliberately
+
+The architecture gate runs over the delivered files after every repair, reports with each
+finding's own remediation, and logs on a clean build too. **No repair loop.** Every other loop
+here fixes something a user would hit; these four are about how code reads, and a dispatch that
+rewrites working code to satisfy a style rule is churn that invalidates every gate above it.
+`duplicate-logic` and `file-too-large` are the clearest cases — "extract this into src/lib" is a
+judgement about a codebase nobody has to maintain yet.
+
+### I3 — one tool, not 225
+
+`web_search` is registered with a description that sends the model to `search_code`,
+`code_intel` and `impact_analysis` for anything about this project and to `fetch_reference` for a
+known URL. The Exa and Firecrawl MCP servers stay off builds: 283 tool definitions in one request
+is what produced `totalChunks=2` on 2026-10-16.
+
+### P0.1 is closed
+
+`build_messages` had RLS disabled with 3,253 rows of user prompts and model output, in a project
+whose anon key ships in the frontend bundle. Verified first that the only reader and writer is
+`src/websocket/message-recorder.ts` over Drizzle/`DATABASE_URL` and that neither repo queries the
+table through supabase-js, then enabled RLS with no policies. Confirmed on production.
+
+### Verified
+
+- `npm ci`, `npm run typecheck`, `npm test` and `npm run build` all pass on a clean Linux tree
+  from the current remote. **`npm ci` exits 0**, so the committed lockfile is consistent with
+  `package.json` — the broken dependencies were local to one machine, not in the repo.
+- Both migrations applied to production and confirmed through `information_schema`/`pg_class`.
+- The F2 capability probe above, with its control.
+
+### Not verified
+
+- See the real-build section appended below for what one build did and did not prove.
