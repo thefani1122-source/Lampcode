@@ -39,7 +39,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedRestProviders } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables } from "../../verify/data-layer.js";
@@ -1347,30 +1347,20 @@ export async function runFastBuild(
     // whether this build might need a connected service; the model decides
     // that itself once these are attached to the dispatch. Cheap (single DB
     // query + decrypt per row, no network calls) even when empty.
-    const [userMcpServers, restProviders] = await Promise.all([
-      getConnectedMcpServers(userId).catch(() => []),
-      getConnectedRestProviders(userId).catch(() => []),
-    ]);
+    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
     // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
     // mcp-action-agent.ts always included them for the same reason: a reference
     // URL in the prompt shouldn't require a user to have connected anything.
     // They still go through the same read-only classification as everything
     // else below, not special-cased as trusted.
     //
-    // Skipped entirely when provider is "modal": the Modal gateway has no MCP-
-    // connector equivalent (see dispatcher.ts's effectiveProvider guard), and
-    // Firecrawl/Exa are attached to essentially every build regardless of plan
-    // — leaving them in unconditionally meant that guard downgraded every
-    // free-tier build straight back to Anthropic, silently defeating the
-    // whole point of routing free tier to Modal. Since Modal can't use these
-    // anyway, omitting them for Modal builds costs nothing.
-    const internalMcpServers = provider === "modal" ? [] : [
+    // Internal providers use the same locally executed MCP tool path as
+    // user-connected servers, independent of the model gateway.
+    const internalMcpServers = [
       ...(config.FIRECRAWL_API_KEY
-        ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev", authToken: config.FIRECRAWL_API_KEY }]
+        ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev/v2/mcp", authToken: config.FIRECRAWL_API_KEY }]
         : []),
-      ...(config.EXA_API_KEY
-        ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
-        : []),
+      { slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: null },
     ];
     // User-connected servers now reach Modal builds too. The old guard emptied
     // this for Modal because MCP forced the dispatch onto Anthropic, so a user
@@ -1493,7 +1483,6 @@ export async function runFastBuild(
       onSandboxLog: (line: string) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
-      restProviders,
       ...(deployCtx === undefined ? {} : { deploy: deployCtx }),
     });
 

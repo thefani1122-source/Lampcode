@@ -38,7 +38,7 @@ import { config } from "../server/config.js";
 import { deductUsage } from "../build/credits.js";
 import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
-import type { ActiveMcpServer, ConnectedRestProvider } from "../server/routes/integrations.js";
+import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { RenderReport } from "../verify/render.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 
@@ -101,7 +101,6 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  classified). Explicitly-annotated write/destructive tools become local
    *  proxy tools with a user-approval gate. Ambiguous tools stay fully blocked. */
   mcpServers?: ActiveMcpServer[] | undefined;
-  restProviders?: ConnectedRestProvider[] | undefined;
   /** Billing/analytics tag for this dispatch — separate from agentType, see
    *  the usageCategory column comment in db/schema.ts. Defaults to "build"
    *  when omitted so every dispatch still lands in a real category rather
@@ -341,7 +340,7 @@ export class AgentDispatcher {
     model: string,
     tier: 1 | 2,
   ): Promise<DispatchResult> {
-    const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers, restProviders } = options;
+    const { agentType, sessionId, userId, projectId, contextFiles, costGuard, mcpServers } = options;
     // MCP no longer forces Anthropic. It used to: the OpenAI-compatible gateway
     // has no MCP-connector equivalent, so a dispatch with connected servers was
     // sent to Anthropic to avoid silently losing MCP tool access. In practice
@@ -443,19 +442,6 @@ export class AgentDispatcher {
       );
     }
 
-    // REST-only providers have no callable tool — their hint text goes into
-    // the user message (never the cached system-prompt base, since it's
-    // per-user credential-bearing content that shouldn't ride on a shared
-    // cache segment). Mirrors mcp-action-agent.ts's existing interpolation.
-    let restContext = "";
-    if (enableTools && restProviders && restProviders.length > 0) {
-      const entries = restProviders.map((rp) => {
-        const hint = rp.restApiHint.replace(/\{(\w+)\}/g, (_m, key: string) => rp.creds[key] ?? `{${key}}`);
-        return `### ${rp.name}\n${hint}`;
-      });
-      restContext = `\n\nAvailable REST APIs for connected services (call these directly, read-only lookups only — for write/destructive actions call request_write_action instead):\n${entries.join("\n\n")}`;
-    }
-
     logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
 
     // Resolve workspace directory for project-specific brain files
@@ -489,7 +475,7 @@ export class AgentDispatcher {
 
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage + restContext },
+      { role: "user", content: userMessage },
     ];
 
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.

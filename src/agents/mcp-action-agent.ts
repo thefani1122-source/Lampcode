@@ -6,7 +6,6 @@ import type {
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { getWebSocketServer } from "../websocket/server.js";
-import type { ConnectedRestProvider } from "../server/routes/integrations.js";
 
 export interface McpServer {
   slug: string;
@@ -21,8 +20,6 @@ export interface McpActionOptions {
   userId: string;
   prompt: string;
   mcpServers: McpServer[];
-  /** REST-only providers whose creds are injected into the system prompt */
-  restProviders?: ConnectedRestProvider[];
   /** True when the prompt contains a reference URL — instructs the agent to use Firecrawl */
   hasReferenceUrl?: boolean;
 }
@@ -36,18 +33,15 @@ export async function runMcpAction(opts: McpActionOptions): Promise<string> {
     platformDefs.push({
       type: "url" as const,
       name: "firecrawl",
-      url: "https://mcp.firecrawl.dev",
+      url: "https://mcp.firecrawl.dev/v2/mcp",
       authorization_token: config.FIRECRAWL_API_KEY,
     });
   }
-  if (config.EXA_API_KEY) {
-    platformDefs.push({
-      type: "url" as const,
-      name: "exa",
-      url: "https://mcp.exa.ai/mcp",
-      authorization_token: config.EXA_API_KEY,
-    });
-  }
+  platformDefs.push({
+    type: "url" as const,
+    name: "exa",
+    url: "https://mcp.exa.ai/mcp",
+  });
 
   // ── User-connected MCP servers ────────────────────────────────────────────
   const userMcpDefs: BetaRequestMCPServerURLDefinition[] = opts.mcpServers.map((s) => {
@@ -64,18 +58,6 @@ export async function runMcpAction(opts: McpActionOptions): Promise<string> {
 
   const mcpDefs = [...platformDefs, ...userMcpDefs];
 
-  // ── Build REST provider context ───────────────────────────────────────────
-  let restContext = "";
-  if (opts.restProviders && opts.restProviders.length > 0) {
-    const entries = opts.restProviders.map((rp) => {
-      const hint = rp.restApiHint.replace(/\{(\w+)\}/g, (_match, key: string) => {
-        return rp.creds[key] ?? `{${key}}`;
-      });
-      return `### ${rp.name}\n${hint}`;
-    });
-    restContext = `\n\nAvailable REST APIs (call these directly via fetch/HTTP — no MCP needed):\n${entries.join("\n\n")}`;
-  }
-
   // ── URL-scraping hint ─────────────────────────────────────────────────────
   const urlHint = opts.hasReferenceUrl && config.FIRECRAWL_API_KEY
     ? "\n\nThe user's prompt contains a reference URL. Use the Firecrawl MCP tool to scrape it first and incorporate the content into your response or actions."
@@ -89,20 +71,19 @@ export async function runMcpAction(opts: McpActionOptions): Promise<string> {
   const allServiceNames = [
     ...platformNames,
     ...opts.mcpServers.map((s) => s.name),
-    ...(opts.restProviders?.map((r) => r.name) ?? []),
   ];
 
   const systemPrompt = `You are an automation agent with access to the user's connected services.
 
 Always-available tools: ${platformNames.length > 0 ? platformNames.join(", ") : "none"}
-Connected user services: ${opts.mcpServers.length > 0 || (opts.restProviders?.length ?? 0) > 0
+Connected user services: ${opts.mcpServers.length > 0
     ? allServiceNames.slice(platformNames.length).join(", ")
     : "none"}
 
-Execute the user's request by calling the appropriate MCP tools or REST APIs.
+Execute the user's request by calling the available MCP tools. REST-only integrations are not executable in this action.
 Be specific about what you did. Show results and IDs.
 If creating code repos, create them with a proper README and initial structure.
-If creating workflows, make them complete and production-ready.${urlHint}${restContext}`;
+If creating workflows, make them complete and production-ready.${urlHint}`;
 
   let ws: ReturnType<typeof getWebSocketServer> | null = null;
   try {
@@ -179,3 +160,4 @@ If creating workflows, make them complete and production-ready.${urlHint}${restC
 
   return finalText;
 }
+

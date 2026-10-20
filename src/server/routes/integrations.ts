@@ -883,13 +883,6 @@ export interface ActiveMcpServer {
   oauthRedirectUrl?: string | undefined;
 }
 
-export interface ConnectedRestProvider {
-  slug: string;
-  name: string;
-  restApiHint: string;
-  creds: Record<string, string>;
-}
-
 /**
  * Returns all connected MCP providers for a user with decrypted creds,
  * ready to pass directly to Anthropic's beta mcp_servers param.
@@ -1027,44 +1020,5 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
     "[mcp] connected servers resolved for this request",
   );
   return servers;
-}
-
-/**
- * Returns all connected REST-only providers (supportsRealMCP = false) with
- * decrypted creds so the action agent can inject them into the system prompt.
- */
-export async function getConnectedRestProviders(userId: string): Promise<ConnectedRestProvider[]> {
-  const rows = await db
-    .select()
-    .from(userMcpConnections)
-    .where(eq(userMcpConnections.userId, userId));
-
-  const providers: ConnectedRestProvider[] = [];
-
-  for (const row of rows) {
-    try {
-      const provider = getMcpProvider(row.providerSlug);
-      if (!provider || provider.supportsRealMCP || !provider.restApiHint) continue;
-
-      const creds = JSON.parse(
-        decrypt({
-          encrypted: row.encryptedCreds,
-          iv: row.encryptedCredsIv,
-          tag: row.encryptedCredsTag,
-        }),
-      ) as Record<string, string>;
-
-      providers.push({
-        slug: row.providerSlug,
-        name: provider.name,
-        restApiHint: provider.restApiHint,
-        creds,
-      });
-    } catch (err) {
-      logger.warn({ userId, slug: row.providerSlug, err }, "Failed to decrypt REST provider creds");
-    }
-  }
-
-  return providers;
 }
 
