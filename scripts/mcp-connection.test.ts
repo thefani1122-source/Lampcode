@@ -15,6 +15,7 @@ check("embedded-token endpoint does not duplicate URL auth", resolveMcpAuth(MCP_
 check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNAL_MCP_PROVIDERS.exa!, {})?.headers, {});
 check("OAuth connection uses stored access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { oauth_access_token: "oauth-token" })?.headers,
   { Authorization: "Bearer oauth-token" });
+check("OAuth-only Vercel does not advertise a static token field", MCP_REGISTRY.vercel!.credentialFields, []);
 check("custom server can use explicit header auth", resolveCustomMcpAuth({ url: "https://mcp.example.com/mcp", authType: "api_key", token: "k", headerName: "X-API-Key" })?.headers,
   { "X-API-Key": "k" });
 ok("cleartext non-local custom MCP URLs are rejected", resolveCustomMcpAuth({ url: "http://mcp.example.com/mcp", authType: "none" }) === null);
