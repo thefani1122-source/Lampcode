@@ -15,6 +15,7 @@ import { getProvider } from "../../mcp/providers/index.js";
 import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
 import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
 import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession } from "../../mcp/oauth-client.js";
+import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
 import { config } from "../config.js";
 
 export const integrationsRouter = new Hono();
@@ -44,7 +45,7 @@ function oauthCallbackUrl(): string {
   return url.toString();
 }
 
-// ── Schemas ───────────────────────────────────────────────────────────────────
+// �� Schemas �������������������������������������������������������������������
 
 const connectSupabaseSchema = z.object({
   supabaseUrl: z.string().url("Must be a valid URL, e.g. https://xxx.supabase.co"),
@@ -57,7 +58,7 @@ const connectSupabaseMcpSchema = z.object({
   projectRef: z.string().min(10, "project ref looks too short").optional(),
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// �� Helpers �������������������������������������������������������������������
 
 async function testSupabaseConnection(
   supabaseUrl: string,
@@ -89,7 +90,7 @@ async function testSupabaseConnection(
   }
 }
 
-// ── GET /api/integrations ─────────────────────────────────────────────────────
+// �� GET /api/integrations �����������������������������������������������������
 
 integrationsRouter.get("/", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -117,7 +118,7 @@ integrationsRouter.get("/", async (c) => {
       lastTestedAt: r.lastTestedAt,
       lastError: r.lastError,
       createdAt: r.createdAt,
-      // only expose safe public fields — never return encrypted key material
+      // only expose safe public fields - never return encrypted key material
       meta: {
         supabaseUrl: cfg["supabaseUrl"] ?? null,
         projectRef: cfg["projectRef"] ?? null,
@@ -129,7 +130,7 @@ integrationsRouter.get("/", async (c) => {
   return c.json({ integrations });
 });
 
-// ── POST /api/integrations/supabase ──────────────────────────────────────────
+// �� POST /api/integrations/supabase ������������������������������������������
 
 integrationsRouter.post("/supabase", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -205,7 +206,7 @@ integrationsRouter.post("/supabase", async (c) => {
   }, 201);
 });
 
-// ── POST /api/integrations/supabase/mcp ──────────────────────────────────────
+// �� POST /api/integrations/supabase/mcp ��������������������������������������
 // Connect the user's OWN Supabase via the hosted MCP server using a Personal
 // Access Token. We verify the PAT by listing tools, then (best-effort) fetch the
 // project's public URL + anon key so the preview can target the user's project.
@@ -232,17 +233,18 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
     const tools = await listSupabaseMcpTools({ accessToken, projectRef });
     toolCount = tools.length;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new AppError(422, `Could not connect to Supabase MCP: ${msg}`, "MCP_CONNECT_FAILED");
+    const category = safeMcpFailureCategory(err);
+    logger.warn({ provider: "supabase", stage: "list_tools", category }, "Supabase MCP validation failed");
+    throw new AppError(422, `Could not connect to Supabase MCP (${category})`, "MCP_CONNECT_FAILED");
   }
   if (toolCount === 0) {
-    throw new AppError(422, "Connected but the MCP server returned no tools — check the token's scope", "MCP_NO_TOOLS");
+    throw new AppError(422, "Connected but the MCP server returned no tools - check the token's scope", "MCP_NO_TOOLS");
   }
 
   // The project's public URL + anon key. NOT best-effort any more.
   //
   // MEASURED 2026-10-18. A row existed with provider=supabase, status=connected
-  // and a config holding NO supabaseUrl and NO anon key — because `projectRef`
+  // and a config holding NO supabaseUrl and NO anon key - because `projectRef`
   // was absent, so this block never ran, and the row was written as "connected"
   // regardless. The result was the worst shape available: the UI showed the
   // integration as connected, `getUserSupabasePreviewCreds` correctly returned
@@ -261,7 +263,7 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
   }
   if (creds.error) credsError = creds.error;
   if (!creds.url || !creds.anonKey) {
-    // The token itself is fine — it just listed tools. What is missing is the
+    // The token itself is fine - it just listed tools. What is missing is the
     // project, so the message says exactly that and exactly what to do, rather
     // than "connection failed", which would send someone to regenerate a token
     // that was never the problem.
@@ -279,34 +281,36 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
     );
   }
 
-  const patEnc = encrypt(accessToken);
   const anonEnc = creds.anonKey ? encrypt(creds.anonKey) : null;
   const now = new Date();
   const id = randomUUID();
+  const mcpEnc = encrypt(JSON.stringify({ accessToken, projectRef }));
 
   const config = {
     projectRef: projectRef ?? undefined,
     supabaseUrl: creds.url ?? undefined,
-    // PAT (admin) — encrypted, backend-only.
-    encryptedToken: patEnc.encrypted,
-    encryptedTokenIv: patEnc.iv,
-    encryptedTokenTag: patEnc.tag,
-    // anon key (public) — encrypted at rest too; injected into previews.
+    // anon key (public) - encrypted at rest too; injected into previews.
     encryptedAnonKey: anonEnc?.encrypted,
     encryptedAnonKeyIv: anonEnc?.iv,
     encryptedAnonKeyTag: anonEnc?.tag,
   };
 
-  await db
-    .insert(userIntegrations)
-    .values({
-      id, userId, provider: "supabase", status: "connected",
-      config, lastTestedAt: now, lastError: null, createdAt: now, updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [userIntegrations.userId, userIntegrations.provider],
-      set: { status: "connected", config, lastTestedAt: now, lastError: null, updatedAt: now },
+  await db.transaction(async (tx) => {
+    await tx.insert(userMcpConnections).values({
+      id: randomUUID(), userId, providerSlug: "supabase",
+      encryptedCreds: mcpEnc.encrypted, encryptedCredsIv: mcpEnc.iv, encryptedCredsTag: mcpEnc.tag,
+      meta: { projectRef: projectRef ?? "", url: new URL(creds.url!).host }, connectedAt: now,
+    }).onConflictDoUpdate({
+      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+      set: { encryptedCreds: mcpEnc.encrypted, encryptedCredsIv: mcpEnc.iv, encryptedCredsTag: mcpEnc.tag, meta: { projectRef: projectRef ?? "", url: new URL(creds.url!).host }, connectedAt: now },
     });
+    await tx.insert(userIntegrations)
+      .values({ id, userId, provider: "supabase", status: "connected", config, lastTestedAt: now, lastError: null, createdAt: now, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [userIntegrations.userId, userIntegrations.provider],
+        set: { status: "connected", config, lastTestedAt: now, lastError: null, updatedAt: now },
+      });
+  });
 
   logger.info({ userId, projectRef, toolCount, hasAnonKey: Boolean(creds.anonKey) }, "Supabase MCP connected");
 
@@ -320,7 +324,7 @@ integrationsRouter.post("/supabase/mcp", async (c) => {
   }, 201);
 });
 
-// ── POST /api/integrations/:id/test ──────────────────────────────────────────
+// �� POST /api/integrations/:id/test ������������������������������������������
 
 integrationsRouter.post("/:id/test", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -340,7 +344,7 @@ integrationsRouter.post("/:id/test", async (c) => {
 
   const cfg = row.config;
   if (!cfg.supabaseUrl || !cfg.encryptedServiceKey || !cfg.encryptedServiceKeyIv || !cfg.encryptedServiceKeyTag) {
-    throw new AppError(422, "Integration credentials are incomplete — reconnect", "INCOMPLETE_CREDENTIALS");
+    throw new AppError(422, "Integration credentials are incomplete - reconnect", "INCOMPLETE_CREDENTIALS");
   }
 
   const serviceRoleKey = decrypt({
@@ -365,26 +369,31 @@ integrationsRouter.post("/:id/test", async (c) => {
   return c.json({ ok: test.ok, error: test.error });
 });
 
-// ── DELETE /api/integrations/:id ─────────────────────────────────────────────
+// �� DELETE /api/integrations/:id ���������������������������������������������
 
 integrationsRouter.delete("/:id", async (c) => {
   const { id: userId } = c.get("authUser");
   const { id } = c.req.param();
 
   const rows = await db
-    .select({ id: userIntegrations.id })
+    .select({ id: userIntegrations.id, provider: userIntegrations.provider })
     .from(userIntegrations)
     .where(and(eq(userIntegrations.id, id), eq(userIntegrations.userId, userId)))
     .limit(1);
   if (!rows[0]) throw new AppError(404, "Integration not found", "NOT_FOUND");
 
-  await db.delete(userIntegrations).where(eq(userIntegrations.id, id));
+  await db.transaction(async (tx) => {
+    await tx.delete(userIntegrations).where(eq(userIntegrations.id, id));
+    if (rows[0]?.provider === "supabase") {
+      await tx.delete(userMcpConnections).where(and(eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, "supabase")));
+    }
+  });
 
   logger.info({ userId, integrationId: id }, "Integration disconnected");
   return c.json({ success: true });
 });
 
-// ── POST /api/integrations/provider/:id ──────────────────────────────────────
+// �� POST /api/integrations/provider/:id ��������������������������������������
 // Generic connect for registry providers (wordpress, shopify, make, n8n,
 // zapier). Validates with the provider's Zod schema, runs testConnection, then
 // stores the full creds object ENCRYPTED (one blob) + a few non-secret fields
@@ -451,7 +460,7 @@ integrationsRouter.post("/provider/:id", async (c) => {
   return c.json({ provider: providerId, status: "connected", meta }, 201);
 });
 
-// ── Helpers for the build/preview flow ────────────────────────────────────────
+// �� Helpers for the build/preview flow ����������������������������������������
 
 async function loadSupabaseIntegration(userId: string) {
   const rows = await db
@@ -485,7 +494,7 @@ export async function getUserSupabasePreviewCreds(
       tag: cfg.encryptedAnonKeyTag,
     });
     // Service key (RLS-bypass) only if the user connected via the service-key
-    // flow. Backend-only — never returned to the frontend.
+    // flow. Backend-only - never returned to the frontend.
     let serviceKey: string | undefined;
     if (cfg.encryptedServiceKey && cfg.encryptedServiceKeyIv && cfg.encryptedServiceKeyTag) {
       try {
@@ -505,11 +514,35 @@ export async function getUserSupabasePreviewCreds(
 
 /**
  * The user's Supabase MCP auth (PAT + projectRef), decrypted, for running their
- * generated schema against their own project. Backend-only — never exposed.
+ * generated schema against their own project. Backend-only - never exposed.
  */
 export async function getUserSupabaseMcpAuth(
   userId: string,
 ): Promise<{ accessToken: string; projectRef?: string } | null> {
+  const mcpRows = await db.select().from(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, "supabase"),
+  )).limit(1);
+  const mcpRow = mcpRows[0];
+  if (mcpRow) {
+    try {
+      const creds = JSON.parse(decrypt({
+        encrypted: mcpRow.encryptedCreds,
+        iv: mcpRow.encryptedCredsIv,
+        tag: mcpRow.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      if (typeof creds["accessToken"] === "string") {
+        return {
+          accessToken: creds["accessToken"],
+          ...(typeof creds["projectRef"] === "string" ? { projectRef: creds["projectRef"] } : {}),
+        };
+      }
+    } catch {
+      logger.warn({ userId, provider: "supabase", stage: "credential_decrypt" }, "Supabase MCP credential could not be read");
+      return null;
+    }
+  }
+
+  // Legacy Supabase PATs remain readable until their next successful reconnect.
   const row = await loadSupabaseIntegration(userId);
   if (!row) return null;
   const cfg = row.config;
@@ -521,13 +554,13 @@ export async function getUserSupabaseMcpAuth(
       tag: cfg.encryptedTokenTag,
     });
     return { accessToken, ...(cfg.projectRef ? { projectRef: cfg.projectRef } : {}) };
-  } catch (err) {
-    logger.warn({ userId, err }, "Failed to decrypt user Supabase PAT");
+  } catch {
+    logger.warn({ userId, provider: "supabase", stage: "legacy_credential_decrypt" }, "Failed to decrypt legacy Supabase PAT");
     return null;
   }
 }
 
-// ── Custom MCP routes (must be before /mcp/:slug to avoid route collision) ────
+// �� Custom MCP routes (must be before /mcp/:slug to avoid route collision) ����
 
 const customConnectSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -535,6 +568,7 @@ const customConnectSchema = z.object({
   description: z.string().default(""),
   mcpServerUrl: z.string().min(1).refine(u => u.startsWith("https://"), "URL must start with https://"),
   authType: z.enum(["bearer_token", "api_key", "none"]),
+  authHeader: z.string().min(1).max(100).optional(),
   creds: z.object({ token: z.string().optional() }).default({}),
 });
 
@@ -545,9 +579,18 @@ integrationsRouter.post("/mcp/custom/connect", async (c) => {
   const parsed = customConnectSchema.safeParse(raw);
   if (!parsed.success) throw new AppError(400, parsed.error.issues[0]?.message ?? "Validation failed", "VALIDATION_ERROR");
 
-  const { name, slug, description, mcpServerUrl, authType, creds } = parsed.data;
+  const { name, slug, description, mcpServerUrl, authType, authHeader, creds } = parsed.data;
 
-  const credsBlob = { token: creds.token ?? "", mcpServerUrl, authType, name, description };
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(slug)) throw new AppError(400, "Custom MCP name is invalid", "VALIDATION_ERROR");
+  const resolved = resolveCustomMcpAuth({ url: mcpServerUrl, authType, token: creds.token, headerName: authHeader });
+  if (!resolved) throw new AppError(400, "Custom MCP URL or authentication is invalid", "VALIDATION_ERROR");
+  const health = await checkMcpServer(resolved);
+  if (!health.ok) {
+    logger.warn({ provider: "custom", stage: health.stage, category: health.category }, "Custom MCP validation failed");
+    throw new AppError(422, `MCP connection failed during ${health.stage} (${health.category})`, "MCP_CONNECT_FAILED");
+  }
+
+  const credsBlob = { token: creds.token ?? "", mcpServerUrl: resolved.url, authType, authHeader, name, description };
   const enc = encrypt(JSON.stringify(credsBlob));
 
   let urlHost = "";
@@ -580,7 +623,7 @@ integrationsRouter.post("/mcp/custom/connect", async (c) => {
   return c.json({ slug, status: "connected" }, 201);
 });
 
-// GET /api/integrations/mcp/custom — list user's custom MCPs
+// GET /api/integrations/mcp/custom - list user's custom MCPs
 integrationsRouter.get("/mcp/custom", async (c) => {
   const { id: userId } = c.get("authUser");
   const rows = await db
@@ -604,7 +647,7 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
   return c.json({ success: true });
 });
 
-// ── MCP Provider routes ────────────────────────────────────────────────────────
+// �� MCP Provider routes ��������������������������������������������������������
 
 integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -746,6 +789,14 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   // the owner's GitHub connection invisible to every build.
   const creds = unwrapCreds(body);
 
+  const resolved = resolveMcpAuth(provider, creds);
+  if (!resolved) throw new AppError(422, "Provider credentials or MCP endpoint are incomplete", "MCP_CREDENTIALS_INCOMPLETE");
+  const health = await checkMcpServer(resolved);
+  if (!health.ok) {
+    logger.warn({ provider: slug, stage: health.stage, category: health.category }, "MCP provider validation failed");
+    throw new AppError(422, `MCP connection failed during ${health.stage} (${health.category})`, "MCP_CONNECT_FAILED");
+  }
+
   // Encrypt all creds as one blob
   const enc = encrypt(JSON.stringify(creds));
 
@@ -790,7 +841,7 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   });
 
   logger.info({ userId, slug }, "MCP provider connected");
-  return c.json({ slug, status: "connected", meta }, 201);
+  return c.json({ slug, status: "connected", toolCount: health.toolCount, meta }, 201);
 });
 
 // DELETE /api/integrations/mcp/:slug
@@ -803,7 +854,7 @@ integrationsRouter.delete("/mcp/:slug", async (c) => {
   return c.json({ success: true });
 });
 
-// GET /api/integrations/mcp — list connected providers
+// GET /api/integrations/mcp - list connected providers
 integrationsRouter.get("/mcp", async (c) => {
   const { id: userId } = c.get("authUser");
   const rows = await db
@@ -817,13 +868,13 @@ integrationsRouter.get("/mcp", async (c) => {
   return c.json({ connected: rows });
 });
 
-// ── Helper: get connected MCP servers ready for Anthropic beta ────────────────
+// �� Helper: get connected MCP servers ready for Anthropic beta ����������������
 
 export interface ActiveMcpServer {
   slug: string;
   name: string;
   url: string;
-  /** null for mcp_url authType — the token is already embedded in the URL */
+  /** null for mcp_url authType - the token is already embedded in the URL */
   authToken: string | null;
   /** Fully resolved auth headers shared by discovery and local execution. */
   authHeaders?: Record<string, string> | undefined;
@@ -841,7 +892,7 @@ export interface ConnectedRestProvider {
  * ready to pass directly to Anthropic's beta mcp_servers param.
  * Only returns providers that supportsRealMCP = true AND have a resolvable URL.
  *
- * For mcp_url authType the token is embedded in the URL — authToken is null.
+ * For mcp_url authType the token is embedded in the URL - authToken is null.
  */
 /**
  * Unwrap a `{ creds: { ... } }` envelope.
@@ -851,7 +902,7 @@ export interface ConnectedRestProvider {
  * therefore stores the envelope. Measured on 2026-10-04: the owner's GitHub
  * connection had `storedKeys: ["creds"]` while the registry expected
  * `github_token`, so every lookup missed and the server silently never reached
- * a build — connected in the UI, absent from every dispatch.
+ * a build - connected in the UI, absent from every dispatch.
  *
  * Unwrapping on READ fixes rows already stored, which matters because the
  * alternative is asking every affected user to reconnect. No provider declares
@@ -910,22 +961,42 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
 
       const provider = getMcpProvider(row.providerSlug);
       if (!provider) {
-        logger.warn({ userId, slug: row.providerSlug }, "[mcp] connected provider is not in the registry — skipped");
+        logger.warn({ userId, slug: row.providerSlug }, "[mcp] connected provider is not in the registry - skipped");
         continue;
       }
       if (!provider.supportsRealMCP) {
-        logger.info({ userId, slug: row.providerSlug }, "[mcp] provider is REST-only, not an MCP server — skipped");
+        logger.info({ userId, slug: row.providerSlug }, "[mcp] provider is REST-only, not an MCP server - skipped");
         continue;
       }
 
       const resolved = resolveMcpAuth(provider, creds);
       if (!resolved) {
-        logger.warn({ userId, slug: row.providerSlug }, "[mcp] could not resolve a server URL — skipped");
+        logger.warn({ userId, slug: row.providerSlug }, "[mcp] could not resolve a server URL - skipped");
         continue;
       }
       servers.push({ slug: row.providerSlug, name: provider.name, url: resolved.url, authToken: null, authHeaders: resolved.headers });
     } catch (err) {
       logger.warn({ userId, slug: row.providerSlug, err }, "Failed to decrypt MCP creds");
+    }
+  }
+
+  // Older releases stored some provider credentials in user_integrations.
+  // Keep those connections usable, while the MCP table wins when both exist.
+  const resolvedSlugs = new Set(servers.map((server) => server.slug));
+  const legacyRows = await db.select().from(userIntegrations).where(eq(userIntegrations.userId, userId));
+  for (const row of legacyRows) {
+    if (row.status !== "connected" || resolvedSlugs.has(row.provider)) continue;
+    const provider = getMcpProvider(row.provider);
+    const cfg = row.config;
+    if (!provider?.supportsRealMCP || !cfg.encryptedCreds || !cfg.encryptedCredsIv || !cfg.encryptedCredsTag) continue;
+    try {
+      const creds = JSON.parse(decrypt({ encrypted: cfg.encryptedCreds, iv: cfg.encryptedCredsIv, tag: cfg.encryptedCredsTag })) as Record<string, string>;
+      const resolved = resolveMcpAuth(provider, creds);
+      if (!resolved) continue;
+      servers.push({ slug: row.provider, name: provider.name, url: resolved.url, authToken: null, authHeaders: resolved.headers });
+      resolvedSlugs.add(row.provider);
+    } catch {
+      logger.warn({ userId, provider: row.provider, stage: "legacy_credential_decrypt" }, "Legacy MCP credential could not be read");
     }
   }
 

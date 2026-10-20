@@ -1,4 +1,28 @@
 import type { McpProvider } from "./registry.js";
+import { isIP } from "node:net";
+
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
+  if (isIP(host) === 4) {
+    const [a, b] = host.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
+      (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a !== undefined && a >= 224);
+  }
+  if (isIP(host) === 6) return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
+  return false;
+}
+
+function safeRemoteUrl(rawUrl: string): URL | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:" || url.username || url.password || url.hash || isPrivateHost(url.hostname)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
 
 export type McpAuth = {
   url: string;
@@ -15,13 +39,8 @@ export function resolveMcpAuth(
     : provider.mcpServerUrl;
   if (!rawUrl) return null;
 
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") return null;
+  const url = safeRemoteUrl(rawUrl);
+  if (!url) return null;
 
   const headers: Record<string, string> = {};
   if (provider.authType === "mcp_url") return { url: url.toString(), headers };
@@ -53,11 +72,14 @@ export function resolveCustomMcpAuth(input: {
   headerName?: string | undefined;
 }): McpAuth | null {
   try {
-    const url = new URL(input.url);
-    if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") return null;
+    const url = safeRemoteUrl(input.url);
+    if (!url) return null;
     const headers: Record<string, string> = {};
     if (input.authType === "bearer_token" && input.token) headers.Authorization = `Bearer ${input.token}`;
-    if (input.authType === "api_key" && input.token && input.headerName) headers[input.headerName] = input.token;
+    if (input.authType === "api_key") {
+      if (!input.token || !input.headerName || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(input.headerName)) return null;
+      headers[input.headerName] = input.token;
+    }
     return { url: url.toString(), headers };
   } catch {
     return null;

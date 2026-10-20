@@ -1,17 +1,19 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { logger } from "../server/logger.js";
+import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
 
-// ── Supabase hosted MCP server ───────────────────────────────────────────────
+// �� Supabase hosted MCP server �����������������������������������������������
 // Official remote MCP: https://supabase.com/docs/guides/getting-started/mcp
 // Auth (programmatic): a Supabase Personal Access Token (PAT) sent as
 //   Authorization: Bearer <token>
 // Scope to one project with ?project_ref=<ref>. We default to read-only=false
 // only where we actually need to write (schema apply); reads use read_only.
 const SUPABASE_MCP_URL = "https://mcp.supabase.com/mcp";
+const SUPABASE_MCP_TIMEOUT_MS = 12_000;
 
 export interface SupabaseMcpAuth {
-  accessToken: string; // Supabase Personal Access Token (PAT) — NEVER logged / sent to client/LLM/sandbox
+  accessToken: string; // Supabase Personal Access Token (PAT) - NEVER logged / sent to client/LLM/sandbox
   projectRef?: string | undefined;
 }
 
@@ -34,7 +36,7 @@ export function buildSupabaseMigrationArgs(name: string, query: string): { name:
 
 /**
  * Opens an MCP session to the Supabase server, runs `fn`, and always closes the
- * transport afterwards. The PAT is passed only as a request header — it never
+ * transport afterwards. The PAT is passed only as a request header - it never
  * touches logs, the client, the model context, or the sandbox.
  */
 async function withSupabaseMcp<T>(
@@ -45,6 +47,7 @@ async function withSupabaseMcp<T>(
   const transport = new StreamableHTTPClientTransport(buildSupabaseMcpUrl(auth.projectRef, readOnly), {
     requestInit: {
       headers: { Authorization: `Bearer ${auth.accessToken}` },
+      signal: AbortSignal.timeout(SUPABASE_MCP_TIMEOUT_MS),
     },
   });
   const client = new Client({ name: "lampcode", version: "1.0.0" }, { capabilities: {} });
@@ -94,7 +97,7 @@ export async function fetchSupabaseProjectCreds(
 
     // Carried out to the caller, because the person connecting needs to read
     // what Supabase actually said. A reason that only reaches a log line is a
-    // silent failure wearing a different hat — which is the bug this whole
+    // silent failure wearing a different hat - which is the bug this whole
     // function has had twice.
     let failure: string | undefined;
     let lastUrlResult: unknown = null;
@@ -107,8 +110,8 @@ export async function fetchSupabaseProjectCreds(
       assertNotError(r, "get_project_url");
       url = extractProjectUrl(payloadOf(r));
     } catch (err) {
-      failure = err instanceof Error ? err.message : String(err);
-      logger.warn({ err }, "[mcp] get_project_url failed");
+      failure = `get_project_url: ${sanitizeMcpError(err instanceof Error ? err.message : String(err))}`;
+      logger.warn({ stage: "get_project_url", category: safeMcpFailureCategory(err) }, "[mcp] Supabase project URL lookup failed");
     }
 
     let anonKey: string | null = null;
@@ -118,12 +121,12 @@ export async function fetchSupabaseProjectCreds(
       assertNotError(r, "get_publishable_keys");
       anonKey = extractAnonKey(payloadOf(r));
     } catch (err) {
-      failure ??= err instanceof Error ? err.message : String(err);
-      logger.warn({ err }, "[mcp] get_publishable_keys failed");
+      failure ??= `get_publishable_keys: ${sanitizeMcpError(err instanceof Error ? err.message : String(err))}`;
+      logger.warn({ stage: "get_publishable_keys", category: safeMcpFailureCategory(err) }, "[mcp] Supabase key lookup failed");
     }
 
     if (!url || !anonKey) {
-      // The SHAPE, never the values — and enough of it that a third failure
+      // The SHAPE, never the values - and enough of it that a third failure
       // does not cost another guess. Two deployments were spent asking "is it
       // in content, or in structuredContent?" when the result itself could
       // have said so the first time. Key names and types only: a Supabase PAT
@@ -147,7 +150,7 @@ export async function fetchSupabaseProjectCreds(
  *
  * MEASURED 2026-10-18. Connecting a Supabase project failed with "the project
  * returned no URL or anon key" while BOTH tool calls succeeded and nothing was
- * logged — because the extractor read only `content[].text`, and the server
+ * logged - because the extractor read only `content[].text`, and the server
  * answers these two tools in `structuredContent`. A tool that returns nothing
  * and a tool that returns somewhere else look identical from one field.
  *
@@ -174,7 +177,7 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
   try {
     raw = JSON.stringify(result) ?? "";
   } catch {
-    /* circular or otherwise unserialisable — the fields above still apply */
+    /* circular or otherwise unserialisable - the fields above still apply */
   }
   return { text: text || raw, data };
 }
@@ -185,14 +188,14 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
  * as its text, and that is deliberate.
  *
  * MEASURED 2026-10-18, twice. First `content[].text` was read and the answer
- * was not there. Then `structuredContent` was added — and the answer was not
+ * was not there. Then `structuredContent` was added - and the answer was not
  * there either: four more attempts, `hasUrl=false hasAnonKey=false`, and still
  * not one error, because the calls kept succeeding. Two guesses at a schema,
  * two deployments, two rounds of the owner retrying by hand.
  *
  * So the third attempt stops guessing where. The three values this function
- * needs have shapes nothing else has — `https://<ref>.supabase.co`, a JWT
- * beginning `eyJ`, and `sb_publishable_…` — and a value that distinctive can
+ * needs have shapes nothing else has - `https://<ref>.supabase.co`, a JWT
+ * beginning `eyJ`, and `sb_publishable_.` - and a value that distinctive can
  * be found by what it IS rather than by where it sits. Knowing the schema is
  * nicer; working whatever the schema turns out to be is worth more here, and
  * the structured path is still tried first so a well-formed answer is read
@@ -205,7 +208,7 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
  *
  * A Supabase PAT and an anon key must never reach a log line, and "log the
  * response so we can see it" is how they do. This prints key names, types and
- * array lengths — enough to find where an answer lives, and nothing that is
+ * array lengths - enough to find where an answer lives, and nothing that is
  * worth stealing.
  */
 /**
@@ -213,7 +216,7 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
  *
  * MEASURED 2026-10-18, after two wrong guesses. `client.callTool()` rejects
  * only on protocol failures. A tool that ran and failed comes back as an
- * ordinary resolved result with `isError: true` and the reason in its text —
+ * ordinary resolved result with `isError: true` and the reason in its text -
  * so every `try/catch` here caught nothing, every warning stayed silent, and
  * two deployments were spent asking whether the answer lived in
  * `content[].text` or in `structuredContent`. There was no answer to find. The
@@ -221,13 +224,13 @@ function payloadOf(result: unknown): { text: string; data: unknown } {
  * returning the identical 219-character text.
  *
  * The message is a server-side error string, not a credential, so it IS
- * logged — that is the whole point. Without it this is a silent failure with a
+ * logged - that is the whole point. Without it this is a silent failure with a
  * different name.
  */
 export function assertNotError(result: unknown, toolName: string): void {
   const r = result as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
   if (r?.isError !== true) return;
-  const reason = textOf({ content: r.content ?? [] }).slice(0, 400) || "(no message)";
+  const reason = sanitizeMcpError(textOf({ content: r.content ?? [] })) || "(no message)";
   throw new Error(`${toolName} failed: ${reason}`);
 }
 
@@ -257,9 +260,9 @@ function extractProjectUrl({ text, data }: { text: string; data: unknown }): str
 /**
  * The key a generated app should initialise its Supabase client with.
  *
- * The server answers `get_publishable_keys` with a LIST — measured shape:
- * `{ keys: [ { api_key, name, type, disabled, id }, … ] }`, carrying both the
- * legacy JWT anon key and a modern `sb_publishable_…` one.
+ * The server answers `get_publishable_keys` with a LIST - measured shape:
+ * `{ keys: [ { api_key, name, type, disabled, id }, . ] }`, carrying both the
+ * legacy JWT anon key and a modern `sb_publishable_.` one.
  *
  * The legacy anon key is preferred, and that is a decision rather than
  * nostalgia: everything the prompt teaches about `auth.uid()` and the JWT the
@@ -313,12 +316,13 @@ export async function applySupabaseSchema(
         arguments: buildSupabaseMigrationArgs(name, sql),
       });
       const res = r as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
-      if (res.isError) return { ok: false, error: textOf(res) || "migration failed" };
+      if (res.isError) return { ok: false, error: sanitizeMcpError(textOf(res)) || "Supabase MCP returned an error during apply_migration" };
       return { ok: true, error: null };
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.warn({ err }, "[mcp] apply_migration failed");
-    return { ok: false, error: msg };
+    const category = safeMcpFailureCategory(err);
+    logger.warn({ stage: "apply_migration", category }, "[mcp] Supabase migration failed");
+    return { ok: false, error: `Supabase MCP failed during apply_migration (${category}): ${sanitizeMcpError(err instanceof Error ? err.message : String(err))}` };
   }
 }
+
