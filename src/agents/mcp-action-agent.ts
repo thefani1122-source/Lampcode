@@ -6,6 +6,7 @@ import type {
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { getWebSocketServer } from "../websocket/server.js";
+import { legacyMcpActionBlocked } from "./mcp-action-guard.js";
 
 export interface McpServer {
   slug: string;
@@ -25,6 +26,10 @@ export interface McpActionOptions {
 }
 
 export async function runMcpAction(opts: McpActionOptions): Promise<string> {
+  if (legacyMcpActionBlocked(opts.mcpServers.length)) {
+    logger.warn({ sessionId: opts.sessionId, serverCount: opts.mcpServers.length }, "Legacy MCP action path cannot run user-connected servers without approval");
+    return "User-connected MCP actions must use the approval-gated build path.";
+  }
   const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 
   // ── Platform-level internal MCP tools (always injected from env vars) ───────
