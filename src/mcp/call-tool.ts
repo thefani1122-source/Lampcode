@@ -3,6 +3,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { logger } from "../server/logger.js";
 import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
 import { createMcpOAuthProvider } from "./oauth-client.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { secureMcpFetch } from "./secure-fetch.js";
 
 /**
  * Executing one tool on one connected MCP server.
@@ -37,10 +39,25 @@ export interface McpCallTarget {
   mcpToolName: string;
 }
 
+function redactTargetCredentials(value: string, target: McpCallTarget): string {
+  let querySecrets: string[] = [];
+  try { querySecrets = [...new URL(target.serverUrl).searchParams.values()]; } catch { /* malformed target is handled by transport */ }
+  const oauthValues = target.oauthSession
+    ? Object.values(target.oauthSession.tokens ?? {}).concat(target.oauthSession.codeVerifier ? [target.oauthSession.codeVerifier] : [])
+    : [];
+  const secrets = [target.authToken, ...Object.values(target.authHeaders ?? {}), ...querySecrets, ...oauthValues].filter(
+    (secret): secret is string => typeof secret === "string" && secret.length >= 4,
+  );
+  let safe = sanitizeMcpError(value);
+  for (const secret of new Set(secrets)) safe = safe.split(secret).join("[redacted credential]");
+  return safe;
+}
+
 export async function callMcpTool(
   target: McpCallTarget,
   args: Record<string, unknown>,
   clientName = "lampcode-mcp",
+  fetchImpl: FetchLike = secureMcpFetch,
 ): Promise<string> {
   const client = new Client({ name: clientName, version: "1.0.0" });
   const headers: Record<string, string> = { ...(target.authHeaders ?? {}) };
@@ -56,6 +73,8 @@ export async function callMcpTool(
     : null;
   const transport = new StreamableHTTPClientTransport(new URL(target.serverUrl), {
     requestInit: { headers },
+    fetch: fetchImpl,
+    redirectPolicy: "same-origin",
     ...(oauth ? { authProvider: oauth.provider } : {}),
   });
 
@@ -80,19 +99,19 @@ export async function callMcpTool(
 
     if (callResult.isError) {
       logger.warn(
-        { toolName: target.mcpToolName, serverSlug: target.serverSlug, category: "mcp_tool_error" },
+        { serverSlug: target.serverSlug, category: "mcp_tool_error" },
         "[mcp] callTool returned isError",
       );
-      return `Error from ${target.serverSlug}: ${sanitizeMcpError(text)}`;
+      return `Error from ${target.serverSlug}: ${redactTargetCredentials(text, target)}`;
     }
-    return text || "(tool returned no content)";
+    return redactTargetCredentials(text, target) || "(tool returned no content)";
   } catch (err) {
     const category = safeMcpFailureCategory(err);
     logger.warn(
-      { category, toolName: target.mcpToolName, serverSlug: target.serverSlug },
+      { category, serverSlug: target.serverSlug },
       "[mcp] callTool failed",
     );
-    return `Error: could not execute ${target.mcpToolName} on ${target.serverSlug} (${category}): ${sanitizeMcpError(err instanceof Error ? err.message : String(err))}`;
+    return `Error: could not execute ${target.mcpToolName} on ${target.serverSlug} (${category}): ${redactTargetCredentials(err instanceof Error ? err.message : String(err), target)}`;
   } finally {
     await client.close().catch(() => undefined);
   }

@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { secureMcpFetch } from "./secure-fetch.js";
 
 export type McpHealthResult =
   | { ok: true; toolCount: number }
@@ -25,10 +27,13 @@ export async function checkMcpServer(input: {
   url: string;
   headers?: Record<string, string> | undefined;
   timeoutMs?: number | undefined;
+  fetch?: FetchLike | undefined;
 }): Promise<McpHealthResult> {
   const client = new Client({ name: "lampcode-connect-check", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(input.url), {
     requestInit: { headers: input.headers ?? {}, signal: AbortSignal.timeout(input.timeoutMs ?? 8_000) },
+    fetch: input.fetch ?? secureMcpFetch,
+    redirectPolicy: "same-origin",
   });
   let stage: "connect" | "list_tools" = "connect";
   try {

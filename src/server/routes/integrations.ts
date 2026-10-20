@@ -14,6 +14,7 @@ import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supab
 import { getProvider } from "../../mcp/providers/index.js";
 import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
 import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
+import { secureMcpFetch } from "../../mcp/secure-fetch.js";
 import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession } from "../../mcp/oauth-client.js";
 import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
 import { config } from "../config.js";
@@ -692,7 +693,7 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     },
   });
   const client = new Client({ name: "lampcode-oauth-connect", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: oauth.provider });
+  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
   try {
     // The MCP SDK performs protected-resource discovery, client registration,
     // state and PKCE generation. Redirect interception returns control to the UI.
@@ -746,7 +747,7 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
     saveStateHash: async () => undefined,
   });
   const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(pending.serverUrl), { authProvider: oauth.provider });
+  const transport = new StreamableHTTPClientTransport(new URL(pending.serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
   try {
     await transport.finishAuth(code);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,23 +1,18 @@
 import type { McpProvider } from "./registry.js";
 import { isIP } from "node:net";
+import { isPublicMcpAddress } from "./secure-fetch.js";
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
-  if (isIP(host) === 4) {
-    const [a, b] = host.split(".").map(Number);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
-      (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) || (a !== undefined && a >= 224);
-  }
-  if (isIP(host) === 6) return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
-  return false;
+  const host = hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") ||
+    host === "metadata" || host === "metadata.google.internal" || host === "metadata.azure.internal") return true;
+  return isIP(host) ? !isPublicMcpAddress(host) : false;
 }
-
 function safeRemoteUrl(rawUrl: string): URL | null {
   try {
     const url = new URL(rawUrl);
-    if (url.protocol !== "https:" || url.username || url.password || url.hash || isPrivateHost(url.hostname)) return null;
+    if (url.protocol !== "https:" || url.username || url.password || url.hash || isPrivateHost(url.hostname) ||
+      url.pathname.startsWith("/latest/meta-data") || url.pathname.startsWith("/computeMetadata/v1")) return null;
     return url;
   } catch {
     return null;

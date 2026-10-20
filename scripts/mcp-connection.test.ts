@@ -19,6 +19,8 @@ check("OAuth-only Vercel does not advertise a static token field", MCP_REGISTRY.
 check("custom server can use explicit header auth", resolveCustomMcpAuth({ url: "https://mcp.example.com/mcp", authType: "api_key", token: "k", headerName: "X-API-Key" })?.headers,
   { "X-API-Key": "k" });
 ok("cleartext non-local custom MCP URLs are rejected", resolveCustomMcpAuth({ url: "http://mcp.example.com/mcp", authType: "none" }) === null);
+ok("IPv6 loopback custom MCP URLs are rejected", resolveCustomMcpAuth({ url: "https://[::1]/mcp", authType: "none" }) === null);
+ok("metadata service paths are rejected", resolveCustomMcpAuth({ url: "https://mcp.example.com/latest/meta-data", authType: "none" }) === null);
 ok("malformed provider URLs are rejected", resolveMcpAuth({ mcpServerUrl: "not a url", authType: "none", credentialFields: [] }, {}) === null);
 
 if (failures) process.exit(1);

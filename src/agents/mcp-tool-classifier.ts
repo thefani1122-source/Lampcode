@@ -7,6 +7,8 @@ import { describeTier, destructiveByName, needsApproval, strongestTier, tierFor,
 import type { ToolDefinition } from "./model-gateway.js";
 import { safeMcpFailureCategory } from "../mcp/health.js";
 import { createMcpOAuthProvider } from "../mcp/oauth-client.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { secureMcpFetch } from "../mcp/secure-fetch.js";
 
 // ── Read-only classification ──────────────────────────────────────────────────
 // The Anthropic MCP connector (mcp_servers + mcp_toolset) has no mid-call
@@ -85,6 +87,7 @@ export interface McpClassificationResult {
 async function discoverServerTools(
   server: ActiveMcpServer,
   failures: McpDiscoveryFailure[],
+  fetchImpl: FetchLike,
 ): Promise<ClassifiedTool[]> {
   const client = new Client({ name: "lampcode-discovery", version: "1.0.0" });
   const headers: Record<string, string> = { ...(server.authHeaders ?? {}) };
@@ -101,6 +104,8 @@ async function discoverServerTools(
     : null;
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
     requestInit: { headers },
+    fetch: fetchImpl,
+    redirectPolicy: "same-origin",
     ...(oauth ? { authProvider: oauth.provider } : {}),
   });
 
@@ -158,9 +163,9 @@ async function discoverServerTools(
  * discovery fails contributes zero enabled tools — not "allow everything" —
  * so a flaky server degrades to "unavailable this build," never to "open."
  */
-export async function classifyMcpServers(servers: ActiveMcpServer[]): Promise<McpClassificationResult> {
+export async function classifyMcpServers(servers: ActiveMcpServer[], fetchImpl: FetchLike = secureMcpFetch): Promise<McpClassificationResult> {
   const failures: McpDiscoveryFailure[] = [];
-  const perServer = await Promise.all(servers.map((s) => discoverServerTools(s, failures)));
+  const perServer = await Promise.all(servers.map((s) => discoverServerTools(s, failures, fetchImpl)));
   const report = perServer.flat();
 
   const toolsets: McpToolsetConfig[] = servers.map((server) => {
