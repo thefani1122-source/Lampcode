@@ -21,17 +21,39 @@ import { secureMcpFetch } from "../mcp/secure-fetch.js";
 // Discovery must not hang a build waiting on a flaky/slow external MCP server.
 const DISCOVERY_TIMEOUT_MS = 5_000;
 
-// MCP's tool annotations (readOnlyHint/destructiveHint) are optional per the
-// spec — servers may not set them. When absent, fall back to a conventional
-// read-verb prefix. Anything that matches neither an explicit safe signal nor
-// this prefix is treated as write/unknown and denied — fail closed, not open.
-const READ_VERB_RE = /^(get|list|search|read|fetch|query|find|show|describe|view|check)_/i;
+function serverSecrets(server: ActiveMcpServer): string[] {
+  const oauthValues = server.oauthSession
+    ? Object.values(server.oauthSession.tokens ?? {}).concat(server.oauthSession.codeVerifier ? [server.oauthSession.codeVerifier] : [])
+    : [];
+  return [server.authToken, ...Object.values(server.authHeaders ?? {}), ...oauthValues].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+}
 
+function redactDiscoveredValue(value: unknown, secrets: string[]): unknown {
+  if (typeof value === "string") return secrets.reduce((safe, secret) => safe.split(secret).join("[redacted credential]"), value);
+  if (Array.isArray(value)) return value.map((item) => redactDiscoveredValue(item, secrets));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      secrets.reduce((safe, secret) => safe.split(secret).join("[redacted credential]"), key),
+      redactDiscoveredValue(item, secrets),
+    ]));
+  }
+  return value;
+}
+
+function safeDiscoveredToolName(name: string, secrets: string[]): boolean {
+  return /^[a-zA-Z0-9_.-]{1,128}$/.test(name) && !secrets.some((secret) => name.includes(secret));
+}
+
+// Provider names and annotations are untrusted. Only app-owned, provider-scoped
+// capabilities can establish an automatic read; provider signals can only
+// escalate classification.
 export interface ClassifiedTool {
   serverSlug: string;
   toolName: string;
   allowed: boolean;
-  reason: "annotation-read-only" | "annotation-destructive" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
+  reason: "annotation-read-only" | "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
   /** Raw inputSchema from MCP listTools — stored for write-proxy ToolDefinition generation. */
   inputSchema?: Record<string, unknown> | undefined;
 }
@@ -122,21 +144,27 @@ async function discoverServerTools(
     await Promise.race([client.connect(transport as any), timeout]);
     const { tools } = await Promise.race([client.listTools(), timeout]);
 
-    return tools.map((tool): ClassifiedTool => {
+    const secrets = serverSecrets(server);
+    const safeTools = tools.filter((tool) => safeDiscoveredToolName(tool.name, secrets));
+    if (safeTools.length !== tools.length) {
+      logger.warn({ server: server.slug, category: "invalid_tool_metadata", omitted: tools.length - safeTools.length }, "[mcp-tool-classifier] unsafe tool metadata omitted");
+    }
+    return safeTools.map((tool): ClassifiedTool => {
       const annotations = tool.annotations as { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined;
-      const inputSchema = tool.inputSchema as Record<string, unknown> | undefined;
-      if (annotations?.readOnlyHint === true) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only", inputSchema };
-      }
+      const inputSchema = redactDiscoveredValue(tool.inputSchema, secrets) as Record<string, unknown> | undefined;
       if (annotations?.destructiveHint === true || annotations?.readOnlyHint === false) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: false, reason: "annotation-destructive", inputSchema };
       }
-      const matchesReadVerb = READ_VERB_RE.test(tool.name);
+      const capability = mapTool(server.slug, tool.name);
+      const capabilityIsRead = capability !== null && (capability.endsWith(".read") || capability === "db.query");
+      if (capabilityIsRead && !destructiveByName(tool.name)) {
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
+      }
       return {
         serverSlug: server.slug,
         toolName: tool.name,
-        allowed: matchesReadVerb,
-        reason: matchesReadVerb ? "name-pattern-match" : "name-pattern-no-match",
+        allowed: false,
+        reason: destructiveByName(tool.name) ? "annotation-destructive" : "name-pattern-no-match",
         inputSchema,
       };
     });
@@ -262,7 +290,7 @@ export function buildReadToolDefinitions(
 
   if (escalated.length > 0) {
     logger.warn(
-      { escalated },
+      { count: escalated.length },
       "[mcp-tool-classifier] read-classified tool(s) escalated behind the approval gate by capability/tier",
     );
   }
@@ -305,7 +333,7 @@ export function buildWriteProxyDefinitions(
     // automatically callable. It becomes callable WITH the user's approval,
     // which is what the gate is for. Vanishing is not a safer default than
     // asking — it is the same denial with the reason hidden from everyone.
-    if (t.reason === "annotation-read-only" || t.reason === "name-pattern-match") continue;
+    if (t.reason === "annotation-read-only" || t.reason === "capability-read-only" || t.reason === "name-pattern-match") continue;
     if (t.reason === "discovery-failed") continue;
     const server = serversBySlug.get(t.serverSlug);
     if (!server) continue;

@@ -6,6 +6,7 @@ import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./p
 import { getWebSocketServer } from "../websocket/server.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
 import { callMcpTool } from "../mcp/call-tool.js";
+import { callApprovedMcpTool } from "../mcp/approved-call.js";
 import { DEFERRED_STATIC_HANDLERS, REGISTRY } from "./tools/registry.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
@@ -767,13 +768,9 @@ if (ctx.writeMcpRegistry?.has(name)) {
       }
     }
 
-    if (!approved) {
-      if (ctx.writeDenied) ctx.writeDenied.value = true;
-      return "Action denied: the write action was not approved by the user.";
-    }
-
-    // User approved — execute it.
-    return callMcpTool(meta, args, "lampcode-write-proxy");
+    if (!approved && ctx.writeDenied) ctx.writeDenied.value = true;
+    // Shared post-gate execution point is covered by local MCP integration tests.
+    return callApprovedMcpTool(meta, args, approved);
   }
 
   // Preserve the existing write-proxy precedence for ask_user, then allow other static handlers.
