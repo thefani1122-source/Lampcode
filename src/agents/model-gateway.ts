@@ -89,22 +89,6 @@ export interface ToolDefinition {
   };
 }
 
-// Anthropic MCP connector (beta mcp-client-2025-11-20) shapes. Kept minimal —
-// only the fields dispatcher.ts/mcp-tool-classifier.ts actually populate.
-export interface McpServerDefinition {
-  type: "url";
-  url: string;
-  name: string;
-  authorization_token?: string;
-}
-
-export interface McpToolsetDefinition {
-  type: "mcp_toolset";
-  mcp_server_name: string;
-  default_config?: { enabled?: boolean };
-  configs?: Record<string, { enabled?: boolean }>;
-}
-
 export interface GatewayRequest {
   model: string;
   messages: ChatMessage[];
@@ -112,11 +96,6 @@ export interface GatewayRequest {
   maxTokens?: number | undefined;
   thinkingBudget?: number | undefined;
   tools?: ToolDefinition[] | undefined;
-  // Presence of mcpServers switches this request onto the beta MCP connector
-  // (client.beta.messages.create with mcp_servers + tools mixing ToolDefinition
-  // and McpToolsetDefinition entries) instead of the stable endpoint.
-  mcpServers?: McpServerDefinition[] | undefined;
-  mcpToolsets?: McpToolsetDefinition[] | undefined;
 }
 
 // Parsed chunk yielded to callers — same shape as before, stream-handler unchanged.
@@ -270,15 +249,6 @@ export class ModelGateway {
 
   /** Yield parsed chunks from an Anthropic streaming completion. */
   async *stream(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    // MCP connector requests need mcp_servers/tools-as-mcp_toolset and the
-    // beta client — kept as a fully separate path so the already-verified
-    // plain-tools (load_skill/read_project_file) route below is untouched
-    // when no MCP servers are attached, which is still the common case.
-    if (req.mcpServers && req.mcpServers.length > 0) {
-      yield* this.streamWithMcp(req, overrideTimeoutMs);
-      return;
-    }
-
     const { systemBlocks, anthropicMessages } = splitMessages(req.messages);
     const model = req.model;
     const maxTokens = req.maxTokens ?? 16_000;
@@ -402,175 +372,5 @@ export class ModelGateway {
     yield { type: "done", stopReason };
   }
 
-  /**
-   * MCP-connector variant of stream() — same event-loop shape, but against
-   * the beta client with mcp_servers/betas attached, and recognizing the two
-   * additional block types (mcp_tool_use, mcp_tool_result) the connector adds.
-   * Unverified against a live Anthropic call in development (no API
-   * key available there) — mirrors the plain-tools loop's proven structure and
-   * the documented block shapes, but hasn't been exercised against a real API
-   * response.
-   */
-  private async *streamWithMcp(req: GatewayRequest, overrideTimeoutMs?: number): AsyncGenerator<StreamChunk> {
-    const { systemBlocks, anthropicMessages } = splitMessages(req.messages);
-    const model = req.model;
-    const maxTokens = req.maxTokens ?? 16_000;
-    const effectiveTimeout = overrideTimeoutMs ?? this.timeoutMs;
-
-    logger.debug({ model, mcpServerCount: req.mcpServers?.length ?? 0 }, "ModelGateway: Anthropic stream (MCP connector)");
-
-    const thinkingParam: Anthropic.ThinkingConfigParam | undefined = supportsThinking(model)
-      ? { type: "enabled", budget_tokens: req.thinkingBudget ?? 4_000 }
-      : undefined;
-
-    // Local function tools (load_skill etc.) and MCP toolsets share one `tools`
-    // array per the connector's documented shape — BetaToolUnion includes both.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const combinedTools: any[] = [
-      ...(req.tools ?? []),
-      ...(req.mcpToolsets ?? []),
-    ];
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let stream: AsyncIterable<any>;
-    try {
-      const client = effectiveTimeout === this.timeoutMs
-        ? this.client
-        : new Anthropic({ apiKey: this.client.apiKey as string, timeout: effectiveTimeout });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const createResult: any = await client.beta.messages.create({
-        model,
-        max_tokens: maxTokens,
-        messages: anthropicMessages,
-        stream: true as const,
-        betas: ["mcp-client-2025-11-20"],
-        mcp_servers: req.mcpServers,
-        ...(systemBlocks ? { system: systemBlocks } : {}),
-        ...(thinkingParam ? { thinking: thinkingParam } : {}),
-        ...(combinedTools.length > 0 ? { tools: combinedTools } : {}),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any);
-      stream = createResult as AsyncIterable<any>;
-    } catch (err) {
-      throw mapAnthropicError(err);
-    }
-
-    const toolInputBuffers = new Map<number, { id: string; name: string; args: string }>();
-    const mcpToolUseBuffers = new Map<number, { id: string; name: string; serverName: string; args: string }>();
-    const mcpToolUsesById = new Map<string, { name: string; serverName: string; input: unknown }>();
-    let currentBlockIndex = -1;
-    let currentBlockType = "";
-    let inputTokens = 0;
-    let cachedInputTokens = 0;
-    let cacheWriteTokens = 0;
-    let outputTokens = 0;
-    let stopReason: string | undefined;
-
-    try {
-      for await (const event of stream) {
-        switch (event.type) {
-          case "message_start":
-            // input_tokens is FRESH only — Anthropic reports cache reads and
-            // cache writes separately and excludes them from it. Summing here
-            // makes promptTokens the real total; without this, cache reads
-            // (most of an agentic build's input) were billed as free.
-            inputTokens =
-              (event.message.usage?.input_tokens ?? 0) +
-              (event.message.usage?.cache_read_input_tokens ?? 0) +
-              (event.message.usage?.cache_creation_input_tokens ?? 0);
-            cachedInputTokens = event.message.usage?.cache_read_input_tokens ?? 0;
-            cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? 0;
-            break;
-
-          case "content_block_start": {
-            currentBlockIndex = event.index;
-            currentBlockType = event.content_block.type;
-            const block = event.content_block;
-
-            if (block.type === "tool_use") {
-              toolInputBuffers.set(event.index, { id: block.id, name: block.name, args: "" });
-            } else if (block.type === "mcp_tool_use") {
-              mcpToolUseBuffers.set(event.index, {
-                id: block.id, name: block.name, serverName: block.server_name, args: "",
-              });
-            } else if (block.type === "mcp_tool_result") {
-              // Arrives fully formed (not streamed via deltas) per the API's
-              // documented block shape — resolve and yield immediately.
-              const use = mcpToolUsesById.get(block.tool_use_id);
-              const resultText = Array.isArray(block.content)
-                ? block.content.map((c: { text?: string }) => c.text ?? "").join("")
-                : String(block.content ?? "");
-              yield {
-                type: "mcp_tool_call",
-                mcpToolCall: {
-                  id: block.tool_use_id,
-                  name: use?.name ?? "unknown",
-                  serverName: use?.serverName ?? "unknown",
-                  input: use?.input ?? {},
-                  result: resultText,
-                  isError: block.is_error === true,
-                },
-              };
-            }
-            break;
-          }
-
-          case "content_block_delta": {
-            const delta = event.delta;
-            if (delta.type === "text_delta" && delta.text) {
-              yield { type: "content", content: delta.text };
-            } else if (delta.type === "thinking_delta" && delta.thinking) {
-              yield { type: "reasoning", reasoning: delta.thinking };
-            } else if (delta.type === "input_json_delta" && delta.partial_json) {
-              const buf = toolInputBuffers.get(currentBlockIndex);
-              if (buf) buf.args += delta.partial_json;
-              const mcpBuf = mcpToolUseBuffers.get(currentBlockIndex);
-              if (mcpBuf) mcpBuf.args += delta.partial_json;
-            }
-            break;
-          }
-
-          case "content_block_stop":
-            if (currentBlockType === "tool_use") {
-              const buf = toolInputBuffers.get(currentBlockIndex);
-              if (buf) {
-                yield { type: "tool_call", toolCall: { id: buf.id, name: buf.name, arguments: buf.args } };
-                toolInputBuffers.delete(currentBlockIndex);
-              }
-            } else if (currentBlockType === "mcp_tool_use") {
-              const buf = mcpToolUseBuffers.get(currentBlockIndex);
-              if (buf) {
-                let input: unknown = {};
-                try { input = buf.args ? JSON.parse(buf.args) : {}; } catch { /* leave as {} — mcp_tool_result still resolves */ }
-                mcpToolUsesById.set(buf.id, { name: buf.name, serverName: buf.serverName, input });
-                mcpToolUseBuffers.delete(currentBlockIndex);
-              }
-            }
-            break;
-
-          case "message_delta":
-            outputTokens = event.usage?.output_tokens ?? outputTokens;
-            stopReason = event.delta.stop_reason ?? stopReason;
-            break;
-
-          case "message_stop":
-            break;
-        }
-      }
-    } catch (err) {
-      throw mapAnthropicError(err);
-    }
-
-    yield {
-      type: "usage",
-      usage: {
-        promptTokens: inputTokens,
-        completionTokens: outputTokens,
-        cachedPromptTokens: cachedInputTokens,
-        cacheWriteTokens,
-      },
-    };
-    yield { type: "done", stopReason };
-  }
 }
+

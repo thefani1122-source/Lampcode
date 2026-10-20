@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { logger } from "../server/logger.js";
+import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
+import { createMcpOAuthProvider } from "./oauth-client.js";
 
 /**
  * Executing one tool on one connected MCP server.
@@ -28,6 +30,9 @@ export interface McpCallTarget {
   /** null when the token is embedded in the URL (mcp_url authType). */
   authToken: string | null;
   authHeaders?: Record<string, string> | undefined;
+  oauthSession?: import("./oauth-client.js").McpOAuthSession | undefined;
+  persistOAuthSession?: ((session: import("./oauth-client.js").McpOAuthSession) => Promise<void>) | undefined;
+  oauthRedirectUrl?: string | undefined;
   /** The tool's real name on the server, without the serverSlug__ prefix. */
   mcpToolName: string;
 }
@@ -40,8 +45,18 @@ export async function callMcpTool(
   const client = new Client({ name: clientName, version: "1.0.0" });
   const headers: Record<string, string> = { ...(target.authHeaders ?? {}) };
   if (target.authToken !== null) headers["Authorization"] = `Bearer ${target.authToken}`;
+  const oauth = target.oauthSession && target.oauthRedirectUrl
+    ? createMcpOAuthProvider({
+        serverUrl: target.serverUrl,
+        redirectUrl: target.oauthRedirectUrl,
+        session: target.oauthSession,
+        persist: target.persistOAuthSession ?? (async () => undefined),
+        saveStateHash: async () => undefined,
+      })
+    : null;
   const transport = new StreamableHTTPClientTransport(new URL(target.serverUrl), {
     requestInit: { headers },
+    ...(oauth ? { authProvider: oauth.provider } : {}),
   });
 
   try {
@@ -65,24 +80,19 @@ export async function callMcpTool(
 
     if (callResult.isError) {
       logger.warn(
-        { toolName: target.mcpToolName, serverSlug: target.serverSlug, text },
+        { toolName: target.mcpToolName, serverSlug: target.serverSlug, category: "mcp_tool_error" },
         "[mcp] callTool returned isError",
       );
-      return `Error from ${target.serverSlug}: ${text}`;
+      return `Error from ${target.serverSlug}: ${sanitizeMcpError(text)}`;
     }
     return text || "(tool returned no content)";
   } catch (err) {
+    const category = safeMcpFailureCategory(err);
     logger.warn(
-      {
-        err: err instanceof Error ? err.message : String(err),
-        toolName: target.mcpToolName,
-        serverSlug: target.serverSlug,
-      },
+      { category, toolName: target.mcpToolName, serverSlug: target.serverSlug },
       "[mcp] callTool failed",
     );
-    return `Error: could not execute ${target.mcpToolName} on ${target.serverSlug}: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
+    return `Error: could not execute ${target.mcpToolName} on ${target.serverSlug} (${category}): ${sanitizeMcpError(err instanceof Error ? err.message : String(err))}`;
   } finally {
     await client.close().catch(() => undefined);
   }

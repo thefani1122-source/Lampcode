@@ -5,6 +5,8 @@ import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import { mapTool, type Capability } from "../mcp/capabilities.js";
 import { describeTier, destructiveByName, needsApproval, strongestTier, tierFor, type Tier } from "../mcp/tiers.js";
 import type { ToolDefinition } from "./model-gateway.js";
+import { safeMcpFailureCategory } from "../mcp/health.js";
+import { createMcpOAuthProvider } from "../mcp/oauth-client.js";
 
 // ── Read-only classification ──────────────────────────────────────────────────
 // The Anthropic MCP connector (mcp_servers + mcp_toolset) has no mid-call
@@ -40,6 +42,9 @@ export interface WriteMcpMeta {
   /** null when the token is embedded in the URL (mcp_url authType). */
   authToken: string | null;
   authHeaders?: Record<string, string> | undefined;
+  oauthSession?: ActiveMcpServer["oauthSession"];
+  persistOAuthSession?: ActiveMcpServer["persistOAuthSession"];
+  oauthRedirectUrl?: string | undefined;
   /** Original tool name on the MCP server (without the serverSlug__ prefix). */
   mcpToolName: string;
   /** How dangerous this call is taken to be (H2/H3). The strongest of what the
@@ -85,8 +90,18 @@ async function discoverServerTools(
   const headers: Record<string, string> = { ...(server.authHeaders ?? {}) };
   if (server.authToken) headers["Authorization"] = `Bearer ${server.authToken}`;
 
+  const oauth = server.oauthSession && server.oauthRedirectUrl
+    ? createMcpOAuthProvider({
+        serverUrl: server.url,
+        redirectUrl: server.oauthRedirectUrl,
+        session: server.oauthSession,
+        persist: server.persistOAuthSession ?? (async () => undefined),
+        saveStateHash: async () => undefined,
+      })
+    : null;
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
     requestInit: { headers },
+    ...(oauth ? { authProvider: oauth.provider } : {}),
   });
 
   const timeout = new Promise<never>((_, reject) =>
@@ -121,13 +136,14 @@ async function discoverServerTools(
       };
     });
   } catch (err) {
+    const category = safeMcpFailureCategory(err);
     logger.warn(
-      { server: server.slug, err: err instanceof Error ? err.message : String(err) },
+      { server: server.slug, category },
       "[mcp-tool-classifier] tool discovery failed — server's tools denied by default (fail closed)",
     );
     failures.push({
       serverSlug: server.slug,
-      message: err instanceof Error ? err.message : String(err),
+      message: category,
     });
     return [];
   } finally {
@@ -222,6 +238,9 @@ export function buildReadToolDefinitions(
       serverUrl: server.url,
       authToken: server.authToken,
       authHeaders: server.authHeaders,
+      oauthSession: server.oauthSession,
+      persistOAuthSession: server.persistOAuthSession,
+      oauthRedirectUrl: server.oauthRedirectUrl,
       mcpToolName: t.toolName,
       tier: "read",
       capability,
@@ -307,6 +326,9 @@ export function buildWriteProxyDefinitions(
       serverUrl: server.url,
       authToken: server.authToken,
       authHeaders: server.authHeaders,
+      oauthSession: server.oauthSession,
+      persistOAuthSession: server.persistOAuthSession,
+      oauthRedirectUrl: server.oauthRedirectUrl,
       mcpToolName: t.toolName,
       tier,
       capability,

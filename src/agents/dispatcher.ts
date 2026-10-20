@@ -10,7 +10,6 @@ import {
   type AgentTaskType,
   type ChatMessage,
   type MessageContentBlock,
-  type McpServerDefinition,
 } from "./model-gateway.js";
 import { modalStream } from "./modal-gateway.js";
 import { TokenTracker } from "./token-tracker.js";
@@ -30,7 +29,6 @@ import {
   classifyMcpServers,
   buildWriteProxyDefinitions,
   buildReadToolDefinitions,
-  type McpToolsetConfig,
   type WriteProxyRegistry,
 } from "./mcp-tool-classifier.js";
 import { capMcpTools } from "./mcp-relevance.js";
@@ -388,8 +386,6 @@ export class AgentDispatcher {
     // else — including anything discovery couldn't classify — stays denylisted.
     // The Anthropic MCP connector has no mid-call approval mechanism (confirmed
     // against its docs), so this denylist IS the safety boundary, not a hint.
-    const mcpDefs: McpServerDefinition[] = [];
-    let mcpToolsets: McpToolsetConfig[] = [];
     let writeProxyDefs: typeof TOOL_DEFINITIONS = [];
     let writeProxyRegistry: WriteProxyRegistry = new Map();
     let readToolDefs: typeof TOOL_DEFINITIONS = [];
@@ -397,11 +393,7 @@ export class AgentDispatcher {
     let mcpToolsOmitted = 0;
     const mcpEscalated: string[] = [];
     if (enableTools && mcpServers && mcpServers.length > 0) {
-      for (const s of mcpServers) {
-        mcpDefs.push({ type: "url", url: s.url, name: s.slug, ...(s.authToken ? { authorization_token: s.authToken } : {}) });
-      }
-      const { toolsets, report, failures } = await classifyMcpServers(mcpServers);
-      mcpToolsets = toolsets;
+      const { report, failures } = await classifyMcpServers(mcpServers);
       // A connected server that refuses auth or cannot be reached contributes
       // zero tools, which is correct (fail closed) and completely invisible —
       // the build just quietly has no GitHub. Measured 2026-10-04: a stored
@@ -428,21 +420,14 @@ export class AgentDispatcher {
       const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
       writeProxyDefs = cappedWrites.kept;
       mcpToolsOmitted += cappedWrites.omitted;
-      // Read-only tools need explicit definitions ONLY where the gateway cannot
-      // run them itself. Anthropic's connector executes them server-side from
-      // mcpToolsets, so offering them again there would duplicate every tool.
-      if (effectiveProvider === "modal") {
-        const readTools = buildReadToolDefinitions(report, mcpServers);
-        readMcpRegistry = readTools.registry;
-        // Tools the classifier called read-only that the capability map says
-        // are destructive. They are not dropped — they moved to the approval
-        // gate (H2/H3 escalates, never relaxes). Logged because a tool silently
-        // changing path is exactly the kind of thing nobody notices.
-        if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
-        const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
-        readToolDefs = cappedReads.kept;
-        mcpToolsOmitted += cappedReads.omitted;
-      }
+      // Both model providers receive the same local function tools. Lampcode
+      // executes reads locally and gates every write before it reaches a server.
+      const readTools = buildReadToolDefinitions(report, mcpServers);
+      readMcpRegistry = readTools.registry;
+      if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
+      const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
+      readToolDefs = cappedReads.kept;
+      mcpToolsOmitted += cappedReads.omitted;
       logger.info(
         {
           sessionId,
@@ -471,7 +456,7 @@ export class AgentDispatcher {
       restContext = `\n\nAvailable REST APIs for connected services (call these directly, read-only lookups only — for write/destructive actions call request_write_action instead):\n${entries.join("\n\n")}`;
     }
 
-    logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpDefs.length }, "Dispatching agent");
+    logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
 
     // Resolve workspace directory for project-specific brain files
     const workspaceDir = projectId !== undefined
@@ -615,7 +600,6 @@ export class AgentDispatcher {
         tools: enableTools
           ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
           : undefined,
-        ...(mcpDefs.length > 0 ? { mcpServers: mcpDefs, mcpToolsets } : {}),
       };
       // What the model was ACTUALLY offered this round. Three different models
       // have now returned zero tool calls with tools supposedly in the request,
@@ -633,9 +617,6 @@ export class AgentDispatcher {
         "Gateway request: tools offered",
       );
 
-      // effectiveProvider is "modal" only when mcpDefs is empty (see the
-      // guard above) — the mcpServers spread above is dead weight on that
-      // path, kept only so gatewayRequest has one shape for both branches.
       const stream = effectiveProvider === "modal"
         ? modalStream(gatewayRequest, streamTimeoutMs)
         : this.gateway.stream(gatewayRequest, streamTimeoutMs);
@@ -981,3 +962,4 @@ export function getDispatcher(): AgentDispatcher {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
