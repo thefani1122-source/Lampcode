@@ -1370,17 +1370,8 @@ export async function runFastBuild(
     // writes still go through the approval-gated proxies — so the guard would
     // now only be hiding the servers the user deliberately connected.
     //
-    // internalMcpServers stays out of the Modal path on purpose, and that is a
-    // cost decision rather than a capability one: Firecrawl and Exa attach to
-    // EVERY build, and each attached server costs a tool-discovery round trip
-    // plus its whole tool list in every round's context. A user-connected
-    // server is one the user asked for; these two would be charged to builds
-    // that never use them. Revisit if web access becomes a default need.
-    // Attach only the servers this request points at. Measured 2026-10-17:
-    // a plain app build was sent 283 tool definitions every round, the gateway
-    // returned zero events on round 5, and the build died without ever writing
-    // src/App.tsx. See mcp-relevance.ts for the log lines and why this is not
-    // the upfront fetch gate the comment above describes.
+    // Attach only user servers relevant to this prompt; internal web tools are
+    // shared local tools for both gateways.
     const { kept: relevantUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
     if (droppedMcp.length > 0) {
       console.log(
@@ -1388,7 +1379,7 @@ export async function runFastBuild(
         `dropped=[${droppedMcp.join(",")}]`,
       );
     }
-    const mcpServers = [...relevantUserMcp, ...(provider === "modal" ? [] : internalMcpServers)];
+    const mcpServers = [...relevantUserMcp, ...internalMcpServers];
 
     // ── What deploy_app needs, if the user connected Vercel ──────────────────
     // Lifted from the servers already resolved above rather than read again:
