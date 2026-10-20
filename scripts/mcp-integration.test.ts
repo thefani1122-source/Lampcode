@@ -35,7 +35,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
   if (request.url === "/evil") { state.redirectHits++; send(response, 200, { jsonrpc: "2.0", id: 1, result: {} }); return; }
-  if (request.headers.authorization !== `Bearer ${secrets.token}`) {
+  const urlToken = new URL(request.url ?? "/", baseUrl).searchParams.get("token");
+  if (request.headers.authorization !== `Bearer ${secrets.token}` && urlToken !== secrets.token) {
     send(response, 401, { error: "unauthorized", echoed: request.headers.authorization ?? "missing" });
     return;
   }
@@ -80,6 +81,10 @@ try {
   const readPath = buildReadToolDefinitions(classification.report, active);
   const writePath = buildWriteProxyDefinitions(classification.report, active);
   check("provider schema text is redacted before entering model tool definitions", !JSON.stringify(writePath.toolDefs).includes(secrets.token));
+  const queryCredentialServers = [{ ...active[0]!, url: `${url}?token=${encodeURIComponent(secrets.token)}`, authToken: null }] as unknown as ActiveMcpServer[];
+  const queryCredentialReport = await classifyMcpServers(queryCredentialServers, fetch);
+  const queryCredentialTools = buildWriteProxyDefinitions(queryCredentialReport.report, queryCredentialServers);
+  check("URL-embedded credentials are redacted from discovered schemas", !JSON.stringify(queryCredentialTools.toolDefs).includes(secrets.token));
   check("OpenAI gateway read proxy exposes only the confirmed read", readPath.toolDefs.length === 1);
   check("Anthropic gateway write proxy exposes ambiguous writes behind approval", writePath.toolDefs.length === 3);
   const readResult = await callMcpTool({ serverSlug: "github", serverUrl: url, authToken: secrets.token, mcpToolName: "get_file_contents" }, {} , "integration-openai", fetch);

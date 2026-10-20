@@ -25,7 +25,9 @@ function serverSecrets(server: ActiveMcpServer): string[] {
   const oauthValues = server.oauthSession
     ? Object.values(server.oauthSession.tokens ?? {}).concat(server.oauthSession.codeVerifier ? [server.oauthSession.codeVerifier] : [])
     : [];
-  return [server.authToken, ...Object.values(server.authHeaders ?? {}), ...oauthValues].filter(
+  let urlValues: string[] = [];
+  try { urlValues = [...new URL(server.url).searchParams.values()]; } catch { /* invalid endpoint will fail discovery */ }
+  return [server.authToken, ...Object.values(server.authHeaders ?? {}), ...oauthValues, ...urlValues].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
 }
