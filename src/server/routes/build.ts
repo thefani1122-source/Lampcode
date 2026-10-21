@@ -43,7 +43,7 @@ import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, 
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
-import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables } from "../../verify/data-layer.js";
+import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables, schemaRepairInstruction, undeclaredTables } from "../../verify/data-layer.js";
 import { extractThreats, formatThreatsForModel, formatThreatsForUser, type ThreatExtractResult, type ThreatRequirement } from "../../verify/threat-model.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { ANSWER_TIMEOUT_MS, createPendingAnswer } from "../../agents/pending-answers.js";
@@ -2299,6 +2299,112 @@ export async function runFastBuild(
     // pipeline path, whose files never pass through the agentic write tools.
     await persistFilesAsWritten(projectId, allFiles);
 
+    // ── Declare the tables the app actually queries ──────────────────────────
+    // `data-layer.ts` has detected this since 2026-10-17 and nothing acted on
+    // it. Of its four findings this is the only one that is a MODEL mistake
+    // rather than an infrastructure fact — no answer to "where does the
+    // database live" makes a query for a table the app never creates correct —
+    // and the failure is invisible: schema.sql is what gets RUN against the
+    // user's database, so a table missing from it does not exist, the query
+    // fails, the generated `{ data, error }` handling renders `data`, and the
+    // app looks finished and empty forever.
+    //
+    // Placed BEFORE the security loop below on purpose, so the RLS checks then
+    // run over whatever tables this added. A CREATE TABLE with no policy is a
+    // table every signed-in user can read.
+    let schemaTablesAdded = 0;
+    {
+      const missing = undeclaredTables(allFiles);
+      if (missing.length > 0 && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+        const declaredBefore = declaredTables(allFiles);
+        // Only these two files may be written, so a schema fix cannot become a
+        // rewrite of the app — and both are snapshotted, because the one way
+        // this repair can do harm is by returning a schema.sql that holds only
+        // the new tables and deletes the rest.
+        const WRITABLE = new Set(["src/db/schema.sql", "src/db/types.ts"]);
+        const snapshot = new Map([...WRITABLE].map((path) => [path, allFiles[path]]));
+
+        logger.warn(
+          { sessionId, projectId, tables: missing.map((m) => m.table) },
+          "Tables queried but never declared — dispatching schema repair",
+        );
+        server?.thinking(sessionId, {
+          sessionId,
+          text: missing.length === 1
+            ? `The app saves to a "${missing[0]?.table}" table that doesn't exist yet — creating it…`
+            : `The app saves to ${missing.length} tables that don't exist yet — creating them…`,
+        });
+
+        try {
+          const fix = await dispatcher.dispatch({
+            agentType: "backend",
+            provider,
+            task: {
+              description: schemaRepairInstruction(missing, allFiles),
+              requirements: [
+                "Return the COMPLETE src/db/schema.sql, with every table it already had.",
+                "Every new table gets ENABLE ROW LEVEL SECURITY and an owner-scoped policy per action.",
+                "Do not rename or drop an existing table, column or policy.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+            enableTools: false,
+            costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+          });
+          cumulativeCostUsd += fix.costUsd ?? 0;
+
+          const written = applyParsedFiles(
+            allFiles,
+            parseFilesFromContent(fix.content ?? ""),
+            { allowNew: true, only: WRITABLE, refuse: isTemplateOwnedFile },
+          );
+
+          const declaredAfter = declaredTables(allFiles);
+          const lost = [...declaredBefore].filter((t) => !declaredAfter.has(t));
+          if (lost.length > 0) {
+            // A schema that lost a table is worse than one missing a table:
+            // the missing one fails a query, this one deletes working ones.
+            logger.warn(
+              { sessionId, projectId, lost },
+              "Schema repair dropped existing table(s) — reverting",
+            );
+            for (const [path, code] of snapshot) {
+              if (code === undefined) delete allFiles[path];
+              else allFiles[path] = code;
+            }
+            console.log(`[build] schema repair session=${sessionId} verdict=reverted lost=[${lost.join(",")}]`);
+          } else if (written.length > 0) {
+            schemaTablesAdded = declaredAfter.size - declaredBefore.size;
+            recorder.record({ type: "repair/applied", kind: "undeclared-tables" });
+            recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
+            const still = undeclaredTables(allFiles);
+            console.log(
+              `[build] schema repair session=${sessionId} missing=${missing.length} ` +
+              `added=${schemaTablesAdded} stillMissing=${still.length} files=[${written.join(",")}]`,
+            );
+            if (still.length > 0) {
+              logger.warn(
+                { sessionId, projectId, still: still.map((m) => m.table) },
+                "Schema repair ran and some queried tables are still undeclared",
+              );
+            }
+          } else {
+            console.log(`[build] schema repair session=${sessionId} missing=${missing.length} verdict=no-files`);
+          }
+        } catch (err) {
+          logger.warn({ sessionId, projectId, err }, "Schema repair dispatch failed");
+        }
+      } else if (missing.length > 0) {
+        console.log(
+          `[build] schema repair session=${sessionId} missing=${missing.length} skipped=cost-ceiling`,
+        );
+      }
+    }
+
     // ── Security validation + auto-fix / hard-block loop ────────────────────
     // Runs in-memory against the current allFiles snapshot — none of the seven
     // checks need real dependencies or a live sandbox (all pure regex/string
@@ -4534,6 +4640,16 @@ export async function runFastBuild(
           );
         }
       }
+    }
+    // A table the app queried and never created is the difference between an
+    // app that saves and one that looks like it saves, so the user is told it
+    // was fixed rather than left to infer it from an app that now works.
+    if (schemaTablesAdded > 0) {
+      closingLines.push(
+        schemaTablesAdded === 1
+          ? "• The app was saving to a table that did not exist — I added it to the schema, with its access rules."
+          : `• The app was saving to ${schemaTablesAdded} tables that did not exist — I added them to the schema, with their access rules.`,
+      );
     }
     // What the build did about what the audit found. Said here as well as in
     // the live stream, because this block is what the user can scroll back to.

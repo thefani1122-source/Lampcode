@@ -20,6 +20,8 @@ import {
   formatDataLayerForUser,
   formatDataLayerGaps,
   queriedTables,
+  schemaRepairInstruction,
+  undeclaredTables,
   type DatabaseState,
 } from "../src/verify/data-layer.js";
 
@@ -312,6 +314,94 @@ ok(
     findDataLayerGaps({ "src/api.ts": `db.from("invoices").select("*")` }, READY),
   )[0]?.includes("invoices") === true,
 );
+
+// ── Repairing the one finding that is a model mistake ──────────────────────
+// `table-never-declared` was detected from 2026-10-17 and nothing acted on it.
+// It is the only one of the four that no answer to "where does the database
+// live" can make correct, which is why it is the only one repaired.
+
+console.log("\n— undeclared tables —");
+{
+  const files = {
+    "src/server/routes/api.ts":
+      "const { data } = await db.from('expenses').select('*')\n" +
+      "await db.from('categories').insert(body)\n",
+    "src/db/schema.sql": "CREATE TABLE categories (id uuid primary key, user_id uuid);\n",
+  };
+  const missing = undeclaredTables(files);
+  check("only the undeclared table is returned", missing.map((m) => m.table), ["expenses"]);
+  check("with the file that queries it", missing[0]?.path, "src/server/routes/api.ts");
+}
+ok("a declared table is not reported", undeclaredTables({
+  "a.ts": "db.from('todos').select('*')",
+  "src/db/schema.sql": "CREATE TABLE todos (id uuid);",
+}).length === 0);
+ok("case does not matter", undeclaredTables({
+  "a.ts": "db.from('Todos').select('*')",
+  "src/db/schema.sql": "CREATE TABLE todos (id uuid);",
+}).length === 0);
+ok("no schema at all means every queried table is missing", undeclaredTables({
+  "a.ts": "db.from('todos').select('*'); db.from('users').select('*')",
+}).length === 2);
+ok("a frontend-only app reports nothing", undeclaredTables({
+  "src/App.tsx": "export default function App() { return <div/> }",
+}).length === 0);
+ok("the finding and the repair agree on what is missing", (() => {
+  const files = { "a.ts": "db.from('expenses').select('*')" };
+  const findings = findDataLayerGaps(files, READY).filter((f) => f.kind === "table-never-declared");
+  return findings.length === undeclaredTables(files).length && findings[0]?.symbol === "expenses";
+})());
+
+console.log("\n— the schema repair instruction —");
+{
+  const files = {
+    "src/server/routes/api.ts": "await db.from('expenses').select('amount, note').order('created_at')",
+    "src/db/schema.sql": "CREATE TABLE categories (id uuid primary key);\n",
+  };
+  const text = schemaRepairInstruction(undeclaredTables(files), files);
+  ok("it names the missing table and where it is queried",
+    text.includes("expenses") && text.includes("src/server/routes/api.ts"));
+  ok("it carries the querying code, so columns come from USE not from the name",
+    text.includes("amount, note") && text.includes("created_at"));
+  ok("it carries the whole existing schema", text.includes("CREATE TABLE categories"));
+
+  // The one way this repair can do harm: a schema.sql holding only the new
+  // tables, which deletes the rest.
+  ok("it demands the COMPLETE file", text.includes("COMPLETE src/db/schema.sql"));
+  ok("and says what a partial file would do", text.includes("DELETES the rest"));
+
+  // A CREATE TABLE with no policy is a table every signed-in user can read.
+  ok("RLS is required on every new table", text.includes("ENABLE ROW LEVEL SECURITY"));
+  ok("with an owner-scoped policy", text.includes("auth.uid() = user_id"));
+  ok("and USING (true) is called out", text.includes("USING (true)"));
+  ok("it explains why the failure is invisible", text.includes("empty list"));
+}
+ok("no schema file is said plainly, not faked", schemaRepairInstruction(
+  [{ table: "todos", path: "a.ts" }], { "a.ts": "db.from('todos')" },
+).includes("no src/db/schema.sql yet"));
+
+console.log("\n— how the repair is wired into the build —");
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("the repair runs in the build", build.includes("schemaRepairInstruction(missing, allFiles)"));
+
+  // Order matters: the RLS checks have to see the tables this added, or a new
+  // table ships with no policy at all.
+  ok("it runs BEFORE the security loop, so RLS is checked on the new tables",
+    build.indexOf("dispatching schema repair") < build.indexOf("Security validation + auto-fix"));
+
+  ok("only the schema and types files may be written",
+    build.includes('new Set(["src/db/schema.sql", "src/db/types.ts"])'));
+  ok("it uses the tested apply path", /schemaRepairInstruction[\s\S]{0,2600}applyParsedFiles/.test(build));
+  ok("a schema that lost a table is reverted", build.includes("Schema repair dropped existing table(s) — reverting"));
+  ok("the repair respects the cost ceiling", build.includes("missing.length > 0 && cumulativeCostUsd < MAX_BUILD_COST_USD"));
+  ok("a skip from the ceiling is logged, not silent", build.includes("skipped=cost-ceiling"));
+  ok("the write is recorded so the gates above it are re-validated",
+    build.includes('kind: "undeclared-tables"'));
+  ok("a dispatch failure does not fail the build", build.includes("Schema repair dispatch failed"));
+  ok("still-missing tables are said out loud", build.includes("still undeclared"));
+  ok("the user is told the tables were added", build.includes("I added it to the schema"));
+}
 
 console.log(
   failures === 0 ? "\nAll data-layer cases passed." : `\n${failures} data-layer case(s) FAILED`,

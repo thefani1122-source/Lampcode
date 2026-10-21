@@ -153,6 +153,66 @@ export function declaredTables(files: Record<string, string>): Set<string> {
 }
 
 /**
+ * Tables a route asks a database for that the app's own SQL never creates.
+ *
+ * The one data-layer finding that is a MODEL MISTAKE rather than an
+ * infrastructure fact — no answer to "where does the database live" makes a
+ * query for an undeclared table correct — which is why it is the only one of
+ * the four worth repairing inside the build. The other three need either the
+ * user's own Supabase or a product decision.
+ */
+export function undeclaredTables(files: Record<string, string>): Array<{ table: string; path: string }> {
+  const declared = declaredTables(files);
+  return queriedTables(files).filter(({ table }) => !declared.has(table.toLowerCase()));
+}
+
+/**
+ * The instruction for the schema repair.
+ *
+ * Carries the whole current schema and the code that does the querying,
+ * because the columns have to be inferred from how the table is USED — a
+ * CREATE TABLE guessed from the name alone produces a table whose columns the
+ * app does not select, which fails exactly like the missing one did.
+ */
+export function schemaRepairInstruction(
+  missing: Array<{ table: string; path: string }>,
+  files: Record<string, string>,
+): string {
+  const schema = files["src/db/schema.sql"] ?? "";
+  const paths = [...new Set(missing.map((m) => m.path))].slice(0, 6);
+  const code = paths
+    .map((path) => `\`\`\`${path}\n${(files[path] ?? "").slice(0, 12_000)}\n\`\`\``)
+    .join("\n\n");
+
+  return [
+    "This app queries tables that its own SQL never creates. That schema is RUN against the",
+    "user's real database, so a table missing from it does not exist at runtime: the query fails,",
+    "the generated error handling turns the failure into an empty list, and the app looks finished",
+    "and empty forever.",
+    "",
+    `Missing table(s): ${missing.map((m) => `${m.table} (queried in ${m.path})`).join(", ")}`,
+    "",
+    "Add a CREATE TABLE for each one to src/db/schema.sql. Work out the columns from how the code",
+    "below actually uses the table — what it selects, inserts, filters and orders by. A table whose",
+    "columns the app does not select fails exactly like the missing one did.",
+    "",
+    "EVERY new table needs row-level security in the same file, immediately after its CREATE TABLE:",
+    "  ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;",
+    "and a policy per action that compares the row to the caller, e.g.",
+    "  CREATE POLICY \"owner_select\" ON <table> FOR SELECT USING (auth.uid() = user_id);",
+    "A policy of USING (true) on a table holding someone's data lets every user read every other",
+    "user's rows. If a table is genuinely public, it may stay world-READABLE — a write policy never may.",
+    "",
+    "Return the COMPLETE src/db/schema.sql, including every table that is already in it below.",
+    "A file that contains only the new tables DELETES the rest of the schema.",
+    "",
+    schema ? `The schema as it stands:\n\`\`\`filename:src/db/schema.sql\n${schema}\n\`\`\`` : "There is no src/db/schema.sql yet — create it.",
+    "",
+    `The code that queries these tables:\n\n${code}`,
+  ].join("\n");
+}
+
+/**
  * The three ways a data layer can be hollow, cheapest first.
  *
  * `database` is what the BUILD knows, not what the files say, so the two
@@ -209,8 +269,7 @@ export function findDataLayerGaps(
 
   const declared = declaredTables(files);
 
-  for (const { table, path } of queried) {
-    if (declared.has(table.toLowerCase())) continue;
+  for (const { table, path } of undeclaredTables(files)) {
     findings.push({
       kind: "table-never-declared",
       path,
