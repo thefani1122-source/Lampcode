@@ -203,6 +203,21 @@ function ws() {
 // a deadline so a stall surfaces as a real, logged error instead.
 const E2B_PREVIEW_TIMEOUT_MS = 90_000;
 
+/**
+ * How long the database question waits before building without one.
+ *
+ * The shared ANSWER_TIMEOUT_MS is TEN MINUTES, which is right for a write
+ * approval — "may I push to your GitHub?" should wait, because guessing is
+ * worse than waiting. It is wrong here. Someone who ignores or misses this card
+ * gets a build that sits silent for ten minutes with no explanation, and the
+ * answer to "no reply" is not dangerous: build it without a database and say
+ * so, which is exactly what the fall-through below does.
+ *
+ * Two minutes is long enough to read a card and click, short enough that a
+ * person who walked away still gets their app.
+ */
+const DB_GATE_TIMEOUT_MS = 120_000;
+
 // The three sandbox quality gates deliberately fail OPEN: a gate that itself
 // errors must never fail a build that was already delivered to the user. That
 // is still right, but it used to be entirely silent, so a gate erroring looked
@@ -914,8 +929,25 @@ export async function runFastBuild(
 
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.
+    // The dispatcher is passed so the AMBIGUOUS middle gets read rather than
+    // guessed. Explicit prompts ("store it in Supabase", "in localStorage")
+    // never reach the model and cost nothing; only a request that names neither
+    // pays for one small call, concurrently with the file selection below.
+    //
+    // That call needs a REAL token budget. Measured 2026-10-21: minimax-m2.5
+    // puts its reasoning in its own field and leaves `content` null until that
+    // is finished — at 400 tokens it returned `finish_reason: "length"` and no
+    // JSON at all, nine times out of nine. At the dispatcher's budget it was
+    // right on nine of nine. Anyone "optimising" this pass with a small budget
+    // will silently turn every ambiguous build back into a browser app.
     const classificationPromise = !hasExistingCode
-      ? classifyBuild(prompt)
+      ? classifyBuild(prompt, {
+          dispatcher: getDispatcher(),
+          sessionId,
+          userId,
+          projectId,
+          provider,
+        })
       : Promise.resolve(null);
 
     // ── Smart follow-up context selection ────────────────────────────────
@@ -958,6 +990,18 @@ export async function runFastBuild(
     // build with no prior code can be promoted to a full-stack generation.
     // classifier was started concurrently above — await result here.
     const classification = await classificationPromise;
+    // Logged on every fresh build, including the frontend ones. This one
+    // decision silently governs whether a backend is written at all, whether
+    // the database gate fires, and what the prompt tells the model — and when
+    // it is wrong nothing downstream can recover. `source` says whether a word
+    // decided it, a model read it, or it was a lean.
+    if (classification) {
+      console.log(
+        `[build] classified session=${sessionId} type=${classification.buildType} ` +
+        `source=${classification.source} auth=${classification.needsAuth} ` +
+        `db=${classification.database} reason="${classification.reason}"`,
+      );
+    }
     const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
     const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
     // On the edit path, detect framework from existing files so E2B gets the right
@@ -1007,16 +1051,28 @@ export async function runFastBuild(
               toolCallId,
               question,
               options,
-              timeoutMs: ANSWER_TIMEOUT_MS,
+              timeoutMs: DB_GATE_TIMEOUT_MS,
               sessionId,
             });
-            setTimeout(() => done(null), ANSWER_TIMEOUT_MS);
+            setTimeout(() => done(null), DB_GATE_TIMEOUT_MS);
           } catch {
             // Nobody is listening, so nothing can be asked. Build as before.
             done(null);
           }
         });
 
+        if (answer === null) {
+          // Timed out or nobody was listening. Said out loud: a build that
+          // quietly decided to skip the database is the silence this whole
+          // thread exists to remove.
+          server?.thinking(sessionId, {
+            sessionId,
+            text:
+              "No answer on the database yet, so I am building this without one — " +
+              "the app will keep its data in the browser. Connect a database and ask " +
+              "me again, and I will move it onto real tables.",
+          });
+        }
         const intent = interpretDatabaseAnswer(answer);
         if (intent === "connect") {
           userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
@@ -4142,6 +4198,9 @@ export async function runFastBuild(
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),
       ...(fullstackEvidence ? { fullstack: fullstackEvidence } : {}),
+      ...(classification
+        ? { classification: { buildType: classification.buildType, source: classification.source, reason: classification.reason } }
+        : {}),
       ...(result.pseudoToolCalls.length > 0 ? { pseudoToolCalls: result.pseudoToolCalls } : {}),
       ...(stillStale.length > 0 ? { unverifiedGates: stillStale } : {}),
       ...(recorder.lostCount() > 0 ? { eventsLost: recorder.lostCount() } : {}),

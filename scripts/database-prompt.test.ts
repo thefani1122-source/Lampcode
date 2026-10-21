@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Cases for the "connect your Supabase" gate. Run by `npm test`.
  *
@@ -94,6 +95,20 @@ check("something off-topic is unclear", interpretDatabaseAnswer("make it blue"),
   ok("a different person is still asked", shouldAskForDatabase("user-b"));
   resetDatabasePromptMemory();
   ok("the memory is per process, not forever", shouldAskForDatabase("user-a"));
+}
+
+
+// ── The gate must not hang a build for ten minutes ──────────────────────────
+// The shared ANSWER_TIMEOUT_MS is 10 minutes, which is right for "may I push to
+// your GitHub?" and wrong for this: no answer here is not dangerous, it just
+// means build without a database and say so. Someone who misses the card used
+// to get ten minutes of silence.
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("the database gate has its own timeout", build.includes("const DB_GATE_TIMEOUT_MS = 120_000;"));
+  ok("and uses it, not the 10-minute approval timeout", build.includes("timeoutMs: DB_GATE_TIMEOUT_MS") && build.includes("setTimeout(() => done(null), DB_GATE_TIMEOUT_MS)"));
+  ok("no answer is said out loud, not decided in silence", build.includes("No answer on the database yet"));
+  ok("and the message says where the data will live", build.includes("keep its data in the browser"));
 }
 
 console.log(

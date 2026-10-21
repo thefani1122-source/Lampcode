@@ -311,9 +311,36 @@ export type BuildOutcome = {
     tablesQueried: number;
     /** Files that fake persistence — a demo-mode branch, a mock fallback. */
     fakePersistenceFiles: number;
+    /** The delivered code writes to localStorage/sessionStorage and there is no
+     *  backend and no connected database — so the app's data lives in one
+     *  browser. Measured on the delivered files, not inferred from the prompt.
+     *  This is the state a request for "saved data" most often actually got.
+     *
+     *  (Dropped by accident in fcb64a3 while that commit edited this file for
+     *  an unrelated reason; build.ts never stopped writing it. Restored.) */
+    browserOnlyPersistence: boolean;
     /** Auth was asked for, and a real auth call was found rather than a mock. */
     authRequested: boolean;
     authReal: boolean;
+  };
+  /** How this build was classified, and by what.
+   *
+   *  Recorded because this is the decision everything else depends on, and
+   *  because it was wrong silently. MEASURED 2026-10-19: a request for sign-in
+   *  and database persistence was classified "frontend", so no backend was
+   *  written, the database gate never fired, and the app shipped localStorage
+   *  while reporting success. Probing the classifier afterwards, eight of nine
+   *  backend-shaped prompts came back frontend — "signs in" and "logs in" both
+   *  missed, and a bare "database" was not a server signal at all.
+   *
+   *  `source` is the honest part: "explicit-server"/"explicit-client" means a
+   *  word in the request decided it, "model" means the request was read, and
+   *  "lean-*" means nothing decided and a default was taken. A build whose
+   *  promise depends on a lean is a build to look at. */
+  classification?: {
+    buildType: "frontend" | "fullstack";
+    source: "explicit-client" | "explicit-server" | "model" | "lean-server" | "lean-client";
+    reason: string;
   };
   /** Tool names the model TYPED as text instead of calling. Normally absent.
    *  Present means a round produced another harness's tool syntax as prose —

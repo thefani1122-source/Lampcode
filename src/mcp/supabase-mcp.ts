@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { logger } from "../server/logger.js";
 import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
 
-// �� Supabase hosted MCP server �����������������������������������������������
+// ── Supabase hosted MCP server ───────────────────────────────────────────────
 // Official remote MCP: https://supabase.com/docs/guides/getting-started/mcp
 // Auth (programmatic): a Supabase Personal Access Token (PAT) sent as
 //   Authorization: Bearer <token>
