@@ -54,8 +54,9 @@ In order. Each one is finished and measured before the next starts.
    requirements and nothing acts on them. Close the loop: each unverified requirement drives a
    bounded fix-and-recheck, with the evidence attached. This is the owner's #6b and the biggest
    remaining differentiator.
-3. **`shell` (I2).** Fully testable offline: denylist, output redaction, timeout, approval tier.
-   A refused command, an approved command and a redacted output, all proven by cases.
+3. ~~`shell` (I2)~~ and ~~scripted `browser_interact` (B6+)~~ — **both done 2026-10-21.**
+   The harness tool set is complete: 27 registered, nothing absent. `diff_since` still carries
+   the P0.2 defect (Codex). Neither new tool has run on a real build yet — that is section B.
 
 ---
 
