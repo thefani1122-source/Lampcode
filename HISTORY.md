@@ -5026,3 +5026,52 @@ every ambiguous build back into a browser app, silently. The call site says so.
 - The database half of G6 is still unproven: no Supabase is connected to the account
   (`user_mcp_connections` holds only `vercel` and `github`), so no generated app has yet written
   a row to a real table.
+
+### The model is the decider now, and the words are two different things — 2026-10-21
+
+The owner's objection to the rewrite above was the right one: *"regex kiun aaya beech me"* — we
+had decided the MODEL should judge what to build, so why is a word list making the call?
+
+It had always been one. `classifyBuild`'s first line said so: *"Keyword-based classifier — no LLM
+call, instant synchronous result."* The question was never put to a model. Reordered so it is:
+
+1. **what the user NAMED** — a database, a backend framework, a browser store. Their own
+   instruction, answered without a round trip, because it is not an inference.
+2. **the model** — everything else. The default, not the fallback.
+3. **the words** — only when there is no dispatcher, the call failed, or the answer was
+   unusable; and `source` records `lean-*` so such a build is never mistaken for a read one.
+
+Everything that used to short-circuit on inference — "signs in", "their own", "a team" — now
+goes to the model.
+
+**Then the model was measured, and it is not better than the words — it is differently wrong.**
+Over the twenty eval prompts it answered "server" four times, three of them wrong, plus one
+answer that could not be parsed at all:
+
+| task | the model's reason | the truth |
+|---|---|---|
+| `wizard-state` | "handles payment details" | the prompt says **"(no real processing)"** |
+| `settings-tabs` | "handles billing" | Billing is the third **tab** |
+| `form-validation` | "users must create accounts" | it is a signup **form** exercise |
+| `dashboard` | — | unparseable |
+
+That is the SAME class of mistake the first regex rewrite made: reading a noun that names a
+screen as a statement about architecture. Two fixes, in the order that matters:
+
+- **The instruction was underspecified**, so it was sharpened with the measurement itself: a word
+  that names a screen, a tab or a field is not a reason; ask what the app must STORE or SHARE;
+  and if the request says the data is mock or that there is no real processing, the person has
+  already answered. **Re-measured: 19 browser + 1 named-server, zero unparsed** — the same answer
+  the words give, so no stored eval comparison changes meaning.
+- **The user's own words now veto a "server" verdict.** A disclaimer the person wrote outranks a
+  model's reading of it. The veto moves the answer only TOWARDS the browser and only on something
+  actually written — never the reverse, because "they did not say it is mock" proves nothing.
+  After the instruction fix it no longer needed to fire, which is the right state for a safety
+  net.
+
+Re-checked the other direction afterwards: the nine ambiguous backend prompts are still **9 of 9**
+server. Total live measurement for this design: **29 prompts, all correct, zero parse failures.**
+
+The lesson worth keeping: neither a word list nor a model is trustworthy alone on this question.
+The words are brittle about PHRASING, the model is brittle about DISCLAIMERS, and the split that
+works is — what the person named, then judgement, then words as a stated fallback.

@@ -146,10 +146,16 @@ function deNegate(prompt: string): string {
 }
 
 export type DeterministicSignals = {
-  clientOnly: boolean;
+  /** The user NAMED a browser store — localStorage, IndexedDB, "no backend".
+   *  Their own instruction, not an inference about their intent. */
+  namedBrowserStore: boolean;
+  /** The user NAMED a database or a backend framework. Likewise theirs. */
+  namedServerThing: boolean;
   /** The prompt itself says the data is mock, sample, or not really processed. */
   notReal: boolean;
-  serverThing: boolean;
+  /** An auth word describing a PIECE OF INTERFACE — "a login page", "a signup
+   *  form" — rather than a system to stand up. */
+  authAsUi: boolean;
   authSystem: boolean;
   multiPerson: boolean;
   crossDevice: boolean;
@@ -161,9 +167,10 @@ export function readSignals(prompt: string): DeterministicSignals {
   const text = typeof prompt === "string" ? prompt : "";
   const deNegated = deNegate(text);
   return {
-    clientOnly: CLIENT_ONLY_RE.test(text),
+    namedBrowserStore: CLIENT_ONLY_RE.test(text),
+    namedServerThing: SERVER_THING_RE.test(deNegated),
     notReal: NOT_REAL_RE.test(text),
-    serverThing: SERVER_THING_RE.test(deNegated),
+    authAsUi: AUTH_AS_UI_RE.test(text),
     authSystem: AUTH_SYSTEM_RE.test(deNegated) && !AUTH_AS_UI_RE.test(text),
     multiPerson: MULTI_PERSON_RE.test(deNegated),
     crossDevice: CROSS_DEVICE_RE.test(deNegated),
@@ -213,6 +220,14 @@ export const CLASSIFY_INSTRUCTION =
   "by hand: all browser-only.\n\n" +
   "Do not answer yes just because a server would be nicer, more professional or " +
   "more scalable. The question is whether the app is WRONG without one.\n\n" +
+  "A WORD THAT NAMES A SCREEN, A TAB OR A FIELD IS NOT A REASON. Measured on real " +
+  "requests: a settings page with a \"Billing\" tab was called server-side because of " +
+  "the word billing; a checkout MOCK-UP was called server-side because it draws " +
+  "payment fields; a signup FORM exercise was called server-side because of the word " +
+  "account. Those are things drawn on a screen. Ask what the app must STORE or SHARE, " +
+  "not which nouns appear in it.\n\n" +
+  "If the request says the data is mock, sample, hard-coded, or that there is no real " +
+  "processing, the answer is NO. The person has already told you.\n\n" +
   'Return JSON only: {"needsServer":true|false,"needsSignIn":true|false,"why":"one short sentence"}';
 
 /**
@@ -234,37 +249,29 @@ export async function classifyBuild(
 ): Promise<BuildClassification> {
   const signals = readSignals(prompt);
 
-  // ── 1. The user asked for the browser ──────────────────────────────────────
-  // Absolute. A named database does NOT override it: "store it in Supabase and
-  // cache in localStorage" names both, and the only safe reading of a prompt
-  // that says both is the one the user can correct in a follow-up — except that
-  // a named database is itself explicit, so it is checked first below.
-  if (signals.clientOnly && !signals.serverThing) {
-    return decide(signals, "frontend", false, "the request asks for browser-side storage", "explicit-client");
+  // ── 1. The user TOLD us, in so many words ─────────────────────────────────
+  // Not a guess and not a pattern that stands in for one: a named database or
+  // a named browser store is the person saying what they want. Their own
+  // instruction outranks any judgement, including a model's, and it is the one
+  // case worth answering without a round trip.
+  //
+  // Everything else — "signs in", "their own", "a team" — is INFERENCE, and
+  // inference belongs to the model below. That distinction is the whole shape
+  // of this function, and getting it wrong is what produced the 2026-10-19
+  // build: a word list was making a judgement call it had no business making.
+  if (signals.namedBrowserStore && !signals.namedServerThing) {
+    return decide(signals, "frontend", false, "the request names browser storage", "explicit-client");
+  }
+  if (signals.namedServerThing) {
+    return decide(signals, "fullstack", signals.authSystem, "the request names a database or backend", "explicit-server");
   }
 
-  // ── 2. The user named a server ─────────────────────────────────────────────
-  // "no real processing", "mock employees": the user answered it themselves.
-  // Before the server layer on purpose — the words this matches are the very
-  // ones being disclaimed. An explicit sign-in or cross-device requirement
-  // still wins, because those cannot be mocked away.
-  if (signals.notReal && !signals.authSystem && !signals.crossDevice) {
-    return decide(signals, "frontend", false, "the request says this data is not real", "explicit-client");
-  }
-  if (signals.serverThing) {
-    return decide(signals, "fullstack", signals.authSystem, "a database, backend or server-only feature is named", "explicit-server");
-  }
-  if (signals.authSystem) {
-    return decide(signals, "fullstack", true, "people sign in as themselves", "explicit-server");
-  }
-  if (signals.crossDevice) {
-    return decide(signals, "fullstack", false, "the data has to exist on another device", "explicit-server");
-  }
-  if (signals.multiPerson) {
-    return decide(signals, "fullstack", signals.authSystem, "more than one person's data is involved", "explicit-server");
-  }
-
-  // ── 3. Ambiguous: ask, do not guess ────────────────────────────────────────
+  // ── 2. Everything else: the model reads it ────────────────────────────────
+  // THE DEFAULT, not the fallback. "Does this app need a server?" is a question
+  // about what someone meant, and a regex cannot answer it — which is exactly
+  // how "a person signs in … claims persist in the database" was read as a
+  // browser app for months. One small call, on new builds only, concurrent with
+  // the file selection that follows it.
   if (opts?.dispatcher && opts.sessionId && opts.userId && opts.projectId) {
     try {
       const result = await opts.dispatcher.dispatch({
@@ -279,32 +286,68 @@ export async function classifyBuild(
       });
       const parsed = parseClassification(result.finalContent || result.content);
       if (parsed) {
+        // THE USER'S OWN WORDS VETO A "SERVER" VERDICT.
+        //
+        // MEASURED 2026-10-21 over the twenty eval prompts: the model answered
+        // "server" for a checkout mock-up that says "(no real processing)", for
+        // a settings page whose third TAB is called Billing, and for a signup
+        // FORM exercise. It makes the same mistake a word list makes — reading
+        // a noun that names a screen as a statement about architecture — and it
+        // does it over the person's own disclaimer.
+        //
+        // So a disclaimer wins. This veto only ever moves the answer TOWARDS
+        // the browser, and only on something the person actually wrote: never
+        // the reverse, because "they did not say it is mock" proves nothing.
+        const vetoed =
+          parsed.needsServer &&
+          (signals.notReal || signals.authAsUi) &&
+          !signals.crossDevice &&
+          !signals.namedServerThing;
+        if (vetoed) {
+          logger.info(
+            { sessionId: opts.sessionId, why: parsed.why.slice(0, 120) },
+            "[classify] model said server; the request says the data is not real — taking the request",
+          );
+          return decide(signals, "frontend", false, "the request itself says this data is not real", "explicit-client");
+        }
         return decide(
           signals,
           parsed.needsServer ? "fullstack" : "frontend",
-          parsed.needsSignIn,
+          parsed.needsSignIn || signals.authSystem,
           parsed.why ? `read from the request: ${parsed.why}` : "read from the request",
           "model",
         );
       }
       logger.warn(
         { sessionId: opts.sessionId, head: (result.finalContent || result.content).slice(0, 200) },
-        "[classify] judgement pass returned nothing usable — leaning on the words instead",
+        "[classify] judgement pass returned nothing usable — falling back to the words",
       );
     } catch (err) {
       logger.warn(
         { sessionId: opts.sessionId, err: err instanceof Error ? err.message : String(err) },
-        "[classify] judgement pass failed — leaning on the words instead",
+        "[classify] judgement pass failed — falling back to the words",
       );
     }
   }
 
-  // ── 4. Lean, and say so ────────────────────────────────────────────────────
-  // Nothing in the prompt names a server and nothing names the browser. With no
-  // judgement available the browser is the honest default: inventing a database
-  // for a request that never mentioned one is how the eval once found half the
-  // smoke set carrying a Supabase schema it never used. `source` records that
-  // this was a lean rather than a reading.
+  // ── 3. No model: fall back to the words, and say that is what happened ────
+  // Reached when no dispatcher was passed (every caller but the build route),
+  // when the call failed, or when it answered with something unusable. These
+  // signals are good — measured at 40 of 40 on the corpus — but they are a
+  // FALLBACK, and `source` says so, so a build decided this way is never
+  // indistinguishable from one that was read.
+  if (signals.notReal && !signals.authSystem && !signals.crossDevice) {
+    return decide(signals, "frontend", false, "the request says this data is not real", "lean-client");
+  }
+  if (signals.authSystem) {
+    return decide(signals, "fullstack", true, "people sign in as themselves", "lean-server");
+  }
+  if (signals.crossDevice) {
+    return decide(signals, "fullstack", false, "the data has to exist on another device", "lean-server");
+  }
+  if (signals.multiPerson) {
+    return decide(signals, "fullstack", signals.authSystem, "more than one person's data is involved", "lean-server");
+  }
   return decide(signals, "frontend", false, "nothing in the request needs a server", "lean-client");
 }
 

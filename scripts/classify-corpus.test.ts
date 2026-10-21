@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * The classification corpus. Run by `npm test`.
  *
@@ -130,8 +131,8 @@ ok("'their own' is a multi-person signal", readSignals("each person sees their o
 ok("a 'Team' plan name is not", !readSignals("three tiers: Free, Pro, Team").multiPerson);
 ok("'mock employees' is a not-real marker", readSignals("200 mock employees").notReal);
 ok("'no real processing' is too", readSignals("payment details (no real processing)").notReal);
-ok("a bare 'database' is a server thing", readSignals("kept in the database").serverThing);
-ok("'no database' is not", !readSignals("a timer with no database").serverThing);
+ok("a bare 'database' is a server thing", readSignals("kept in the database").namedServerThing);
+ok("'no database' is not", !readSignals("a timer with no database").namedServerThing);
 ok("'another device' is cross-device", readSignals("available on another device").crossDevice);
 ok("mongo is detected for the db choice", readSignals("store it in MongoDB").mentionsMongo);
 
@@ -194,6 +195,44 @@ console.log("\n— the eval corpus —");
   }
   ok(`exactly one eval task needs a server (got: ${fullstack.join(",") || "none"})`, fullstack.length === 1 && fullstack[0] === "python-api");
   ok("all twenty were classified", tasks.length === 20);
+}
+
+
+// ── The model is the DEFAULT, the words are not ─────────────────────────────
+// The old classifier was a word list making a judgement call it had no business
+// making, and it read "a person signs in … claims persist in the database" as a
+// browser app for months. The order now is: what the user NAMED (their own
+// instruction), then the model (judgement), then the words (fallback only).
+
+console.log("\n— the model decides, not the words —");
+{
+  const src = readFileSync(new URL("../src/agents/build-classifier.ts", import.meta.url), "utf8");
+  const namedLayer = src.indexOf("// ── 1. The user TOLD us");
+  const modelLayer = src.indexOf("// ── 2. Everything else: the model reads it");
+  const wordsLayer = src.indexOf("// ── 3. No model: fall back to the words");
+  ok("what the user named is answered first", namedLayer > 0 && namedLayer < modelLayer);
+  ok("the model comes before the word signals", modelLayer > 0 && modelLayer < wordsLayer);
+  ok("and the fallback says so in its comment", /FALLBACK/.test(src.slice(wordsLayer, wordsLayer + 700)));
+
+  // The inferred signals must NOT short-circuit the model any more. Only the
+  // two "the user named it" signals may.
+  const beforeModel = src.slice(namedLayer, modelLayer);
+  ok("an auth guess does not pre-empt the model", !beforeModel.includes("signals.authSystem)"));
+  ok("a multi-person guess does not either", !beforeModel.includes("signals.multiPerson"));
+  ok("a cross-device guess does not either", !beforeModel.includes("signals.crossDevice"));
+}
+
+{
+  // With no dispatcher the words still have to be right, because that is what
+  // runs when the model is unavailable — but the source must admit it.
+  const leaned = await classifyBuild("a person signs in and sees their own claims");
+  ok("the fallback still gets a sign-in right", leaned.buildType === "fullstack");
+  ok("and marks it as a lean, not a reading", leaned.source === "lean-server");
+
+  const named = await classifyBuild("keep the rows in Postgres");
+  ok("a named database is still answered without a model", named.source === "explicit-server");
+  const namedBrowser = await classifyBuild("a todo list in localStorage");
+  ok("so is a named browser store", namedBrowser.source === "explicit-client");
 }
 
 console.log(`\n${checks} classification checks, ${failures} failed`);
