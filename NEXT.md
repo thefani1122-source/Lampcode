@@ -15,6 +15,7 @@ so rather than leaving it.
 | **Railway incident** — "Builds are temporarily paused" (their status page, not our account) | every real-build proof below | nothing to fix. Poll `list-deployments` until a SUCCESS for a commit ≥ `6610983`. No redeploy is possible: the failed deployment has no snapshot. |
 | **No Supabase connected** (`user_mcp_connections` holds only `vercel`, `github`) | the row-level half of G6/P0.4 | owner connects their Supabase in the UI; then the retry is one build |
 | **`MCP_OAUTH_REDIRECT_URL` unset on Railway** | every OAuth MCP connect (503) | owner sets it to `https://<backend host>/api/integrations/mcp/oauth/callback` |
+| **`db-path` is not on `main`** — the merge push was refused by this session's deploy guard | the audit-repair loop reaching production | owner merges `db-path` into `main` (one fast-forward commit, `d18f3ae`), or grants the push. Railway is paused, so nothing is lost by waiting |
 | **Vercel connection is stale** (its `authType` became `oauth`; the stored static token no longer authenticates MCP) | Vercel MCP tools | owner reconnects once OAuth works. `deploy_app` is NOT affected — it reads its own token now |
 
 ---
@@ -50,10 +51,12 @@ In order. Each one is finished and measured before the next starts.
    tables the app queries, RLS on every table with owner-scoped policies, `dbFor(c)` used so the
    caller's identity reaches the query, and `src/lib/api.ts` in the shape the preview proxy and
    `wiring.ts` both expect. Review against the real prompt text, fix, add cases.
-2. **"It sees its work — now make it fix it."** The completion audit reports `unverified`
-   requirements and nothing acts on them. Close the loop: each unverified requirement drives a
-   bounded fix-and-recheck, with the evidence attached. This is the owner's #6b and the biggest
-   remaining differentiator.
+2. ~~**"It sees its work — now make it fix it."**~~ — **done 2026-10-21**, `src/verify/audit-repair.ts`,
+   79 cases. At most five unmet requirements, a live sandbox, one attempt, tools off; kept only if
+   it still compiles and does not un-prove something already proven; re-audited against the same
+   criteria and the result replaces the stored audit. Recorded in `build_outcome.auditRepair`
+   (attempted / fixed / remaining / cost) and in the closing status block.
+   **Not yet proven on a real build** — that is section B, and it needs Railway.
 3. ~~`shell` (I2)~~ and ~~scripted `browser_interact` (B6+)~~ — **both done 2026-10-21.**
    The harness tool set is complete: 27 registered, nothing absent. `diff_since` still carries
    the P0.2 defect (Codex). Neither new tool has run on a real build yet — that is section B.
