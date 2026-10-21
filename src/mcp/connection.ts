@@ -3,7 +3,18 @@ import { isIP } from "node:net";
 import { isPublicMcpAddress } from "./secure-fetch.js";
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+  // Strip the brackets IPv6 URLs carry: new URL("https://[::1]/").hostname is
+  // "[::1]", and isIP() answers 0 for that, which reads as "not an IP" and
+  // therefore "not private".
+  //
+  // MEASURED 2026-10-21 — this was a live SSRF bypass. The pattern here was
+  // /^\\[|\\]$/g, which in source matches a BACKSLASH followed by a bracket,
+  // not a bracket. So nothing was ever stripped and every IPv6 private address
+  // passed the guard: https://[::1]/mcp, https://[fd00::1]/mcp and
+  // https://[fe80::1]/mcp were all accepted as custom MCP servers, letting a
+  // user point this backend at its own loopback. mcp-connection.test.ts caught
+  // it and was failing on the branch.
+  const host = hostname.toLowerCase().replace(/^\[(.+)\]$/, "$1");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") ||
     host === "metadata" || host === "metadata.google.internal" || host === "metadata.azure.internal") return true;
   return isIP(host) ? !isPublicMcpAddress(host) : false;
