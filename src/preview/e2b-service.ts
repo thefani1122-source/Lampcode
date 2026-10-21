@@ -161,6 +161,18 @@ const sandboxes = new Map<string, Sandbox>();
 // at call sites that only have a projectId (resume-on-open, follow-up writes).
 const sandboxFrameworks = new Map<string, FullstackFramework>();
 
+/**
+ * The secret VALUES this sandbox was handed, per project.
+ *
+ * Kept so `shell` output can have them taken out by exact value before it
+ * becomes a tool result. The generic shapes in shell-policy.ts catch a key
+ * nobody told us about; this catches the ones we put there ourselves —
+ * including, for a user who connected their own Supabase, theirs.
+ *
+ * Values only, never names. Nothing here is ever logged.
+ */
+const sandboxSecrets = new Map<string, Set<string>>();
+
 /** Port the dev server listens on inside the sandbox. */
 function devPort(framework: FullstackFramework): number {
   return framework === "nextjs" || framework === "tanstack" ? 3000 : 5173;
@@ -486,6 +498,16 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   }
   try {
     await sandbox.files.write(`${PROJECT_DIR}/.env`, env);
+    // Remember the values, not the names: `shell` redacts its output against
+    // these by exact match. A short value is skipped by the redactor itself.
+    const injected = new Set<string>();
+    for (const line of env.split("\n")) {
+      const at = line.indexOf("=");
+      if (at <= 0) continue;
+      const value = line.slice(at + 1).trim();
+      if (value.length >= 8) injected.add(value);
+    }
+    sandboxSecrets.set(projectId, injected);
     log("Injected preview Supabase credentials into .env");
   } catch (err) {
     logger.warn({ err }, "[e2b] Failed to write preview .env");
@@ -989,6 +1011,44 @@ export async function captureStorage(projectId: string, route = "/"): Promise<St
   } catch (err) {
     logger.warn({ projectId, err }, "[e2b] storage capture unavailable — client state remains unobserved");
     return EMPTY_STORAGE;
+  }
+}
+
+/**
+ * Run one command in the project directory of the sandbox.
+ *
+ * Deliberately thin: WHAT may run is decided by `shell-policy.ts` before this
+ * is ever called, and what may come back out is redacted there too. This part
+ * only runs it, bounds it, and reports honestly when it could not.
+ *
+ * The secrets this sandbox was given are returned alongside the output so the
+ * caller can take them out by exact value — the preview `.env` holds a live
+ * Supabase URL and key, and for a user who connected their own project, theirs.
+ */
+export async function runShellCommand(
+  projectId: string,
+  command: string,
+  timeoutMs = 60_000,
+): Promise<{ ran: boolean; exitCode: number | null; stdout: string; stderr: string; secrets: string[] }> {
+  const sandbox = sandboxes.get(projectId);
+  const secrets = [...(sandboxSecrets.get(projectId) ?? [])];
+  if (!sandbox) {
+    logger.warn({ projectId, gate: "runShellCommand" }, "[e2b] shell skipped — no live sandbox");
+    return { ran: false, exitCode: null, stdout: "", stderr: "", secrets };
+  }
+  try {
+    const r = await sandbox.commands.run(`cd ${PROJECT_DIR} && ${command}`, { timeoutMs });
+    return { ran: true, exitCode: r.exitCode ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "", secrets };
+  } catch (err) {
+    // A non-zero exit arrives here as a throw. That is a RESULT, not a
+    // failure of the tool — a failing test run is exactly what the model asked
+    // to see — so it is reported with whatever output came with it.
+    const e = err as { exitCode?: number; stdout?: string; stderr?: string; message?: string };
+    if (typeof e?.exitCode === "number" || typeof e?.stdout === "string") {
+      return { ran: true, exitCode: e.exitCode ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? String(e.message ?? ""), secrets };
+    }
+    logger.warn({ projectId, err }, "[e2b] shell command could not run");
+    return { ran: false, exitCode: null, stdout: "", stderr: "", secrets };
   }
 }
 

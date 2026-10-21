@@ -12,7 +12,7 @@ import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 
-const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page"]);
+const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page", "shell"]);
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
@@ -466,6 +466,34 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
         url: { type: "string", description: "The reference page's URL, as the user gave it." },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "shell",
+    description:
+      "Run a command in this project's sandbox — the same machine the preview is served from, " +
+      "with the project as the working directory.\n" +
+      "Use it for what no other tool covers: looking at a file tree, checking a package version, " +
+      "running a build to read its real error, inspecting what a script produced. The tools you " +
+      "already have are better where they apply — read_file, list_files, search_code, " +
+      "check_types, run_tests and read_logs are faster and their output is shaped for you.\n" +
+      "Some commands are REFUSED outright and no argument changes that: anything that reads the " +
+      "environment or .env, anything that sends data out of the sandbox, anything outside the " +
+      "project directory, and anything acting as the user elsewhere. The sandbox's .env holds " +
+      "live database keys; you do not need them and output is redacted either way.\n" +
+      "Commands that delete, install or change things in the project PAUSE THE BUILD while the " +
+      "user approves them, so prefer a narrower tool when one exists.",
+    input_schema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description:
+            "One command line, run from the project root. Write it out in full — $(…) and " +
+            "backticks are refused because they can hide what is really being run.",
+        },
+      },
+      required: ["command"],
     },
   },
   {
