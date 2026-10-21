@@ -4915,3 +4915,114 @@ not, and cannot be until a model that accepts images is reachable.
 - **`web_search` was not called**, correctly: nothing in either prompt needed a lookup.
 - **No MCP tool ran**, so the tier escalation was not exercised on a live server; its cases drive
   the real `executeTool` approval path instead.
+
+## THE CLASSIFIER WAS THE BUG — 2026-10-21
+
+The single highest-leverage defect found in this product so far, and it had been there the whole
+time.
+
+### What was measured
+
+The 2026-10-19 launch-proof build asked for:
+
+> "Build a team expense tracker. A person **signs in** … sees **only their own** claims … a
+> separate **approvals** page … nobody may approve their own claim. Claims persist **in the
+> database** so they survive a reload."
+
+`classifyBuild` returned **frontend**. Consequence chain, all silent: `isFullstackBuild` false →
+the database gate never asked the user to connect anything → `DB_INSTRUCTIONS` never entered the
+prompt → zero backend files → the app shipped four hardcoded users and `localStorage` → and the
+closing message said "complete and fully functional".
+
+Probing the old classifier over nine backend-shaped prompts, **eight came back frontend**:
+
+| prompt | old verdict |
+|---|---|
+| "a person **signs** in" | frontend |
+| "a user **logs** in" | frontend |
+| "each customer has their own **account**" | frontend |
+| "a **team** can see each other's tasks" | frontend |
+| "notes are stored in the **database**" | frontend |
+| "**Save** the entries **to a database**" | frontend |
+| "each user sees only their own records" | frontend |
+| "a team can comment on each other's work" | frontend |
+| "can **sign in**" (the literal form) | fullstack ✓ |
+
+The cause is ordinary English. `AUTH_RE` held `login|signin|sign[- ]in|signup` and no
+conjugations, so "signs in" and "logs in" missed. `SERVER_DATA_RE` held `save.to.database` and
+`real.database` but **not a bare `database`**, so "stored in the database" was not a server
+signal at all. A hundred lines of regex were breaking the product's core promise on any request
+phrased the way people actually write.
+
+### The fix: layered by certainty, not by keyword
+
+1. the user named the browser → frontend, absolute
+2. the user said the data is **not real** ("no real processing", "mock employees") → frontend;
+   checked BEFORE the server layer, because those are the words it would misread
+3. the user named a server → fullstack
+4. neither → **one narrow model call**: must the data be shared between people, or exist on
+   another device? Explicitly NOT "would a backend be nicer", which has one answer for every app
+   ever described
+5. no model available → lean, and record that it was a lean
+
+Every phrase in the deterministic layers is now a construction rather than a noun, because the
+first rewrite over-corrected and produced the mirror-image bug: a **pricing page** became
+fullstack (its tiers are named "Free, Pro, **Team**"), a table of "200 **mock employees**" became
+fullstack, a settings page became fullstack (a "**Billing**" tab and "the **account** name"), and
+a checkout **mock-up** became fullstack despite saying "**no real processing**". A classifier is
+only as good as the two mistakes it refuses to make, so both directions are in the corpus.
+
+### Measured after
+
+- **72 cases**, deterministic layer only, no network: 24 backend-shaped prompts and 16
+  browser-shaped ones all correct, plus the signals one at a time, the negation cases, the
+  parser, and the instruction's wording.
+- **The judgement layer against the live model: 9 of 9 sound.** The one "miss" was my own
+  expectation — a portfolio with a contact form does need a server to send email, and the model
+  said so.
+- **The eval corpus does not move.** Of the 20 stored tasks exactly one — `python-api` — asks for
+  a server, the same answer as before, so no stored comparison changes meaning.
+
+### A trap worth remembering
+
+That judgement call needs a REAL token budget. `minimax-m2.5` puts its reasoning in its own field
+and leaves `content` null until it is finished: at `max_tokens: 400` it returned
+`finish_reason: "length"` and no JSON at all, nine times out of nine. At the dispatcher's budget
+it was right nine times out of nine. Anyone "optimising" this pass with a small budget turns
+every ambiguous build back into a browser app, silently. The call site says so.
+
+### Also fixed, same session
+
+- **The classification and its SOURCE are recorded** in `build_outcome`. This decision governs
+  everything downstream and was wrong invisibly; `source` says whether a word decided it, a model
+  read it, or it was a lean.
+- **The database question got its own 2-minute timeout.** It had been using the shared
+  `ANSWER_TIMEOUT_MS` — **ten minutes** — which is right for "may I push to your GitHub?" and
+  wrong here: someone who misses the card got ten minutes of silence. No answer is now said out
+  loud, naming where the data will live instead.
+- **An IPv6 SSRF bypass**, found while reviewing the branch. `isPrivateHost` stripped brackets
+  with `/^\\[|\\]$/g`, which matches a BACKSLASH followed by a bracket. Nothing was stripped, so
+  `isIP("[::1]")` answered 0 — "not an IP", therefore "not private" — and `https://[::1]/mcp`,
+  `[fd00::1]` and `[fe80::1]` all passed as custom MCP servers, letting a user point the backend
+  at its own loopback with credentials. `mcp-connection.test.ts` already covered it and was
+  failing on the branch. Scanned the rest of `src/`: every other double-escape is inside a
+  `new RegExp(\`…\`)` template or a browser script string, where `\\b` is correct.
+- **`deploy_app` had lost its credential.** Vercel's registry entry became `authType: "oauth"`
+  with no credential fields, and `ActiveMcpServer.authToken` is null on every path now, so the
+  deploy context could never be built. The REST deploy needs an account token and the MCP server
+  wants OAuth — two endpoints, two credentials. Read as its own thing now, with the legacy table
+  as a fallback.
+- Restored `browserOnlyPersistence`, dropped by accident in `fcb64a3`, and the replacement
+  characters an editor wrote into `supabase-mcp.ts`.
+
+### Not verified
+
+- **No real build has run on the fixed classifier.** Production is still serving `a23f780`
+  (19 Oct): the push for `a41b0ef` produced a deployment that failed in 0.3s with no build, no
+  snapshot and `failedReason: null`, and the push for `4d44dd7` produced no deployment at all.
+  `/health` answers, so the old container is alive. This is Railway-side — no tool here can give
+  a service a deployment without a snapshot — and it needs the owner to look at the project's
+  build/billing state or re-attach the GitHub source.
+- The database half of G6 is still unproven: no Supabase is connected to the account
+  (`user_mcp_connections` holds only `vercel` and `github`), so no generated app has yet written
+  a row to a real table.
