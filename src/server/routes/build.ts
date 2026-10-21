@@ -218,6 +218,10 @@ const E2B_PREVIEW_TIMEOUT_MS = 90_000;
  */
 const DB_GATE_TIMEOUT_MS = 120_000;
 
+/** Long enough for a migration against a cold Supabase, short enough that a
+ *  wedged one does not hold the build. */
+const SCHEMA_APPLY_TIMEOUT_MS = 45_000;
+
 // The three sandbox quality gates deliberately fail OPEN: a gate that itself
 // errors must never fail a build that was already delivered to the user. That
 // is still right, but it used to be entirely silent, so a gate erroring looked
@@ -818,6 +822,12 @@ export async function runFastBuild(
   // OOM, a throw past the catch — still leaves the evidence it had reached.
   // Folded into the outcome's core at the end by projectOutcome().
   const recorder = new BuildEventRecorder(sessionId);
+
+  // What happened when the generated schema met the user's database. Absent on
+  // frontend builds; `ran: false` when a schema was written and there was no
+  // database to apply it to, which is the single most common reason a
+  // "fullstack" app saves nothing.
+  let schemaApply: { ran: boolean; ok: boolean; error?: string } | null = null;
 
   // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
   // routing outright — without it a paid or admin account can never exercise
@@ -2978,22 +2988,61 @@ export async function runFastBuild(
       // app's tables/RLS exist. Best-effort + out-of-band — never blocks the
       // build, and only ever touches the user's own project (never the platform
       // DB). We do NOT run generated SQL against any shared/platform database.
+      // ── Create the tables BEFORE anything looks at the app ────────────────
+      // This used to be `void getUserSupabaseMcpAuth(…).then(…)` — fire and
+      // forget — and that is wrong twice over.
+      //
+      // ORDER: the preview starts below, and the interaction probe and the
+      // completion audit then drive an app whose tables may not exist yet.
+      // Every query fails, the generated error handling turns the failure into
+      // an empty list, and the app looks finished and empty. The tables have to
+      // exist first.
+      //
+      // EVIDENCE: the old version put its result in ONE preview-log line and
+      // nowhere else. A failure scrolled past in a log panel while the closing
+      // message said the build was complete, the record said nothing, and the
+      // user's data had nowhere to go. "I could not create your tables" is
+      // exactly the kind of thing this product exists to say out loud.
+      //
+      // Bounded, and never fatal: a slow Supabase must not hold a build, and a
+      // failed apply still ships an app — it just ships one that says so.
       const schemaSql = allFiles["src/db/schema.sql"];
       if (schemaSql && schemaSql.trim()) {
-        void getUserSupabaseMcpAuth(userId)
-          .then(async (auth) => {
-            if (!auth) return;
-            server?.emitToRoom(sessionId, "build:preview_log", {
-              sessionId,
-              line: "Applying schema to your Supabase project…",
-            });
-            const r = await applySupabaseSchema(auth, `lampcode_${Date.now()}`, schemaSql);
-            server?.emitToRoom(sessionId, "build:preview_log", {
-              sessionId,
-              line: r.ok ? "✅ Schema applied to your Supabase project" : `⚠️ Schema apply failed: ${r.error}`,
-            });
-          })
-          .catch((err) => logger.warn({ projectId, err }, "Supabase schema apply failed"));
+        const auth = await getUserSupabaseMcpAuth(userId).catch(() => null);
+        if (auth) {
+          server?.emitToRoom(sessionId, "build:preview_log", {
+            sessionId,
+            line: "Applying schema to your Supabase project…",
+          });
+          const applied = await withTimeout(
+            applySupabaseSchema(auth, `lampcode_${Date.now()}`, schemaSql),
+            SCHEMA_APPLY_TIMEOUT_MS,
+            `applySupabaseSchema exceeded ${SCHEMA_APPLY_TIMEOUT_MS}ms`,
+          ).catch((err: unknown) => ({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+          schemaApply = applied.ok
+            ? { ran: true, ok: true }
+            : { ran: true, ok: false, ...(applied.error ? { error: applied.error } : {}) };
+          server?.emitToRoom(sessionId, "build:preview_log", {
+            sessionId,
+            line: applied.ok ? "✅ Schema applied to your Supabase project" : `⚠️ Schema apply failed: ${applied.error}`,
+          });
+          console.log(
+            `[build] schema apply session=${sessionId} ok=${applied.ok}` +
+            (applied.ok ? "" : ` error=${String(applied.error).slice(0, 160)}`),
+          );
+          if (!applied.ok) {
+            logger.warn({ sessionId, projectId }, "Supabase schema apply failed — the app will have no tables");
+          }
+        } else {
+          // A schema was generated and there is no database to put it in. Not
+          // an error — the gate above already offered — but it IS the reason
+          // the app will not save anything, so it is recorded rather than lost.
+          schemaApply = { ran: false, ok: false, error: "no Supabase connected" };
+          console.log(`[build] schema apply session=${sessionId} ran=false reason=no-connection`);
+        }
       }
     }
 
@@ -4136,6 +4185,7 @@ export async function runFastBuild(
           fakePersistenceFiles: fakeFiles.length,
           authRequested: authWanted,
           authReal: authWanted ? authReal : false,
+          ...(schemaApply ? { schemaApply } : {}),
         }
       : null;
     if (fullstackEvidence) {
@@ -4264,7 +4314,9 @@ export async function runFastBuild(
         fs.backendFiles > 0 &&
         fs.databaseConnected &&
         fs.tablesQueried > 0 &&
-        fs.fakePersistenceFiles === 0;
+        fs.fakePersistenceFiles === 0 &&
+        // A connected database with no tables in it is not a working one.
+        fs.schemaApply?.ok !== false;
       closingLines.push(
         real
           ? "This has a real backend: server code, a connected database, and queries against it."
@@ -4287,6 +4339,21 @@ export async function runFastBuild(
             ? "• Database: your own Supabase is connected."
             : "• Database: not connected, so nothing is saved on a server. Connect one and I will wire it up.",
         );
+        // The tables are the difference between a connected database and a
+        // working one. A failure here used to reach a log line and nothing
+        // else, while the closing message said the build was complete.
+        if (fs.schemaApply?.ran === false && fs.schemaApply.error === "no Supabase connected") {
+          closingLines.push(
+            "• Tables: I wrote the schema but there was no database to create it in, so every save will fail until you connect one.",
+          );
+        } else if (fs.schemaApply?.ran && !fs.schemaApply.ok) {
+          closingLines.push(
+            "• Tables: I could NOT create them in your Supabase, so saving will not work yet. " +
+              `The reason it gave: ${String(fs.schemaApply.error ?? "unknown").slice(0, 200)}`,
+          );
+        } else if (fs.schemaApply?.ok) {
+          closingLines.push("• Tables: created in your Supabase, so the app has somewhere real to save.");
+        }
         if (fs.tablesDeclared > 0 || fs.tablesQueried > 0) {
           closingLines.push(
             `• Tables: ${fs.tablesDeclared} declared, ${fs.tablesQueried} actually queried by the app.`,

@@ -5075,3 +5075,36 @@ server. Total live measurement for this design: **29 prompts, all correct, zero 
 The lesson worth keeping: neither a word list nor a model is trustworthy alone on this question.
 The words are brittle about PHRASING, the model is brittle about DISCLAIMERS, and the split that
 works is — what the person named, then judgement, then words as a stated fallback.
+
+### The tables were created fire-and-forget — 2026-10-21
+
+Found while checking the second half of the same thread: classification being right only matters
+if the backend it asks for is a correct one.
+
+`applySupabaseSchema` was called as `void getUserSupabaseMcpAuth(userId).then(…)` — the same
+fire-and-forget shape that produced the ShopHub ordering bug, in the database path.
+
+Two consequences, both silent:
+
+1. **Order.** The preview starts below that line, and the interaction probe and the completion
+   audit then drive an app whose tables may not exist yet. Every query fails, the generated error
+   handling turns the failure into an empty list, and the app looks finished and empty — which is
+   indistinguishable, from the outside, from an app with no data in it yet.
+2. **Evidence.** The result reached ONE `build:preview_log` line and nothing else. A failed
+   migration scrolled past in a log panel while the closing message said the build was complete,
+   `build_outcome` said nothing, and the user's data had nowhere to go.
+
+Now awaited before the preview chain, bounded at 45s, never fatal, and recorded as
+`outcome.fullstack.schemaApply`. The closing message says which of the three happened:
+
+- tables created in your Supabase, so the app has somewhere real to save
+- I could NOT create them, and the reason the database gave
+- I wrote the schema and there was no database to create it in, so every save will fail
+
+A failed apply also stops `real` being claimed: **a connected database with no tables in it is
+not a working one.**
+
+Also added to `DB_INSTRUCTIONS`: every table a route queries must be declared in `schema.sql`,
+because that file is what is actually run against the user's database — a table missing from it
+does not exist at runtime, and the failure arrives disguised as an empty list. The model is asked
+to read its own routes and check each `.from(...)` name before finishing.

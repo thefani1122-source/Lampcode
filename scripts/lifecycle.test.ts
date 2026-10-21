@@ -110,7 +110,15 @@ check("events are flushed at boundaries, not only in the catch", (build.match(/a
 // ── Fullstack honesty ─────────────────────────────────────────────────────
 
 check("the closing status is built from evidence", build.includes("const fullstackEvidence = fullstackRequested"));
-check("'real' requires backend, a connected database, queries and no faking", build.includes("fs.backendFiles > 0 &&") && build.includes("fs.fakePersistenceFiles === 0;"));
+check(
+  "'real' requires backend, a connected database, queries, no faking — and tables",
+  build.includes("fs.backendFiles > 0 &&") &&
+    build.includes("fs.databaseConnected &&") &&
+    build.includes("fs.tablesQueried > 0 &&") &&
+    build.includes("fs.fakePersistenceFiles === 0 &&") &&
+    // A connected database with no tables in it is not a working one.
+    build.includes("fs.schemaApply?.ok !== false"),
+);
 check("a missing database is said in plain words", build.includes("Database: not connected, so nothing is saved on a server"));
 check("a mocked sign-in is not called real", build.includes("Sign-in: not real yet"));
 check("demo-data fallbacks are named", build.includes("fall back to demo data when the backend is missing"));

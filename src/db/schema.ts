@@ -319,6 +319,11 @@ export type BuildOutcome = {
      *  (Dropped by accident in fcb64a3 while that commit edited this file for
      *  an unrelated reason; build.ts never stopped writing it. Restored.) */
     browserOnlyPersistence: boolean;
+    /** What happened when the generated schema met the user's database.
+     *  `ran: false` with "no Supabase connected" is the most common reason a
+     *  fullstack app saves nothing: the tables were written and had nowhere to
+     *  go. Absent on builds that generated no schema. */
+    schemaApply?: { ran: boolean; ok: boolean; error?: string };
     /** Auth was asked for, and a real auth call was found rather than a mock. */
     authRequested: boolean;
     authReal: boolean;

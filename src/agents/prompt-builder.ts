@@ -562,6 +562,15 @@ carrying the caller's token. Not one shared client:
 DB SCHEMA FILES: Already listed in FULLSTACK_INSTRUCTION as items 1 and 2.
 Generate types.ts interfaces and schema.sql CREATE TABLE + RLS there.
 
+EVERY TABLE YOU QUERY MUST EXIST IN schema.sql. If any route calls
+.from('expenses'), then schema.sql contains CREATE TABLE expenses with its RLS
+policies — no exceptions, and no table invented in a route that the schema does
+not declare. That schema is RUN against the user's real database, so a table
+missing from it does not exist at runtime: the query fails, your error handling
+turns the failure into an empty list, and the app looks finished and empty
+forever. Before you finish, read your own routes and check every .from(...)
+name appears in schema.sql.
+
 The env (SUPABASE_URL + keys) is injected by the preview — do NOT generate .env
 or package.json. Read everything from process.env in the backend.
 
