@@ -22,6 +22,7 @@ import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACK
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
+  applyParsedFiles,
   findMissingFullstackFiles,
   validateSandpackFiles,
   parseSurgicalEdits,
@@ -2493,15 +2494,15 @@ export async function runFastBuild(
               costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
             });
             cumulativeCostUsd += fixResult.costUsd ?? 0;
-            const fixed = parseFilesFromContent(fixResult.content ?? "");
             // Only files that already exist are replaced. A repair that
             // CREATES files is a repair that has misunderstood the finding —
             // nothing here needs a new file, and letting it add one is how a
             // narrow fix turns into an unreviewed rewrite.
-            const rewritten: string[] = [];
-            for (const [p, code] of Object.entries(fixed)) {
-              if (typeof code === "string" && allFiles[p] !== undefined) { allFiles[p] = code; rewritten.push(p); }
-            }
+            const rewritten = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: false, refuse: isTemplateOwnedFile },
+            );
             // MEASURED on the launch-proof build 2026-10-19: the broken-import
             // loop rewrote files after check_page and check_types had passed,
             // and the record still said staleCheckPage=0. Only the three loops
@@ -2767,10 +2768,11 @@ export async function runFastBuild(
             cumulativeCostUsd += fixResult.costUsd ?? 0;
             // New files ARE allowed here — writing them is the entire point,
             // which is why this loop and the cut above take opposite rules.
-            const created: string[] = [];
-            for (const [p, code] of Object.entries(parseFilesFromContent(fixResult.content ?? ""))) {
-              if (typeof code === "string" && (code as string).trim().length > 0) { allFiles[p] = code; created.push(p); }
-            }
+            const created = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: true, refuse: isTemplateOwnedFile },
+            );
             recorder.record({ type: "repair/applied", kind: "broken-imports" });
             if (created.length > 0) {
               recorder.record({ type: "files/written", paths: created, added: 0, removed: 0 });
@@ -2896,29 +2898,31 @@ export async function runFastBuild(
             });
             cumulativeCostUsd += fixResult.costUsd ?? 0;
 
-            const cut = parseFilesFromContent(fixResult.content ?? "");
-            let touched = 0;
-            const cutPaths: string[] = [];
-            for (const [p, code] of Object.entries(cut)) {
-              // Existing files only. A cut that CREATES a file has
-              // misunderstood, and letting it through turns a deletion into an
-              // unreviewed rewrite.
-              if (typeof code === "string" && allFiles[p] !== undefined) {
-                allFiles[p] = code;
-                touched += 1;
-                cutPaths.push(p);
-              }
-            }
+            // Existing files only. A cut that CREATES a file has
+            // misunderstood, and letting it through turns a deletion into an
+            // unreviewed rewrite.
+            const cutPaths = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: false, refuse: isTemplateOwnedFile },
+            );
+            const touched = cutPaths.length;
             if (cutPaths.length > 0) {
               recorder.record({ type: "files/written", paths: cutPaths, added: 0, removed: 0 });
             }
 
             if (touched === 0) {
               // MEASURED 2026-10-18, session dc1fbc17: `dead=23 touched=0` —
-              // a removal dispatch paid for and not one file changed, because
-              // the reply came back as prose rather than fenced files. The
-              // loop was harmless and useless at the same time, which is the
-              // worst value for money available. Logged loudly so a run of
+              // a removal dispatch paid for and not one file changed. That was
+              // read at the time as a reply in prose rather than fenced files.
+              // It was not: this loop applied its files with
+              // `Object.entries()` over an ARRAY, so its own `typeof code ===
+              // "string"` guard was permanently false and `touched` could
+              // never be anything but 0 (fixed 2026-10-21, applyParsedFiles).
+              // The reading is kept because the lesson stands — a paid-for
+              // dispatch that changes nothing is the worst value for money
+              // available — and because a confident root cause that turned out
+              // to be wrong is worth leaving visible. Logged loudly so a run of
               // these is visible rather than mistaken for "nothing to cut".
               logger.warn(
                 { sessionId, projectId, dead: dead.length },

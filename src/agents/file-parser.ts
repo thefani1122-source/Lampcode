@@ -5,6 +5,58 @@ export interface ParsedFile {
   code: string;
 }
 
+export type ApplyParsedOptions = {
+  /** May this write CREATE a file? A narrow repair should say no: a fix that
+   *  invents a file has usually misunderstood the finding, and letting it
+   *  through turns a one-line correction into an unreviewed rewrite. The
+   *  broken-import loop is the exception — writing the missing file IS the fix. */
+  allowNew: boolean;
+  /** When given, only these paths may be written — the files a finding named. */
+  only?: ReadonlySet<string>;
+  /** Paths to refuse outright. `build.ts` passes the template-owned set: the
+   *  sandbox owns vite.config.ts and writing it breaks the preview. */
+  refuse?: (path: string) => boolean;
+};
+
+/**
+ * Apply parsed files to a file map, and return the paths actually written.
+ *
+ * ONE TESTED PATH, because four hand-rolled copies of this loop produced three
+ * silent no-ops. Each of them did `for (const [p, code] of Object.entries(…))`
+ * over the ARRAY this parser returns, so `p` was "0", "1", "2" and `code` was a
+ * {path, code} object — making the `typeof code === "string"` guard that
+ * followed permanently false. Nothing was ever written.
+ *
+ * TypeScript could not catch it: after `typeof code === "string"` the value
+ * narrows to `never`, and `never` is assignable to `string`, so the broken
+ * assignment type-checks. The three loops it killed were the fake-persistence
+ * removal, the broken-import repair and the dead-code cut — and the
+ * `dead=23 touched=0` measurement from 2026-10-18 was this bug, not a model
+ * that replied in prose.
+ */
+export function applyParsedFiles(
+  target: Record<string, string>,
+  parsed: ParsedFile[],
+  opts: ApplyParsedOptions,
+): string[] {
+  const written: string[] = [];
+  for (const file of parsed) {
+    // The input is a parse of model output, so the shape is checked rather
+    // than trusted — and this is the guard the dead loops THOUGHT they had.
+    if (!file || typeof file.path !== "string" || typeof file.code !== "string") continue;
+    if (file.path.length === 0) continue;
+    // An empty file is not a fix. Writing one turns a missing feature into a
+    // blank screen, which is harder to diagnose than the original.
+    if (file.code.trim().length === 0) continue;
+    if (opts.only && !opts.only.has(file.path)) continue;
+    if (!opts.allowNew && target[file.path] === undefined) continue;
+    if (opts.refuse?.(file.path)) continue;
+    target[file.path] = file.code;
+    written.push(file.path);
+  }
+  return written;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // Single-word language hints that appear after ``` but are NOT file paths
