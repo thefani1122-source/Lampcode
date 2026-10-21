@@ -517,6 +517,62 @@ export async function getUserSupabasePreviewCreds(
  * The user's Supabase MCP auth (PAT + projectRef), decrypted, for running their
  * generated schema against their own project. Backend-only — never exposed.
  */
+/**
+ * The Vercel token `deploy_app` needs, read straight from the stored
+ * credential.
+ *
+ * MEASURED 2026-10-21. Vercel's registry entry became `authType: "oauth"` with
+ * no credential fields (its MCP server does not accept a static token), and
+ * `ActiveMcpServer.authToken` is now null on every path. build.ts built the
+ * deploy context from that field, so `deploy_app` could never receive a token
+ * again — the tool stayed in the model's list and would have failed for lack of
+ * one. The owner's Vercel connection from 16 Oct holds a perfectly good REST
+ * token.
+ *
+ * This is deliberately NOT the MCP auth path: `deployToVercel` talks to
+ * Vercel's REST API, where an account token is exactly right, while the MCP
+ * server wants OAuth. Two different credentials for two different endpoints —
+ * conflating them is what broke this.
+ */
+export async function getUserVercelDeployToken(userId: string): Promise<string | null> {
+  const read = (row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): string | null => {
+    try {
+      const creds = JSON.parse(decrypt({
+        encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      const inner = unwrapCreds(creds);
+      for (const key of ["vercel_token", "token", "accessToken", "oauth_access_token"]) {
+        const value = inner[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+      }
+    } catch {
+      logger.warn({ userId, stage: "vercel_token_decrypt" }, "Stored Vercel credential could not be read");
+    }
+    return null;
+  };
+
+  const rows = await db.select().from(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, "vercel"),
+  )).limit(1);
+  const row = rows[0];
+  if (row) {
+    const token = read(row);
+    if (token) return token;
+  }
+
+  // Older releases stored it in user_integrations. Same reason the MCP server
+  // list still reads those: a connection someone made months ago must not stop
+  // working because the storage moved.
+  const legacy = await db.select().from(userIntegrations).where(and(
+    eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "vercel"),
+  )).limit(1);
+  const cfg = legacy[0]?.config;
+  if (cfg?.encryptedCreds && cfg.encryptedCredsIv && cfg.encryptedCredsTag) {
+    return read({ encryptedCreds: cfg.encryptedCreds, encryptedCredsIv: cfg.encryptedCredsIv, encryptedCredsTag: cfg.encryptedCredsTag });
+  }
+  return null;
+}
+
 export async function getUserSupabaseMcpAuth(
   userId: string,
 ): Promise<{ accessToken: string; projectRef?: string } | null> {

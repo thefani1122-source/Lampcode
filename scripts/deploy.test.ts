@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Cases for the Vercel deploy path. Run by `npm test`. Costs nothing — every
  * network call is injected.
@@ -385,6 +386,27 @@ ok(
     ...formatDeployForUser({ ok: false, shape: "hono", error: "nope" }),
   ].every((l) => !l.includes("tok") && !l.includes("src/")),
 );
+
+
+// ── The deploy token is its own credential (2026-10-21) ─────────────────────
+// Vercel's MCP auth became OAuth, so ActiveMcpServer.authToken is null on every
+// path. build.ts had been building the deploy context from that field, which
+// meant deploy_app could never receive a token again while still being offered
+// to the model. The REST deploy needs an account token; the MCP server wants
+// OAuth. Two endpoints, two credentials.
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const integrations = readFileSync(new URL("../src/server/routes/integrations.ts", import.meta.url), "utf8");
+
+  ok("the deploy token is read as its own credential", build.includes("getUserVercelDeployToken(userId)"));
+  ok("and not from the MCP server record's authToken", !build.includes("vercelToken: vercelMcp.authToken"));
+  ok("the context is only built when a token was found", build.includes("if (vercelDeployToken) {"));
+  ok("a failed read is not fatal", build.includes("getUserVercelDeployToken(userId).catch(() => null)"));
+  ok("the reader exists and unwraps the stored envelope", integrations.includes("export async function getUserVercelDeployToken") && integrations.includes("unwrapCreds(creds)"));
+  ok("it accepts the key a static connection stored", integrations.includes('"vercel_token"'));
+  ok("and falls back to the legacy table", integrations.includes("eq(userIntegrations.provider, \"vercel\")"));
+  ok("a credential that cannot be read is logged without its value", integrations.includes('stage: "vercel_token_decrypt"'));
+}
 
 console.log(failures === 0 ? "\nAll deploy cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);

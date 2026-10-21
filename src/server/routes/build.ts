@@ -39,7 +39,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables } from "../../verify/data-layer.js";
@@ -1453,9 +1453,18 @@ export async function runFastBuild(
     // what the user will see in their own Vercel dashboard — so it is worth one
     // read, but only for the users who actually connected Vercel. Guarding the
     // query on the token keeps it off the path of everyone who did not.
+    // MEASURED 2026-10-21: this used to read `vercelMcp.authToken`, and that
+    // field is now null on every path — Vercel's MCP auth became OAuth, whose
+    // token lives in the session rather than on the server record. So
+    // `deploy_app` could never receive a token again, while still being offered
+    // to the model. The REST deploy needs an account token, which is a
+    // different credential from the MCP one, so it is read as its own thing.
     const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
+    const vercelDeployToken = vercelMcp
+      ? await getUserVercelDeployToken(userId).catch(() => null)
+      : null;
     let deployCtx: { vercelToken: string; projectName: string } | undefined;
-    if (vercelMcp?.authToken) {
+    if (vercelDeployToken) {
       const named = await db
         .select({ name: projects.name })
         .from(projects)
@@ -1463,7 +1472,7 @@ export async function runFastBuild(
         .limit(1)
         .catch(() => []);
       deployCtx = {
-        vercelToken: vercelMcp.authToken,
+        vercelToken: vercelDeployToken,
         projectName: named[0]?.name ?? "lampcode-app",
       };
     }
