@@ -5108,3 +5108,72 @@ Also added to `DB_INSTRUCTIONS`: every table a route queries must be declared in
 because that file is what is actually run against the user's database — a table missing from it
 does not exist at runtime, and the failure arrives disguised as an empty list. The model is asked
 to read its own routes and check each `.from(...)` name before finishing.
+
+## THE HARNESS TOOL SET IS COMPLETE — 2026-10-21
+
+The two that were missing are in. **27 tools registered**, and nothing in the tool surface is
+listed as absent any more.
+
+### `shell` (I2) — the policy is the tool
+
+The executor is twenty lines. `src/verify/shell-policy.ts` is the work, because `shell` is the
+only tool that can do something nobody designed.
+
+**The thing being protected is not the sandbox.** That is ephemeral and the user's own; a broken
+file is fixed by writing it again. It is the CREDENTIALS. The preview `.env` holds a live
+Supabase URL and anon key — for someone who connected their own project, theirs — and `cat .env`
+would put those into the model's context, the websocket, the chat transcript and `build_messages`
+at once, irreversibly. So reading the environment is **refused outright, not approved**: "may I
+print your database keys into the chat?" is not a question with a safe answer, and the model has
+no need for them — `read_logs` shows it the backend's own output.
+
+Four tiers, reusing the ones H2/H3 defined. `refused` never runs. `approval` waits on the same
+gate a write to the user's GitHub uses, a timeout is a denial, and one denial denies the rest of
+the turn. `read` and `sandbox` run quietly. **An unrecognised command is `approval`, never
+`read`** — the same fail-closed rule as `tierFor(null)`.
+
+The verdict is the **strictest part of the whole line**, because a policy that reads the first
+word can be walked straight past: `ls && cat .env`, `ls; printenv` and `npm run build && cat .env`
+are all refused, and `$(…)` and backticks are refused outright since they can hide anything from
+the check itself.
+
+Every output is redacted on the way out, **including from commands that looked harmless** — `npm
+run build` can print a connection string in a stack trace. Exact values this sandbox was handed
+(now tracked when the `.env` is written) plus the shapes of keys nobody told us about. Counted,
+and logged by count rather than by value.
+
+90 cases. And a lesson worth keeping: **GitHub's push protection blocked the first commit**,
+because the test fixtures were realistic enough to look like real credentials. It was right. The
+fixtures are assembled at runtime now — a test for a redactor must not itself be the thing a
+scanner has to forgive.
+
+### `browser_interact` (B6+) — the only tool that can check a FEATURE
+
+The product already had two things that look like this one, and the distinction is worth writing
+down:
+
+| | asks |
+|---|---|
+| `check_page` | did this page render, was the console clean |
+| the interaction probe | does ANY control respond, on every route, automatically |
+| `browser_interact` | does the FEATURE work — add an item, reload, is it still there |
+
+Only the third answers what the user actually asked for. One browser, one context, one page for
+the whole journey, because what step 2 typed has to still be there when step 5 looks for it. A
+failed step **stops** the run and names itself: everything after it would run against a state
+nobody asked for, and reporting those as failures too would bury the one that matters.
+
+Small vocabulary on purpose — `goto`, `click`, `type`, `press`, `wait`, `expect`. There is no
+arbitrary-JavaScript step: that would be a `shell` inside a browser with none of shell-policy's
+protection, and it could read the page's own storage, where the app keeps its session token. A
+`goto` must be a rooted path, so a journey cannot drive the user's browser somewhere nobody asked
+for. Steps are validated before a browser is ever started, so a malformed journey costs nothing.
+
+49 cases, including the three facts this codebase keeps relearning: `ran: false` is not a failed
+journey, a cap exists on everything, and the message a model gets must say what to fix.
+
+### What remains in the tool surface
+
+Nothing absent. `diff_since` still carries the P0.2 defect (Codex, in `CODEX-BRIEF.md`), and
+`shell`, `browser_interact`, `web_search` and `look_at_page` have not yet been exercised on a
+real build — Railway's own build incident has production pinned to the 19 October image.

@@ -12,7 +12,7 @@ import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 
-const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page", "shell"]);
+const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page", "shell", "browser_interact"]);
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
@@ -466,6 +466,36 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
         url: { type: "string", description: "The reference page's URL, as the user gave it." },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "browser_interact",
+    description:
+      "Drive the running app the way a person would, in one browser session, and get every step " +
+      "back separately.\n" +
+      "This is the only way to check that a FEATURE works. check_page asks whether a page " +
+      "rendered; this asks whether adding an item, reloading, and finding it still there " +
+      "actually happens. Use it on the thing the user asked for, once you believe it is " +
+      "finished — especially anything that saves, signs in, or changes what another screen " +
+      "shows.\n" +
+      "Steps run in order against ONE page, so what you type in step 2 is still there in step 5. " +
+      "A failed step stops the journey and tells you which one and why: that step is the bug.\n" +
+      "Refer to controls by the words a user would see. At most 20 steps.",
+    input_schema: {
+      type: "object",
+      properties: {
+        steps: {
+          type: "array",
+          description:
+            'In order. Each is one of: {"do":"goto","route":"/cart"}, ' +
+            '{"do":"click","text":"Add to cart"} (or "selector"), ' +
+            '{"do":"type","text":"milk","into":"New item"} (label, placeholder or selector), ' +
+            '{"do":"press","key":"Enter"}, {"do":"wait","forText":"Saved"} or {"do":"wait","ms":500}, ' +
+            '{"do":"expect","text":"milk"} or {"do":"expect","missing":"milk"}.',
+          items: { type: "object" },
+        },
+      },
+      required: ["steps"],
     },
   },
   {

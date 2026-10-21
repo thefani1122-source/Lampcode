@@ -12,6 +12,7 @@ import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactio
 import type { InteractionFinding } from "../verify/interactions.js";
 import { RENDER_SCRIPT, parseRenderReport } from "../verify/render.js";
 import { STORAGE_SCRIPT } from "../verify/storage-script.js";
+import { JOURNEY_SCRIPT, parseJourneyReport, type JourneyReport, type JourneyStep } from "../verify/journey.js";
 import { parseStorageSnapshot, type StorageSnapshot } from "../verify/storage.js";
 import type { RenderReport } from "../verify/render.js";
 
@@ -1011,6 +1012,37 @@ export async function captureStorage(projectId: string, route = "/"): Promise<St
   } catch (err) {
     logger.warn({ projectId, err }, "[e2b] storage capture unavailable — client state remains unobserved");
     return EMPTY_STORAGE;
+  }
+}
+
+/**
+ * Drive a scripted journey through the running app (B6+).
+ *
+ * One browser for the whole journey, because that is the difference between a
+ * journey and a series of unrelated clicks: what step 2 typed has to still be
+ * there when step 5 looks for it.
+ *
+ * Never throws and never fails a build. `ran: false` with a reason is the
+ * honest answer when the preview was not up — it is kept apart from "every
+ * step ran and one of them failed", which is a finding about the app.
+ */
+export async function runJourney(
+  projectId: string,
+  steps: JourneyStep[],
+): Promise<JourneyReport> {
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return { ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "there is no live preview" };
+  try {
+    await sandbox.files.write(`${TOOLS_DIR}/lampcode-journey.mjs`, JOURNEY_SCRIPT);
+    const framework = sandboxFrameworks.get(projectId) ?? "react";
+    const r = await sandbox.commands.run(
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-journey.mjs http://localhost:${devPort(framework)} ${JSON.stringify(JSON.stringify(steps))}`,
+      { timeoutMs: 90_000 },
+    );
+    return parseJourneyReport(r.stdout);
+  } catch (err) {
+    logger.warn({ projectId, err }, "[e2b] journey could not run");
+    return { ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "the browser could not be started" };
   }
 }
 

@@ -25,6 +25,7 @@ import { readLogsHandler } from "./read-logs.js";
 import { webSearchHandler } from "./web-search.js";
 import { lookAtPageHandler } from "./look-at-page.js";
 import { shellHandler } from "./shell.js";
+import { browserInteractHandler } from "./browser-interact.js";
 
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -67,5 +68,6 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["web_search", webSearchHandler],
   ["look_at_page", lookAtPageHandler],
   ["shell", shellHandler],
+  ["browser_interact", browserInteractHandler],
 ]);
 
