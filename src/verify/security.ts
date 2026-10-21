@@ -272,7 +272,156 @@ export function checkRLS(files: FileTree): SecurityCheck {
   };
 }
 
-// ── 3. checkSecrets ───────────────────────────────────────────────────────────
+// ── 3. checkServiceRole + checkCallerIdentity ─────────────────────────────────
+//
+// Two rules the prompt states and nothing verified. DB_INSTRUCTIONS says, in
+// the generated app's own words: "Do NOT reach for a service-role key: it
+// bypasses every policy above, which turns all of this into decoration and
+// lets any signed-in user read everyone's rows", and "Call dbFor(c) INSIDE
+// each route handler, never once at module level — a module-level client would
+// serve every user with whichever token happened to arrive first."
+//
+// Prompt-vs-reality drift is the #1 bug class in this repo, and an instruction
+// with no check behind it is exactly that. Both of these are free, pure string
+// scans, and both slot into the existing two-attempt auto-fix loop, so a
+// finding is repaired rather than reported.
+//
+// Neither is id-prefixed `secret-` or `packages-undeclared-`: those abort the
+// build, and both of these have a known correct fix.
+
+/** A component is not the backend. The frontend MAY hold a module-level client
+ *  with the anon key — that is the documented shape of src/lib/supabase.ts. */
+function isServerFile(path: string): boolean {
+  const p = path.toLowerCase();
+  if (/\.(tsx|jsx|css|html|md|sql|json)$/.test(p)) return false;
+  if (p.endsWith(".py")) return true;
+  return /(^|\/)(server|api)\//.test(p) || p.endsWith("src/lib/db.ts");
+}
+
+const SERVICE_ROLE_RE = /service[_-]?role/i;
+
+/**
+ * The service-role key bypasses row-level security entirely.
+ *
+ * Worth its own check rather than folding into checkSecrets, because the
+ * danger is not an exposed string — it is a correctly-stored key used in the
+ * wrong place. Every policy the other two checks just verified becomes
+ * decoration, and the app leaks every user's rows to every signed-in user
+ * while looking completely healthy.
+ */
+export function checkServiceRole(files: FileTree): SecurityCheck {
+  const offenders = [...files]
+    .filter(([path]) => isServerFile(path))
+    .filter(([, code]) => SERVICE_ROLE_RE.test(code))
+    .map(([path]) => path);
+
+  if (offenders.length > 0) {
+    return {
+      id: "service-role-key",
+      status: "fail",
+      severity: "critical",
+      file: offenders[0],
+      message:
+        `Backend uses a service-role key (${offenders.join(", ")}). It bypasses every row-level ` +
+        `security policy, so any signed-in user can read and change every other user's rows. ` +
+        `Use SUPABASE_ANON_KEY and forward the caller's Authorization header instead, so ` +
+        `auth.uid() resolves to the signed-in user and the policies do the filtering.`,
+    };
+  }
+  return {
+    id: "service-role-key",
+    status: "pass",
+    severity: "critical",
+    message: "No service-role key in the backend",
+  };
+}
+
+/** `const db = createClient(…)` at top level — shared by every request. */
+const MODULE_LEVEL_CLIENT_RE = /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:await\s+)?createClient\s*\(/m;
+// Two different things, and conflating them produced a false positive: a
+// token going INTO the client's headers, versus the backend verifying the
+// caller itself. Only the first makes a module-level client dangerous.
+const TOKEN_IN_CLIENT_RE = /authorization|bearer/i;
+const VERIFIES_CALLER_RE = /getuser\s*\(/i;
+const OWNER_FILTER_RE = /\.eq\s*\(\s*['"`](user_id|owner_id|author_id|created_by|profile_id)['"`]/i;
+const QUERIES_RE = /\.from\s*\(/;
+
+/**
+ * Does the caller's identity reach the query at all?
+ *
+ * Both failures look identical from outside and neither trips any other gate:
+ *
+ *  - A client built with no token is ANONYMOUS, so `auth.uid()` is NULL and
+ *    every owner-scoped policy DENIES it. The app compiles, renders, responds
+ *    to every control, and returns an empty list forever.
+ *  - A client built ONCE at module level, HOLDING a caller's token, serves
+ *    every request with whichever token arrived first — one user reading
+ *    another user's data. A shared client with no per-caller credential is a
+ *    different and legitimate design, so it is not reported.
+ *
+ * Reported only when NOTHING in the file refers to the caller — no
+ * Authorization header, no getUser(), and no explicit owner-column filter.
+ * A backend that verifies the token itself and filters by the id is a
+ * different design, not a bug, so it is left alone.
+ */
+export function checkCallerIdentity(files: FileTree): SecurityCheck {
+  const problems: string[] = [];
+  let checked = 0;
+
+  for (const [path, code] of files) {
+    if (!isServerFile(path)) continue;
+    if (!QUERIES_RE.test(code)) continue;
+    if (!/createClient\s*\(/.test(code)) continue;
+    checked++;
+
+    const tokenInClient = TOKEN_IN_CLIENT_RE.test(code);
+    const carriesIdentity = tokenInClient || VERIFIES_CALLER_RE.test(code) || OWNER_FILTER_RE.test(code);
+    if (!carriesIdentity) {
+      problems.push(
+        `${path}: builds its database client without the caller's token and never filters by an ` +
+        `owner column, so auth.uid() is NULL and every owner-scoped policy denies the query — ` +
+        `the app will return empty lists forever`,
+      );
+      continue;
+    }
+    // Only when the client CARRIES a caller's token. A shared client holding
+    // no per-caller credential is the normal shape for a backend that verifies
+    // the caller itself and filters by the owner column — flagging that would
+    // dispatch a paid fix at working code.
+    if (tokenInClient && MODULE_LEVEL_CLIENT_RE.test(code)) {
+      problems.push(
+        `${path}: creates the database client once at module level, so every request shares ` +
+        `whichever caller's token arrived first — one user reading another user's data`,
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    return {
+      id: "caller-identity",
+      status: "fail",
+      severity: "high",
+      file: problems[0]?.split(":")[0],
+      message:
+        `The caller's identity does not reach the database: ${problems.join("; ")}. ` +
+        `Build the client INSIDE each route handler from the request, e.g. ` +
+        `function dbFor(c) { return createClient(URL, ANON_KEY, { global: { headers: ` +
+        `{ Authorization: c.req.header('Authorization') ?? '' } } }) }, and call dbFor(c) in ` +
+        `every handler.`,
+    };
+  }
+
+  return {
+    id: "caller-identity",
+    status: checked > 0 ? "pass" : "skip",
+    severity: "high",
+    message: checked > 0
+      ? `The caller's identity reaches the query in ${checked} backend file(s)`
+      : "No backend database access to check",
+  };
+}
+
+// ── 4. checkSecrets ───────────────────────────────────────────────────────────
 
 const SECRET_PATTERNS: Array<{ re: RegExp; name: string }> = [
   { re: /sk-[a-zA-Z0-9]{20,}/,                              name: "OpenAI API key" },
@@ -403,6 +552,8 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
+    checkServiceRole(files),
+    checkCallerIdentity(files),
     ...checkSecrets(files),
     ...checkPackages(files),
   ];

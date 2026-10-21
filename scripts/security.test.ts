@@ -4,7 +4,9 @@ import {
   checkPackages,
   checkRLS,
   checkRlsScoping,
+  checkCallerIdentity,
   checkSecrets,
+  checkServiceRole,
   type FileTree,
 } from "../src/verify/security.js";
 
@@ -211,6 +213,108 @@ check("no SQL at all is skipped, not passed", checkRlsScoping(tree({ "src/App.ts
   ok("and says a public table may stay public", /genuinely public/i.test(msg));
 }
 
+
+// ── Two rules the prompt states, now with a check behind them ───────────────
+// DB_INSTRUCTIONS forbids the service-role key and requires dbFor(c) per
+// request. Nothing verified either until 2026-10-21, and an instruction with
+// no check behind it is exactly the prompt-vs-reality drift this repo keeps
+// finding. Both feed the existing two-attempt auto-fix loop.
+
+const ROUTES = "src/server/routes/api.ts";
+
+console.log("\n— the service-role key —");
+{
+  const bad = checkServiceRole(tree({
+    [ROUTES]: "const key = process.env.SUPABASE_SERVICE_ROLE_KEY\nconst db = createClient(url, key)",
+  }));
+  ok("a service-role key in the backend fails", bad.status === "fail");
+  ok("it is critical", bad.severity === "critical");
+  ok("the message says the policies stop mattering", bad.message.includes("bypasses every row-level"));
+  ok("and names the fix", bad.message.includes("SUPABASE_ANON_KEY") && bad.message.includes("Authorization"));
+  // Must NOT be a hard block: it has a known correct fix, and aborting the
+  // build would throw away everything that worked.
+  ok("it is not id-prefixed as a build-aborting finding",
+    !bad.id.startsWith("secret-") && !bad.id.startsWith("packages-undeclared-"));
+}
+ok("serviceRole in camelCase is caught too", checkServiceRole(tree({
+  [ROUTES]: "const serviceRoleKey = cfg.key\nconst db = createClient(url, serviceRoleKey)",
+})).status === "fail");
+ok("a clean backend passes", checkServiceRole(tree({
+  [ROUTES]: "const db = createClient(url, process.env.SUPABASE_ANON_KEY)",
+})).status === "pass");
+// schema.sql legitimately mentions service_role in GRANT statements, and a
+// component is not the backend.
+ok("service_role in SQL is not a backend finding", checkServiceRole(tree({
+  "src/db/schema.sql": "GRANT ALL ON todos TO service_role;",
+})).status === "pass");
+ok("a .tsx component is not scanned as the backend", checkServiceRole(tree({
+  "src/components/Admin.tsx": "// service_role is mentioned in this comment",
+})).status === "pass");
+
+console.log("\n— does the caller's identity reach the query —");
+{
+  // The anonymous client. Compiles, renders, responds to every control, and
+  // returns an empty list forever, because auth.uid() is NULL and every
+  // owner-scoped policy denies it.
+  const anon = checkCallerIdentity(tree({
+    [ROUTES]: "const db = createClient(URL, ANON)\napi.get('/todos', async (c) => c.json(await db.from('todos').select('*')))",
+  }));
+  ok("a client built with no token fails", anon.status === "fail");
+  ok("the message says what the user would SEE", anon.message.includes("empty lists forever"));
+  ok("and names dbFor(c) as the fix", anon.message.includes("dbFor(c)"));
+}
+{
+  // The shared client: it forwards a token, but builds the client once, so
+  // every request gets whichever token arrived first.
+  const shared = checkCallerIdentity(tree({
+    [ROUTES]:
+      "const token = c.req.header('Authorization')\n" +
+      "const db = createClient(URL, ANON, { global: { headers: { Authorization: token } } })\n" +
+      "api.get('/todos', async (c) => c.json(await db.from('todos').select('*')))",
+  }));
+  ok("a module-level client fails even when a token is forwarded", shared.status === "fail");
+  ok("and says why", shared.message.includes("arrived first"));
+}
+{
+  // The documented shape.
+  const good = checkCallerIdentity(tree({
+    [ROUTES]:
+      "function dbFor(c) {\n" +
+      "  const token = c.req.header('Authorization') || ''\n" +
+      "  return createClient(URL, ANON, { global: { headers: { Authorization: token } } })\n" +
+      "}\n" +
+      "api.get('/todos', async (c) => { const db = dbFor(c); return c.json(await db.from('todos').select('*')) })",
+  }));
+  ok("dbFor(c) per request passes", good.status === "pass");
+  ok("and says how many files it checked", good.message.includes("1 backend file"));
+}
+{
+  // A backend that verifies the token itself and filters by the id is a
+  // different design, not a bug. Flagging it would dispatch a fix at working
+  // code and charge the user for it.
+  const explicit = checkCallerIdentity(tree({
+    [ROUTES]:
+      "const { data: { user } } = await supabase.auth.getUser(jwt)\n" +
+      "const db = createClient(URL, SERVICE)\n" +
+      "await db.from('todos').select('*').eq('user_id', user.id)",
+  }));
+  ok("explicit owner filtering is not reported as missing identity", explicit.status !== "fail");
+}
+ok("a frontend file is not checked", checkCallerIdentity(tree({
+  "src/lib/supabase.ts": "export const supabase = createClient(URL, ANON)",
+})).status === "skip");
+ok("a backend with no database access is skipped", checkCallerIdentity(tree({
+  [ROUTES]: "api.get('/health', (c) => c.json({ ok: true }))",
+})).status === "skip");
+
+console.log("\n— both run in the build —");
+{
+  const sec = readFileSync(new URL("../src/verify/security.ts", import.meta.url), "utf8");
+  ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("and runSecurityChecks is what the build calls", build.includes("runSecurityChecks(projectId"));
+  ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
+}
 
 if (failures > 0) {
   console.error("\n" + failures + " security case(s) FAILED");
