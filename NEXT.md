@@ -46,11 +46,26 @@ so rather than leaving it.
 
 In order. Each one is finished and measured before the next starts.
 
-1. **The quality of the backend we now correctly ask for.** Classification being right only
-   matters if `DB_INSTRUCTIONS` then produces a *correct* backend: a schema that matches the
-   tables the app queries, RLS on every table with owner-scoped policies, `dbFor(c)` used so the
-   caller's identity reaches the query, and `src/lib/api.ts` in the shape the preview proxy and
-   `wiring.ts` both expect. Review against the real prompt text, fix, add cases.
+1. ~~**The quality of the backend we now correctly ask for.**~~ — **done 2026-10-21.** All five
+   items on the original list now have a deterministic check, and four of them a repair:
+
+   | the rule | before | now |
+   |---|---|---|
+   | schema matches the tables queried | detected since 17 Oct, **reported only** | repaired before the security loop, revert if a table is lost |
+   | RLS on every table, owner-scoped | `checkRLS` + `checkRlsScoping`, auto-fixed | unchanged — verified wired, not re-done |
+   | no service-role key in the backend | **nothing** | `service-role-key`, critical, auto-fixed |
+   | `dbFor(c)` per request | **nothing** | `caller-identity`, high, auto-fixed |
+   | `src/lib/api.ts` uses `API_BASE` | `hardcoded-dev-host`, repairable | unchanged — verified wired |
+
+   **Also found and fixed on the way (P0):** three repair loops — fake-persistence removal,
+   broken-import repair, dead-code cut — applied their files with `Object.entries()` over the
+   ARRAY `parseFilesFromContent` returns, so their own `typeof code === "string"` guard was
+   permanently false and **nothing was ever written**. TypeScript cannot catch it (`never` is
+   assignable to `string`). One tested path now, `applyParsedFiles`, plus a source guard that
+   bans the shape. The `dead=23 touched=0` reading from 18 Oct was this bug, not a model
+   replying in prose.
+
+   **None of it is proven on a real build** — that is section B, and it needs Railway.
 2. ~~**"It sees its work — now make it fix it."**~~ — **done 2026-10-21**, `src/verify/audit-repair.ts`,
    79 cases. At most five unmet requirements, a live sandbox, one attempt, tools off; kept only if
    it still compiles and does not un-prove something already proven; re-audited against the same
