@@ -361,6 +361,19 @@ export type BuildOutcome = {
    *  incomplete, so a projection recomputed from the database will not match
    *  this record. Absent is the normal case. */
   eventsLost?: number;
+  /** What happened when the build went back to finish what the completion
+   *  audit said was missing. Absent means no repair was attempted — which is
+   *  the normal case, and a DIFFERENT fact from one attempted and reverted.
+   *  `fixed` is the increase in `proven` after the re-audit, so a loop that
+   *  spent money and achieved nothing is visible in the record rather than
+   *  hidden behind an unchanged audit. */
+  auditRepair?: {
+    outcome: "kept" | "reverted-types" | "reverted-worse" | "no-files" | "not-attempted";
+    attempted: number;
+    fixed: number;
+    remaining: number;
+    costUsd: number;
+  };
   architecture?: {
     circularImports: number;
     layerViolations: number;

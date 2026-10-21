@@ -61,6 +61,7 @@ import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-p
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
+import { auditRepairInstruction, describeRepair, formatFilesForRepair, judgeRepair, planAuditRepair, repairStatusLine, whyNoRepair, type RepairOutcome } from "../../verify/audit-repair.js";
 import { BuildEventRecorder } from "../build-events.js";
 import { projectOutcome } from "../../verify/outcome-projection.js";
 import {
@@ -828,6 +829,11 @@ export async function runFastBuild(
   // database to apply it to, which is the single most common reason a
   // "fullstack" app saves nothing.
   let schemaApply: { ran: boolean; ok: boolean; error?: string } | null = null;
+
+  // What happened when the build went back to finish what the audit said was
+  // missing. Null when no repair was attempted — which is the normal case, and
+  // a different fact from one that was attempted and achieved nothing.
+  let auditRepair: NonNullable<BuildOutcome["auditRepair"]> | null = null;
 
   // Which gateway this build uses. LLM_PROVIDER_MODE overrides the per-plan
   // routing outright — without it a paid or admin account can never exercise
@@ -3807,12 +3813,22 @@ export async function runFastBuild(
     // verdict anyone obtained, not only the model's own calls. "The model never
     // looked" stays derivable — `toolCalls` counts check_page, check_types and
     // run_tests — and the counters below only reset when a real run happened.
+    //
+    // A FUNCTION rather than a straight-line block because it has to run
+    // twice: once here, and again after the completion-audit repair below,
+    // which is the one repair loop that lands AFTER these gates. Calling it a
+    // second time is free when nothing was written — the projection reports no
+    // staleness, so nothing re-runs.
+    // Hoisted: the closing message reports it, and the LAST call's answer is
+    // the true one — so each run clears it rather than appending to history.
+    const stillStale: string[] = [];
+    const revalidateStaleGates = async (): Promise<void> => {
+    stillStale.length = 0;
     const staleBefore = projectOutcome([
       ...recorder.events(),
       { type: "build/end", turnsExhausted: false, filesWritten: 0, costUsd: 0, durationMs: 0 },
     ]);
     const revalidated: string[] = [];
-    const stillStale: string[] = [];
     if (hasSandbox(projectId)) {
       if ((staleBefore.staleCheckTypes ?? 0) > 0) {
         const types = await runTypeCheck(projectId).catch(() => null);
@@ -3855,6 +3871,8 @@ export async function runFastBuild(
       `stillStale=[${stillStale.join(",")}] sandbox=${hasSandbox(projectId)}`,
     );
     if (revalidated.length > 0) await recorder.flush();
+    };
+    await revalidateStaleGates();
 
     // ── Update build session ────────────────────────────────────────────────
     // creditsUsed is deprecated (see schema.ts) and kept only additively,
@@ -3958,6 +3976,145 @@ export async function runFastBuild(
       for (const line of formatAuditForUser(completionAudit)) {
         server?.thinking(sessionId, { text: line, sessionId });
       }
+    }
+
+    // ── The audit found gaps. Go and fix them ───────────────────────────────
+    // THE HALF THAT WAS MISSING. The audit turns the person's own words into
+    // requirements and marks each one proven / contradicted / unverified — and
+    // nothing acted on it. Measured 2026-10-19: a follow-up build ended 0
+    // proven, 2 unverified, and completed anyway. Seeing a gap and shipping it
+    // is barely better than not seeing it; the person still gets an app that
+    // does not do what they asked, now with a note attached.
+    //
+    // Strict on purpose. One attempt, only with a live sandbox, only when the
+    // list is short enough that one dispatch could plausibly close it, and the
+    // result is kept only if it survives a type check and does not un-prove
+    // something that was already proven.
+    const repairPlan = hasSandbox(projectId) ? planAuditRepair(completionAudit) : null;
+    if (completionAudit && !repairPlan) {
+      console.log(`[build] audit repair session=${sessionId} skipped=${whyNoRepair(completionAudit)}`);
+    }
+    if (repairPlan && completionAudit && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+      const before = completionAudit;
+      server?.thinking(sessionId, {
+        sessionId,
+        text: `${repairPlan.items.length} thing(s) you asked for aren't actually there yet — going back to finish them…`,
+      });
+
+      // The two things the judgement needs, taken before anything changes.
+      const typesBefore = await runTypeCheck(projectId).catch(() => null);
+      const snapshot = { ...allFiles };
+      let outcome: RepairOutcome = "no-files";
+      let repairCost = 0;
+
+      try {
+        const fix = await dispatcher.dispatch({
+          agentType: "fix",
+          usageCategory: "build",
+          provider,
+          task: {
+            description: `${auditRepairInstruction(repairPlan)}\n\nThe project as it stands:\n\n${formatFilesForRepair(allFiles)}`,
+            outputFormat: "code",
+          },
+          sessionId,
+          userId,
+          projectId,
+          enableTools: false,
+          costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+        });
+        repairCost += fix.costUsd ?? 0;
+        cumulativeCostUsd += fix.costUsd ?? 0;
+
+        // New files are allowed: a requirement that is missing usually needs
+        // one. Same rule as the broken-import loop, opposite of the cut.
+        const written: string[] = [];
+        for (const file of parseFilesFromContent(fix.content ?? "")) {
+          // A template-owned path is refused here exactly as everywhere else —
+          // the sandbox owns vite.config.ts and writing it breaks the preview.
+          if (file.code.trim().length > 0 && !isTemplateOwnedFile(file.path)) {
+            allFiles[file.path] = file.code;
+            written.push(file.path);
+          }
+        }
+
+        if (written.length > 0) {
+          await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+          recorder.record({ type: "repair/applied", kind: "completion-audit" });
+          recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
+
+          const typesAfter = await runTypeCheck(projectId).catch(() => null);
+
+          // Re-audit with the SAME criteria over the new files. This is the
+          // only way to know whether the repair worked, and it is paid for
+          // only when a repair actually landed.
+          const after = await auditCompletion({
+            dispatcher,
+            criteria: before.criteria,
+            files: allFiles,
+            gates: {
+              // Both of these are the model's own verdicts from before the
+              // repair, so they are labelled STALE rather than quoted as if
+              // they described the files the re-audit is reading. The types
+              // verdict is the only one that was actually re-run.
+              checkPage: `${result.gateResults.checkPage ?? "never"} (STALE — a repair landed after it)`,
+              checkTypes: typesAfter === null || typesAfter.unavailable
+                ? "unavailable"
+                : typesAfter.ok ? "pass" : "fail",
+              checkTests: `${result.gateResults.checkTests ?? "never"} (STALE — a repair landed after it)`,
+            },
+            sessionId,
+            userId,
+            projectId,
+            provider,
+          });
+          repairCost += after.costUsd;
+          cumulativeCostUsd += after.costUsd;
+
+          outcome = judgeRepair({
+            typesWereGreen: typesBefore?.ok === true,
+            typesAreGreen: typesAfter ? typesAfter.ok : null,
+            provenBefore: before.proven,
+            provenAfter: after.proven,
+          });
+
+          if (outcome === "kept") {
+            // The record now describes the repaired app, which is the one the
+            // user gets. Keeping the old audit would understate a fix that
+            // worked and overstate one that did not.
+            completionAudit = after;
+            if (typesAfter && !typesAfter.unavailable) {
+              recorder.record({ type: "verification/result", gate: "types", status: typesAfter.ok ? "pass" : "fail" });
+            }
+          } else {
+            Object.assign(allFiles, snapshot);
+            for (const path of written) if (!(path in snapshot)) delete allFiles[path];
+            await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+            recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
+            recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
+          }
+        }
+      } catch (err) {
+        logger.warn({ sessionId, projectId, err }, "Completion-audit repair dispatch failed");
+        outcome = "no-files";
+      }
+
+      const fixed = Math.max(0, completionAudit.proven - before.proven);
+      const remaining = completionAudit.unverified + completionAudit.contradicted;
+      auditRepair = { outcome, attempted: repairPlan.items.length, fixed, remaining, costUsd: repairCost };
+      console.log(
+        `[build] audit repair session=${sessionId} outcome=${outcome} attempted=${repairPlan.items.length} ` +
+        `fixed=${fixed} remaining=${remaining} cost=$${repairCost.toFixed(4)}`,
+      );
+      const line = describeRepair(outcome, fixed, remaining);
+      if (line) server?.thinking(sessionId, { sessionId, text: line });
+
+      // The repair wrote files AFTER every gate, including a revert — which
+      // restores the old bytes but leaves the event stream saying a write
+      // landed. Either way the gates have been outrun, so re-run whatever the
+      // projection now calls stale. Without this, a repair that compiles but
+      // renders a white screen would ship behind a page verdict obtained
+      // before it existed.
+      await revalidateStaleGates();
     }
 
     // ── Dead code in what is actually being delivered ───────────────────────
@@ -4263,6 +4420,7 @@ export async function runFastBuild(
       ...(result.pseudoToolCalls.length > 0 ? { pseudoToolCalls: result.pseudoToolCalls } : {}),
       ...(stillStale.length > 0 ? { unverifiedGates: stillStale } : {}),
       ...(recorder.lostCount() > 0 ? { eventsLost: recorder.lostCount() } : {}),
+      ...(auditRepair ? { auditRepair } : {}),
     };
 
     // The projection refuses to invent what it was not told, so a stream that
@@ -4373,6 +4531,9 @@ export async function runFastBuild(
         }
       }
     }
+    // What the build did about what the audit found. Said here as well as in
+    // the live stream, because this block is what the user can scroll back to.
+    if (auditRepair) closingLines.push(repairStatusLine(auditRepair));
     if (stillStale.length > 0) {
       closingLines.push(
         `• Not re-checked after the last fixes: ${stillStale.join(", ")}. The preview had already stopped, so I could not run those again — treat them as unverified.`,
