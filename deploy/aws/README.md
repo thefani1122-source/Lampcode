@@ -59,6 +59,27 @@ server *and* for Bedrock, which is the whole budget problem in one application.
 
 ## 1. Launch the instance
 
+**Quickest: CloudShell.** It is the terminal icon at the bottom-left of the AWS
+console — a shell in the browser, already signed in as you, free. Nothing to
+install and no credentials to paste anywhere.
+
+```bash
+git clone https://github.com/thefani1122-source/Lampcode.git -b db-path
+bash Lampcode/deploy/aws/launch-ec2.sh
+```
+
+It picks the current Ubuntu 24.04 arm64 image, makes the key pair, opens 22/80/443,
+launches a `t4g.small` with 20 GB, waits for the IP, and prints the ssh command.
+Re-running reuses whatever already exists, so a half-finished run is fixed by
+running it again. Use `INSTANCE_TYPE=t4g.micro bash …` to take the cheaper one.
+
+**A note on Amazon Q's "Host my website":** don't. It is built for static sites
+and will steer you to Amplify or App Runner, which do not fit a server holding
+websockets open for minutes, and cost more.
+
+<details>
+<summary>Or by hand, in the EC2 console</summary>
+
 EC2 → **Launch instance**.
 
 | Field | Value | Why |
@@ -79,14 +100,27 @@ Network settings → **Edit**, and allow:
 
 Launch, then copy the **Public IPv4 address**.
 
+</details>
+
 ---
 
 ## 2. Get in
+
+From CloudShell (the script prints this line with your IP filled in):
+
+```bash
+ssh -i ~/lampcode.pem -o StrictHostKeyChecking=accept-new ubuntu@<PUBLIC_IP>
+```
+
+Or from your own machine, with the `.pem` you downloaded:
 
 ```bash
 chmod 400 ~/Downloads/lampcode.pem
 ssh -i ~/Downloads/lampcode.pem ubuntu@<PUBLIC_IP>
 ```
+
+**Back up `~/lampcode.pem`.** AWS shows a private key once, at creation. Lose it
+and the only way back in is a new instance.
 
 ## 3. Let the box read the private repo
 
