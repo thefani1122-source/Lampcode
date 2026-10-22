@@ -1,0 +1,39 @@
+# Placeholders are filled in by bootstrap.sh — edit that, not the installed copy.
+[Unit]
+Description=Lampcode backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+WorkingDirectory=@REPO_DIR@
+EnvironmentFile=@REPO_DIR@/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js
+
+# A build can run for minutes and holds open websockets. 90 seconds to drain
+# before SIGKILL, so a restart does not cut a user's build in half.
+Restart=always
+RestartSec=3
+TimeoutStopSec=90
+KillSignal=SIGTERM
+
+# The cheap instances are small and a leak would otherwise take the whole box
+# down with the ssh daemon on it. Restarting is recoverable; an unreachable
+# machine is not.
+MemoryMax=80%
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lampcode
+
+# It serves HTTP and talks to Supabase, Redis, E2B and the model gateway. It
+# has no reason to write anywhere but its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
