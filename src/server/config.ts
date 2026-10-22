@@ -52,6 +52,25 @@ const envSchema = z.object({
   // Shared preview MongoDB connection string — injected into the backend env
   // (MONGODB_URI) so generated MongoDB apps can connect & persist in the preview.
   PREVIEW_MONGODB_URI: z.string().min(1).optional(),
+  // Socket.IO's Redis adapter exists for ONE reason: letting several instances
+  // of this server share a broadcast. It costs one Redis PUBLISH per emit, and
+  // this app streams model output over the socket — so a single build is
+  // thousands of publishes. On a managed Redis billed per command (Upstash's
+  // free tier is 500k/month) that is the whole allowance in days, bought for
+  // nothing, because a one-instance deployment has nobody to broadcast to.
+  //
+  // Default stays TRUE so this changes no running deployment: whether
+  // production runs one replica or two is not something the code can see, and
+  // switching it off under a second replica would silently stop that
+  // replica's users receiving build events. Set it to "false" when you KNOW
+  // there is one instance. Explicit-string parsing for the same reason as
+  // AGENTIC_BUILD_ENABLED: z.coerce.boolean() reads "false" as true, so a var
+  // set to turn this off would have turned it on.
+  SOCKETIO_REDIS_ADAPTER: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === "" ? true : !(v === "false" || v === "0")))
+    .pipe(z.boolean()),
   REDIS_URL: z.string().url().optional(),
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),

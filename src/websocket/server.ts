@@ -120,13 +120,29 @@ export class WebSocketServer {
     // resulting promise — with the queue disabled that rejection is unhandled
     // and takes the process down on boot, in a restart loop. Queueing that one
     // subscribe until the connection is up is exactly what the queue is for.
-    try {
-      const pubClient = createRedis({ enableOfflineQueue: true });
-      const subClient = createRedis({ enableOfflineQueue: true });
-      this.io.adapter(createAdapter(pubClient, subClient));
-      logger.info("Socket.IO Redis adapter attached");
-    } catch (err) {
-      logger.warn({ err }, "Socket.IO Redis adapter failed to attach — falling back to in-memory adapter");
+    //
+    // Switched off by SOCKETIO_REDIS_ADAPTER=false on a single-instance
+    // deployment, where it buys nothing and costs one Redis PUBLISH per emit —
+    // and this server streams model output over the socket, so one build is
+    // thousands of publishes. Against a Redis billed per command that is the
+    // difference between a free tier lasting a month and lasting a week.
+    if (config.SOCKETIO_REDIS_ADAPTER) {
+      try {
+        const pubClient = createRedis({ enableOfflineQueue: true });
+        const subClient = createRedis({ enableOfflineQueue: true });
+        this.io.adapter(createAdapter(pubClient, subClient));
+        logger.info("Socket.IO Redis adapter attached");
+      } catch (err) {
+        logger.warn({ err }, "Socket.IO Redis adapter failed to attach — falling back to in-memory adapter");
+      }
+    } else {
+      // Said out loud rather than inferred from silence: this is correct for
+      // one instance and WRONG for two, and the log is the only place anyone
+      // would find out which one is running.
+      logger.info(
+        "Socket.IO Redis adapter disabled (SOCKETIO_REDIS_ADAPTER=false) — in-memory adapter. " +
+        "Correct for a single instance; a second replica would not receive these broadcasts.",
+      );
     }
 
     // ── Namespaces ────────────────────────────────────────────────────────────
