@@ -25,6 +25,32 @@ Three things to read off, and tell them to Claude:
 | Is this account on the new **"Free plan"**? | A Free-plan account **closes itself** when its credits run out or six months pass — and that would take Bedrock down with it. You need to know this BEFORE you depend on it. |
 | Bedrock spend so far | Your real burn rate, which is the number the launch plan actually turns on. |
 
+### Set a billing alarm before you launch, not after
+
+With credits funding this, the thing that ends the project is not a big bill —
+it is credits quietly reaching zero. On the new **Free plan** an account
+**closes itself** when that happens, and it takes Bedrock with it. You want to
+hear about it with weeks to spare, not on the day the site stops.
+
+Billing console → **Budgets** → **Create budget** → *Zero spend* or a monthly
+cost budget → alert at **50% and 80%** → your email. Free, two minutes.
+
+Also find, and write down, **the credits' expiry date**. On a Free-plan account
+the calendar matters more than the burn rate: unused credits still expire, and
+the account closes on that date whether or not money is left.
+
+### What the runway actually is
+
+| instance | memory | ~per month, Sydney, with 20 GB disk | months from $117 |
+|---|---|---|---|
+| `t4g.micro` | 1 GB | ~$8–10 | ~12 |
+| **`t4g.small`** | 2 GB | ~$14–18 | **~6–8** |
+
+Take `t4g.small`. The extra ~$6 a month buys the memory that stops `npm ci` and
+the build being killed, and debugging an OOM costs more of your time than the
+difference costs in money. It is also not a one-way choice: stop the instance,
+change the type, start it again — a few minutes, and nothing is lost.
+
 **Apply for AWS Activate the same day** — https://aws.amazon.com/startups/credits/
 — $1,000, self-service, no investor needed, 5–10 business days. It pays for the
 server *and* for Bedrock, which is the whole budget problem in one application.
@@ -40,7 +66,7 @@ EC2 → **Launch instance**.
 | Name | `lampcode` | |
 | AMI | **Ubuntu Server 24.04 LTS** | the scripts here are written for it |
 | Architecture | **64-bit (Arm)** | `t4g` is cheaper per unit of work and every dependency in this repo is pure JS |
-| Type | **t4g.small**, or `t4g.micro` to save | small is 2 GB; micro is 1 GB and leans on the swap the bootstrap adds |
+| Type | **t4g.small** | 2 GB. `t4g.micro` works on the swap the bootstrap adds and saves ~$6/month, but leans on it. Changeable later with stop → change type → start |
 | Key pair | **Create new**, RSA, `.pem`, download it | this file is the only way in — losing it means rebuilding the box |
 | Storage | **20 GiB gp3** | 8 GiB fills up on node_modules plus logs |
 | Region | **ap-southeast-2 (Sydney)** | same region as the Bedrock gateway this app calls |
