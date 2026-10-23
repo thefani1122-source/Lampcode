@@ -3,6 +3,7 @@ import { dirname } from "node:path"
 import type { WebSocketServer } from "../websocket/server.js"
 import type { StreamChunk } from "./model-gateway.js"
 import { parseFilesFromContent } from "./file-parser.js"
+import { narrateTool } from "./tool-narration.js"
 import { PseudoToolFilter } from "./pseudo-tools.js"
 
 // Re-export so dispatcher.ts can still do:
@@ -169,9 +170,15 @@ export async function handleAgentStream(
         case "tool_call":
           if (chunk.toolCall) {
             toolCalls.push(chunk.toolCall)
+            // `label`/`active` ride along so the chat can name the action
+            // without owning a verb table for tools it does not define, and so
+            // the live status line and the finished row always agree.
+            const narration = narrateTool(chunk.toolCall.name, chunk.toolCall.arguments)
             emit("build:tool_call", {
               tool: chunk.toolCall.name,
               args: chunk.toolCall.arguments,
+              label: narration.label,
+              active: narration.active,
               sessionId,
             })
           }

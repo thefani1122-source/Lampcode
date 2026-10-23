@@ -11,7 +11,9 @@ import {
   type ChatMessage,
   type MessageContentBlock,
 } from "./model-gateway.js";
+import { diffFile, type FileDiff } from "./file-diff.js";
 import { modalStream } from "./modal-gateway.js";
+import { narrateTool, formatLineDelta } from "./tool-narration.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
@@ -820,10 +822,51 @@ export class AgentDispatcher {
           });
         }
         resultBlocks.push({ type: "tool_result", tool_use_id: tc.id, content: result });
+
+        // What to SHOW for this call. Diffs come from the snapshot taken at
+        // :753 against the files as they now are, so they describe what the
+        // tool actually applied rather than what the model asked for — a tool
+        // can refuse or clamp a request, and the two are not the same thing.
+        const shown: FileDiff[] = [];
+        let shownBytes = 0;
+        let shownAdded = 0;
+        let shownRemoved = 0;
+        for (const path of touched) {
+          const before = filesBefore.get(path);
+          if (before === undefined) {
+            // A file that did not exist is a creation, not an edit: the whole
+            // thing is new, and a diff against nothing reads as noise.
+            shownAdded += (generatedFiles[path] ?? "").split("\n").length;
+            continue;
+          }
+          const diff = diffFile(path, before, generatedFiles[path] ?? "");
+          if (!diff) continue;
+          shownAdded += diff.added;
+          shownRemoved += diff.removed;
+          // Budgeted: these events are buffered in Redis and stored per
+          // message, so a build that rewrites twenty files must not carry
+          // twenty diffs through both.
+          const size = JSON.stringify(diff.hunks).length;
+          if (shown.length < 4 && shownBytes + size <= 12_000) {
+            shown.push(diff);
+            shownBytes += size;
+          }
+        }
+        for (const path of gone) {
+          shownRemoved += (filesBefore.get(path) ?? "").split("\n").length;
+        }
+        const narration = narrateTool(tc.name, tc.arguments);
+        const delta = formatLineDelta(shownAdded, shownRemoved);
+
         try {
           getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
             tool: tc.name,
             result: result.startsWith("Error:") ? "error" : "success",
+            label: narration.label,
+            ...(touched.length > 0 ? { paths: touched } : {}),
+            ...(gone.length > 0 ? { deleted: gone } : {}),
+            ...(delta ? { delta } : {}),
+            ...(shown.length > 0 ? { diffs: shown } : {}),
             sessionId,
           });
           // Dedicated signal for the generic "no proxy available" case.

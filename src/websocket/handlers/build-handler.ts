@@ -1,4 +1,5 @@
 import { type Namespace, type Socket } from "socket.io";
+import { narrateTool } from "../../agents/tool-narration.js";
 import { eq } from "drizzle-orm";
 import { logger } from "../../server/logger.js";
 import { createRedis } from "../../lib/redis.js";
@@ -177,6 +178,7 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
 
   let summary = "";
   let hint: string | undefined;
+  let checks: unknown;
   for (const m of history) {
     switch (m.role) {
       case "user":
@@ -185,17 +187,43 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
       case "thinking":
         emitRaw("build:thinking", { sessionId, text: m.content });
         break;
-      case "tool":
+      case "tool": {
         // Two events: one opens the line, the other marks it finished, which
         // is how the chat draws a completed tool call.
-        emitRaw("build:tool_call", { sessionId, tool: m.content });
-        emitRaw("build:tool_result", { sessionId, tool: m.content });
+        //
+        // Everything the live build showed has to be carried here too, or a
+        // refresh silently downgrades a readable timeline to a list of bare
+        // tool names. The label is recomputed when an older row predates it,
+        // so history written before this existed still reads properly.
+        const meta = m.metadata as Record<string, unknown>;
+        const stored = typeof meta["label"] === "string" ? meta["label"] : "";
+        const narration = narrateTool(m.content);
+        const label = stored || narration.label;
+        emitRaw("build:tool_call", {
+          sessionId,
+          tool: m.content,
+          label,
+          active: narration.active,
+        });
+        emitRaw("build:tool_result", {
+          sessionId,
+          tool: m.content,
+          result: meta["ok"] === false ? "error" : "success",
+          label,
+          ...(Array.isArray(meta["paths"]) ? { paths: meta["paths"] } : {}),
+          ...(Array.isArray(meta["deleted"]) ? { deleted: meta["deleted"] } : {}),
+          ...(typeof meta["delta"] === "string" ? { delta: meta["delta"] } : {}),
+          ...(Array.isArray(meta["diffs"]) ? { diffs: meta["diffs"] } : {}),
+          ...(meta["diffsDropped"] === true ? { diffsDropped: true } : {}),
+        });
         break;
+      }
       case "assistant":
         // Held back: it belongs to build:complete, which must come last
         // because the client stops accepting chat events once it arrives.
         summary = m.content;
         hint = typeof m.metadata["hint"] === "string" ? (m.metadata["hint"] as string) : undefined;
+        checks = m.metadata["checks"] ?? undefined;
         break;
       case "error":
         emitRaw("build:error", { sessionId, message: m.content });
@@ -219,6 +247,12 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
     files = await downloadProjectFiles(row.projectId);
   } catch (err) {
     logger.warn({ sessionId, err }, "Could not load stored files while settling a replayed view");
+  }
+
+  // Same ordering rule as the live path: the card has to land before the
+  // event that closes the chat to new rows.
+  if (checks && typeof checks === "object") {
+    emitRaw("build:checks", { sessionId, ...(checks as Record<string, unknown>) });
   }
 
   emitRaw("build:complete", {

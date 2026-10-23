@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildChecksCard } from "../../verify/checks-card.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, desc, isNotNull, inArray } from "drizzle-orm";
@@ -4754,6 +4755,30 @@ export async function runFastBuild(
     }
 
     const finalSummary = [buildSummary, ...closingLines].filter(Boolean).join("\n");
+
+    // The build's verdict on its own work, in the user's words. Nothing here
+    // is newly measured — see checks-card.ts. It is emitted BEFORE
+    // build:complete on purpose: the client stops accepting chat events once
+    // that arrives.
+    server?.emitToRoom(
+      sessionId,
+      "build:checks",
+      {
+        sessionId,
+        ...buildChecksCard({
+          checkPage: outcome.checkPage,
+          checkTypes: outcome.checkTypes,
+          checkTests: outcome.checkTests,
+          wiring: wiringTally,
+          wiringRepaired,
+          schemaApply,
+          audit: completionAudit
+            ? { criteria: completionAudit.criteria, verdicts: completionAudit.verdicts }
+            : null,
+          auditRepaired: auditRepair?.fixed ?? 0,
+        }),
+      },
+    );
 
     server?.buildComplete(sessionId, {
       sessionId,

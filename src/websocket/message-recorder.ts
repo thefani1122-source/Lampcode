@@ -34,6 +34,11 @@ interface SessionState {
   /** Model output arrives in chunks; it becomes one message when something
    *  else happens, exactly as the chat renders it. */
   openThinking: string | null;
+  /** The checks card, held until build:complete so it rides on the same row
+   *  the summary does. Emitted as its own event, but stored with the message
+   *  it belongs to — a card that is only emitted is gone on the next reload,
+   *  which is the same mistake the preview URL made. */
+  checks: unknown;
 }
 
 const sessions = new Map<string, SessionState>();
@@ -49,7 +54,7 @@ function stateFor(sessionId: string): SessionState {
       const oldest = sessions.keys().next().value;
       if (oldest !== undefined) sessions.delete(oldest);
     }
-    s = { projectId: null, resolving: null, seq: 0, openThinking: null };
+    s = { projectId: null, resolving: null, seq: 0, openThinking: null, checks: null };
     sessions.set(sessionId, s);
   }
   return s;
@@ -147,17 +152,50 @@ export function recordEvent(sessionId: string, event: string, data: Record<strin
       case "build:tool_result": {
         const tool = str("tool") || str("name") || "tool";
         closeThinking(sessionId);
+
+        // Diffs are stored, not re-derived: the sandbox the files came from is
+        // gone by the time anyone reloads, so whatever is not written here is
+        // lost. The budget is why it is not simply all of them — a long build
+        // would otherwise carry a megabyte of hunks through every read of its
+        // history. When it does not fit, the counts survive and the flag says
+        // the lines did not, which is better than a view that looks empty.
+        const diffs = Array.isArray(data["diffs"]) ? data["diffs"] : undefined;
+        const keepDiffs = diffs && JSON.stringify(diffs).length <= 6_000;
+
         write(sessionId, "tool", tool, {
           tool,
           ok: data["success"] !== false && data["ok"] !== false,
+          ...(str("label") ? { label: str("label") } : {}),
+          ...(Array.isArray(data["paths"]) ? { paths: data["paths"] } : {}),
+          ...(Array.isArray(data["deleted"]) ? { deleted: data["deleted"] } : {}),
+          ...(str("delta") ? { delta: str("delta") } : {}),
+          ...(keepDiffs ? { diffs } : {}),
+          ...(diffs && !keepDiffs ? { diffsDropped: true } : {}),
         });
+        return;
+      }
+
+      case "build:checks": {
+        // Not a message of its own: it has no place in a transcript read back
+        // as prose, and it belongs to the reply it accompanies.
+        stateFor(sessionId).checks = {
+          rows: data["rows"],
+          missing: data["missing"],
+          repairs: data["repairs"],
+        };
         return;
       }
 
       case "build:complete": {
         closeThinking(sessionId);
         const summary = str("summary");
-        if (summary) write(sessionId, "assistant", summary, { hint: str("hint") || undefined });
+        const checks = stateFor(sessionId).checks;
+        if (summary) {
+          write(sessionId, "assistant", summary, {
+            hint: str("hint") || undefined,
+            ...(checks ? { checks } : {}),
+          });
+        }
         sessions.delete(sessionId);
         return;
       }
