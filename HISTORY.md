@@ -5177,3 +5177,45 @@ journey, a cap exists on everything, and the message a model gets must say what 
 Nothing absent. `diff_since` still carries the P0.2 defect (Codex, in `CODEX-BRIEF.md`), and
 `shell`, `browser_interact`, `web_search` and `look_at_page` have not yet been exercised on a
 real build — Railway's own build incident has production pinned to the 19 October image.
+
+## A TRUNCATED READ WAS COMMITTED AS SOURCE — 2026-10-23
+
+`f79e031` on `db-path` is titled "Explain Supabase email confirmation in preview builds". Its
+intended change really is six lines — one import and one `closingLines.push`. It also took
+`src/server/routes/build.ts` from **5308 lines to 2526**, and from 268,631 bytes to 120,110.
+
+The cause is in the committed file, mid-way through:
+
+```
+"Do NOT generate next.config.ts…37241 tokens truncated…st, and nothing
+```
+
+That is a tool's own truncation marker, written back into the file as if it were code. The file
+does not parse — `TS1434` at line 1, an unterminated string literal at 1232. Checked out on its
+own and type-checked to confirm, rather than inferred from the diff.
+
+It was not a refactor and nothing was moved: the commit adds 300 lines in total against 2943
+removed, and no new module is close to large enough to hold what went missing. Measured against
+`da61b1c`, inside `build.ts`:
+
+| | base | f79e031 |
+|---|---|---|
+| `emitPreviewUrl` — the preview-URL persistence fix | 2 | 0 |
+| `security` — the whole security loop | 17 | 1 |
+| `check_page` | 5 | 1 |
+
+Its own commit message records that `npm run build` was never verified.
+
+Recovered in `5fb7ee9` by restoring `build.ts` from `da61b1c` and re-applying the six intended
+lines on top. `f79e031`'s two genuinely additive files — `src/verify/preview-auth-guidance.ts`
+and its test — were kept untouched and still pass. `f79e031` was left in history rather than
+rewritten, so the record stays readable and the restore reverts like anything else.
+
+**The rule this buys: never write back a read that was truncated.** If read output carries a
+truncation marker, read the file in parts, and check the line count before writing. A diff that
+removes an order of magnitude more than it adds is not a refactor until a moved destination has
+actually been found.
+
+One correction against the first report of this, so the wrong number is not carried forward:
+`checkRlsScoping` was never in `build.ts` (it lives in `src/verify/security.ts`, which `f79e031`
+never touched), and `emitPreviewUrl` went from 2 to 0, not from 1 to 0.
