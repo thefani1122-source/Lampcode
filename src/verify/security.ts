@@ -171,6 +171,37 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
     }
   }
 
+  // ── An INSERT that does not bind the owner column ────────────────────────
+  // MEASURED on a real build, 2026-10-23: a "shared team board" shipped
+  // `created_by uuid NOT NULL` with no default and
+  // WITH CHECK (auth.uid() IS NOT NULL). Two separate failures from one
+  // mistake. Creating a task failed outright — "null value in column
+  // created_by violates not-null constraint" — and had it succeeded, any
+  // signed-in user could have written someone else's id into that column.
+  //
+  // Mentioning auth.uid() is not scoping. `auth.uid() IS NOT NULL` means
+  // "anybody who is logged in", which is a fine rule for SELECT on a shared
+  // table and never a sufficient one for INSERT on a table that records who
+  // did something.
+  for (const { table, body } of policies) {
+    if (!/\bfor\s+(insert|all)\b/i.test(body)) continue;
+    const cols = bodies.get(table) ?? "";
+    const owner = cols.match(OWNER_COLUMN_RE)?.[0];
+    if (!owner) continue;
+    const check = body.match(/with\s+check\s*\(([\s\S]*)\)/i)?.[1] ?? "";
+    const binds = new RegExp(
+      `auth\\.uid\\s*\\(\\s*\\)\\s*=\\s*${owner}|${owner}\\s*=\\s*auth\\.uid\\s*\\(\\s*\\)`,
+      "i",
+    ).test(check);
+    if (!binds) {
+      problems.push(
+        `${table}: its INSERT policy never ties ${owner} to auth.uid(), so a signed-in user can ` +
+        `create a row attributed to someone else. Use WITH CHECK (auth.uid() = ${owner}), and give ` +
+        `the column DEFAULT auth.uid() so the caller never has to send it`,
+      );
+    }
+  }
+
   // Owner-scoped tables whose policies never mention who is asking.
   const scopedByTable = new Map<string, boolean>();
   for (const { table, body } of policies) {

@@ -585,6 +585,24 @@ CREATE POLICY "owner_insert" ON {table_name} FOR INSERT WITH CHECK (auth.uid() =
 CREATE POLICY "owner_update" ON {table_name} FOR UPDATE USING (auth.uid() = user_id);
 CREATE POLICY "owner_delete" ON {table_name} FOR DELETE USING (auth.uid() = user_id);
 
+OWNER COLUMNS — TWO RULES, ON EVERY TABLE THAT RECORDS WHO DID SOMETHING.
+Measured on a real build 2026-10-23: a "shared team board" shipped with
+"created_by uuid NOT NULL" and no default, and an INSERT policy of
+WITH CHECK (auth.uid() IS NOT NULL). Creating a task failed outright —
+"null value in column created_by violates not-null constraint" — and any
+signed-in user could have written someone else's name into that column.
+
+1. GIVE THE OWNER COLUMN A DEFAULT, so the caller never has to send it:
+     created_by uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id)
+   Without the default, every insert that does not name the column fails, and
+   an insert that DOES name it is taking the client's word for who it is.
+
+2. BIND IT IN THE INSERT POLICY, even when the table is shared:
+     CREATE POLICY "x_insert" ON {table} FOR INSERT WITH CHECK (auth.uid() = created_by);
+   "Everyone on the team can see everything" is about SELECT. It never means
+   anyone may write a row attributed to someone else. A shared table still
+   scopes its writes to the caller.
+
 PATTERN 2 — Public content with author control (blogs, portfolios, product catalogs):
 ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public_read" ON {table_name} FOR SELECT USING (is_published = true);

@@ -316,6 +316,51 @@ console.log("\n— both run in the build —");
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 }
 
+// ── An INSERT that does not bind the owner column ───────────────────────────
+// This is the schema a REAL build shipped on 2026-10-23, verified against the
+// live project: inserting a task failed with "null value in column created_by
+// violates not-null constraint", and had it succeeded, any signed-in user
+// could have written someone else's id into that column. Mentioning auth.uid()
+// is not scoping — `auth.uid() IS NOT NULL` means "anybody who is logged in".
+
+console.log("\n— an INSERT policy that does not bind the owner —");
+const SHIPPED = `CREATE TABLE tasks (
+  id uuid primary key,
+  title text,
+  created_by uuid NOT NULL
+);
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "team_insert_tasks" ON tasks FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "team_read_tasks" ON tasks FOR SELECT USING (auth.uid() IS NOT NULL);
+`;
+{
+  const got = checkRlsScoping(tree({ "src/db/schema.sql": SHIPPED }));
+  ok("the schema a real build shipped is caught", got.status === "fail");
+  ok("and the message names the column", got.message.includes("created_by"));
+  ok("and says what a user could do with it", got.message.includes("attributed to someone else"));
+  ok("and gives the fix, including the default", got.message.includes("DEFAULT auth.uid()"));
+}
+{
+  const bound = SHIPPED.replace("WITH CHECK (auth.uid() IS NOT NULL)", "WITH CHECK (auth.uid() = created_by)");
+  ok("binding it passes", checkRlsScoping(tree({ "src/db/schema.sql": bound })).status === "pass");
+}
+{
+  // A shared SELECT is a legitimate design and must not be dragged in.
+  const readOnly = `CREATE TABLE posts (id uuid primary key, body text);
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
+`;
+  ok("a shared read on a table with no owner column is left alone",
+    checkRlsScoping(tree({ "src/db/schema.sql": readOnly })).status !== "fail");
+}
+{
+  // And the prompt has to teach it, or the check just fails every build.
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("the prompt requires DEFAULT auth.uid() on owner columns", prompt.includes("DEFAULT auth.uid() REFERENCES auth.users(id)"));
+  ok("and binding the owner in the INSERT policy", prompt.includes("WITH CHECK (auth.uid() = created_by)"));
+  ok("and says a shared table still scopes its writes", prompt.includes("A shared table still"));
+}
+
 if (failures > 0) {
   console.error("\n" + failures + " security case(s) FAILED");
   process.exit(1);
