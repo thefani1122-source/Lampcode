@@ -172,4 +172,35 @@ check(
   build.includes("the record still said staleCheckPage=0"),
 );
 
+// ── The preview URL has to SURVIVE, not just be announced ───────────────────
+// Measured 2026-10-23 on the first real build after the AWS move: the agent's
+// own closing message carried "The app is running at https://5173-….e2b.app"
+// while the preview pane said "Build finished, but no preview URL was
+// returned". The sandbox was up and serving the whole time.
+//
+// The cause was structural, not a race. `build_sessions.preview_url` existed
+// as a column and was only ever written as null, so the socket event was the
+// ONLY delivery the URL ever had — and the fallback the frontend polls every
+// 3s, /api/build/:id/files, did not return a preview URL either. Missing one
+// websocket event therefore lost the preview permanently, and the message
+// shown to the user was guaranteed rather than diagnostic.
+
+check(
+  "the preview URL is persisted where the poll can find it",
+  /emitPreviewUrl\(sessionId[\s\S]{0,1400}db\.update\(buildSessions\)\.set\(\{ previewUrl: url \}\)/.test(build),
+);
+check(
+  "and failing to persist it never fails the build",
+  build.includes("the socket event is now its only delivery"),
+);
+check(
+  "the files endpoint returns it, which is what the frontend polls for",
+  /return c\.json\(\{[\s\S]{0,600}previewUrl: session\.previewUrl/.test(build),
+);
+// The bug in one line: every write to this column set it to null.
+check(
+  "the column is no longer only ever set to null",
+  (build.match(/previewUrl: null/g) ?? []).length > 0 && build.includes("previewUrl: url"),
+);
+
 console.log(`\n${checks} lifecycle checks passed`);

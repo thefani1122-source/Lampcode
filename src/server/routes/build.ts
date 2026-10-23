@@ -3623,6 +3623,25 @@ export async function runFastBuild(
 
       server?.emitPreviewUrl(sessionId, { sessionId, url });
 
+      // ── And WRITE IT DOWN ───────────────────────────────────────────────
+      // Until now this socket event was the ONLY delivery of the preview URL.
+      // `build_sessions.preview_url` existed as a column and was only ever set
+      // to null, so a missed event — a reconnect, a tab switch, a workspace
+      // that mounted a second late — lost the URL permanently, and the user
+      // was told "no preview URL was returned" about a sandbox that was
+      // running and serving. Measured 2026-10-23: the agent's own closing
+      // message carried the URL while the preview pane showed that error.
+      //
+      // The frontend already polls /api/build/:id/files for exactly this, so
+      // persisting here is what makes that fallback able to work at all.
+      // Never fails the build: a preview that cannot be recorded is still a
+      // preview the socket just delivered.
+      try {
+        await db.update(buildSessions).set({ previewUrl: url }).where(eq(buildSessions.id, sessionId));
+      } catch (err) {
+        logger.warn({ sessionId, projectId, err }, "Could not persist the preview URL — the socket event is now its only delivery");
+      }
+
       // ── Reconcile what the repair loops above changed ─────────────────────
       // They ran after the build was recorded and delivered, and they mutate
       // allFiles. Two records are therefore wrong until this runs, and neither
@@ -5174,6 +5193,12 @@ buildRouter.get("/:sessionId/files", async (c) => {
 
   return c.json({
     sessionId,
+    // The frontend polls this endpoint every 3s when it has no preview URL,
+    // and gives up after 120s with "no preview URL was returned". It was
+    // polling an endpoint that never returned one, so that message was
+    // guaranteed the moment the socket event was missed — about a sandbox
+    // that was up and serving.
+    previewUrl: session.previewUrl,
     totalFiles: files.length,
     totalSizeBytes: files.reduce((acc, f) => acc + f.sizeBytes, 0),
     groups: grouped,
