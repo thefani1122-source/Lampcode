@@ -1,101 +1,87 @@
 # What is next, and what each thing is waiting on
 
-Updated 2026-10-21. One thread at a time: **"a request that needs a backend gets a real one."**
-Nothing moves to a new thread until the list under "To finish the current thread" is empty.
+Updated 2026-10-23, the day the backend moved to AWS EC2 and v1 opened.
 
 Keep this file honest. If something here is done, delete it. If something turned out false, say
-so rather than leaving it.
+so rather than leaving it. **"Built" and "proven on a real build" are different columns and are
+never merged.**
 
 ---
 
-## A. Blocked right now, and on what
+## Where it runs now
 
-| Blocked on | What it blocks | What to do |
-|---|---|---|
-| **Railway incident** — "Builds are temporarily paused" (their status page, not our account) | every real-build proof below | nothing to fix. Poll `list-deployments` until a SUCCESS for a commit ≥ `6610983`. No redeploy is possible: the failed deployment has no snapshot. |
-| **No Supabase connected** (`user_mcp_connections` holds only `vercel`, `github`) | the row-level half of G6/P0.4 | owner connects their Supabase in the UI; then the retry is one build |
-| **`MCP_OAUTH_REDIRECT_URL` unset on Railway** | every OAuth MCP connect (503) | owner sets it to `https://<backend host>/api/integrations/mcp/oauth/callback` |
-| **`db-path` is not on `main`** — the merge push was refused by this session's deploy guard | the audit-repair loop reaching production | owner merges `db-path` into `main` (one fast-forward commit, `d18f3ae`), or grants the push. Railway is paused, so nothing is lost by waiting |
-| **Vercel connection is stale** (its `authType` became `oauth`; the stored static token no longer authenticates MCP) | Vercel MCP tools | owner reconnects once OAuth works. `deploy_app` is NOT affected — it reads its own token now |
+| | |
+|---|---|
+| Backend | **EC2** `https://16.176.96.2.sslip.io` — Ubuntu 24.04 arm64, systemd + Caddy, branch `db-path` |
+| Deploy | `cd ~/Lampcode && bash deploy/aws/deploy.sh` (see `deploy/aws/README.md`) |
+| Frontend | Vercel, `www.lampcode.dev` |
+| Redis | Railway public TCP proxy (`rlwy.net`) with `SOCKETIO_REDIS_ADAPTER=false` |
+| Visibility | **the production Supabase, not logs.** `build_sessions.build_outcome` holds gates, classification, repairs, cost. Reading it is how everything below was verified. |
 
----
-
-## B. To finish the current thread — run in this order the moment builds resume
-
-1. **Confirm the deploy is live.** A SUCCESS deployment whose commit is `6610983` or later.
-   Trap 8: `/health` answering proves nothing, it is served by the old container.
-2. **Real build #1 — the same expense-tracker prompt** (`scripts/launch-proof.ts`, build 1).
-   Expect in the logs and the record:
-   - `[build] classified … type=fullstack source=model` (or `explicit-server`)
-   - `[build] db gate … intent=…` — the card actually fired
-   - backend files written (`outcome.fullstack.backendFiles > 0`) and a schema file present
-   - the closing message carries the honest status block, not "complete and fully functional"
-   If it still classifies frontend, read `classification.source` first — it says whether a word,
-   the model, or a lean decided.
-3. **With a Supabase connected, repeat.** Done means: schema applied, the app writes a row, the
-   row is read back after a reload, and the policies are scoped to the owner.
-4. **Real build #2 — the follow-up edit.** Watch `[build] freshness …`: a repair that lands after
-   a gate must now show `revalidated=[…]` rather than `revalidated=[]`.
-5. **P0.5** — one build that exercises `search_code`, `delete_file`, `checkpoint`/`revert` and
-   `diff_since`, each appearing in `toolCalls` having done its job.
-6. **G3 adversarial** — two users, and B must not be able to read A's row.
+Railway is kept deliberately reachable: `railway.toml` is untouched and nothing Railway-specific
+was removed, so going back is turning the plan on and pasting the variables.
 
 ---
 
-## C. Not blocked — what gets done while the above waits
+## A. Proven on real builds — 2026-10-23
 
-In order. Each one is finished and measured before the next starts.
+Read from `build_sessions`, not inferred.
 
-1. ~~**The quality of the backend we now correctly ask for.**~~ — **done 2026-10-21.** All five
-   items on the original list now have a deterministic check, and four of them a repair:
+- **Classifier decides by need, not by words.** Session df827368 → `frontend`, c777a195 →
+  `fullstack`, both `source: "model"`, both with a readable reason.
+- **The database gate, end to end.** Session c777a195: `schemaApply {ran:true, ok:true}`, and a
+  real `tasks` table exists in the connected project — RLS on, 4 policies, the columns the prompt
+  asked for. First generated table ever created, against 416 projects that produced none.
+- **RLS actually blocks.** Driven against the live project: anonymous read returned `[]`,
+  anonymous insert refused with "new row violates row-level security policy".
+- **The preview URL survives.** `preview_url` was null on every build in history; it is written
+  now and the `/files` endpoint returns it.
+- **The three dead repair loops write files again.** Visible in a build's own narration: the cut
+  ran, broke the type check, and put everything back.
 
-   | the rule | before | now |
-   |---|---|---|
-   | schema matches the tables queried | detected since 17 Oct, **reported only** | repaired before the security loop, revert if a table is lost |
-   | RLS on every table, owner-scoped | `checkRLS` + `checkRlsScoping`, auto-fixed | unchanged — verified wired, not re-done |
-   | no service-role key in the backend | **nothing** | `service-role-key`, critical, auto-fixed |
-   | `dbFor(c)` per request | **nothing** | `caller-identity`, high, auto-fixed |
-   | `src/lib/api.ts` uses `API_BASE` | `hardcoded-dev-host`, repairable | unchanged — verified wired |
+## B. Built, NOT yet proven on a real build
 
-   **Also found and fixed on the way (P0):** three repair loops — fake-persistence removal,
-   broken-import repair, dead-code cut — applied their files with `Object.entries()` over the
-   ARRAY `parseFilesFromContent` returns, so their own `typeof code === "string"` guard was
-   permanently false and **nothing was ever written**. TypeScript cannot catch it (`never` is
-   assignable to `string`). One tested path now, `applyParsedFiles`, plus a source guard that
-   bans the shape. The `dead=23 touched=0` reading from 18 Oct was this bug, not a model
-   replying in prose.
+Honest list. Each needs one build that exercises it.
 
-   **None of it is proven on a real build** — that is section B, and it needs Railway.
-2. ~~**"It sees its work — now make it fix it."**~~ — **done 2026-10-21**, `src/verify/audit-repair.ts`,
-   79 cases. At most five unmet requirements, a live sandbox, one attempt, tools off; kept only if
-   it still compiles and does not un-prove something already proven; re-audited against the same
-   criteria and the result replaces the stored audit. Recorded in `build_outcome.auditRepair`
-   (attempted / fixed / remaining / cost) and in the closing status block.
-   **Not yet proven on a real build** — that is section B, and it needs Railway.
-3. ~~`shell` (I2)~~ and ~~scripted `browser_interact` (B6+)~~ — **both done 2026-10-21.**
-   The harness tool set is complete: 27 registered, nothing absent. `diff_since` still carries
-   the P0.2 defect (Codex). Neither new tool has run on a real build yet — that is section B.
+| | why it has not fired yet |
+|---|---|
+| audit → repair loop | needs the audit to report something unverified; every build since has come back clean |
+| schema repair (`table-never-declared`) | the model declared every table it queried |
+| `service-role-key`, `caller-identity` checks | no build has violated them yet |
+| `shell`, `web_search`, `fetch_reference` | **never called in any of 99 builds** |
+| `checkpoint` / `revert` / `diff_since` | **never called in any of 99 builds** — this is P0.5 |
+| honest status (`completed` instead of `success`) | needs a build where a gate fails |
 
----
+## C. Open, and nobody has started
 
-## D. Codex — `CODEX-BRIEF.md`
+1. **P0.2 — `diff_since` erases real edits.** The reason the model rewrites whole files instead
+   of editing them. Assigned to Codex.
+2. **G3 adversarial — two users.** Prove B cannot read A's row. The single-user half is proven;
+   the isolation half has never been driven.
+3. **Generated-app visual quality.** No deterministic check exists for whether an app looks
+   good. Nothing in this repo measures it. Named as a differentiator and genuinely untouched.
+4. **Email confirmation cannot complete in a preview.** The confirmation link goes to the
+   project's Site URL; the preview URL changes every build. Measured 23 Oct: sign-up could not be
+   completed and `tasks` stayed at 0 rows. The system says nothing about this today.
+5. **Preview fallback only polls for fullstack builds** (`workspace.$projectId.tsx` ~849), so a
+   frontend-only build that misses the socket event still loses its preview permanently.
+6. **MCP OAuth popup + `MCP_OAUTH_REDIRECT_URL`.** Token-paste works; the "permissions page" the
+   owner asked for does not exist yet.
+7. **`PREVIEW_MONGODB_URI` holds placeholders** (`<db_lampcode>`), so Mongo apps cannot connect.
 
-1. Process: never push a red branch (`mcp-connection.test.ts` was failing and it was a real SSRF
-   hole); write files as UTF-8 (an editor wrote replacement bytes and silently dropped a line).
-2. An AST guard test for double-escaped regex literals — the bug class behind that SSRF hole.
-3. P0.2 `diff_since` — the reason the model rewrites whole files instead of editing them.
-4. The MCP OAuth **frontend** half: the popup that opens the authorization URL, plus
-   `MCP_OAUTH_REDIRECT_URL`. This is the "permissions page" the owner has been asking for.
-5. Hands off: `build-classifier.ts`, the classification/DB-gate block in `build.ts`,
-   `supabase-mcp.ts`, and the database path.
+## D. Owner's hands
+
+- Rotate the Supabase **service_role** key — it appeared in a screenshot on 23 Oct.
+- Enable **leaked-password protection** (Supabase → Authentication).
+- Merge **`db-path` into `main`** — everything from the last three days lives only on the branch.
+- AWS **billing alarm**, and write down the credits' expiry date.
 
 ---
 
 ## E. The standing checklist, every change, no exceptions
 
-- `npm ci` → `npm run typecheck` → `npm test` → `npm run build`. All four, on Linux, before push.
-- Never push red. Merge to `main` only after the suite passes **on main**.
-- No claim without a measurement. "Probably works" goes in the "not verified" list instead.
-- After any E2B template build: `cd e2b-template && npx tsx verify-template.ts` (trap 6).
+- `npm run typecheck` → `npm test` → `npm run build`. All three, on Linux, before push.
+- Never push red. No claim without a measurement; "probably works" goes in section B.
+- After any E2B template build: `cd e2b-template && npx tsx verify-template.ts`.
 - New findings go in `HISTORY.md`; `CLAUDE.md` changes only when something it states stops being
   true.
