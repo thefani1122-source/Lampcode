@@ -125,6 +125,14 @@ sed -e "s#@REPO_DIR@#$REPO_DIR#g" -e "s#@APP_USER@#$APP_USER#g" \
 
 install -d -o "$APP_USER" -g "$APP_USER" /var/log/lampcode
 
+# Caddy's own log directory. The Caddyfile writes an access log, and Caddy
+# REFUSES TO START if it cannot open it — "permission denied" on
+# /var/log/caddy/access.log, exit 1, no TLS at all. The package does not
+# reliably leave this directory writable by the caddy user, and the failure
+# reads as a certificate problem rather than a file-permission one, which is
+# how it cost a deploy on 2026-10-23.
+install -d -o caddy -g caddy /var/log/caddy
+
 # ── Caddy ────────────────────────────────────────────────────────────────────
 sed -e "s#@HOST@#$HOST#g" "$REPO_DIR/deploy/aws/Caddyfile" > /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile >/dev/null || die "Caddyfile did not validate"
