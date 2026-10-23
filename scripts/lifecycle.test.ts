@@ -203,4 +203,39 @@ check(
   (build.match(/previewUrl: null/g) ?? []).length > 0 && build.includes("previewUrl: url"),
 );
 
+// ── A failing gate has to reach the person, not just the record ────────────
+// MEASURED 2026-10-23 (session df827368, "Build me a habit tracker"):
+// checkPage=fail, checkTypes=fail, both FRESH — re-run at the end and still
+// failing — and the closing message said nothing about either. The model's own
+// summary said "Your HabitFlow habit tracker is complete!".
+//
+// The summary is written by the thing being graded, so it cannot be the only
+// account of whether the app works.
+
+check(
+  "a failing page check is said out loud",
+  build.includes('const pageFailed = outcome.checkPage === "fail"') &&
+    build.includes("The app does not open"),
+);
+check(
+  "a failing type check is said out loud",
+  build.includes('const typesFailed = outcome.checkTypes === "fail"') &&
+    build.includes("will not build for production"),
+);
+check(
+  "it is the FIRST thing in the closing message, before the backend block",
+  build.indexOf("const closingLines: string[] = []") < build.indexOf("this build is NOT finished") &&
+    build.indexOf("this build is NOT finished") < build.indexOf("What is real, and what is not"),
+);
+// "never" and "unavailable" are not failures, and treating them as such would
+// make every build that could not run a gate look broken.
+check(
+  "only `fail` counts — not `never`, not `unavailable`",
+  !build.includes('outcome.checkPage !== "pass"') && !build.includes('outcome.checkTypes !== "pass"'),
+);
+check(
+  "and it offers the next step rather than just the bad news",
+  build.includes("Send me a follow-up message and I will fix this"),
+);
+
 console.log(`\n${checks} lifecycle checks passed`);

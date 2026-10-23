@@ -4595,6 +4595,41 @@ export async function runFastBuild(
     // prose is where "complete E-commerce Store" and "mock authentication"
     // appeared in the same build.
     const closingLines: string[] = [];
+
+    // ── What the checks found, said FIRST and in plain words ────────────────
+    // MEASURED 2026-10-23 on a real build (session df827368, "Build me a habit
+    // tracker"): checkPage=fail, checkTypes=fail, BOTH FRESH (stale=0, so they
+    // were re-run at the end and still failed) — and the user was told "Your
+    // HabitFlow habit tracker is complete!". Nothing anywhere in this closing
+    // block mentioned either failure, and the row was written status=success.
+    //
+    // The model's own summary is the last thing the person reads and it is
+    // written by the thing being graded, so it cannot be the only account of
+    // whether the app works. The gates have to speak for themselves, before
+    // anything else, in words that describe what the person will SEE rather
+    // than the name of the check that failed.
+    //
+    // "fail" only — "never" and "unavailable" are not failures, and claiming
+    // they are would make every build that could not run a gate look broken.
+    const pageFailed = outcome.checkPage === "fail";
+    const typesFailed = outcome.checkTypes === "fail";
+    if (pageFailed || typesFailed) {
+      closingLines.push("Before anything else — this build is NOT finished:");
+      if (pageFailed) {
+        closingLines.push(
+          "• The app does not open. The page throws an error when it loads, so whatever the " +
+            "preview is showing is not this app working.",
+        );
+      }
+      if (typesFailed) {
+        closingLines.push(
+          "• The code does not compile — there are type errors. Even if the preview shows " +
+            "something, this will not build for production in its current state.",
+        );
+      }
+      closingLines.push("Send me a follow-up message and I will fix this before anything else.");
+    }
+
     if (fullstackEvidence) {
       const fs = fullstackEvidence;
       const real =
