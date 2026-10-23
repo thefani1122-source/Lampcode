@@ -78,17 +78,31 @@ eq("an unchanged file produces no diff", diffFile("a.ts", "one\ntwo", "one\ntwo"
 
 // ── narrateTool ─────────────────────────────────────────────────────────────
 
+// Arguments arrive as the JSON STRING the model emitted. The first version of
+// these tests passed objects, which no caller sends — so every one of them
+// passed while production showed "Read" and "Edited" with no filename on them.
+// Pass what the callers pass.
 eq("an edit names the file in both tenses",
-  narrateTool("edit_file", { path: "src/App.tsx" }),
+  narrateTool("edit_file", JSON.stringify({ path: "src/App.tsx" })),
   { label: "Edited src/App.tsx", active: "Editing src/App.tsx" });
 
+eq("an object still works, for any caller that holds one",
+  narrateTool("edit_file", { path: "src/App.tsx" }).label,
+  "Edited src/App.tsx");
+
 eq("a multi-file write counts the files",
-  narrateTool("write_files", { files: [{ path: "a" }, { path: "b" }, { path: "c" }] }).label,
+  narrateTool("write_files", JSON.stringify({ files: [{ path: "a" }, { path: "b" }, { path: "c" }] })).label,
   "Wrote 3 files");
 
 eq("one file is not pluralised",
-  narrateTool("write_files", { files: [{ path: "a" }] }).label,
+  narrateTool("write_files", JSON.stringify({ files: [{ path: "a" }] })).label,
   "Wrote 1 file");
+
+// A tool call is streamed in fragments, so the arguments are not valid JSON
+// until the last one lands.
+eq("a half-streamed argument string does not break the label",
+  narrateTool("edit_file", '{"path":"src/Ap').label,
+  "Edited");
 
 // A replayed event carries no arguments. "Wrote 0 files" would be a lie about
 // the build; saying less is the honest option.
@@ -101,11 +115,11 @@ eq("the gates speak plainly",
   ["Checked that the app opens", "Checked that the code compiles", "Checked every button and form"]);
 
 ok("a long path keeps the filename visible",
-  narrateTool("read_file", { path: "src/a/very/deeply/nested/directory/tree/that/keeps/going/Component.tsx" })
+  narrateTool("read_file", JSON.stringify({ path: "src/a/very/deeply/nested/directory/tree/that/keeps/going/Component.tsx" }))
     .label.endsWith("Component.tsx"));
 
 eq("a search quotes its query",
-  narrateTool("search_code", { query: "useEffect" }).label,
+  narrateTool("search_code", JSON.stringify({ query: "useEffect" })).label,
   'Searched the code for "useEffect"');
 
 eq("an unknown tool still reads as words",
@@ -125,6 +139,20 @@ eq("an insertion-only delta omits the minus half", formatLineDelta(4, 0), "+4");
   ok("the registry was actually parsed", registered.length > 20, `found ${registered.length}`);
   const missing = registered.filter((name) => !new RegExp(`^\\s{2}${name}:`, "m").test(narration));
   ok("every registered tool has a phrase", missing.length === 0, `missing: ${missing.join(", ")}`);
+}
+
+// The guard that would have caught the shipped bug: the callers' own type.
+// If arguments ever stop being a string, these tests are describing something
+// the code no longer does.
+{
+  const stream = readFileSync("src/agents/stream-handler.ts", "utf8");
+  ok("stream-handler still passes tool arguments as a string",
+    /toolCalls:\s*Array<\{[^}]*arguments:\s*string/.test(stream));
+  ok("and it is that same value that is narrated",
+    stream.includes("narrateTool(chunk.toolCall.name, chunk.toolCall.arguments)"));
+  const dispatcher = readFileSync("src/agents/dispatcher.ts", "utf8");
+  ok("the dispatcher narrates the arguments it was given too",
+    dispatcher.includes("narrateTool(tc.name, tc.arguments)"));
 }
 
 console.log(`\n${checks} tool-narration checks, ${failures} failed`);

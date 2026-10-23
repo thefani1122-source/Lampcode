@@ -105,9 +105,36 @@ function fallback(tool: string): Phrase {
   return { past: `Ran ${words}`, present: `Running ${words}` };
 }
 
+/**
+ * Tool arguments reach both callers as the JSON STRING the model emitted, not
+ * as an object — `toolCalls: Array<{ id; name; arguments: string }>` in
+ * stream-handler.ts, and the same values in dispatcher.ts.
+ *
+ * Getting this wrong is what shipped "Read" and "Edited" with no filename on
+ * them: the object check silently rejected every string, so no argument was
+ * ever read and every label lost its target. Seen in production 2026-10-23.
+ * The first version of the test for this passed an object, which the callers
+ * never send — a test can only prove what it was given is handled.
+ */
+function argumentBag(args: unknown): Record<string, unknown> {
+  if (typeof args === "string") {
+    const text = args.trim();
+    if (!text) return {};
+    try {
+      const parsed: unknown = JSON.parse(text);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      // A partially streamed tool call is not yet valid JSON. Saying less is
+      // right here: the result event will re-label the row once it completes.
+      return {};
+    }
+  }
+  return args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+}
+
 export function narrateTool(tool: string, args?: unknown): ToolNarration {
   const phrase = PHRASES[tool] ?? fallback(tool);
-  const bag = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const bag = argumentBag(args);
 
   let suffix = "";
   if (phrase.countArg) {
