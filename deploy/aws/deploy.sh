@@ -22,9 +22,21 @@ git merge --ff-only "origin/$BRANCH" || die "not a fast-forward — someone forc
 AFTER="$(git rev-parse --short HEAD)"
 [[ "$BEFORE" == "$AFTER" ]] && say "Already up to date at $AFTER" || say "Now at $AFTER"
 
+# Same trap as the bootstrap: this lockfile was generated on x86, `npm ci`
+# honours it exactly, and npm's optional-dependency bug (npm/cli#4828) means
+# the arm64 rollup binary is never fetched. npm ci SUCCEEDS and the BUILD dies,
+# so the fallback hangs off the build. Worse here than in the bootstrap: npm ci
+# wipes a working node_modules first, so without this every deploy would undo
+# the one that worked.
 say "Installing and building"
-npm ci --no-audit --no-fund
-npm run build
+if ! { npm ci --no-audit --no-fund && npm run build; }; then
+  say "The lockfile's tree does not build on this machine — re-resolving"
+  rm -rf node_modules package-lock.json
+  npm install --no-audit --no-fund
+  npm run build
+  # Leave the tree clean so the next `git merge --ff-only` is not refused.
+  git checkout -- package-lock.json || true
+fi
 [[ -f dist/index.js ]] || die "build produced no dist/index.js — NOT restarting, the old version is still serving"
 
 say "Restarting"
