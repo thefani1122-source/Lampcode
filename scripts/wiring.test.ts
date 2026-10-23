@@ -12,6 +12,7 @@
  * backend mounts the same path under a prefix.
  */
 
+import { readFileSync } from "node:fs";
 import {
   findWiringGaps,
   tallyWiringGaps,
@@ -725,6 +726,35 @@ check(
   kinds(ROTA_LIKE),
   ["dead-handler", "dead-link"],
 );
+
+// ── The prompt has to ASK for what this file measures ───────────────────────
+// Asked by the owner 2026-10-23: the original idea was "analyse the request,
+// then build a product where every function, every page, every button works".
+// Half of it survived — the prompt says "no coming soon sections" and "build
+// COMPLETE apps" — and that half is about how MANY features there are.
+//
+// This file measures seven ways a control can render and do nothing, and the
+// prompt named roughly two of them. We were checking afterwards for something
+// we never asked for up front, which is the drift this repo keeps finding.
+{
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  const asks = (what: string, needle: string): void =>
+    ok(`the prompt asks for: ${what}`, prompt.includes(needle));
+
+  ok("there is a block about controls doing something", prompt.includes("EVERY CONTROL YOU RENDER MUST DO SOMETHING"));
+  asks("buttons with no handler", "A <button> with no onClick");
+  asks("forms that submit nowhere", "<form> with no onSubmit");
+  asks("links to undeclared routes", "a path no <Route> declares");
+  asks("fetches to endpoints that do not exist", "an endpoint the backend never defines");
+  asks("endpoints nothing calls", "A backend endpoint nothing in the frontend ever calls");
+  asks("placeholder text", '"Coming soon", "TODO"');
+  asks("orphan files and stylesheets", "a stylesheet nothing loads");
+  ok("and it says leaving a feature out is the honest move",
+    prompt.includes("leave it OUT and"));
+  // The reason to ask rather than only check: a failed check costs a repair
+  // dispatch, and the person waits for it.
+  ok("it tells the model the checks run automatically", prompt.includes("measured automatically after you stop"));
+}
 
 console.log(failures === 0 ? "\nAll wiring cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);

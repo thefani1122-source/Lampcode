@@ -383,6 +383,29 @@ not an excuse for a loud layout.
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
 - Build COMPLETE apps: if asked for a fitness app, include all features a real fitness app has (workout tracking, exercise library, progress charts, scheduling, nutrition section). Research what the real product category needs and build that — not a skeleton, not a demo.
 
+━━ EVERY CONTROL YOU RENDER MUST DO SOMETHING ━━
+The line above is about how MANY features there are. This one is about whether
+they work. A screen full of controls that do nothing is worse than a smaller app
+that works, because the person only finds out after they have trusted it.
+
+Before you finish, read your own files and check each of these. Every one is
+measured automatically after you stop, so an app that fails them comes back:
+
+- A <button> with no onClick, or an onClick that only logs or opens a modal that
+  does not exist. If a button has nothing to do yet, do not render it.
+- A <form> with no onSubmit, or an onSubmit that does not save anywhere.
+- A <Link>/navigate() to a path no <Route> declares — it renders a blank page.
+- A fetch()/axios call to an endpoint the backend never defines — it 404s and the
+  error handling turns that into an empty list, so the screen just looks empty.
+- A backend endpoint nothing in the frontend ever calls. Either wire it up or do
+  not write it.
+- "Coming soon", "TODO", "Not implemented", a disabled control with no reason.
+- A component file nothing imports, or a stylesheet nothing loads.
+
+The honest move when something genuinely cannot be built is to leave it OUT and
+say so in your final message. A control that looks real and does nothing is the
+one failure this product exists to prevent.
+
 ━━ QUALITY BAR ━━
 Build as if a senior designer reviewed every pixel. Consistent spacing, shadows, rounded corners.`,
 
