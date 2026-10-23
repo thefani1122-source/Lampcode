@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 67241)
-Total output lines: 5314
-
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -1229,7 +1226,2798 @@ export async function runFastBuild(
               : [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
                   "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/types.ts, src/db/schema.sql.",
-                  "Do NOT generate next.config.ts…37241 tokens truncated…st, and nothing
+                  "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
+                  "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                  "app/api/*/route.ts: build a Supabase client PER REQUEST with SUPABASE_ANON_KEY and the caller's Authorization header forwarded in global.headers — that header is what makes auth.uid() resolve inside RLS. Never a service key, never a module-level client, and NEVER import supabase-js in 'use client' components.",
+                  "app/page.tsx is a Server Component — it can query Supabase directly (import supabase-js with the service key). Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
+                  "Do NOT generate package.json or .env — the environment provides them.",
+                ]
+            : fullstackFramework === "tanstack"
+              ? fullstackDb === "mongodb"
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/schema.ts, src/lib/db.ts.",
+                    "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                    "Data fetching: use createServerFn (server-side) — call connectDB() + Mongoose inside the server fn. Never call Mongoose from client components.",
+                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                    "Do NOT generate package.json or .env — the environment provides them.",
+                  ]
+                : [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
+                    "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                    "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
+                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                    "Do NOT generate package.json or .env — the environment provides them.",
+                  ]
+              : fullstackDb === "mongodb"
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/schema.ts, src/lib/db.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
+                    "Add src/server/routes/auth.ts ONLY if the app needs login/accounts (see AUTH MODE).",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                    "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
+                  ]
+                : wantsPython
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
+                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+                  ]
+                : [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
+                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                    "Backend: Hono.js + Supabase (@supabase/supabase-js) — NOT drizzle-orm, NOT any TCP DB driver; export const api = new Hono(); routes prefixed /api/; Zod validation.",
+                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+                  ]
+          : [
+              "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+              "Always include src/App.tsx, src/index.tsx, and package.json.",
+              "src/App.tsx must have `export default function App()`.",
+            ];
+
+    // The person's own words, stored first so the history reads as a
+    // conversation rather than starting mid-reply. Nothing else records this:
+    // the chat shows it from a sessionStorage key that dies with the tab.
+    recordUserPrompt(sessionId, prompt);
+
+    // ── Tell frontend what's being built (original prompt, never expanded) ──
+    server?.thinking(sessionId, { text: `Building: ${prompt}`, sessionId });
+    server?.thinking(sessionId, {
+      text: hasExistingCode
+        ? `Editing existing project (${Object.keys(existingFiles).length} files loaded)...`
+        : "Starting new build...",
+      sessionId,
+    });
+    server?.thinking(sessionId, { text: "Calling AI model...", sessionId });
+
+    // ── Dispatch frontend agent ─────────────────────────────────────────────
+    const dispatcher = getDispatcher();
+
+    // When a reference image is attached, prepend a pixel-fidelity requirement
+    // so it surfaces prominently in the user message alongside the system-prompt
+    // instruction injected by buildSystemPrompt().
+    const effectiveRequirements = hasReferenceImage
+      ? [
+          "A reference screenshot/design has been provided. Extract ALL exact hex colors, font sizes, spacing, border-radius, and shadow values from it before writing any code.",
+          "Every color and spacing value in your output must exactly match the reference — no approximations.",
+          ...requirements,
+        ]
+      : requirements;
+
+    // ── Planning pass, for long new builds only ─────────────────────────────
+    // One cheap dispatch that decides the file layout before any code exists.
+    // A big build was otherwise one long improvisation: the model found out
+    // what the app was while writing it, which is where the one-file-app habit
+    // comes from, and when ForgeFlow died at round 14 nothing stated what it
+    // had set out to make. Never throws — a build must not fail because its
+    // optional planning pass did.
+    let buildPlan: BuildPlan | null = null;
+    let planCostUsd = 0;
+    if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
+      server?.emitToRoom(sessionId, "build:preview_log", {
+        sessionId,
+        line: "Planning the file layout…",
+      });
+      const planned = await planBuild({
+        dispatcher, prompt, sessionId, userId, projectId, provider,
+      });
+      buildPlan = planned.plan;
+      planCostUsd = planned.costUsd;
+      if (buildPlan) {
+        // Only when a plan was really produced: "planned" and "tried to plan
+        // and got nothing" are different facts, and the projection reads the
+        // presence of this event as the first one.
+        recorder.record({ type: "plan/ready", files: buildPlan.files.map((f) => f.path) });
+        console.log(
+          `[build] planned ${buildPlan.files.length} file(s) session=${sessionId} ` +
+          `cost=$${planCostUsd.toFixed(4)}`,
+        );
+        // Stored before the build runs, not after. The point of the plan is to
+        // survive a build that does not finish — writing it at the end would
+        // lose it in exactly the case it exists for.
+        await db
+          .update(buildSessions)
+          .set({ buildPlan })
+          .where(eq(buildSessions.id, sessionId))
+          .catch((err: unknown) => {
+            logger.warn({ sessionId, err }, "[planner] could not store the plan");
+          });
+        server?.emitToRoom(sessionId, "build:preview_log", {
+          sessionId,
+          line: `Plan: ${buildPlan.files.length} file(s) — ${buildPlan.summary}`,
+        });
+      }
+    }
+
+    // ── Completion audit, pass 1 of 2: the user's own words ─────────────────
+    // Started here and awaited at the very end, so its latency hides behind the
+    // build rather than adding to it.
+    //
+    // It reads `prompt` — the RAW request. Not the expanded prompt and not the
+    // plan, both of which are already OUR interpretation of it. An audit built
+    // from the builder's interpretation agrees with the builder's blind spots
+    // by construction, which is how `editor-undo` passed every gate while
+    // shipping no persistence at all.
+    const criteriaPromise: Promise<ExtractResult> = shouldAudit()
+      ? extractCriteria({ dispatcher, prompt, sessionId, userId, projectId, provider })
+          .catch(() => ({ criteria: [], costUsd: 0, reason: "extraction threw" }))
+      : Promise.resolve({ criteria: [], costUsd: 0, reason: "disabled" });
+
+    // Show what was understood as soon as extraction completes, without
+    // joining the build's critical path. Catch the side-effect chain too so a
+    // failed chat emit cannot become an unhandled rejection.
+    void criteriaPromise
+      .then((result) => {
+        for (const line of formatCriteriaForUser(result)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      })
+      .catch((err) => logger.warn({ sessionId, err }, "Could not show extracted requirements in chat"));
+
+    // ── What must NOT be possible in this app (G2) ──────────────────────────
+    // The same trick as the audit above, aimed at security: a pass that cannot
+    // write code turns the request into rules, and something else tries to
+    // break them later.
+    //
+    // It reads the RAW prompt for the same reason the audit does, and it runs
+    // beside it rather than after it — two short JSON passes in parallel cost
+    // one pass of latency.
+    //
+    // Only for builds that store or guard something. A landing page has no
+    // threat model worth a dispatch, and asking for one produces exactly the
+    // boilerplate the filter exists to throw away.
+    const wantsThreatModel = shouldAudit() && (isFullstackBuild || needsAuth(prompt));
+    const threatsPromise: Promise<ThreatExtractResult> = wantsThreatModel
+      ? extractThreats({ dispatcher, prompt, sessionId, userId, projectId, provider })
+          .catch(() => ({ threats: [], costUsd: 0, reason: "extraction threw" }))
+      : Promise.resolve({ threats: [], costUsd: 0, reason: "not a build that guards anything" });
+
+    void threatsPromise
+      .then((result) => {
+        if (result.threats.length > 0) {
+          console.log(
+            `[build] threats session=${sessionId} kept=${result.threats.length} ` +
+            `generic=${result.generic ?? 0} dropped=${result.dropped ?? 0}`,
+          );
+        }
+        for (const line of formatThreatsForUser(result.threats)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      })
+      .catch((err) => logger.warn({ sessionId, err }, "Could not show the threat model in chat"));
+
+    // Fetched unconditionally now — there's no upfront keyword gate deciding
+    // whether this build might need a connected service; the model decides
+    // that itself once these are attached to the dispatch. Cheap (single DB
+    // query + decrypt per row, no network calls) even when empty.
+    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+    // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
+    // mcp-action-agent.ts always included them for the same reason: a reference
+    // URL in the prompt shouldn't require a user to have connected anything.
+    // They still go through the same read-only classification as everything
+    // else below, not special-cased as trusted.
+    //
+    // Internal providers use the same locally executed MCP tool path as
+    // user-connected servers, independent of the model gateway.
+    const internalMcpServers = [
+      ...(config.FIRECRAWL_API_KEY
+        ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev/v2/mcp", authToken: config.FIRECRAWL_API_KEY }]
+        : []),
+      { slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: null },
+    ];
+    // User-connected servers now reach Modal builds too. The old guard emptied
+    // this for Modal because MCP forced the dispatch onto Anthropic, so a user
+    // who connected GitHub got a build on a provider with no credentials rather
+    // than GitHub tools. The dispatcher no longer switches provider on MCP —
+    // read-only tools are offered as ordinary functions and executed our side,
+    // writes still go through the approval-gated proxies — so the guard would
+    // now only be hiding the servers the user deliberately connected.
+    //
+    // Attach only user servers relevant to this prompt; internal web tools are
+    // shared local tools for both gateways.
+    const { kept: relevantUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
+    if (droppedMcp.length > 0) {
+      console.log(
+        `[build] mcp relevance project=${projectId} kept=[${relevantUserMcp.map((s) => s.slug).join(",")}] ` +
+        `dropped=[${droppedMcp.join(",")}]`,
+      );
+    }
+    const mcpServers = [...relevantUserMcp, ...internalMcpServers];
+
+    // ── What deploy_app needs, if the user connected Vercel ──────────────────
+    // Lifted from the servers already resolved above rather than read again:
+    // `getConnectedMcpServers` has run and already decrypted these, so a second
+    // lookup would be a second decrypt of the same row.
+    //
+    // Resolved HERE and passed down, not looked up inside the tool module. Doing
+    // it there would import integrations.ts into agents/tools.ts and pull the
+    // database and crypto helpers into scripts/mcp-tools.test.ts, which runs
+    // free and without credentials today — trap 9's exact shape.
+    //
+    // Absent is a normal state, not a failure: most users will not have Vercel
+    // connected, and the tool answers that with a sentence telling them how.
+    // The project's NAME is not otherwise loaded in this function, and it is
+    // what the user will see in their own Vercel dashboard — so it is worth one
+    // read, but only for the users who actually connected Vercel. Guarding the
+    // query on the token keeps it off the path of everyone who did not.
+    // MEASURED 2026-10-21: this used to read `vercelMcp.authToken`, and that
+    // field is now null on every path — Vercel's MCP auth became OAuth, whose
+    // token lives in the session rather than on the server record. So
+    // `deploy_app` could never receive a token again, while still being offered
+    // to the model. The REST deploy needs an account token, which is a
+    // different credential from the MCP one, so it is read as its own thing.
+    const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
+    const vercelDeployToken = vercelMcp
+      ? await getUserVercelDeployToken(userId).catch(() => null)
+      : null;
+    let deployCtx: { vercelToken: string; projectName: string } | undefined;
+    if (vercelDeployToken) {
+      const named = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .catch(() => []);
+      deployCtx = {
+        vercelToken: vercelDeployToken,
+        projectName: named[0]?.name ?? "lampcode-app",
+      };
+    }
+
+    // The threat model, if it arrived in time, goes to the model BEFORE it
+    // writes anything.
+    //
+    // Telling it "a clinician may only read their own patients' appointments"
+    // up front is worth far more than catching the opposite afterwards: the
+    // first costs one sentence, the second costs a repair dispatch and may not
+    // be fixable without rewriting the data layer.
+    //
+    // It has been running in parallel since well above this line, so in
+    // practice this waits for little or nothing. The timeout exists so that a
+    // slow or wedged extraction can never hold a build hostage — it is an
+    // improvement to the prompt, not a prerequisite for it.
+    const threatsForBuild = wantsThreatModel
+      ? await Promise.race([
+          threatsPromise.then((r) => r.threats).catch(() => []),
+          new Promise<ThreatRequirement[]>((resolve) => setTimeout(() => resolve([]), 20_000)),
+        ])
+      : [];
+    const threatBlock = formatThreatsForModel(threatsForBuild);
+    if (threatBlock) {
+      console.log(`[build] threats in-prompt session=${sessionId} count=${threatsForBuild.length}`);
+    }
+
+    const result = await dispatcher.dispatch({
+      agentType: "frontend",
+      usageCategory: "build",
+      provider,
+      task: {
+        description:
+          (buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription) +
+          (threatBlock ? `\n\n${threatBlock}` : ""),
+        requirements: effectiveRequirements,
+        outputFormat: "code",
+        hasReferenceImage,
+        isAgentBuild: agentBuildFlag,
+        hasAnimationContext: animationFlag,
+        projectMemory,
+        projectManifest,
+      },
+      sessionId,
+      userId,
+      projectId,
+      // Tool-calling (load_skill/read_project_file/request_write_action, plus
+      // any connected services' read-only MCP tools) is scoped to this, the
+      // original generation dispatch — the fix loops below already give the
+      // model precise, targeted context directly, so they don't opt in.
+      // cumulativeUsd is 0 here: this is the first dispatch of the build.
+      enableTools: true,
+      costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
+      agenticBuild,
+      userPrompt: prompt,
+      // Only this loop knows the ORDER of its rounds, tool calls, gate verdicts
+      // and writes — which is the one thing the outcome could never reconstruct
+      // afterwards, and the reason a gate verdict used to outlive the write
+      // that invalidated it.
+      onEvent: (event) => recorder.record(event),
+      // Only on an edit — on a new build there is no prior project, and an
+      // empty map would make list_files fall through to the sandbox anyway.
+      ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
+      onSandboxLog: (line: string) =>
+        server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+      mcpServers,
+      ...(deployCtx === undefined ? {} : { deploy: deployCtx }),
+    });
+
+    outcomeDraft = {
+      rounds: result.rounds,
+      turnsExhausted: result.turnsExhausted,
+      filesWritten: Object.keys(result.generatedFiles).length,
+      toolCalls: countToolCalls(result.toolCalls),
+      // "never" and "unavailable" are different failures and both matter: the
+      // first is a model that didn't look, the second is a gate that couldn't
+      // run. Collapsing either into "fail" is how a structurally broken
+      // check_page looked like a model problem for three weeks.
+      checkPage: result.gateResults.checkPage ?? "never",
+      checkTypes: result.gateResults.checkTypes ?? "never",
+      checkTests: result.gateResults.checkTests ?? "never",
+      staleCheckPage: result.gateResults.writesAfterCheckPage ?? 0,
+      staleCheckTypes: result.gateResults.writesAfterCheckTypes ?? 0,
+      staleCheckTests: result.gateResults.writesAfterCheckTests ?? 0,
+      planned: buildPlan !== null,
+      plannedFiles: buildPlan?.files.length ?? 0,
+      churn: result.churn,
+      deadCodeCalled: result.deadCode.called,
+      ...(result.review.called
+        ? {
+            review: {
+              deep: result.review.deep,
+              total: result.review.total,
+              unreviewed: result.review.unreviewed,
+              findings: result.review.findings,
+              dropped: result.review.dropped,
+              costUsd: result.review.costUsd,
+            },
+          }
+        : {}),
+      costUsd: result.costUsd + planCostUsd + result.review.costUsd,
+      durationMs: Date.now() - buildStartedMs,
+    };
+
+    // review_code dispatches a model per file, inside the main dispatch's tool
+    // loop, so its spend is not in result.costUsd and would otherwise be
+    // invisible. A review that cost more than the build must not look free.
+    // Running spend across this build's dispatches. The main dispatch above
+    // always fires regardless of cost — there is nothing to check it against yet.
+    // The planning pass counts: it is a model call this build paid for, and
+    // leaving it out would understate every planned build's cost.
+    let cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd;
+
+    // ── Check for cancellation ──────────────────────────────────────────────
+    if (cancelledSessions.has(sessionId)) {
+      cancelledSessions.delete(sessionId);
+      // Tell the client the build actually stopped — the frontend listens for
+      // "build:cancelled" to clear its "building" state. Without this the UI
+      // hangs forever after the user presses cancel.
+      server?.buildCancelled(sessionId);
+      return;
+    }
+
+    // ── Parse and write files ───────────────────────────────────────────────
+    console.log("[DEBUG] LLM output first 500 chars:", result.content.substring(0, 500))
+    console.log("[DEBUG] LLM output last 200 chars:", result.content.substring(result.content.length - 200))
+
+    const outputDir = join(WORKSPACE_BASE, projectId, sessionId, "frontend");
+    await mkdir(outputDir, { recursive: true });
+
+    // For every follow-up edit: copy ALL existing files first so unchanged files
+    // remain present. LLM output then overwrites only the changed ones.
+    if (preserveExistingFiles && lastSuccessRow[0]?.outputDir) {
+      const copied = await copyExistingFiles(lastSuccessRow[0].outputDir, outputDir);
+      console.log(`[build] copied ${copied} existing files to new outputDir`);
+    }
+
+    // Keep the build-start snapshot for diff_since while removing these paths from current output.
+    for (const deletedPath of result.deletedFiles) {
+      const fullPath = resolve(outputDir, deletedPath);
+      if (fullPath !== outputDir && fullPath.startsWith(outputDir + sep)) {
+        await rm(fullPath, { force: true });
+      }
+    }
+
+    // In agentic mode the model is told to write files through write_files
+    // rather than printing ```filename fences, so the file set normally comes
+    // back from the dispatch. Normally — but not every model actually calls
+    // the tool. A model that ignores the instruction (or whose endpoint
+    // doesn't really support tool calling) still writes perfectly good code,
+    // just in its reply, and reading only generatedFiles threw all of it away
+    // and reported "generation failed" over a build that had produced a whole
+    // app. Fall back to parsing the reply: an agentic build that degrades into
+    // a pipeline build is a far better outcome than no build.
+    let parsedFiles: ParsedFile[];
+    if (agenticBuild) {
+      const written = Object.entries(result.generatedFiles).map(([path, code]) => ({ path, code }));
+      if (written.length > 0) {
+        parsedFiles = written;
+        console.log(`[build] agentic mode produced ${written.length} file(s) via its tools`);
+      } else if (result.toolCalls.length > 0) {
+        // Tools were used and nothing was written: that is a decision, not a
+        // failure. On an edit the model can read the project, find the change
+        // already present, and correctly write nothing — which is exactly what
+        // happened here (toolCalls=5, files=0). Parsing the reply in that case
+        // mined prose for code and invented a file out of an explanation, which
+        // then failed validation and told the user the project was missing
+        // App.tsx while it sat there rendering perfectly.
+        parsedFiles = [];
+        console.log(
+          `[build] agentic mode wrote no files but used ${result.toolCalls.length} tool(s) ` +
+            `— treating as a deliberate no-op, not parsing the reply`,
+        );
+      } else {
+        parsedFiles = parseFilesFromContent(result.content);
+        logger.warn(
+          {
+            sessionId,
+            projectId,
+            model: result.modelUsed,
+            toolCallsMade: result.toolCalls.length,
+            toolNames: [...new Set(result.toolCalls.map((t) => t.name))],
+            stopReason: result.stopReason,
+            recoveredFiles: parsedFiles.length,
+          },
+          "Agentic build wrote no files via write_files — falling back to parsing the reply. " +
+            "toolCallsMade: 0 means the model never called any tool at all, which usually means " +
+            "this model or endpoint does not do tool calling; the harness cannot work on it.",
+        );
+        console.log(
+          `[build] agentic mode produced 0 file(s) via its tools ` +
+            `(toolCalls=${result.toolCalls.length}) — recovered ${parsedFiles.length} file(s) from the reply`,
+        );
+      }
+    } else {
+      parsedFiles = parseFilesFromContent(result.content);
+    }
+
+    // ── Pure action-only response ────────────────────────────────────────────
+    // The model used a connected service's MCP tool, or declined a write
+    // action via request_write_action, and produced no file fences — this was
+    // never trying to build an app. Deliver it as a completion here, before
+    // the fix-agent retry and entry-point checks below (both of which assume
+    // "no files" means a failed generation, which would be wrong here) and
+    // before the sandbox/fix-loop pipeline this function runs afterward.
+    if (parsedFiles.length === 0 && (result.mcpToolCalls.length > 0 || result.requestedWriteAction)) {
+      logger.info(
+        {
+          sessionId,
+          mcpToolCalls: result.mcpToolCalls.map((t) => `${t.serverName}.${t.name}`),
+          requestedWriteAction: result.requestedWriteAction,
+        },
+        "Action-only response — no files produced, delivering as a completion instead of a build",
+      );
+      server?.buildComplete(sessionId, {
+        sessionId,
+        files: {},
+        backendFiles: {},
+        backendFileCount: 0,
+        previewUrl: null,
+        totalFiles: 0,
+        summary: result.content || "Done.",
+      });
+      return;
+    }
+
+    // Auto-trigger fix agent if frontend produced no structured file output.
+    //
+    // Never on an agentic EDIT. This rescue re-parses ```filename fences, and
+    // on an edit a model that read the project and correctly concluded nothing
+    // needed changing also produces zero files and a short reply — answering
+    // that by spending another dispatch and writing stale fences over a project
+    // that was already correct is a regression, not a repair. A new agentic
+    // build with nothing to show has genuinely failed, so it still gets the
+    // rescue like any other build.
+    if (!(agenticBuild && hasExistingCode) && parsedFiles.length === 0 && result.content.trim().length < 200) {
+      logger.warn({ sessionId }, "Frontend agent produced no structured output — triggering fix agent");
+      try {
+        const fixResult = await dispatcher.triggerFixAgent(
+          "frontend",
+          `Original prompt: ${prompt}\nAgent response: ${result.content.slice(0, 500)}`,
+          sessionId, projectId, userId,
+        );
+        parsedFiles = parseFilesFromContent(fixResult.content);
+      } catch (fixErr) {
+        logger.error({ sessionId, fixErr }, "Fix agent also failed");
+      }
+    }
+
+    // For Next.js/TanStack builds, strip the React boilerplate that
+    // parseFilesFromContent auto-injects for Sandpack. These files are
+    // meaningless in a Next.js/TanStack project and would be written to the
+    // E2B sandbox unnecessarily (src/index.tsx confuses the project structure).
+    if (fullstackFramework !== "react") {
+      parsedFiles = parsedFiles.filter((f) => f.path !== "src/index.tsx");
+    }
+
+    // ── Drop files the model emitted with no actual content ─────────────────
+    // A real build ("counter app with login") produced 13 files of which 5 were
+    // empty — including src/db/types.ts, which src/lib/api.ts and src/App.tsx
+    // both import (so the app could not compile), and src/server/index.ts,
+    // which `test -f` still matches, so ensureBackendServer would start a
+    // backend that dies instantly. The non-empty gate further down only runs
+    // when the classifier tagged the build "fullstack"; that one was tagged
+    // frontend, so nothing checked the backend files the model wrote anyway.
+    // An empty file can never help: don't write it and don't count it toward
+    // "Built your app with N files". Runs BEFORE the entry-point check below so
+    // an empty src/App.tsx is correctly treated as a missing entry point.
+    const emptyFiles = parsedFiles.filter((f) => isEffectivelyEmpty(f.code)).map((f) => f.path);
+    if (emptyFiles.length > 0) {
+      parsedFiles = parsedFiles.filter((f) => !isEffectivelyEmpty(f.code));
+      logger.warn({ sessionId, projectId, emptyFiles }, "Model emitted empty files — dropping them");
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message: `The AI left ${emptyFiles.length} file(s) empty, so they were skipped: ${emptyFiles.join(", ")}. Send a follow-up prompt to fill them in.`,
+        validationErrors: emptyFiles.map((p) => `${p}: empty file`),
+      });
+    }
+
+    // ── Fail loudly on missing entry point for NEW builds ───────────────────
+    // parseFilesFromContent no longer injects a placeholder component when it
+    // can't find the entry point — that used to let broken generations silently
+    // report "success" with a fake "could not be extracted" component. For a
+    // brand-new build (no existing code to fall back on), a missing entry point
+    // means the generation genuinely failed: warn the client and abort.
+    const expectedEntryPoint =
+      fullstackFramework === "nextjs"   ? "app/page.tsx" :
+      fullstackFramework === "tanstack" ? "app/routes/index.tsx" :
+      "src/App.tsx";
+    if (!hasExistingCode && !parsedFiles.some((f) => f.path === expectedEntryPoint)) {
+      // Say which of the two actually happened. A cut-off response and a model
+      // that genuinely produced nothing usable look identical from here, but
+      // they mean completely different things to the person waiting: one is
+      // "ask for less in one go", the other is "try again".
+      const msg = result.stopReason === "max_tokens"
+        ? `The build ran out of room before finishing ${expectedEntryPoint}. Try asking for a smaller first version — you can add the rest in follow-up messages.`
+        : `The AI did not produce a valid ${expectedEntryPoint} — generation failed.`;
+      logger.error({ sessionId, projectId }, `Parse failure: ${expectedEntryPoint} missing from new build output`);
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message: msg,
+        missingFiles: [expectedEntryPoint],
+      });
+      throw new Error(msg);
+    }
+
+    let filesToWrite: ParsedFile[] =
+      parsedFiles.length > 0
+        ? parsedFiles
+        : [{ path: "output.md", code: result.content }];
+
+    // Fullstack builds must produce non-empty api.ts / db.ts / .env.example /
+    // README.md. If any are missing, attempt one focused retry for only those files
+    // before continuing — avoids broken deploys without risking infinite loops.
+    if (isFullstackBuild) {
+      const fileRecord: Record<string, string> = Object.fromEntries(
+        filesToWrite.map((f) => [f.path, f.code]),
+      );
+      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework);
+      if (missing.length > 0) {
+        logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
+        server?.thinking(sessionId, {
+          text: `Retrying generation for missing files: ${missing.join(", ")}`,
+          sessionId,
+        });
+
+        try {
+          const dbLabel = fullstackDb === "mongodb"
+            ? "MongoDB (Mongoose — use mongoose models, connectDB() from src/lib/db.ts)"
+            : "Supabase PostgreSQL (@supabase/supabase-js — use createClient with env vars)";
+
+          const retryDescription =
+            `The following backend/db files were empty or missing from the first build pass and must be generated now:\n` +
+            missing.map((f) => `- ${f}`).join("\n") + "\n\n" +
+            `App description: ${prompt}\n` +
+            `Backend framework: Hono.js on Node.js, port 3001\n` +
+            `Database: ${dbLabel}\n\n` +
+            `Per-file requirements:\n` +
+            (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\n" : "") +
+            (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\n" : "") +
+            (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\n" : "") +
+            (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\n" : "");
+
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before missing-files retry — aborting build",
+            );
+            const reason = "Build aborted: cost ceiling reached.";
+            server?.buildFailed(sessionId, {
+              sessionId,
+              phase: "BUILD",
+              reason,
+              logs: "",
+              timestamp: new Date().toISOString(),
+            });
+            await Promise.all([
+              db.update(buildSessions)
+                .set({ status: "failed", error: reason, completedAt: new Date() })
+                .where(eq(buildSessions.id, sessionId)),
+              db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+            ]);
+            console.log(`[build] cost ceiling reached before missing-files retry, build aborted: ${prompt.slice(0, 80)}`);
+            return;
+          }
+
+          const retryResult = await dispatcher.dispatch({
+            agentType: "backend",
+            usageCategory: "missing_files_retry",
+            provider,
+            task: {
+              description: retryDescription,
+              requirements: [
+                `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
+                "Each file must be complete, non-empty, and production-ready.",
+                "Use the exact format: \`\`\`filename:<path> for each file.",
+                "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += retryResult.costUsd;
+
+          const retryParsed = parseFilesFromContent(retryResult.content);
+          const missingSet = new Set(missing);
+          const toMerge = retryParsed.filter((f) => missingSet.has(f.path));
+
+          if (toMerge.length > 0) {
+            const mergedPaths = new Set(toMerge.map((f) => f.path));
+            filesToWrite = [
+              ...filesToWrite.filter((f) => !mergedPaths.has(f.path)),
+              ...toMerge,
+            ];
+            logger.info({ sessionId, merged: [...mergedPaths] }, "Fullstack retry: merged recovered files");
+          }
+
+          const stillMissing = findMissingFullstackFiles(
+            Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
+            fullstackFramework,
+          );
+          if (stillMissing.length > 0) {
+            logger.warn({ sessionId, stillMissing }, "Fullstack retry: files still missing after retry");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `Some files could not be generated: ${stillMissing.join(", ")}. Continuing with available files.`,
+              missingFiles: stillMissing,
+            });
+          }
+        } catch (retryErr) {
+          logger.error({ sessionId, retryErr }, "Fullstack retry dispatch failed");
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Retry for missing files failed. Continuing with available files. Missing: ${missing.join(", ")}`,
+            missingFiles: missing,
+          });
+        }
+      }
+    }
+
+    // ── Syntax validation + orphan-export detection + auto-fix loop ─────────
+    // The #1 cause of "Preview failed to load: syntax error" is the model
+    // emitting a truncated/broken source file. Parse every generated source
+    // file with esbuild (the same parser the preview uses); if any fail, ask
+    // the model to return the COMPLETE corrected file, then re-validate.
+    // Alongside that, catch the "component added but never wired in" failure:
+    // a UI component that exports something no other file imports. Both
+    // checks are cheap, deterministic, and run in-memory (no sandbox needed),
+    // so they share one bounded loop, one fingerprint, and one fix budget.
+    // Broken/orphaned code never reaches the preview unless we genuinely can't repair it.
+    {
+      const MAX_FIX_ATTEMPTS = 2;
+      let lastFingerprint = "";
+      for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+        const errors = await validateSyntax(filesToWrite).catch(() => []);
+        let orphans: OrphanExport[] = [];
+        try {
+          // The orphan check needs the WHOLE project, not just this turn's
+          // writes. On an edit filesToWrite holds only what changed, so a
+          // component the model touched looks unimported purely because the
+          // file that imports it was not in the set — reported as "unwired
+          // components: Hero (src/components/Hero.tsx)" while Hero was plainly
+          // rendering on screen. Harmless-looking, but it also drove a repair
+          // dispatch at something that was never broken.
+          //
+          // This went unnoticed while edits rewrote whole files, because the
+          // importer usually came along for the ride. edit_file made the set
+          // small enough for it to fire almost every time.
+          //
+          // validateSyntax stays on filesToWrite alone — only new code needs
+          // checking, and re-parsing untouched files would be wasted work.
+          orphans = findOrphanExports({
+            ...currentProjectFiles(existingFiles, result.generatedFiles, new Set(result.deletedFiles)),
+            ...Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
+          });
+        } catch {
+          orphans = [];
+        }
+        if (errors.length === 0 && orphans.length === 0) break;
+
+        const fingerprint =
+          errors.map((e) => `${e.path}:${e.message}`).sort().join("|") +
+          "||" +
+          orphans.map((o) => `${o.path}:${o.name}`).sort().join("|");
+        if (attempt === MAX_FIX_ATTEMPTS || fingerprint === lastFingerprint) {
+          // Out of attempts or the same issues keep coming back — surface it
+          // instead of shipping broken/unwired code as if it succeeded.
+          logger.warn({ sessionId, errors, orphans }, "Syntax errors or orphan exports remain after fix attempts");
+          const summary: string[] = [];
+          if (errors.length > 0) summary.push(`syntax errors: ${errors.map((e) => e.path).join(", ")}`);
+          if (orphans.length > 0) summary.push(`unwired components: ${orphans.map((o) => `${o.name} (${o.path})`).join(", ")}`);
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Some issues remain: ${summary.join("; ")}. Try a follow-up prompt to fix them.`,
+            validationErrors: [
+              ...errors.map((e) => `${e.path}: ${e.message}`),
+              ...orphans.map((o) => `${o.path}: exports '${o.name}' but it's never imported anywhere`),
+            ],
+          });
+          break;
+        }
+        lastFingerprint = fingerprint;
+
+        logger.warn({ sessionId, errors, orphans, attempt }, "Syntax errors or orphan exports — dispatching fix");
+        server?.thinking(sessionId, {
+          text:
+            errors.length > 0 && orphans.length > 0
+              ? `Fixing syntax errors and wiring in ${orphans.length} unused component(s)…`
+              : errors.length > 0
+                ? `Fixing a syntax error in ${errors.map((e) => e.path).join(", ")}…`
+                : `Wiring in ${orphans.length} component(s) that aren't used anywhere…`,
+          sessionId,
+        });
+
+        const broken = new Set(errors.map((e) => e.path));
+        const brokenFiles = filesToWrite.filter((f) => broken.has(f.path));
+        const descriptionParts: string[] = [];
+        if (brokenFiles.length > 0) {
+          descriptionParts.push(
+            `These files have syntax errors that break the preview. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
+              brokenFiles
+                .map((f) => {
+                  const errMsg = errors.find((e) => e.path === f.path)?.message ?? "syntax error";
+                  return `### ${f.path} — error: ${errMsg}\n\`\`\`filename:${f.path}\n${f.code}\n\`\`\``;
+                })
+                .join("\n\n"),
+          );
+        }
+        if (orphans.length > 0) {
+          descriptionParts.push(
+            `These components are exported but never imported or rendered anywhere in the project — they exist but are not wired into the app:\n\n` +
+              orphans.map((o) => `- ${o.name} (exported from ${o.path})`).join("\n") +
+              `\n\nWire each one in: edit the appropriate existing file (commonly App.tsx or a parent page/layout) to import and render it. Return the COMPLETE corrected file for whichever file(s) you change.`,
+          );
+        }
+        const fixDescription = descriptionParts.join("\n\n---\n\n");
+
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before syntax/orphan fix dispatch — aborting build",
+          );
+          const reason = "Build aborted: cost ceiling reached.";
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+          ]);
+          console.log(`[build] cost ceiling reached before syntax/orphan fix dispatch, build aborted: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        const requirements: string[] = [];
+        if (brokenFiles.length > 0) {
+          requirements.push(
+            `Output the COMPLETE corrected file for each of: ${[...broken].join(", ")}.`,
+            "Return each file COMPLETE — never truncate, close every JSX tag and brace.",
+          );
+        }
+        if (orphans.length > 0) {
+          requirements.push(
+            "For the unwired components, only touch the file(s) that need to import and render them — do not rewrite unrelated files.",
+          );
+        }
+        requirements.push("Use the exact format: ```filename:<path> for each file.");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "frontend",
+            usageCategory: "syntax_fix",
+            provider,
+            task: {
+              description: fixDescription,
+              requirements,
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fixResult.costUsd;
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          // Orphan fixes legitimately land in a DIFFERENT file than the one that
+          // declared the export (e.g. App.tsx gains the import), so once orphans
+          // are in play, accept any returned file that's already part of this
+          // project rather than restricting to the syntax-error set.
+          const knownPaths = new Set(filesToWrite.map((f) => f.path));
+          const acceptablePaths = orphans.length > 0 ? knownPaths : broken;
+          const fixedMap = new Map(fixedParsed.filter((f) => acceptablePaths.has(f.path)).map((f) => [f.path, f.code]));
+          if (fixedMap.size > 0) {
+            filesToWrite = filesToWrite.map((f) => (fixedMap.has(f.path) ? { ...f, code: fixedMap.get(f.path)! } : f));
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Syntax/orphan fix dispatch failed");
+          break;
+        }
+      }
+    }
+
+    // ── Validate the parsed file set before writing (new builds only) ───────
+    // Catches missing entry points, missing default exports, and server-side
+    // imports leaking into browser-bundled files.
+    //
+    // Only meaningful when the file set IS the whole project. On a follow-up
+    // edit `filesToWrite` holds just what changed — by design, since that is
+    // what preserves everything else — so asking whether it contains App.tsx
+    // and package.json always answers "no". A correct no-op edit, where the
+    // model read the code and found nothing to change, produced the worst
+    // version of this: zero files written, and the user told
+    // "Validation found issues: Missing src/App.tsx; Missing package.json"
+    // about a project that was intact and rendering fine.
+    // Also skipped for agentic builds. It asks whether the model wrote
+    // index.tsx and package.json — but the template already owns both, and a
+    // harness build correctly writes only the files it actually needs. A build
+    // that produced one good App.tsx and rendered fine still reported
+    // "Missing src/index.tsx; Missing package.json". The harness's own
+    // check_page is a real render of the real page, which is a stronger check
+    // than this ever was.
+    if (!isFullstackBuild && !hasExistingCode && !agenticBuild) {
+      const fileRecord: Record<string, string> = Object.fromEntries(
+        filesToWrite.map((f) => [f.path, f.code]),
+      );
+      const { valid, errors } = validateSandpackFiles(fileRecord);
+      if (!valid) {
+        logger.warn({ sessionId, errors }, "Sandpack validation found issues in generated files");
+        server?.emitToRoom(sessionId, "build:warning", {
+          sessionId,
+          message: `Validation found issues: ${errors.join("; ")}`,
+          validationErrors: errors,
+        });
+      }
+    }
+
+    const writtenPaths: string[] = [];
+    const totalFiles = filesToWrite.length;
+
+    for (let idx = 0; idx < filesToWrite.length; idx++) {
+      if (cancelledSessions.has(sessionId)) break;
+
+      const file = filesToWrite[idx];
+      if (!file) continue;
+      const { path: filePath, code } = file;
+
+      // Sanitise path: resolve against the output dir and verify containment —
+      // a regex strip of "../" can be bypassed with absolute paths or encoded
+      // sequences, but a resolved-path prefix check cannot.
+      const fullPath = resolve(outputDir, filePath);
+      if (fullPath !== outputDir && !fullPath.startsWith(outputDir + sep)) {
+        logger.warn({ sessionId, filePath }, "Path traversal attempt blocked");
+        continue;
+      }
+      const safePath = relative(outputDir, fullPath);
+      await mkdir(dirname(fullPath), { recursive: true });
+
+      let finalCode = code;
+
+      // ── CSS protection: reject styles.css for non-theme follow-up edits ───
+      // Prevents the LLM from wiping the design tokens on feature additions
+      // or text/layout edits. Token-only edits are exempt (they exist to update CSS).
+      if (safePath === "src/styles.css" && hasExistingCode && !isTokenOnlyEdit) {
+        // Keyword-matching the user's prompt to decide whether the model's work
+        // survives is exactly the kind of guess this codebase is moving away
+        // from — "add smooth animations" contains none of these words, so the
+        // stylesheet carrying those animations was dropped and the build
+        // reported success. The agentic path no longer reaches here at all:
+        // write_files refuses template-owned paths up front and tells the model
+        // to put custom CSS in its own file, so it can correct itself mid-build.
+        // This stays for the pipeline path, but it no longer does it silently.
+        const isThemePrompt = /\b(theme|color|colour|dark|light|background|palette|gradient|border|shadow)\b/i.test(prompt);
+        if (!isThemePrompt) {
+          console.log(`[build] CSS file rejected for non-theme edit — keeping existing styles.css`);
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message:
+              "The AI tried to rewrite the project's main stylesheet, which is locked to " +
+              "protect the design system — so that part of the change wasn't applied. If " +
+              "you were asking for styling or animation changes, ask again and mention the " +
+              "colours or theme explicitly.",
+          });
+          continue;
+        }
+      }
+
+      // ── Validate App.tsx before writing (feature addition or any edit) ────
+      if (safePath === "src/App.tsx" && hasExistingCode) {
+        const validationError = validateAppTsx(code);
+        if (validationError !== null) {
+          console.warn(`[build] App.tsx validation failed: ${validationError}`);
+          server?.thinking(sessionId, {
+            text: `⚠️ Could not safely apply this change to App.tsx: ${validationError}. Keeping existing file.`,
+            sessionId,
+          });
+          // Keep the existing App.tsx by skipping this file — it was already copied above
+          continue;
+        }
+      }
+
+      // ── Surgical edits (BEGIN_EDIT/END_EDIT markers) ──────────────────────
+      const surgicalEdits = parseSurgicalEdits(code);
+
+      if (surgicalEdits.length > 0) {
+        // Read the existing file (may have been copied from previous build above)
+        let existingCode = "";
+        try { existingCode = await readFile(fullPath, "utf8"); } catch { /* new file */ }
+
+        finalCode = existingCode;
+        for (const edit of surgicalEdits) {
+          finalCode = applySurgicalEdit(finalCode, edit);
+        }
+        console.log(`[build] applied ${surgicalEdits.length} surgical edit(s) to ${safePath}`);
+      } else if (isTokenOnlyEdit && safePath === "src/styles.css") {
+        // Token-only mode: LLM outputs just the :root block.
+        // Verify it's root-only output, then splice it into the full existing CSS.
+        if (isRootOnlyCSS(finalCode)) {
+          let existingCSS = "";
+          try { existingCSS = await readFile(fullPath, "utf8"); } catch { /* no prior file */ }
+          if (existingCSS) {
+            finalCode = applySurgicalEdit(existingCSS, { description: "token update", content: finalCode });
+            console.log(`[build] token-only edit: spliced new :root block into ${safePath}`);
+          }
+        } else {
+          // LLM output more than the :root block — use it as the full file
+          console.log(`[build] token-only: LLM output full CSS (${finalCode.split("\n").length} lines), using as-is`);
+        }
+      }
+
+      // Strip any stray edit markers so Sandpack never sees // BEGIN_EDIT comments
+      finalCode = stripEditMarkers(finalCode);
+
+      // Safety check: warn if styles.css begins with a JS comment after processing
+      if (safePath === "src/styles.css" && finalCode.trimStart().startsWith("//")) {
+        console.warn(`[build] WARNING: ${safePath} starts with JS comment after edit — possible marker corruption`);
+      }
+
+      await writeFile(fullPath, finalCode, "utf8");
+      writtenPaths.push(safePath);
+
+      const linesChanged = finalCode.split("\n").length;
+      server?.fileUpdate(sessionId, {
+        sessionId,
+        path: safePath,
+        content: finalCode,
+        linesChanged,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Emit file:created for frontend workspace listener
+      server?.emitToRoom(sessionId, "file:created", {
+        path: safePath,
+        content: finalCode,
+        sessionId,
+      });
+
+      // Emit build:file_write so fullstack clients can track per-file progress
+      server?.fileWrite(sessionId, {
+        path: safePath,
+        isBackend: isBackendFile(safePath),
+        sessionId,
+      });
+
+      const writePercent = 90 + Math.floor(((idx + 1) / totalFiles) * 10);
+      server?.progress(sessionId, {
+        sessionId,
+        percent: writePercent,
+        message: `Writing ${safePath}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (cancelledSessions.has(sessionId)) {
+      cancelledSessions.delete(sessionId);
+      return;
+    }
+
+    // ── Save design tokens after every successful build ──────────────────
+    // Read the final written styles.css from disk so we get the post-splice content.
+    // Path: workspace/{projectId}/DESIGN_TOKENS.md — strictly per-project, not global.
+    const finalStylesPath = join(outputDir, "src/styles.css");
+    let finalStylesContent = "";
+    try { finalStylesContent = await readFile(finalStylesPath, "utf8"); } catch { /* no styles.css */ }
+    if (finalStylesContent) {
+      const tokensMd = extractDesignTokens(finalStylesContent);
+      if (tokensMd !== null) {
+        const projectWorkspaceDir = join(WORKSPACE_BASE, projectId);
+        const tokensPath = join(projectWorkspaceDir, "DESIGN_TOKENS.md");
+        await mkdir(projectWorkspaceDir, { recursive: true });
+        await writeFile(tokensPath, tokensMd, "utf8");
+        const varCount = (tokensMd.match(/--[\w-]+\s*:/g) ?? []).length;
+        // Isolation audit: log exact path so it's easy to verify per-project isolation
+        console.log(`[build] design-tokens project=${projectId} vars=${varCount} path=${tokensPath}`);
+      }
+    }
+
+    // ── Emit build:complete for frontend workspace listener ────────────────
+    // Collect final content: on any edit, merge with the existing files already
+    // copied into outputDir so the frontend (and the next edit, which reads this
+    // build's outputDir) receives the complete file set, not just what changed.
+    const allFiles: Record<string, string> = {};
+    if (preserveExistingFiles) {
+      // Seed with all files in outputDir (includes copies + LLM output)
+      const allOnDisk = await walkDirectory(outputDir, outputDir).catch(() => []);
+      for (const f of allOnDisk) allFiles[f.path] = f.content;
+    } else {
+      for (const f of filesToWrite) {
+        allFiles[f.path] = f.code;
+      }
+    }
+
+    for (const deletedPath of result.deletedFiles) delete allFiles[deletedPath];
+
+    // Store the generated code the moment it exists, before the gates below it.
+    // Five repair loops run between here and the end-of-build sync — security,
+    // typecheck, browser-render, each able to throw or to stop on the cost
+    // ceiling — and until now a build that died in any of them left nothing
+    // recoverable at all. The sync at the end still runs and upserts whatever
+    // those loops changed; this one is the insurance, and it is what covers the
+    // pipeline path, whose files never pass through the agentic write tools.
+    await persistFilesAsWritten(projectId, allFiles);
+
+    // ── Declare the tables the app actually queries ──────────────────────────
+    // `data-layer.ts` has detected this since 2026-10-17 and nothing acted on
+    // it. Of its four findings this is the only one that is a MODEL mistake
+    // rather than an infrastructure fact — no answer to "where does the
+    // database live" makes a query for a table the app never creates correct —
+    // and the failure is invisible: schema.sql is what gets RUN against the
+    // user's database, so a table missing from it does not exist, the query
+    // fails, the generated `{ data, error }` handling renders `data`, and the
+    // app looks finished and empty forever.
+    //
+    // Placed BEFORE the security loop below on purpose, so the RLS checks then
+    // run over whatever tables this added. A CREATE TABLE with no policy is a
+    // table every signed-in user can read.
+    let schemaTablesAdded = 0;
+    {
+      const missing = undeclaredTables(allFiles);
+      if (missing.length > 0 && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+        const declaredBefore = declaredTables(allFiles);
+        // Only these two files may be written, so a schema fix cannot become a
+        // rewrite of the app — and both are snapshotted, because the one way
+        // this repair can do harm is by returning a schema.sql that holds only
+        // the new tables and deletes the rest.
+        const WRITABLE = new Set(["src/db/schema.sql", "src/db/types.ts"]);
+        const snapshot = new Map([...WRITABLE].map((path) => [path, allFiles[path]]));
+
+        logger.warn(
+          { sessionId, projectId, tables: missing.map((m) => m.table) },
+          "Tables queried but never declared — dispatching schema repair",
+        );
+        server?.thinking(sessionId, {
+          sessionId,
+          text: missing.length === 1
+            ? `The app saves to a "${missing[0]?.table}" table that doesn't exist yet — creating it…`
+            : `The app saves to ${missing.length} tables that don't exist yet — creating them…`,
+        });
+
+        try {
+          const fix = await dispatcher.dispatch({
+            agentType: "backend",
+            provider,
+            task: {
+              description: schemaRepairInstruction(missing, allFiles),
+              requirements: [
+                "Return the COMPLETE src/db/schema.sql, with every table it already had.",
+                "Every new table gets ENABLE ROW LEVEL SECURITY and an owner-scoped policy per action.",
+                "Do not rename or drop an existing table, column or policy.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+            enableTools: false,
+            costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+          });
+          cumulativeCostUsd += fix.costUsd ?? 0;
+
+          const written = applyParsedFiles(
+            allFiles,
+            parseFilesFromContent(fix.content ?? ""),
+            { allowNew: true, only: WRITABLE, refuse: isTemplateOwnedFile },
+          );
+
+          const declaredAfter = declaredTables(allFiles);
+          const lost = [...declaredBefore].filter((t) => !declaredAfter.has(t));
+          if (lost.length > 0) {
+            // A schema that lost a table is worse than one missing a table:
+            // the missing one fails a query, this one deletes working ones.
+            logger.warn(
+              { sessionId, projectId, lost },
+              "Schema repair dropped existing table(s) — reverting",
+            );
+            for (const [path, code] of snapshot) {
+              if (code === undefined) delete allFiles[path];
+              else allFiles[path] = code;
+            }
+            console.log(`[build] schema repair session=${sessionId} verdict=reverted lost=[${lost.join(",")}]`);
+          } else if (written.length > 0) {
+            schemaTablesAdded = declaredAfter.size - declaredBefore.size;
+            recorder.record({ type: "repair/applied", kind: "undeclared-tables" });
+            recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
+            const still = undeclaredTables(allFiles);
+            console.log(
+              `[build] schema repair session=${sessionId} missing=${missing.length} ` +
+              `added=${schemaTablesAdded} stillMissing=${still.length} files=[${written.join(",")}]`,
+            );
+            if (still.length > 0) {
+              logger.warn(
+                { sessionId, projectId, still: still.map((m) => m.table) },
+                "Schema repair ran and some queried tables are still undeclared",
+              );
+            }
+          } else {
+            console.log(`[build] schema repair session=${sessionId} missing=${missing.length} verdict=no-files`);
+          }
+        } catch (err) {
+          logger.warn({ sessionId, projectId, err }, "Schema repair dispatch failed");
+        }
+      } else if (missing.length > 0) {
+        console.log(
+          `[build] schema repair session=${sessionId} missing=${missing.length} skipped=cost-ceiling`,
+        );
+      }
+    }
+
+    // ── Security validation + auto-fix / hard-block loop ────────────────────
+    // Runs in-memory against the current allFiles snapshot — none of the seven
+    // checks need real dependencies or a live sandbox (all pure regex/string
+    // scans), so unlike the tsc loop this has no reason to run sandbox-side.
+    // Positioned here deliberately: before backendReady/Sandpack emission below
+    // (so those never see pre-fix content) and before the E2B write further down
+    // (so a hard-blocked deploy never produces a live preview URL at all).
+    {
+      const MAX_SECURITY_FIX_ATTEMPTS = 2;
+      let lastSecurityFingerprint = "";
+      for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
+        const fileTree: FileTree = new Map(Object.entries(allFiles));
+        const report: SecurityReport = await runSecurityChecks(projectId, async () => fileTree).catch(
+          (): SecurityReport => ({ passed: true, checks: [] }),
+        );
+        const failing = report.checks.filter((c) => c.status === "fail");
+        if (failing.length === 0) break;
+
+        const hardBlocked = failing.filter(isHardBlockSecurityCheck);
+        if (hardBlocked.length > 0) {
+          // Never attempt an automated fix on a live credential or a possibly
+          // hallucinated package — abort the whole build instead. Real usage
+          // already incurred for dispatches that ran stays charged; nothing
+          // to refund since usage is deducted per-dispatch, not pre-charged.
+          logger.warn({ sessionId, projectId, hardBlocked }, "Security hard-block finding — aborting build, no auto-fix attempted");
+          const reason = `Build blocked by security check: ${hardBlocked.map((c) => c.message).join("; ")}`;
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+          ]);
+          console.log(`[build] security hard-block, build aborted: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        // Everything remaining in `failing` is auto-fixable at this point.
+        const fingerprint = failing.map((c) => `${c.id}:${c.file ?? ""}:${c.message}`).sort().join("|");
+        if (attempt === MAX_SECURITY_FIX_ATTEMPTS || fingerprint === lastSecurityFingerprint) {
+          logger.warn({ sessionId, projectId, failing }, "Security findings remain after fix attempts");
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: `Some security issues remain: ${failing.map((c) => c.message).join("; ")}. Try a follow-up prompt to fix them.`,
+            validationErrors: failing.map((c) => `${c.file ?? "project"}: ${c.message}`),
+          });
+          break;
+        }
+        lastSecurityFingerprint = fingerprint;
+
+        logger.warn({ sessionId, projectId, failing, attempt }, "Security findings — dispatching fix");
+        server?.thinking(sessionId, {
+          text: `Fixing ${failing.length} security issue(s)…`,
+          sessionId,
+        });
+
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before security-fix dispatch — aborting build",
+          );
+          const reason = "Build aborted: cost ceiling reached.";
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+          ]);
+          console.log(`[build] cost ceiling reached before security-fix dispatch, build aborted: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        const fixDescription =
+          `These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation):\n\n` +
+          failing
+            .map((c) => `- [${c.id}]${c.file ? ` ${c.file}${c.line ? `:${c.line}` : ""} —` : ""} ${c.message}`)
+            .join("\n");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "backend",
+            usageCategory: "security_fix",
+            provider,
+            task: {
+              description: fixDescription,
+              requirements: [
+                "Fix ONLY the reported security issues — do not change unrelated logic.",
+                "Return the COMPLETE corrected file for each file you touch.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fixResult.costUsd;
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          const knownPaths = new Set(Object.keys(allFiles));
+          for (const f of fixedParsed) {
+            if (knownPaths.has(f.path)) allFiles[f.path] = f.code;
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Security fix dispatch failed");
+          break;
+        }
+      }
+    }
+
+    // ── Take the fake out before anyone sees it ─────────────────────────────
+    //
+    // Measured twice, 2026-10-17 and 2026-10-18. Asked to fix a broken sign-up,
+    // the model concluded "the backend isn't running in the sandbox" — false
+    // both times, and on the first occasion it had itself confirmed the
+    // opposite nine minutes earlier — and replaced the API layer with
+    // localStorage, reporting it as a fix. `data-layer.ts` caught it both
+    // times, and reporting was not enough: the user still met an app that
+    // signs them up, shows their data back, and saves nothing anywhere.
+    //
+    // So this is a repair, not a report. Unlike the wiring loop it gets ONE
+    // dispatch, not two: the finding is specific and the correct fix is known,
+    // so a second attempt would mean the model argued with it rather than
+    // missed something — and a loop that keeps paying to re-ask is how a
+    // disagreement becomes a bill.
+    //
+    // It never fails the build, for the same reason wiring does not: a fake is
+    // wrong, not dangerous, and a build that dies here would take the real work
+    // with it.
+    let fakeRepaired = 0;
+    {
+      const before = fakePersistence(allFiles);
+      if (before.length > 0 && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+        const paths = before.map((f) => f.path).filter((p) => allFiles[p] !== undefined);
+        const included = paths.slice(0, 6);
+        if (included.length > 0) {
+          logger.warn(
+            { sessionId, projectId, findings: before.length, files: included },
+            "Faked persistence found — dispatching removal",
+          );
+          server?.thinking(sessionId, {
+            sessionId,
+            text: "Found code that stores data in the browser instead of saving it — taking it out…",
+          });
+
+          const fixDescription =
+            `${formatDataLayerGaps(before)}\n\n` +
+            `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+            `truncation):\n\n` +
+            included.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n");
+
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description: fixDescription,
+                requirements: [
+                  "DELETE the demo/mock/localStorage stand-in entirely. Do not keep it behind a " +
+                  "flag, an environment variable or a try/catch — a fallback that can switch on " +
+                  "is the same bug waiting for a different day.",
+                  "Call the real API instead, through API_BASE + '/api/...' where " +
+                  "API_BASE = import.meta.env.VITE_API_URL ?? ''.",
+                  "If any file hardcodes http://localhost:3001 or any other host, replace it with " +
+                  "API_BASE. That is almost always why the call appeared to fail: the preview is " +
+                  "served from a different origin, so localhost resolves to nothing.",
+                  "If a request genuinely fails, SHOW the error to the user. Do not substitute " +
+                  "local data so the screen looks populated.",
+                  "Keep localStorage ONLY where it is not standing in for the server — a theme, a " +
+                  "collapsed panel, an unsent draft.",
+                  "Change ONLY what the findings name — leave unrelated logic alone.",
+                  "Return the COMPLETE corrected file for each file you touch.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+            // Only files that already exist are replaced. A repair that
+            // CREATES files is a repair that has misunderstood the finding —
+            // nothing here needs a new file, and letting it add one is how a
+            // narrow fix turns into an unreviewed rewrite.
+            const rewritten = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: false, refuse: isTemplateOwnedFile },
+            );
+            // MEASURED on the launch-proof build 2026-10-19: the broken-import
+            // loop rewrote files after check_page and check_types had passed,
+            // and the record still said staleCheckPage=0. Only the three loops
+            // inside the preview chain were emitting this event, so a repair
+            // that ran EARLIER invalidated a verdict silently. Every loop that
+            // mutates allFiles says so now.
+            if (rewritten.length > 0) {
+              recorder.record({ type: "files/written", paths: rewritten, added: 0, removed: 0 });
+            }
+            const after = fakePersistence(allFiles);
+            fakeRepaired = Math.max(0, before.length - after.length);
+            console.log(
+              `[build] fake persistence session=${sessionId} before=${before.length} ` +
+              `after=${after.length} repaired=${fakeRepaired}`,
+            );
+            // Said out loud either way. A removal the user is not told about
+            // leaves them believing the earlier "it works in the preview"
+            // message, which is the thing being corrected.
+            server?.thinking(sessionId, {
+              sessionId,
+              text:
+                after.length === 0
+                  ? "Removed it — the app now talks to the real backend instead of the browser."
+                  : "I could not fully remove it. Part of this app still stores data in the browser, " +
+                    "so it will look like it saved and will not have.",
+            });
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Fake-persistence repair dispatch failed");
+          }
+        }
+      }
+    }
+
+    // ── Wire up what renders but does nothing ───────────────────────────────
+    // Positioned here for the same reason the security loop is: everything
+    // below this point SHOWS the files to someone. The storage sync, the
+    // backendReady emit and the preview sandbox all read `allFiles`, so a fix
+    // that lands after them is a fix the user never sees.
+    //
+    // Three deliberate differences from the security loop above:
+    //
+    //  1. **It never fails the build.** A security hard-block aborts because a
+    //     live credential in shipped code is dangerous. A button with no
+    //     onClick is not — the app still runs, it is just incomplete. On the
+    //     cost ceiling, a repeated finding or a failed dispatch this warns,
+    //     stops, and lets the build finish with the gap recorded honestly in
+    //     build_outcome.wiring.
+    //  2. **Only `repairableGaps` are dispatched.** An endpoint nothing calls
+    //     and a "coming soon" label are left to the user's next prompt; see
+    //     REPAIRABLE_KINDS for why acting on those would mean the loop choosing
+    //     a product outcome with no way to ask.
+    //  3. **The affected files are sent WITH the findings.** The report alone
+    //     is not enough context to write a handler, and a dead link is fixed in
+    //     the router rather than in the file that writes the link — so the
+    //     router and the backend entry are pulled in when those kinds appear.
+    let wiringRepaired = 0;
+    let wiringCostUsd = 0;
+    {
+      const costBeforeWiring = cumulativeCostUsd;
+      const MAX_WIRING_FIX_ATTEMPTS = 2;
+      /** Per dispatch, not per build. Bounded so one prompt stays readable by
+       *  the model; the loop re-measures and the next attempt takes what is
+       *  left. */
+      const MAX_FIX_FILES = 8;
+      const MAX_FIX_CHARS = 120_000;
+      let lastWiringFingerprint = "";
+      let before = -1;
+      let remaining = 0;
+
+      for (let attempt = 0; attempt <= MAX_WIRING_FIX_ATTEMPTS; attempt++) {
+        const gaps = repairableGaps(findWiringGaps(allFiles));
+        remaining = gaps.length;
+        if (before < 0) before = gaps.length;
+        if (gaps.length === 0) break;
+        // The last pass exists to re-measure after the previous fix, not to
+        // dispatch again.
+        if (attempt === MAX_WIRING_FIX_ATTEMPTS) break;
+
+        const fingerprint = gaps.map((g) => `${g.kind}:${g.path}:${g.symbol}`).sort().join("|");
+        if (fingerprint === lastWiringFingerprint) {
+          logger.warn(
+            { sessionId, projectId, remaining: gaps.length },
+            "Wiring findings unchanged after a fix dispatch — stopping",
+          );
+          break;
+        }
+        lastWiringFingerprint = fingerprint;
+
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD, remaining: gaps.length },
+            "Build cost ceiling reached before wiring-fix dispatch — skipping further auto-repair",
+          );
+          break;
+        }
+
+        const affected = new Set<string>();
+        for (const g of gaps) if (g.path && allFiles[g.path] !== undefined) affected.add(g.path);
+        if (gaps.some((g) => g.kind === "dead-link")) {
+          for (const [p, code] of Object.entries(allFiles)) {
+            if (declaredRoutes(code).length > 0) affected.add(p);
+          }
+        }
+        if (gaps.some((g) => g.kind === "missing-endpoint")) {
+          for (const p of Object.keys(allFiles)) if (isBackendFile(p)) affected.add(p);
+        }
+
+        const included: string[] = [];
+        let budget = MAX_FIX_CHARS;
+        for (const p of affected) {
+          if (included.length >= MAX_FIX_FILES) break;
+          const code = allFiles[p];
+          if (code === undefined || code.length > budget) continue;
+          budget -= code.length;
+          included.push(p);
+        }
+        if (included.length === 0) break;
+
+        logger.warn(
+          { sessionId, projectId, attempt, gaps: gaps.length, files: included.length },
+          "Hollow elements found — dispatching wiring fix",
+        );
+        server?.thinking(sessionId, {
+          text: `${gaps.length} control(s) render but don't do anything yet — wiring them up…`,
+          sessionId,
+        });
+
+        const fixDescription =
+          `${formatWiringGaps(gaps)}\n\n` +
+          `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+          `truncation):\n\n` +
+          included.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n");
+
+        try {
+          const fixResult = await dispatcher.dispatch({
+            agentType: "frontend",
+            // No usageCategory on purpose. The column is a Postgres enum and
+            // migrations here are applied by hand, not on boot — so adding a
+            // `wiring_fix` value would make every dispatch in this loop throw
+            // until someone ran db:migrate against production. The field is
+            // nullable, billing is per-dispatch in dispatcher.ts either way,
+            // and what the loop costs is recorded in build_outcome.wiring
+            // instead. Add the enum value and a migration if the usage
+            // breakdown UI ever needs to separate it.
+            provider,
+            task: {
+              description: fixDescription,
+              requirements: [
+                "Implement the behaviour each element is labelled with — a button that says " +
+                "Save must save, a link must reach a real route, a fetch must hit a route the " +
+                "backend defines.",
+                "Do NOT delete an element to satisfy a finding. The user asked for it.",
+                "Change ONLY what the findings name — leave unrelated logic alone.",
+                "Return the COMPLETE corrected file for each file you touch.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fixResult.costUsd;
+          const fixedParsed = parseFilesFromContent(fixResult.content);
+          // Known paths only, as in the security loop. A fix that invents a new
+          // file is the one shape this cannot check — it could be a legitimate
+          // new route module or it could be a regenerated `package.json`, which
+          // the template owns. Editing what already exists covers the common
+          // case: the backend entry gains a route, the router gains a path.
+          const knownPaths = new Set(Object.keys(allFiles));
+          let applied = 0;
+          const wired: string[] = [];
+          for (const f of fixedParsed) {
+            if (!knownPaths.has(f.path)) continue;
+            allFiles[f.path] = f.code;
+            applied += 1;
+            wired.push(f.path);
+          }
+          if (wired.length > 0) {
+            recorder.record({ type: "files/written", paths: wired, added: 0, removed: 0 });
+          }
+          if (applied === 0) {
+            logger.warn(
+              { sessionId, returned: fixedParsed.length },
+              "Wiring fix dispatch returned no file this build already had — stopping",
+            );
+            break;
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Wiring fix dispatch failed");
+          break;
+        }
+      }
+
+      wiringRepaired = Math.max(0, before - remaining);
+      if (wiringRepaired > 0) recorder.record({ type: "repair/applied", kind: "wiring" });
+      wiringCostUsd = cumulativeCostUsd - costBeforeWiring;
+      if (before > 0) {
+        console.log(
+          `[build] wiring session=${sessionId} before=${before} remaining=${remaining} ` +
+          `repaired=${wiringRepaired} cost=${wiringCostUsd.toFixed(4)}`,
+        );
+      }
+    }
+
+    // ── Imports that point at nothing ───────────────────────────────────────
+    //
+    // Session dc1fbc17, 2026-10-18: the model rewrote src/App.tsx to import
+    // ./pages/HomePage, ./pages/HabitsPage and ./pages/StatsPage, and never
+    // wrote them. The person saw Vite's red overlay and, in the chat beside
+    // it, "I've built a complete habit tracker app" with a feature list.
+    //
+    // Nothing downstream was broken. The page sweep had run and passed BEFORE
+    // the rewrite; the completion audit caught it honestly at the end — "the
+    // pages that would wire up the onAdd handler are not in the file list" —
+    // but the build had already been reported complete. Both were right and
+    // both were too late.
+    //
+    // This is the same fact available with no browser and no model, the moment
+    // the files exist, and it is exactly decidable. It runs before everything
+    // that shows the app to anyone.
+    {
+      const broken = findBrokenImports(allFiles);
+      if (broken.length > 0) {
+        console.log(
+          `[build] broken imports session=${sessionId} count=${broken.length} ` +
+          `first=${broken[0]?.path}→${broken[0]?.specifier}`,
+        );
+        if (cumulativeCostUsd < MAX_BUILD_COST_USD) {
+          server?.thinking(sessionId, {
+            sessionId,
+            text: `${broken.length} import(s) point at files that were never written — writing them now…`,
+          });
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description:
+                  `${formatBrokenImports(broken)}\n\n` +
+                  `Here is the file that imports them:\n\n` +
+                  [...new Set(broken.map((b) => b.path))]
+                    .slice(0, 3)
+                    .map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``)
+                    .join("\n\n"),
+                requirements: [
+                  "WRITE the missing files. Each must export exactly the name it is imported by.",
+                  "Build them from what the importing file expects of them — the props it passes " +
+                  "and the behaviour its surrounding code implies.",
+                  "Do NOT fix this by deleting the import unless the feature genuinely does not " +
+                  "belong in this app. The person asked for it; a missing page is not surplus.",
+                  "Return the COMPLETE file for each one you write.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+            // New files ARE allowed here — writing them is the entire point,
+            // which is why this loop and the cut above take opposite rules.
+            const created = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: true, refuse: isTemplateOwnedFile },
+            );
+            recorder.record({ type: "repair/applied", kind: "broken-imports" });
+            if (created.length > 0) {
+              recorder.record({ type: "files/written", paths: created, added: 0, removed: 0 });
+            }
+            const after = findBrokenImports(allFiles);
+            console.log(
+              `[build] broken imports session=${sessionId} before=${broken.length} after=${after.length}`,
+            );
+            if (after.length > 0) {
+              server?.thinking(sessionId, {
+                sessionId,
+                text:
+                  `${after.length} of those are still missing, so parts of the app will not load. ` +
+                  `Ask me again and I will write them.`,
+              });
+            }
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Broken-import repair dispatch failed");
+          }
+        }
+      }
+    }
+
+    // ── Cut what the edits left behind ──────────────────────────────────────
+    //
+    // `edit_file(old → new)` is additive by nature: the cheapest way to satisfy
+    // "add X" is to insert X, and removing the path X replaced requires knowing
+    // what just became unreachable — a whole-program property an edit cannot
+    // see. So after a few rounds one feature has two implementations and the
+    // next edit guesses which is live. It guesses wrong. That is what this
+    // removes.
+    //
+    // THE RULE THAT SHAPES ALL OF IT: `dead-code.ts` says of itself that it is
+    // "advisory, never a gate… the analysis is textual, not a real TypeScript
+    // program, so it can be wrong — and the response to a dead-code report is
+    // deleting code, which is the most expensive thing to be wrong about."
+    //
+    // That is a warning written by someone who had thought about it, and it is
+    // honoured here in three ways.
+    //
+    // 1. NOTHING IS CUT THAT CANNOT BE VERIFIED. If there is no sandbox to run
+    //    `tsc` in, the cut does not happen at all. A deletion whose correctness
+    //    nobody checked is exactly the expensive mistake above.
+    //
+    // 2. ONLY TWO OF THE FOUR KINDS ARE ELIGIBLE. `unused-import` and
+    //    `unreferenced-export` are things an edit abandoned. The other two are
+    //    NOT dead code and deleting them destroys work:
+    //      • `never-rendered` — a view nothing renders is as often one the user
+    //        ASKED FOR and the model forgot to wire. The completion audit
+    //        caught precisely that on one build: four requested views, never
+    //        wired, while all three gates passed. Deleting those is deleting
+    //        the feature. Telling superseded from merely unwired needs the
+    //        audit's own criteria, which is D3's job, not a guess here.
+    //      • `orphan-stylesheet` — a stylesheet nothing imports leaves the app
+    //        on the template's greyscale tokens. The fix is to IMPORT it. A
+    //        cut here would delete the design and call the result clean.
+    //
+    // 3. IT IS FULLY REVERSIBLE. The file map is snapshotted before the cut and
+    //    restored byte-for-byte if `tsc` goes from passing to failing — and the
+    //    sandbox is rewritten from the restored copy, so a reverted cut leaves
+    //    nothing behind.
+    //
+    // A cut that breaks the build is not a failure of this loop. It is the loop
+    // working: the analysis was wrong, and nobody found out from a user.
+    let codeCut = 0;
+    let codeCutReverted = false;
+    {
+      const CUTTABLE = new Set<DeadCodeKind>(["unused-import", "unreferenced-export"]);
+      const dead = findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind));
+
+      if (dead.length === 0) {
+        // nothing abandoned — the common case, and it costs one text scan
+      } else if (!hasSandbox(projectId)) {
+        console.log(
+          `[build] cut skipped session=${sessionId} dead=${dead.length} reason=no-sandbox-to-verify-in`,
+        );
+      } else if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+        console.log(`[build] cut skipped session=${sessionId} dead=${dead.length} reason=cost-ceiling`);
+      } else {
+        // The gates must be green BEFORE the cut, or a revert cannot tell
+        // "my deletion broke this" from "it was already broken".
+        const typesBefore = await runTypeCheck(projectId).catch(() => null);
+        if (!typesBefore || typesBefore.ok !== true) {
+          console.log(
+            `[build] cut skipped session=${sessionId} dead=${dead.length} reason=types-not-green-before`,
+          );
+        } else {
+          const snapshot: Record<string, string> = { ...allFiles };
+          const paths = [...new Set(dead.map((d) => d.path))].filter((p) => allFiles[p] !== undefined).slice(0, 8);
+
+          server?.thinking(sessionId, {
+            sessionId,
+            text: `Removing ${dead.length} leftover(s) from earlier edits…`,
+          });
+
+          try {
+            const fixResult = await dispatcher.dispatch({
+              agentType: "frontend",
+              provider,
+              task: {
+                description:
+                  `${formatDeadCode(dead)}\n\n` +
+                  `Return the COMPLETE corrected file for EACH file you change (no diffs, no ` +
+                  `truncation):\n\n` +
+                  paths.map((p) => `\`\`\`filename:${p}\n${allFiles[p] ?? ""}\n\`\`\``).join("\n\n"),
+                requirements: [
+                  "Delete ONLY the symbols and imports named in the findings.",
+                  "Do NOT delete anything else, do not rename, do not reformat, and do not " +
+                  "'tidy up' while you are in the file — an unrelated change here cannot be " +
+                  "reviewed and will be reverted along with the rest.",
+                  "If a finding looks wrong to you — the symbol IS used somewhere — leave that " +
+                  "one alone and remove the others. Saying so is better than deleting it.",
+                  "Return the COMPLETE corrected file for each file you touch.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+              enableTools: false,
+              costGuard: { cumulativeUsd: cumulativeCostUsd, maxUsd: MAX_BUILD_COST_USD },
+            });
+            cumulativeCostUsd += fixResult.costUsd ?? 0;
+
+            // Existing files only. A cut that CREATES a file has
+            // misunderstood, and letting it through turns a deletion into an
+            // unreviewed rewrite.
+            const cutPaths = applyParsedFiles(
+              allFiles,
+              parseFilesFromContent(fixResult.content ?? ""),
+              { allowNew: false, refuse: isTemplateOwnedFile },
+            );
+            const touched = cutPaths.length;
+            if (cutPaths.length > 0) {
+              recorder.record({ type: "files/written", paths: cutPaths, added: 0, removed: 0 });
+            }
+
+            if (touched === 0) {
+              // MEASURED 2026-10-18, session dc1fbc17: `dead=23 touched=0` —
+              // a removal dispatch paid for and not one file changed. That was
+              // read at the time as a reply in prose rather than fenced files.
+              // It was not: this loop applied its files with
+              // `Object.entries()` over an ARRAY, so its own `typeof code ===
+              // "string"` guard was permanently false and `touched` could
+              // never be anything but 0 (fixed 2026-10-21, applyParsedFiles).
+              // The reading is kept because the lesson stands — a paid-for
+              // dispatch that changes nothing is the worst value for money
+              // available — and because a confident root cause that turned out
+              // to be wrong is worth leaving visible. Logged loudly so a run of
+              // these is visible rather than mistaken for "nothing to cut".
+              logger.warn(
+                { sessionId, projectId, dead: dead.length },
+                "Cut dispatch returned no usable files — paid for nothing",
+              );
+              console.log(`[build] cut session=${sessionId} dead=${dead.length} touched=0 verdict=no-op`);
+            } else {
+              await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+              const typesAfter = await runTypeCheck(projectId).catch(() => null);
+              if (typesAfter?.ok === true) {
+                codeCut = dead.length - findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind)).length;
+                if (codeCut > 0) recorder.record({ type: "repair/applied", kind: "dead-code-cut" });
+                console.log(
+                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} removed=${codeCut} verdict=kept`,
+                );
+              } else {
+                codeCutReverted = true;
+                for (const k of Object.keys(allFiles)) delete allFiles[k];
+                Object.assign(allFiles, snapshot);
+                await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+                console.log(
+                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} verdict=REVERTED types-broke`,
+                );
+                server?.thinking(sessionId, {
+                  sessionId,
+                  text: "That removal broke the type check, so I put everything back exactly as it was.",
+                });
+              }
+            }
+          } catch (err) {
+            logger.warn({ sessionId, err }, "Dead-code cut dispatch failed — nothing removed");
+          }
+        }
+      }
+    }
+
+    // ── Sync project files to Supabase Storage (survives Railway redeploys) ──
+    // For edits: merge existingFiles (pre-build state) with allFiles (LLM output)
+    // so unchanged files that the LLM didn't re-emit are not lost in Storage.
+    // For fresh builds: existingFiles is {}, so syncMap === allFiles.
+    // Fire-and-forget — never blocks the build or preview.
+    void (async () => {
+      try {
+        const syncMap: Record<string, string> = hasExistingCode
+          ? { ...existingFiles, ...allFiles }
+          : { ...allFiles };
+        for (const deletedPath of result.deletedFiles) delete syncMap[deletedPath];
+        await uploadProjectFiles(projectId, syncMap);
+        console.log(`[storage] synced ${Object.keys(syncMap).length} files project=${projectId}`);
+      } catch (err) {
+        logger.error({ projectId, sessionId, err }, "[storage] upload failed — next redeploy may lose edit context");
+      }
+    })();
+
+    // ── Signal backend code is ready with full file contents (fullstack builds) ──
+    // NOTE: We generate backend + DB files as code artifacts; we deliberately do
+    // NOT execute the generated schema/seed SQL against the platform database.
+    // The platform `db` client points at Lampcode's own production DB — running
+    // LLM-generated DDL/DML there would be arbitrary SQL execution against prod.
+    // Users run these files in their own deployment using the emitted .env.example.
+    if (isFullstackBuild) {
+      const backendPaths = writtenPaths.filter(isBackendFile);
+      server?.backendReady(sessionId, {
+        sessionId,
+        files: allFiles,
+        backendFileCount: backendPaths.length,
+        note: "Backend + DB files generated. Run the SQL in src/db/schema.sql against your Supabase project (see .env.example).",
+      });
+      console.log(`[build] backend_ready project=${projectId} files=[${backendPaths.join(", ")}]`);
+
+      // If the user connected their OWN Supabase via MCP, actually provision it:
+      // run the generated schema as a migration against THEIR project so the
+      // app's tables/RLS exist. Best-effort + out-of-band — never blocks the
+      // build, and only ever touches the user's own project (never the platform
+      // DB). We do NOT run generated SQL against any shared/platform database.
+      // ── Create the tables BEFORE anything looks at the app ────────────────
+      // This used to be `void getUserSupabaseMcpAuth(…).then(…)` — fire and
+      // forget — and that is wrong twice over.
+      //
+      // ORDER: the preview starts below, and the interaction probe and the
+      // completion audit then drive an app whose tables may not exist yet.
+      // Every query fails, the generated error handling turns the failure into
+      // an empty list, and the app looks finished and empty. The tables have to
+      // exist first.
+      //
+      // EVIDENCE: the old version put its result in ONE preview-log line and
+      // nowhere else. A failure scrolled past in a log panel while the closing
+      // message said the build was complete, the record said nothing, and the
+      // user's data had nowhere to go. "I could not create your tables" is
+      // exactly the kind of thing this product exists to say out loud.
+      //
+      // Bounded, and never fatal: a slow Supabase must not hold a build, and a
+      // failed apply still ships an app — it just ships one that says so.
+      const schemaSql = allFiles["src/db/schema.sql"];
+      if (schemaSql && schemaSql.trim()) {
+        const auth = await getUserSupabaseMcpAuth(userId).catch(() => null);
+        if (auth) {
+          server?.emitToRoom(sessionId, "build:preview_log", {
+            sessionId,
+            line: "Applying schema to your Supabase project…",
+          });
+          const applied = await withTimeout(
+            applySupabaseSchema(auth, `lampcode_${Date.now()}`, schemaSql),
+            SCHEMA_APPLY_TIMEOUT_MS,
+            `applySupabaseSchema exceeded ${SCHEMA_APPLY_TIMEOUT_MS}ms`,
+          ).catch((err: unknown) => ({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+          schemaApply = applied.ok
+            ? { ran: true, ok: true }
+            : { ran: true, ok: false, ...(applied.error ? { error: applied.error } : {}) };
+          server?.emitToRoom(sessionId, "build:preview_log", {
+            sessionId,
+            line: applied.ok ? "✅ Schema applied to your Supabase project" : `⚠️ Schema apply failed: ${applied.error}`,
+          });
+          console.log(
+            `[build] schema apply session=${sessionId} ok=${applied.ok}` +
+            (applied.ok ? "" : ` error=${String(applied.error).slice(0, 160)}`),
+          );
+          if (!applied.ok) {
+            logger.warn({ sessionId, projectId }, "Supabase schema apply failed — the app will have no tables");
+          }
+        } else {
+          // A schema was generated and there is no database to put it in. Not
+          // an error — the gate above already offered — but it IS the reason
+          // the app will not save anything, so it is recorded rather than lost.
+          schemaApply = { ran: false, ok: false, error: "no Supabase connected" };
+          console.log(`[build] schema apply session=${sessionId} ran=false reason=no-connection`);
+        }
+      }
+    }
+
+    // Filter out backend/server/db files and non-source artifacts before sending
+    // to Sandpack. Server-side files import Node.js-only packages that the
+    // browser bundler can't resolve. README.md and .env.* are deployment-only.
+    // For Next.js/TanStack builds, also exclude package.json: it lists `next`/
+    // `vinxi` as dependencies, which Sandpack tries to install from npm and then
+    // hangs forever showing "Installing packages…" — the E2B iframe is the real
+    // preview for these builds; Sandpack's bundle is irrelevant.
+    const frontendFiles = Object.fromEntries(
+      Object.entries(allFiles).filter(
+        ([p]) =>
+          !isBackendFile(p) &&
+          !isSandpackExcluded(p) &&
+          !(fullstackFramework !== "react" && p === "package.json"),
+      ),
+    );
+    const backendFileCount = Object.keys(allFiles).length - Object.keys(frontendFiles).length;
+
+    // ── Build summary: the builder's own words ──────────────────────────────
+    // This used to be a second Haiku call describing a build it had never seen,
+    // working only from the prompt and a list of filenames. It cost money on
+    // every build, sat on the critical path, and was the weaker description of
+    // the two — the model that wrote the code already says what it made, either
+    // side of its file fences. Free, no extra latency, and actually informed.
+    // finalContent, not content: an agentic build's `content` is every round
+    // concatenated, and the early rounds are the model thinking out loud
+    // between tool calls. Built from that, the summary opened with "The write
+    // replaced the whole file — I need to restore the full App.tsx…" instead of
+    // describing the app. The last round is the model's actual closing reply.
+    // Identical to `content` on a single-round dispatch.
+    let buildSummary = extractBuildSummary(result.finalContent || result.content);
+
+    // The loop can stop because the model finished, or because it ran out of
+    // turns mid-task. Those are completely different outcomes and looked
+    // identical to the user: a fullstack build was cut at turn 12 while still
+    // retrying a page check, and the chat showed its half-finished sentence
+    // ("Backend is up on :3001 now. Retrying the page check:") as if that were
+    // the summary. The files are real and the app runs, but nothing after the
+    // cut was verified — so say so rather than letting it read as complete.
+    if (result.turnsExhausted) {
+      logger.warn(
+        { sessionId, projectId, files: writtenPaths.length },
+        "Agentic loop hit the turn cap while still working — build delivered unverified",
+      );
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message:
+          "This build used up its allowed steps before the AI finished checking its work. " +
+          "What it wrote is here and should run, but the last changes weren't verified — " +
+          "send a follow-up message if something looks wrong.",
+      });
+      buildSummary =
+        (buildSummary ? buildSummary + "\n\n" : "") +
+        "Note: I ran out of steps before I could finish verifying this — tell me if anything is off.";
+    }
+
+    // The summary-bearing build:complete used to fire HERE, which is before the
+    // sandbox has even started and long before the repair loops, the interaction
+    // probe, the freshness re-runs and the completion audit. The frontend latches
+    // the first build:complete it sees (`completedRef`), so that one was final:
+    // the user was told "App ab chal raha hai!" and every repair message after it
+    // arrived underneath a build that already read as done.
+    //
+    // It is emitted at the very end now, once nothing can change the code any
+    // more. Nothing is lost by waiting: files reach the file tree through
+    // build:file_write as they are written, and the preview URL arrives on its
+    // own build:preview_url event the moment the sandbox serves.
+
+    // ── Async preview thumbnail — never blocks the build ──────────────────
+    // Runs after the sandbox has had time to serve the finished app. A failure
+    // here only costs the project card its picture, so every step is optional
+    // and nothing is retried.
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const png = await capturePreviewScreenshot(projectId);
+          if (!png) return;
+          const path = await uploadPreviewScreenshot(projectId, png);
+          if (!path) return;
+          await db.update(projects).set({ previewImage: path }).where(eq(projects.id, projectId));
+          console.log(`[thumbnail] captured preview for project=${projectId} (${png.length} bytes)`);
+        } catch (err) {
+          logger.warn({ projectId, err }, "Preview thumbnail capture failed");
+        }
+      })();
+    });
+
+    // ── Async project memory + manifest update — never blocks the build ────
+    setImmediate(() => {
+      void (async () => {
+        try {
+          // Both derived from the files, neither a model call. generateProjectMemory
+          // used to dispatch Haiku and log "Could not resolve authentication
+          // method" on every build, because ANTHROPIC_API_KEY is not set here.
+          const newMemory = generateProjectMemory({
+            files: allFiles,
+            prompt,
+            existingMemory: projectMemory,
+          })
+          const newManifest = generateFileManifest(allFiles)
+          try {
+            await db.update(projects)
+              .set({ projectMemory: newMemory, projectManifest: newManifest })
+              .where(eq(projects.id, projectId))
+            console.log(`[memory] saved memory+manifest for project ${projectId}`)
+          } catch {
+            // project_manifest column missing — save memory only until migration runs
+            await db.update(projects)
+              .set({ projectMemory: newMemory })
+              .where(eq(projects.id, projectId))
+            console.warn("[memory] saved memory only (project_manifest column missing — run migration 0007)")
+          }
+        } catch (err) {
+          console.error("[memory] update failed:", err)
+        }
+      })()
+    })
+
+    // ── The post-generation phase is AWAITED now ────────────────────────────
+    // It used to be fire-and-forget. `finishPreview` says so in its own first
+    // comment: "Everything in here runs AFTER the build session has been
+    // recorded success." That is what produced the ShopHub ordering — the
+    // model's "App ab chal raha hai!" reached the chat, the session was
+    // recorded successful, and only then did the browser-render repair, the
+    // interaction probe and the dead-code cut run, mutating the delivered files
+    // underneath a build the user had already been told was finished.
+    //
+    // So the preview chain is a promise now, awaited below with a bound, before
+    // anything authoritative is written or said. The user still sees the app
+    // early — `emitPreviewUrl` fires from inside the chain the moment the
+    // sandbox serves — but "complete" waits for the last thing that can change
+    // the code.
+    let previewWork: Promise<void> = Promise.resolve();
+    // Filled in by the chain, read by the final outcome. They used to be
+    // written straight into the database from inside it, with a read-modify-
+    // write, because the record already existed by then. It does not any more.
+    // A holder rather than four `let`s: TypeScript's flow analysis does not see
+    // an assignment made inside a closure, so a `let` filled in by the chain
+    // below still reads as `null` at the use site and narrows to `never`.
+    const previewEvidence: {
+      interactions: BuildOutcome["interactions"] | null;
+      hollow: ReturnType<typeof tallyHollowTests> | null;
+      storage: StorageSnapshot | null;
+      storageSource: "interaction" | "page-load" | null;
+    } = { interactions: null, hollow: null, storage: null, storageSource: null };
+    // True once the authoritative record has been written. The reconciliation
+    // blocks inside the chain exist only for the old ordering; with the chain
+    // awaited they would be patching a row that is about to be written anyway.
+    let outcomeRecorded = false;
+
+    // ── E2B cloud sandbox preview ───────────────────────────────────────────
+    // All builds use E2B — React/Vite via lampcode-vite template, fullstack via
+    // nextjs/tanstack templates. isFullstackBuild still controls code generation
+    // (Hono backend + DB vs pure React), but preview always goes to E2B.
+    const wantsE2BPreview = true;
+
+    // Agentic verify-and-fix: after the preview is live, check the real backend
+    // actually started. If it crashed, capture the error, re-prompt the model to
+    // fix src/server, write the fix back (which restarts the backend), and
+    // re-verify. Bounded so it can't loop forever. Then hand back the URL.
+    const finishPreview = async (url: string): Promise<void> => {
+      // Everything in here runs AFTER the build session has been recorded
+      // "success", after its files were persisted and after usageUsd was
+      // computed — the calls below are reached only from non-awaited `.then()`
+      // chains. The three repair loops it contains all MUTATE allFiles, so both
+      // of those records go stale the moment one of them lands. Tracked here and
+      // settled once at the end; see the reconciliation block below for why.
+      const costBeforeRepairs = cumulativeCostUsd;
+      let repairedAfterCompletion = false;
+      const MAX = 2;
+      for (let attempt = 0; attempt < MAX; attempt++) {
+        const { ok, issues } = await verifyPreview(projectId).catch((err: unknown) => gateFailedOpen("verifyPreview", sessionId, projectId, err));
+        if (ok || issues.length === 0) break;
+
+        const errText = issues.map((i) => `${i.source}: ${i.message}`).join("\n");
+        logger.warn({ sessionId, projectId, errText, attempt }, "Backend failed to start — agentic fix");
+        server?.thinking(sessionId, { text: "Backend hit an error — fixing it automatically…", sessionId });
+
+        const serverFiles = Object.entries(allFiles).filter(
+          ([p]) => p.startsWith("src/server/"),
+        );
+        if (serverFiles.length === 0) break;
+        const fixDesc =
+          `The generated backend CRASHED on startup. Fix it and return the COMPLETE corrected file(s) — no diffs, no truncation.\n\n` +
+          `Startup error:\n${errText}\n\n` +
+          `Current backend files:\n` +
+          serverFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
+
+        // This loop runs fire-and-forget AFTER the build session is already marked
+        // "success" (writeFilesToSandbox/createPreviewSandbox above are not awaited
+        // before that update). The cost ceiling here can only stop further spend —
+        // it cannot fail or refund a build already recorded and delivered as complete.
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before preview-crash fix dispatch — skipping further auto-repair",
+          );
+          server?.emitToRoom(sessionId, "build:warning", {
+            sessionId,
+            message: "Backend crashed and the automatic fix budget for this build was reached. Try a follow-up prompt to fix it.",
+          });
+          break;
+        }
+
+        let fixedCount = 0;
+        try {
+          const fix = await dispatcher.dispatch({
+            agentType: "frontend",
+            usageCategory: "backend_crash_fix",
+            provider,
+            task: {
+              description: fixDesc,
+              requirements: [
+                "Return each backend file COMPLETE and runnable under tsx.",
+                "Keep the server on Number(process.env.PORT) || 3001 and mount routes under /api.",
+                "Handle all errors defensively — the server must never throw on startup.",
+                "Use the exact format: ```filename:<path> for each file.",
+              ],
+              outputFormat: "code",
+            },
+            sessionId,
+            userId,
+            projectId,
+          });
+          cumulativeCostUsd += fix.costUsd;
+          const repaired: string[] = [];
+          for (const f of parseFilesFromContent(fix.content)) {
+            if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+          }
+          // Every gate verdict above now describes code this build no longer
+          // has. The event says so; the projection turns it into staleness.
+          if (repaired.length > 0) {
+            recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
+          }
+        } catch (fixErr) {
+          logger.error({ sessionId, fixErr }, "Backend agentic fix dispatch failed");
+          break;
+        }
+        if (fixedCount === 0) break;
+        repairedAfterCompletion = true;
+        recorder.record({ type: "repair/applied", kind: "backend-start" });
+        // Write the fix back — this restarts the backend with the new code.
+        await writeFilesToSandbox(projectId, allFiles, (line) =>
+          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+        ).catch(() => {});
+      }
+
+      // Type-check the generated project against its real dependency graph and
+      // tsconfig — both only exist inside the sandbox (see runTypeCheck() for
+      // why this can't run in-memory in this process). Same shape as the
+      // backend-crash loop above: bounded, fingerprinted, fire-and-forget
+      // after the build is already marked "success" — a ceiling hit here can
+      // only stop further spend, never fail/refund a build already delivered.
+      {
+        const MAX_TYPECHECK_ATTEMPTS = 2;
+        let lastTypeFingerprint = "";
+        for (let attempt = 0; attempt <= MAX_TYPECHECK_ATTEMPTS; attempt++) {
+          const { ok, issues: allIssues } = await runTypeCheck(projectId).catch((err: unknown) => gateFailedOpen("runTypeCheck", sessionId, projectId, err));
+          // Drop errors in template-owned files. A rewrite of one is discarded
+          // on the way into the sandbox, so reporting it to the user as "your
+          // generated files have type errors" is wrong, and dispatching a fix
+          // for it is spend that cannot change anything. This was live: the
+          // baked tsconfig carried a `baseUrl` that current TypeScript rejects,
+          // so every build surfaced that one config error — and, because tsc
+          // stops at the config, surfaced nothing else. patchSandboxTsconfig
+          // now removes it; this guard is what keeps the next such error from
+          // costing anything.
+          const issues = allIssues.filter((i) => !isTemplateOwnedFile(i.source));
+          if (allIssues.length > issues.length) {
+            logger.warn(
+              { sessionId, projectId, skipped: allIssues.filter((i) => isTemplateOwnedFile(i.source)) },
+              "Type errors in template-owned files — not fixable from here, ignoring",
+            );
+          }
+          if (ok || issues.length === 0) break;
+
+          const fingerprint = issues.map((i) => `${i.source}:${i.message}`).sort().join("|");
+          if (attempt === MAX_TYPECHECK_ATTEMPTS || fingerprint === lastTypeFingerprint) {
+            logger.warn({ sessionId, projectId, issues }, "Type errors remain after fix attempts");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `Some generated files still have type errors: ${[...new Set(issues.map((i) => i.source))].join(", ")}. Try a follow-up prompt to fix them.`,
+              validationErrors: issues.map((i) => `${i.source}: ${i.message}`),
+            });
+            break;
+          }
+          lastTypeFingerprint = fingerprint;
+
+          const affected = new Set(issues.map((i) => i.source));
+          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
+          // Nothing we hold the source for — say nothing and stop, rather than
+          // logging "dispatching fix" and telling the user we're fixing
+          // something when the next line breaks out without dispatching.
+          if (affectedFiles.length === 0) break;
+
+          logger.warn({ sessionId, projectId, issues, attempt }, "Type errors — dispatching fix");
+          server?.thinking(sessionId, {
+            text: `Fixing a type error in ${[...new Set(issues.map((i) => i.source))].join(", ")}…`,
+            sessionId,
+          });
+
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before type-fix dispatch — skipping further auto-repair",
+            );
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: "Type errors found and the automatic fix budget for this build was reached. Try a follow-up prompt to fix them.",
+            });
+            break;
+          }
+
+          const fixDesc =
+            `These files have TypeScript type errors. Return the COMPLETE corrected file for EACH (no diffs, no truncation):\n\n` +
+            affectedFiles
+              .map(([p, code]) => {
+                const fileIssues = issues.filter((i) => i.source === p).map((i) => i.message).join("; ");
+                return `### ${p} — error: ${fileIssues}\n\`\`\`filename:${p}\n${code}\n\`\`\``;
+              })
+              .join("\n\n");
+
+          let fixedCount = 0;
+          try {
+            const fix = await dispatcher.dispatch({
+              agentType: "frontend",
+              usageCategory: "typecheck_fix",
+              provider,
+              task: {
+                description: fixDesc,
+                requirements: [
+                  `Output the COMPLETE corrected file for each of: ${[...affected].join(", ")}.`,
+                  "Fix ONLY the reported type errors — do not change unrelated logic.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+            });
+            cumulativeCostUsd += fix.costUsd;
+            const repaired: string[] = [];
+            for (const f of parseFilesFromContent(fix.content)) {
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+            }
+            if (repaired.length > 0) {
+              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
+            }
+          } catch (fixErr) {
+            logger.error({ sessionId, fixErr }, "Type-check fix dispatch failed");
+            break;
+          }
+          if (fixedCount === 0) break;
+          repairedAfterCompletion = true;
+          recorder.record({ type: "repair/applied", kind: "type-check" });
+          await writeFilesToSandbox(projectId, allFiles, (line) =>
+            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+          ).catch(() => {});
+        }
+      }
+
+      // Headless-Chromium render check — catches what the two checks above
+      // structurally cannot: a page that compiles clean and type-checks clean
+      // but crashes or renders blank at runtime (see verifyBrowserRender()).
+      // Same bounded/fingerprinted/fire-and-forget shape as the type-check
+      // loop above. There's no per-line diagnostic to attribute a render
+      // failure to one file, so the fix prompt always includes src/App.tsx
+      // (the render root) plus any other src/** file whose name is literally
+      // mentioned in the console error text — bounded rather than dumping
+      // every generated file into the prompt.
+      {
+        const MAX_BROWSER_FIX_ATTEMPTS = 2;
+        let lastBrowserFingerprint = "";
+        for (let attempt = 0; attempt <= MAX_BROWSER_FIX_ATTEMPTS; attempt++) {
+          const { ok, issues } = await verifyBrowserRender(projectId).catch((err: unknown) => gateFailedOpen("verifyBrowserRender", sessionId, projectId, err));
+          if (ok || issues.length === 0) break;
+
+          const errText = issues.map((i) => i.message).join("\n");
+          const fingerprint = errText;
+          if (attempt === MAX_BROWSER_FIX_ATTEMPTS || fingerprint === lastBrowserFingerprint) {
+            logger.warn({ sessionId, projectId, errText }, "Browser render issue remains after fix attempts");
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: `The app has a render issue: ${errText}. Try a follow-up prompt to fix it.`,
+              validationErrors: [errText],
+            });
+            break;
+          }
+          lastBrowserFingerprint = fingerprint;
+
+          logger.warn({ sessionId, projectId, errText, attempt }, "Browser render issue — dispatching fix");
+          server?.thinking(sessionId, { text: "The preview didn't render correctly — fixing it automatically…", sessionId });
+
+          if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+            logger.warn(
+              { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+              "Build cost ceiling reached before browser-render fix dispatch — skipping further auto-repair",
+            );
+            server?.emitToRoom(sessionId, "build:warning", {
+              sessionId,
+              message: "A render issue was found and the automatic fix budget for this build was reached. Try a follow-up prompt to fix it.",
+            });
+            break;
+          }
+
+          const affected = new Set<string>();
+          if (allFiles["src/App.tsx"] !== undefined) affected.add("src/App.tsx");
+          for (const p of Object.keys(allFiles)) {
+            if (p.startsWith("src/") && errText.includes(p.split("/").pop() ?? "")) affected.add(p);
+          }
+          const affectedFiles = Object.entries(allFiles).filter(([p]) => affected.has(p));
+          if (affectedFiles.length === 0) break;
+
+          const fixDesc =
+            `The generated app has a RUNTIME RENDER problem in the browser (not a type error, not a crash on the backend). ` +
+            `Return the COMPLETE corrected file for EACH file below — no diffs, no truncation:\n\n` +
+            `Browser error(s):\n${errText}\n\n` +
+            affectedFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
+
+          let fixedCount = 0;
+          try {
+            const fix = await dispatcher.dispatch({
+              agentType: "frontend",
+              usageCategory: "browser_render_fix",
+              provider,
+              task: {
+                description: fixDesc,
+                requirements: [
+                  `Output the COMPLETE corrected file for each of: ${[...affected].join(", ")}.`,
+                  "Fix ONLY what's causing the reported browser error — do not change unrelated logic.",
+                  "Use the exact format: ```filename:<path> for each file.",
+                ],
+                outputFormat: "code",
+              },
+              sessionId,
+              userId,
+              projectId,
+            });
+            cumulativeCostUsd += fix.costUsd;
+            const repaired: string[] = [];
+            for (const f of parseFilesFromContent(fix.content)) {
+              if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
+            }
+            if (repaired.length > 0) {
+              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
+            }
+          } catch (fixErr) {
+            logger.error({ sessionId, fixErr }, "Browser-render fix dispatch failed");
+            break;
+          }
+          if (fixedCount === 0) break;
+          repairedAfterCompletion = true;
+          recorder.record({ type: "repair/applied", kind: "browser-render" });
+          await writeFilesToSandbox(projectId, allFiles, (line) =>
+            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+          ).catch(() => {});
+        }
+      }
+
+      server?.emitPreviewUrl(sessionId, { sessionId, url });
+
+      // ── And WRITE IT DOWN ───────────────────────────────────────────────
+      // Until now this socket event was the ONLY delivery of the preview URL.
+      // `build_sessions.preview_url` existed as a column and was only ever set
+      // to null, so a missed event — a reconnect, a tab switch, a workspace
+      // that mounted a second late — lost the URL permanently, and the user
+      // was told "no preview URL was returned" about a sandbox that was
+      // running and serving. Measured 2026-10-23: the agent's own closing
+      // message carried the URL while the preview pane showed that error.
+      //
+      // The frontend already polls /api/build/:id/files for exactly this, so
+      // persisting here is what makes that fallback able to work at all.
+      // Never fails the build: a preview that cannot be recorded is still a
+      // preview the socket just delivered.
+      try {
+        await db.update(buildSessions).set({ previewUrl: url }).where(eq(buildSessions.id, sessionId));
+      } catch (err) {
+        logger.warn({ sessionId, projectId, err }, "Could not persist the preview URL — the socket event is now its only delivery");
+      }
+
+      // ── Reconcile what the repair loops above changed ─────────────────────
+      // They ran after the build was recorded and delivered, and they mutate
+      // allFiles. Two records are therefore wrong until this runs, and neither
+      // announced it:
+      //
+      // 1. STORAGE. persistFilesAsWritten/uploadProjectFiles both ran before
+      //    this function was ever called, so a fix made here reached the
+      //    sandbox and nowhere else. Sandboxes are reclaimed; restore prefers a
+      //    live sandbox and falls back to storage, so the user would get back
+      //    the exact crashing / non-type-checking version these loops just
+      //    fixed. Upserts are keyed on path, so re-persisting the whole set
+      //    converges on the same stored project.
+      // 2. usageUsd. Each loop adds its dispatch to cumulativeCostUsd, but
+      //    usageUsd was computed from that variable earlier. The user IS
+      //    charged for these dispatches — deductUsage runs per-dispatch inside
+      //    dispatcher.ts — so this is a recording gap, not a billing hole: the
+      //    column billing.ts sums for usage reporting under-reports the build.
+      //
+      // Only runs when a repair actually landed, and cannot fail the build —
+      // the build is already complete and the user already has the app.
+      if (repairedAfterCompletion) {
+        await persistFilesAsWritten(projectId, allFiles);
+
+        const repairCostUsd = cumulativeCostUsd - costBeforeRepairs;
+        // Only when the record was already written — which, now that this chain
+        // is awaited before that write, means the bounded wait below gave up on
+        // it and the build finished without it. In the normal path there is
+        // nothing to reconcile: usageUsd is computed from cumulativeCostUsd
+        // after this returns, so it already includes these dispatches.
+        try {
+          if (!outcomeRecorded) {
+            logger.info(
+              { sessionId, projectId, repairCostUsd },
+              "Post-generation repairs landed before the record was written — no reconciliation needed",
+            );
+            throw new SkipReconciliation();
+          }
+          // Read-modify-write rather than a blind set: this races the main
+          // body's own finalizing update in principle. In practice the repair
+          // dispatches above take seconds, so that write has long landed —
+          // but reading it means an unexpected ordering under-reports by a
+          // repair instead of discarding the whole build's figures.
+          const [row] = await db
+            .select({ usageUsd: buildSessions.usageUsd, buildOutcome: buildSessions.buildOutcome })
+            .from(buildSessions)
+            .where(eq(buildSessions.id, sessionId))
+            .limit(1);
+          if (row) {
+            const prior = row.buildOutcome;
+            await db
+              .update(buildSessions)
+              .set({
+                usageUsd: row.usageUsd + repairCostUsd * config.USAGE_MARGIN_MULTIPLIER,
+                ...(prior
+                  ? { buildOutcome: { ...prior, costUsd: cumulativeCostUsd } }
+                  : {}),
+              })
+              .where(eq(buildSessions.id, sessionId));
+          }
+        } catch (err) {
+          if (!(err instanceof SkipReconciliation)) {
+            logger.warn(
+              { sessionId, projectId, err },
+              "Post-completion repair cost reconciliation failed — usageUsd under-reports this build",
+            );
+          }
+        }
+
+        logger.info(
+          { sessionId, projectId, repairCostUsd, files: Object.keys(allFiles).length },
+          "Persisted post-completion repairs and reconciled their cost",
+        );
+      }
+
+      // ── Click the delivered app's own controls ──────────────────────────────
+      // Every other check in this build reads source. This one drives the
+      // running preview, so it is the only evidence here about BEHAVIOUR rather
+      // than about text — and it answers the question the wiring scan cannot: a
+      // handler can be present, correctly wired, and still change nothing.
+      //
+      // Last thing in finishPreview on purpose. It needs a live sandbox, and it
+      // has to run after the repair loops above have landed, or it reports on an
+      // app the user no longer has. Costs no model spend; the script runs inside
+      // the sandbox against the baked Playwright.
+      // Every route the app declares, not just "/". The probe used to open the
+      // home page alone, so a multi-page app's own buttons were never touched —
+      // which is precisely the complaint it exists to answer.
+      const interactionRoutes = routesToVisit(
+        [...new Set(Object.values(allFiles).flatMap((code) => declaredRoutes(code)))],
+      );
+      const interaction = await checkInteractions(projectId, interactionRoutes);
+      const interactionTally = tallyInteractions(interaction.findings);
+
+      // Only said when the probe actually ran. A probe that could not run has
+      // nothing to report, and "some controls need a closer look" from a check
+      // that never happened would be worse than silence.
+      if (interaction.ran) {
+        for (const line of formatInteractionsForUser(interaction.findings)) {
+          server?.thinking(sessionId, { text: line, sessionId });
+        }
+      }
+
+      console.log(
+        `[build] interactions session=${sessionId} ran=${interaction.ran} ` +
+        `total=${interactionTally.total} buttons=${interactionTally.buttonsNoChange} ` +
+        `links=${interactionTally.linksNoChange} forms=${interactionTally.formsNoChange} ` +
+        `consoleErrors=${interactionTally.consoleErrors} routes=${interactionRoutes.length}`,
+      );
+
+      // Re-measured here, not carried from the main body, because the repair
+      // loops above MUTATE allFiles — so a count taken before them describes
+      // code the build no longer has. Measured on this build: deadCode recorded
+      // orphanStylesheets=1 while the delivered files had the import and scanned
+      // clean, which is the loop working and the record not keeping up. The
+      // wiring scan already re-measures for exactly this reason; it just could
+      // not reach past finishPreview. Free and deterministic, so re-running it
+      // costs nothing but accuracy.
+      const hollowNow = tallyHollowTests(findHollowTests(allFiles));
+
+      // ── What the app had actually stored when the clicking stopped (F3) ────
+      // The probe reads localStorage/sessionStorage/IndexedDB from inside the
+      // page it just operated, because a browser of its own would start empty
+      // and could never see what a CLICK persisted. Values are redacted in the
+      // page before they reach stdout.
+      //
+      // `ran` is load-bearing here exactly as it is for the interaction counts:
+      // zeros with ran=false mean nothing was read, which is not the same fact
+      // as an app that stores nothing. The source is recorded too — a snapshot
+      // from a fresh page load is weaker evidence than one taken after a click,
+      // and conflating them would turn "the app writes a theme on mount" into
+      // "the user's actions persist".
+      if (interaction.ran && interaction.storage.ran) {
+        previewEvidence.storage = interaction.storage;
+        previewEvidence.storageSource = "interaction";
+      } else {
+        const loaded = await captureStorage(projectId, interactionRoutes[0] ?? "/");
+        if (loaded.ran) {
+          previewEvidence.storage = loaded;
+          previewEvidence.storageSource = "page-load";
+        }
+      }
+      const captured = previewEvidence.storage;
+      if (captured) {
+        console.log(
+          `[build] storage session=${sessionId} ran=${captured.ran} source=${previewEvidence.storageSource} ` +
+          `local=${captured.local.length} session=${captured.session.length} ` +
+          `indexedDb=${captured.indexedDb.length}`,
+        );
+      } else {
+        console.log(`[build] storage session=${sessionId} ran=false source=none`);
+      }
+
+      // Handed back rather than written from here. The record does not exist
+      // yet — this chain is awaited before it — so the final outcome below
+      // carries these, and the read-modify-write underneath is now only the
+      // fallback for a chain that overran its bound.
+      previewEvidence.interactions = { ran: interaction.ran, ...interactionTally };
+      previewEvidence.hollow = hollowNow;
+      if (!outcomeRecorded) return;
+
+      // Read-modify-write, like the cost reconciliation above and for the same
+      // reason: build_outcome was written when the build was recorded complete,
+      // which is before this point. A blind set would discard every other field
+      // in it. Cannot fail the build — the user already has the app — so a
+      // failure here costs the record and nothing else.
+      try {
+        const [row] = await db
+          .select({ buildOutcome: buildSessions.buildOutcome })
+          .from(buildSessions)
+          .where(eq(buildSessions.id, sessionId))
+          .limit(1);
+        if (row?.buildOutcome) {
+          await db
+            .update(buildSessions)
+            .set({
+              buildOutcome: {
+                ...row.buildOutcome,
+                hollowTests: hollowNow,
+                interactions: { ran: interaction.ran, ...interactionTally },
+              },
+            })
+            .where(eq(buildSessions.id, sessionId));
+        }
+      } catch (err) {
+        logger.warn(
+          { sessionId, projectId, err },
+          "Could not record the interaction probe — build_outcome will not carry it for this build",
+        );
+      }
+    };
+
+    if (wantsE2BPreview) {
+      const sandboxAlreadyRunning = hasSandbox(projectId);
+      if (sandboxAlreadyRunning) {
+        // Live in this process — push files straight in (Vite HMR refreshes).
+        console.log(`[E2B] Follow-up build — writing files directly to running sandbox for project=${projectId}`);
+        previewWork = writeFilesToSandbox(projectId, allFiles, (line) => {
+          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+        })
+          .then((url) => {
+            console.log(`[E2B] Sandbox files updated for project=${projectId} url=${url}`);
+            return finishPreview(url);
+          })
+          .catch((err) => {
+            // Race condition: prewarm sandbox was deleted (dev server timed out) between
+            // hasSandbox() returning true and writeFilesToSandbox completing.
+            // Fall back to a full cold-start rather than surfacing an error to the user.
+            console.warn(`[E2B] Sandbox file write FAILED for project=${projectId} — falling back to full sandbox creation:`, err instanceof Error ? err.message : err);
+            logger.warn({ sessionId, projectId, err }, "E2B sandbox file write failed — falling back to createPreviewSandbox");
+            server?.emitPreviewLoading(sessionId, { sessionId });
+            return withTimeout(
+              createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
+                server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+              }),
+              E2B_PREVIEW_TIMEOUT_MS,
+              `createPreviewSandbox (fallback) exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
+            )
+              .then((url) => {
+                console.log(`[E2B] Fallback sandbox ready for session=${sessionId} url=${url}`);
+                return finishPreview(url);
+              })
+              .catch((fallbackErr) => {
+                const message = fallbackErr instanceof Error ? fallbackErr.message : "Failed to start preview sandbox";
+                console.error(`[E2B] Fallback sandbox FAILED for session=${sessionId}:`, message);
+                logger.warn({ sessionId, fallbackErr }, "E2B fallback sandbox failed to start");
+                server?.emitPreviewError(sessionId, { sessionId, message });
+              });
+          });
+      } else {
+        // Not live in-process — createPreviewSandbox resumes the paused
+        // snapshot (or creates fresh for a brand-new fullstack build).
+        console.log(`[E2B] Preview needed — queueing createPreviewSandbox for session=${sessionId} files=${Object.keys(allFiles).length} e2bKeyConfigured=${Boolean(config.E2B_API_KEY)}`);
+        server?.emitPreviewLoading(sessionId, { sessionId });
+        // Was setImmediate + void: the point was to let the main body run on
+        // without waiting. The main body now waits on purpose, so the chain is
+        // simply started and kept.
+        previewWork = (async () => {
+          console.log(`[E2B] calling createPreviewSandbox for session=${sessionId}`);
+          return withTimeout(
+            createPreviewSandbox(sessionId, projectId, fullstackFramework, allFiles, (line) => {
+              server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
+            }),
+            E2B_PREVIEW_TIMEOUT_MS,
+            `createPreviewSandbox exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
+          )
+            .then((url) => {
+              console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
+              return finishPreview(url);
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : "Failed to start preview sandbox";
+              console.error(`[E2B] Preview sandbox FAILED for session=${sessionId}:`, message);
+              logger.warn({ sessionId, err }, "E2B preview sandbox failed to start");
+              server?.emitPreviewError(sessionId, { sessionId, message });
+            });
+        })();
+      }
+    }
+
+    // ── Wait for everything that can still change the delivered code ────────
+    // This is the boundary the ShopHub build did not have. Past this line no
+    // repair loop runs, so the observations, the audit, the record and the
+    // user's "it is done" all describe the same files.
+    //
+    // Bounded, because a wedged sandbox must not hold a build open forever. On
+    // a timeout the chain keeps running in the background — it is already
+    // started and its own reconciliation path still works — and the build
+    // completes with what it has, saying so. A bound that silently swallowed
+    // the overrun would be the same lie in a different place.
+    const POST_BUILD_WAIT_MS = 240_000;
+    let postBuildOverran = false;
+    try {
+      await withTimeout(previewWork, POST_BUILD_WAIT_MS, `post-generation phase exceeded ${POST_BUILD_WAIT_MS}ms`);
+    } catch (err) {
+      postBuildOverran = true;
+      logger.warn(
+        { sessionId, projectId, err },
+        "Post-generation phase did not finish in time — completing the build without its evidence",
+      );
+      recorder.record({ type: "repair/applied", kind: "post-generation-phase-overran" });
+    }
+    await recorder.flush();
+
+    // ── A verdict is only about the code it looked at ───────────────────────
+    // Every repair loop above mutates the delivered files, and each one emitted
+    // a files/written event — so the projection already knows which gate
+    // verdicts the build has outrun. This is where that is acted on instead of
+    // reported: re-run what went stale, against the code that is actually
+    // shipping, and record the fresh verdict through the same event stream.
+    //
+    // Re-running is better than reporting staleness, but only if it is real: a
+    // gate needs a live sandbox, and without one the staleness stands and is
+    // said out loud rather than quietly turned into a pass. The ShopHub run
+    // showed "Checking app loads — Done" followed by later edits; this is the
+    // half of that fix that produces evidence rather than a disclaimer.
+    //
+    // Note on what `checkPage`/`checkTypes`/`checkTests` now mean: the LAST
+    // verdict anyone obtained, not only the model's own calls. "The model never
+    // looked" stays derivable — `toolCalls` counts check_page, check_types and
+    // run_tests — and the counters below only reset when a real run happened.
+    //
+    // A FUNCTION rather than a straight-line block because it has to run
+    // twice: once here, and again after the completion-audit repair below,
+    // which is the one repair loop that lands AFTER these gates. Calling it a
+    // second time is free when nothing was written — the projection reports no
+    // staleness, so nothing re-runs.
+    // Hoisted: the closing message reports it, and the LAST call's answer is
+    // the true one — so each run clears it rather than appending to history.
+    const stillStale: string[] = [];
+    const revalidateStaleGates = async (): Promise<void> => {
+    stillStale.length = 0;
+    const staleBefore = projectOutcome([
+      ...recorder.events(),
+      { type: "build/end", turnsExhausted: false, filesWritten: 0, costUsd: 0, durationMs: 0 },
+    ]);
+    const revalidated: string[] = [];
+    if (hasSandbox(projectId)) {
+      if ((staleBefore.staleCheckTypes ?? 0) > 0) {
+        const types = await runTypeCheck(projectId).catch(() => null);
+        if (types && !types.unavailable) {
+          recorder.record({ type: "verification/result", gate: "types", status: types.ok ? "pass" : "fail" });
+          revalidated.push("types");
+        } else stillStale.push("types");
+      }
+      if ((staleBefore.staleCheckPage ?? 0) > 0) {
+        const page = await verifyBrowserRender(projectId).catch(() => null);
+        if (page && !page.unavailable) {
+          recorder.record({ type: "verification/result", gate: "page", status: page.ok ? "pass" : "fail" });
+          revalidated.push("page");
+        } else stillStale.push("page");
+      }
+      if ((staleBefore.staleCheckTests ?? 0) > 0) {
+        const tests = await runTests(projectId).catch(() => null);
+        if (tests && tests.outcome !== "unavailable") {
+          recorder.record({
+            type: "verification/result",
+            gate: "tests",
+            // "none" is its own verdict and must survive: a suite that does not
+            // exist has not passed.
+            status: tests.outcome === "none" ? "none" : tests.outcome === "passed" ? "pass" : "fail",
+          });
+          revalidated.push("tests");
+        } else stillStale.push("tests");
+      }
+    } else {
+      for (const gate of ["page", "types", "tests"] as const) {
+        const count =
+          gate === "page" ? staleBefore.staleCheckPage
+          : gate === "types" ? staleBefore.staleCheckTypes
+          : staleBefore.staleCheckTests;
+        if ((count ?? 0) > 0) stillStale.push(gate);
+      }
+    }
+    console.log(
+      `[build] freshness session=${sessionId} revalidated=[${revalidated.join(",")}] ` +
+      `stillStale=[${stillStale.join(",")}] sandbox=${hasSandbox(projectId)}`,
+    );
+    if (revalidated.length > 0) await recorder.flush();
+    };
+    await revalidateStaleGates();
+
+    // ── Update build session ────────────────────────────────────────────────
+    // creditsUsed is deprecated (see schema.ts) and kept only additively,
+    // still computed from just the main dispatch as it always was. usageUsd
+    // is the new, accurate field — the real margined cost of the whole
+    // build, main dispatch + every fix loop that ran.
+    const creditsUsed = Math.ceil(result.costUsd * 1_000);
+
+    // ── Completion audit, pass 2 of 2: did it do what was asked? ────────────
+    // Runs last, over the final file set — after every repair loop, so it is
+    // auditing what the user will actually get rather than a mid-build state.
+    //
+    // Everything above this line is the agent checking its own work: each gate
+    // is a question the agent chose to ask about work it chose to do, so a
+    // requirement it never understood produced no code AND no test, and nothing
     // failed. This compares the user's words against the delivered files, and
     // keeps `unverified` apart from `fail` — nothing else in the build can tell
     // the difference between "checked and fine" and "never checked".
@@ -1936,14 +4724,14 @@ export async function runFastBuild(
         }
       }
     }
+    // A table the app queried and never created is the difference between an
+    // app that saves and one that looks like it saves, so the user is told it
+    // was fixed rather than left to infer it from an app that now works.
     const emailConfirmationGuidance = formatPreviewEmailConfirmationGuidance(
       allFiles,
       fullstackEvidence?.databaseConnected === true,
     );
     if (emailConfirmationGuidance) closingLines.push(emailConfirmationGuidance);
-    // A table the app queried and never created is the difference between an
-    // app that saves and one that looks like it saves, so the user is told it
-    // was fixed rather than left to infer it from an app that now works.
     if (schemaTablesAdded > 0) {
       closingLines.push(
         schemaTablesAdded === 1
