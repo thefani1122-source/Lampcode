@@ -5219,3 +5219,39 @@ actually been found.
 One correction against the first report of this, so the wrong number is not carried forward:
 `checkRlsScoping` was never in `build.ts` (it lives in `src/verify/security.ts`, which `f79e031`
 never touched), and `emitPreviewUrl` went from 2 to 0, not from 1 to 0.
+
+## THE TOOL CENSUS WAS OUT OF DATE — 2026-10-23
+
+A real build ("build me a habit tracker", session `6714b6c5`, 482 s, status `success`)
+used tools that `NEXT.md` recorded as never having been called. Counted across every
+build in `build_messages` rather than inferred from one session:
+
+| tool | calls | sessions | last |
+|---|---|---|---|
+| `search_code` | 17 | 5 | 2026-10-23 |
+| `browser_interact` | 4 | 2 | 2026-10-23 |
+| `look_at_page` | 3 | 3 | 2026-10-23 |
+| `delete_file` | 2 | 2 | 2026-10-23 |
+| `shell` | 2 | 1 | 2026-10-23 |
+| `review_code` | 1 | 1 | 2026-10-10 |
+
+Still never called: `web_search`, `fetch_reference`, `checkpoint`, `revert`,
+`diff_since`, `code_intel`, `impact_analysis`.
+
+### What that build spent its effort on
+
+Its 90 recorded tool rows, which is the evidence for "why does a simple app take
+eight minutes":
+
+`write_file` 53 · `edit_file` 7 · `read_file` 6 · **`check_types` 6** · `write_files` 4 ·
+`browser_interact` 3 · `check_page` 3 · `list_files` 3 · `shell` 2 ·
+`find_wiring_gaps` 1 · `find_dead_code` 1 · `delete_file` 1
+
+Six type-checks and seven surgical edits on one small app is not the model being
+thorough for its own sake — it is the write → check → fix cycle running five more
+times than the first attempt needed. Reading is cheap here (6 reads, 3 listings);
+the time goes on fixing. Only `find_wiring_gaps`, `find_dead_code` and the
+deterministic repair loops are forced. The rest the model chose.
+
+Worth knowing before anyone tries to make simple builds faster by capping rounds:
+the thing that would be cut is the part that fixes the errors.

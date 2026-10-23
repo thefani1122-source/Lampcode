@@ -48,9 +48,27 @@ Honest list. Each needs one build that exercises it.
 | audit → repair loop | needs the audit to report something unverified; every build since has come back clean |
 | schema repair (`table-never-declared`) | the model declared every table it queried |
 | `service-role-key`, `caller-identity` checks | no build has violated them yet |
-| `shell`, `web_search`, `fetch_reference` | **never called in any of 99 builds** |
-| `checkpoint` / `revert` / `diff_since` | **never called in any of 99 builds** — this is P0.5 |
+| `web_search`, `fetch_reference`, `code_intel`, `impact_analysis` | **still never called** |
+| `checkpoint` / `revert` / `diff_since` | **still never called** — this is the rest of P0.5 |
 | honest status (`completed` instead of `success`) | needs a build where a gate fails |
+
+### Corrected 2026-10-23 — five of these have now fired
+
+Counted over every build in `build_messages`, not inferred:
+
+| tool | calls | sessions | last |
+|---|---|---|---|
+| `search_code` | 17 | 5 | 2026-10-23 |
+| `browser_interact` | 4 | 2 | 2026-10-23 |
+| `look_at_page` | 3 | 3 | 2026-10-23 |
+| `delete_file` | 2 | 2 | 2026-10-23 |
+| `shell` | 2 | 1 | 2026-10-23 |
+| `review_code` | 1 | 1 | 2026-10-10 |
+
+So the "never called in any of 99 builds" line above was true when written and is
+not any more. `search_code` and `delete_file` are the two halves of P0.5 that are
+now proven on real builds; `checkpoint`, `revert` and `diff_since` are what is
+left of it.
 
 ## C. Open, and nobody has started
 
