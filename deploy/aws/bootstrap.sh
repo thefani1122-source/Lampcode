@@ -93,8 +93,18 @@ chown "$APP_USER":"$APP_USER" "$REPO_DIR/.env"
 chmod 600 "$REPO_DIR/.env"
 
 # ── Build ────────────────────────────────────────────────────────────────────
+# `npm ci` installs EXACTLY what the lockfile names, and this lockfile was
+# generated on x86 — so it carries @rollup/rollup-linux-x64-gnu and has never
+# heard of the arm64 one. On a Graviton box the build then dies with "Cannot
+# find module @rollup/rollup-linux-arm64-gnu", which reads like a missing
+# dependency and is really npm's long-standing optional-dependency bug
+# (npm/cli#4828). `npm install` re-resolves for the machine it is on and picks
+# up the right platform binary.
+#
+# ci first, because a lockfile is worth honouring when it can be: it is only
+# abandoned when it demonstrably cannot produce a working tree here.
 say "Installing dependencies and building"
-sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && npm ci --no-audit --no-fund && npm run build"
+sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && { npm ci --no-audit --no-fund || { echo '--- npm ci failed, re-resolving for this architecture ---'; npm install --no-audit --no-fund; }; } && npm run build"
 [[ -f "$REPO_DIR/dist/index.js" ]] || die "build produced no dist/index.js"
 
 # ── systemd ──────────────────────────────────────────────────────────────────
