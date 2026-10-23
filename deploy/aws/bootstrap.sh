@@ -104,7 +104,18 @@ chmod 600 "$REPO_DIR/.env"
 # ci first, because a lockfile is worth honouring when it can be: it is only
 # abandoned when it demonstrably cannot produce a working tree here.
 say "Installing dependencies and building"
-sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && { npm ci --no-audit --no-fund || { echo '--- npm ci failed, re-resolving for this architecture ---'; npm install --no-audit --no-fund; }; } && npm run build"
+if ! sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && npm ci --no-audit --no-fund && npm run build"; then
+  # The first attempt at this guarded `npm ci` itself, which was the wrong
+  # command: npm ci SUCCEEDS — "added 257 packages" — and then the build dies.
+  # So the fallback has to hang off the BUILD, not the install. Removing the
+  # lockfile with it is what npm's own error message asks for, and is the only
+  # thing that makes npm re-resolve the platform binaries.
+  say "The lockfile's tree does not build on this machine — re-resolving"
+  sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && rm -rf node_modules package-lock.json && npm install --no-audit --no-fund && npm run build"
+  # Put the lockfile back. node_modules is already installed and working, and a
+  # modified tracked file here would make every later `git pull` refuse.
+  sudo -u "$APP_USER" bash -lc "cd '$REPO_DIR' && git checkout -- package-lock.json" || true
+fi
 [[ -f "$REPO_DIR/dist/index.js" ]] || die "build produced no dist/index.js"
 
 # ── systemd ──────────────────────────────────────────────────────────────────
