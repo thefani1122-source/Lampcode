@@ -22,6 +22,18 @@ git merge --ff-only "origin/$BRANCH" || die "not a fast-forward — someone forc
 AFTER="$(git rev-parse --short HEAD)"
 [[ "$BEFORE" == "$AFTER" ]] && say "Already up to date at $AFTER" || say "Now at $AFTER"
 
+# A deploy script that deploys ITSELF has to hand over to the new copy.
+# Measured 2026-10-23: the pull wrote a new deploy.sh with an arm64 build
+# fallback in it, bash carried on executing the OLD text it had already read,
+# the build failed exactly as before, and the fallback that was sitting on
+# disk never ran. Re-exec once, guarded so the new copy does not do it again.
+if [[ "$BEFORE" != "$AFTER" && "${LAMPCODE_REEXEC:-}" != "1" ]]; then
+  if ! git diff --quiet "$BEFORE" "$AFTER" -- deploy/aws/deploy.sh; then
+    say "This script changed in that pull — restarting with the new copy"
+    LAMPCODE_REEXEC=1 exec bash "$REPO_DIR/deploy/aws/deploy.sh" "$@"
+  fi
+fi
+
 # Same trap as the bootstrap: this lockfile was generated on x86, `npm ci`
 # honours it exactly, and npm's optional-dependency bug (npm/cli#4828) means
 # the arm64 rollup binary is never fetched. npm ci SUCCEEDS and the BUILD dies,
