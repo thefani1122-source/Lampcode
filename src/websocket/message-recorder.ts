@@ -187,6 +187,26 @@ export function recordEvent(sessionId: string, event: string, data: Record<strin
         return;
       }
 
+      // An MCP call is a tool call the agent made against somebody else's
+      // service, and it was the one kind that left no trace at all: 0 of 1,482
+      // recorded build events mention MCP, and nothing reached build_messages
+      // either. So it never appeared in the transcript, never survived a
+      // reload, and there was no way to answer "has an MCP ever actually run"
+      // from the data. Measured 2026-10-23.
+      case "build:mcp_tool_call": {
+        const tool = str("tool") || "tool";
+        const server = str("server");
+        closeThinking(sessionId);
+        write(sessionId, "tool", server ? `${server}.${tool}` : tool, {
+          tool,
+          mcp: true,
+          ...(server ? { server } : {}),
+          label: server ? `Used ${server} — ${tool}` : `Used ${tool}`,
+          ok: str("result") !== "error",
+        });
+        return;
+      }
+
       case "build:complete": {
         closeThinking(sessionId);
         const summary = str("summary");

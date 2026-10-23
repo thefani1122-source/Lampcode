@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { classifyMcpServers, buildReadToolDefinitions, buildWriteProxyDefinitions } from "../src/agents/mcp-tool-classifier.js";
 import { callApprovedMcpTool } from "../src/mcp/approved-call.js";
 import { callMcpTool } from "../src/mcp/call-tool.js";
@@ -110,6 +111,25 @@ try {
   server.close();
   server.closeAllConnections();
   await closed;
+}
+
+// ── An MCP call must leave a trace ──────────────────────────────────────────
+//
+// Measured 2026-10-23 against production: 0 of 1,482 recorded build events
+// mentioned MCP, and build_messages held none either. An MCP call is the agent
+// using somebody else's service on the user's behalf — the LAST thing that
+// should be invisible. Without a stored row it never reached the transcript,
+// never survived a reload, and there was no way to answer "has an MCP ever
+// actually run" from the data.
+{
+  const recorder = readFileSync("src/websocket/message-recorder.ts", "utf8");
+  check("the recorder handles MCP tool calls", recorder.includes('case "build:mcp_tool_call"'));
+  check("and writes them as tool rows", /case "build:mcp_tool_call"[\s\S]{0,600}?write\(sessionId, "tool"/.test(recorder));
+  check("marked as MCP, so the transcript can tell them apart", /case "build:mcp_tool_call"[\s\S]{0,600}?mcp: true/.test(recorder));
+  check("naming the server they went to", /case "build:mcp_tool_call"[\s\S]{0,600}?server/.test(recorder));
+  check("with a label written for a person", /case "build:mcp_tool_call"[\s\S]{0,600}?label: server \? `Used/.test(recorder));
+  // An error from someone else's service is still a result worth keeping.
+  check("and the outcome recorded either way", /case "build:mcp_tool_call"[\s\S]{0,600}?ok: str\("result"\) !== "error"/.test(recorder));
 }
 
 console.log(`${checks} local MCP integration checks passed`);
