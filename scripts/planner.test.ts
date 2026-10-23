@@ -36,12 +36,27 @@ check(
   shouldPlan({ prompt: longPrompt, hasExistingCode: false, agenticBuild: true, minWords: 60 }),
   true,
 );
-// An edit already has a layout — the project's own. Planning one again invites
-// the model to restructure a working app.
+// REVERSED 2026-10-23. This asserted that an edit is never planned, on the
+// reasoning that an edit already has a layout — the project's own, and that
+// planning one again invites the model to restructure a working app. The first
+// half is true and the second is handled by the prompt, which now tells the
+// planner it is planning ONE CHANGE and must not redesign the app around it.
+//
+// What the old rule actually cost: "add a camera so people can photograph a
+// dish and get its calories" skipped the only pass that works out what a
+// feature requires, and the agent improvised it for ten minutes. A request
+// made in one line needs that pass MORE than a long first prompt does.
 check(
-  "an edit is never planned, however long the prompt",
+  "an edit is planned too — that is where the request gets understood",
   shouldPlan({ prompt: longPrompt, hasExistingCode: true, agenticBuild: true, minWords: 60 }),
-  false,
+  true,
+);
+// And with no length or keyword test in front of it: the heuristics below are
+// what let the camera request through in the first place.
+check(
+  "a short edit plans as well",
+  shouldPlan({ prompt: "add a camera", hasExistingCode: true, agenticBuild: true, minWords: 60 }),
+  true,
 );
 // The pipeline emits one shot of fenced files and never reads a plan, so
 // planning for it would be paid for and thrown away.
@@ -140,14 +155,15 @@ check(
   }),
   false,
 );
-// The exclusions still win over every signal above.
+// The pipeline exclusion still wins over every signal above; the edit one is
+// gone on purpose (see the reversal note near the top of this file).
 check(
-  "an edit never plans even when it names four views",
+  "an edit that names four views plans, like every other edit",
   shouldPlan({
     prompt: "A CRM with four views and a formula evaluator.",
     hasExistingCode: true, agenticBuild: true, minWords: 38,
   }),
-  false,
+  true,
 );
 check(
   "the pipeline never plans even when it names four views",

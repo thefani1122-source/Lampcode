@@ -195,6 +195,39 @@ export interface OrphanExport {
  * not imports), and utility/type files (legitimately different consumption
  * patterns) are excluded to keep false positives cheap.
  */
+/** `export type X` / `export interface X` / `export enum X` in this file. A
+ *  type cannot be rendered, so it can never be an unwired component — and
+ *  `ButtonProps` was being reported as one. */
+function typeOnlyExports(content: string): Set<string> {
+  const names = new Set<string>();
+  const re = /export\s+(?:declare\s+)?(?:type|interface|enum)\s+([A-Za-z_$][\w$]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) if (m[1]) names.add(m[1]);
+  // `export type { Foo }` — a type-only re-export list.
+  const listRe = /export\s+type\s*\{([^}]+)\}/g;
+  while ((m = listRe.exec(content)) !== null) {
+    for (const part of (m[1] ?? "").split(",")) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * A design-system primitive, not a feature component.
+ *
+ * `src/components/ui/*` is a LIBRARY: button.tsx exports Button, ButtonProps
+ * and buttonVariants, and an app that uses only Button is behaving correctly.
+ * Treating the rest as unwired reported 29 "unwired components" against a
+ * working calorie tracker — Card, CardHeader, DialogPortal, SelectGroup and so
+ * on — and, worse, drove a repair dispatch at code that was never broken.
+ * Seen in production 2026-10-23.
+ */
+function isDesignSystemPrimitive(path: string): boolean {
+  return /(^|\/)components\/ui\//i.test(path);
+}
+
 export function findOrphanExports(files: Record<string, string>): OrphanExport[] {
   const paths = Object.keys(files);
   const knownPaths = new Set(paths);
@@ -214,10 +247,20 @@ export function findOrphanExports(files: Record<string, string>): OrphanExport[]
   const orphans: OrphanExport[] = [];
   for (const p of paths) {
     if (!inferPurpose(p).startsWith("UI component")) continue;
-    const exported = extractExports(files[p] ?? "");
+    if (isDesignSystemPrimitive(p)) continue;
+
+    const content = files[p] ?? "";
+    const exported = extractExports(content);
+    const types = typeOnlyExports(content);
     const imported = importedByFile.get(p) ?? new Set<string>();
+
     for (const name of exported) {
-      if (!imported.has(name)) orphans.push({ path: p, name });
+      if (imported.has(name)) continue;
+      // A React component is PascalCase. A lowercase export is a helper —
+      // `buttonVariants`, `cn` — and nothing renders it, by design.
+      if (!/^[A-Z]/.test(name)) continue;
+      if (types.has(name)) continue;
+      orphans.push({ path: p, name });
     }
   }
   return orphans;

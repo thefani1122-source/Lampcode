@@ -96,6 +96,18 @@ Your entire output is the list of files to create, in the order to create them.
 - Do not plan more than 25 files. If the request is bigger than that, plan the files that
   make the app work end to end and list the rest under outOfScope.
 
+## IF THE PROJECT ALREADY HAS FILES
+They are listed under EXISTING FILES at the end of the request. You are planning
+ONE CHANGE to that app, not a new one.
+- Work out what the change actually requires BEFORE listing any file: what the
+  user will do step by step, what has to be stored, what has to be computed or
+  called, what the screen shows while it happens, and what happens when it fails.
+- A feature is not done because a button exists for it. Plan the whole path.
+- List BOTH the new files to create AND the existing files that must change.
+  Say in each purpose what changes in it, not just what the file is.
+- Do not list files the change does not touch, and do not redesign the app
+  around it.
+
 ## FORMAT
 Output ONLY this JSON object, nothing before or after it:
 

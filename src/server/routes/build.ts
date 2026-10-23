@@ -1328,10 +1328,13 @@ export async function runFastBuild(
     if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
       server?.emitToRoom(sessionId, "build:preview_log", {
         sessionId,
-        line: "Planning the file layout…",
+        line: hasExistingCode
+          ? "Working out what this change needs…"
+          : "Planning the file layout…",
       });
       const planned = await planBuild({
         dispatcher, prompt, sessionId, userId, projectId, provider,
+        ...(hasExistingCode ? { existingFiles } : {}),
       });
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;

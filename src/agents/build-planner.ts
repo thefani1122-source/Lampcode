@@ -1,4 +1,5 @@
 import { AgentDispatcher } from "./dispatcher.js";
+import { generateFileManifest } from "./manifest-generator.js";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { isTemplateOwnedFile } from "../preview/e2b-service.js";
@@ -66,10 +67,25 @@ export function shouldPlan(opts: {
   minWords?: number;
 }): boolean {
   if (!config.BUILD_PLANNING_ENABLED) return false;
-  // An edit already has a layout — the project's own.
-  if (opts.hasExistingCode) return false;
   // The pipeline path never reads a plan.
   if (!opts.agenticBuild) return false;
+
+  // An EDIT always plans, and deliberately without a word count or a keyword
+  // test in front of it.
+  //
+  // This used to bail on `hasExistingCode`, reasoning that an edit already has
+  // a layout — the project's own. True about layout, and beside the point: the
+  // planning pass is where the request gets understood, and a feature asked for
+  // in one line ("add a camera so people can photograph a dish and get its
+  // calories") needs that more than a long first prompt does, not less. Without
+  // it the agent went straight to writing and spent ten minutes improvising a
+  // feature nobody had thought through. Reported 2026-10-23.
+  //
+  // No heuristic decides which edits deserve it, because the heuristics below
+  // are exactly what let this one through. The asymmetry is the same one the
+  // comment below describes, only sharper: a plan costs about $0.05, and a
+  // misunderstood feature costs the build.
+  if (opts.hasExistingCode) return true;
 
   const prompt = opts.prompt;
   const words = prompt.trim().split(/\s+/).filter(Boolean).length;
@@ -209,14 +225,26 @@ export async function planBuild(opts: {
   userId: string;
   projectId: string;
   provider: "anthropic" | "modal";
+  /** The project as it stands. Present on an edit, empty on a new build. */
+  existingFiles?: Record<string, string>;
 }): Promise<PlanResult> {
+  // A plan for a change has to be made against the app that exists, or it is
+  // guesswork about which files to touch. The manifest is paths and purposes
+  // only — the planner is not allowed to write code and does not need to read
+  // it to decide what a change requires.
+  const existing = opts.existingFiles ?? {};
+  const description =
+    Object.keys(existing).length > 0
+      ? `${opts.prompt}\n\nEXISTING FILES:\n${generateFileManifest(existing)}`
+      : opts.prompt;
+
   try {
     const result = await opts.dispatcher.dispatch({
       agentType: "planning",
       usageCategory: "build",
       provider: opts.provider,
       task: {
-        description: opts.prompt,
+        description,
         outputFormat: "json",
       },
       sessionId: opts.sessionId,
