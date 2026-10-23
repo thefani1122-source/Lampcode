@@ -78,12 +78,24 @@ export async function handleAgentStream(
    * audit, rendered as though the builder were thinking out loud in JSON.
    *
    * Narration exists to show what the BUILD agent is doing. `frontend`,
-   * `backend`, `fix` and `planning` are that agent; these three are plumbing,
-   * and their results already reach the user through their own formatters —
+   * `backend` and `fix` are that agent; the rest are plumbing, and their
+   * results already reach the user through their own formatters —
    * `formatCriteriaForUser` and `formatAuditForUser` — written in the user's
    * words rather than the model's raw output.
+   *
+   * `planning` was listed as a build agent here and left out of the set below,
+   * and that was wrong for the same reason the other three are in it: the
+   * planning prompt says "Output ONLY this JSON object", so narrating it puts
+   *
+   *     { "summary": "A minimal B2B SaaS starter...", "approach": [ ...
+   *
+   * in the chat, which is the identical failure this comment was written about.
+   * It stayed hidden while planning ran on perhaps one build in five; making
+   * every build plan (2026-10-23) put it in front of every user at once. The
+   * user already gets a written line for this pass — "Planning the file
+   * layout…", then the plan's own summary — so nothing is lost by silencing it.
    */
-  const SILENT_AGENT_TYPES = new Set(["acceptance", "audit", "review"])
+  const SILENT_AGENT_TYPES = new Set(["acceptance", "audit", "review", "planning"])
   const narrate = (event: string, data: Record<string, unknown>): void => {
     if (SILENT_AGENT_TYPES.has(agentType)) return
     emit(event, data)

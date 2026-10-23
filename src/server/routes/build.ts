@@ -1335,6 +1335,7 @@ export async function runFastBuild(
       const planned = await planBuild({
         dispatcher, prompt, sessionId, userId, projectId, provider,
         ...(hasExistingCode ? { existingFiles } : {}),
+        shape: { fullstack: isFullstackBuild, databaseConnected: ownSupabaseConnected },
       });
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;

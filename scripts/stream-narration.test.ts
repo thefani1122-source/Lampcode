@@ -15,7 +15,7 @@
  * `formatAuditForUser`, in the user's own words. The raw stream never should.
  */
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleAgentStream } from "../src/agents/stream-handler.js";
@@ -63,17 +63,44 @@ async function narrationFor(agentType: string): Promise<number> {
   return events.filter((e) => e === "build:thinking" || e === "build:token").length;
 }
 
-// The three that produce structured data for the system.
-for (const agentType of ["acceptance", "audit", "review"]) {
+// Every pass that produces structured data for the system rather than prose
+// for a person.
+//
+// `planning` was on the other list until 2026-10-23, on the grounds that it is
+// part of the build rather than plumbing. True about its role and wrong about
+// its OUTPUT: its prompt says "Output ONLY this JSON object", so narrating it
+// put a raw plan object in the chat — the identical failure the acceptance
+// pass caused, and the reason this file exists. It went unnoticed while
+// planning ran on a minority of builds; making every build plan put it in
+// front of every user at once. The pass still reports itself to the user, as
+// "Planning the file layout…" and then the plan's summary.
+for (const agentType of ["acceptance", "audit", "review", "planning"]) {
   check(`${agentType} narrates nothing to the user`, await narrationFor(agentType), 0);
 }
 
 // The build agent itself. This must keep narrating — silencing everything would
 // leave the user staring at an empty panel for the length of a build, which is
 // the opposite failure and a worse one.
-for (const agentType of ["frontend", "backend", "fix", "planning"]) {
+for (const agentType of ["frontend", "backend", "fix"]) {
   const count = await narrationFor(agentType);
   check(`${agentType} still narrates`, count > 0, true);
+}
+
+// The guard that would have caught this: a pass told to answer in JSON must
+// never be on the narrating list. Both facts live in source, so they are
+// checked against each other rather than trusted.
+{
+  const handler = readFileSync("src/agents/stream-handler.ts", "utf8");
+  const prompts = readFileSync("src/agents/prompt-builder.ts", "utf8");
+  const silent = /SILENT_AGENT_TYPES = new Set\(\[([^\]]+)\]\)/.exec(handler)?.[1] ?? "";
+  for (const agentType of ["planning", "acceptance", "audit"]) {
+    const asksForJson = new RegExp(`${agentType}:\\s*\`[\\s\\S]{0,4000}?Output ONLY this JSON`).test(prompts);
+    check(
+      `${agentType} asks for JSON, so it must be silent`,
+      !asksForJson || silent.includes(`"${agentType}"`),
+      true,
+    );
+  }
 }
 
 console.log(failures === 0 ? "\nAll narration cases passed." : `\n${failures} case(s) failed.`);

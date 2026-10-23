@@ -224,16 +224,40 @@ export async function planBuild(opts: {
   provider: "anthropic" | "modal";
   /** The project as it stands. Present on an edit, empty on a new build. */
   existingFiles?: Record<string, string>;
+  /** What the pipeline has ALREADY decided, before the planner is asked
+   *  anything. Without it the planner decides independently and the two
+   *  contradict each other — a plan saying "no backend, mock login" against a
+   *  build the classifier had already routed as fullstack. The agent then has
+   *  to pick a side mid-build, which it reported out loud: "I see there's a
+   *  conflict: the planning pass says no backend with localStorage, but…".
+   *  Seen 2026-10-23. */
+  shape?: { fullstack: boolean; databaseConnected: boolean };
 }): Promise<PlanResult> {
   // A plan for a change has to be made against the app that exists, or it is
   // guesswork about which files to touch. The manifest is paths and purposes
   // only — the planner is not allowed to write code and does not need to read
   // it to decide what a change requires.
   const existing = opts.existingFiles ?? {};
-  const description =
-    Object.keys(existing).length > 0
-      ? `${opts.prompt}\n\nEXISTING FILES:\n${generateFileManifest(existing)}`
-      : opts.prompt;
+  const parts = [opts.prompt];
+
+  if (opts.shape) {
+    parts.push(
+      "",
+      "ALREADY DECIDED — plan within this, do not contradict it:",
+      opts.shape.fullstack
+        ? "- This build HAS a real backend. Do not plan around localStorage as the store of record, and do not mock away anything the backend should do."
+        : "- This build is frontend-only. Do not plan a server or an API of your own.",
+      opts.shape.databaseConnected
+        ? "- A real database is connected. Data belongs in it, and anything behind a sign-in must be genuinely protected — a login that accepts any password is not a feature, it is a hole."
+        : "- No database is connected, so persistence is local to the browser. Say so plainly in approach rather than implying accounts are real.",
+    );
+  }
+
+  if (Object.keys(existing).length > 0) {
+    parts.push("", "EXISTING FILES:", generateFileManifest(existing));
+  }
+
+  const description = parts.join("\n");
 
   try {
     const result = await opts.dispatcher.dispatch({
