@@ -57,7 +57,9 @@ const awaitChain = at("await withTimeout(previewWork, POST_BUILD_WAIT_MS");
 const freshness = at("const staleBefore = projectOutcome([");
 const audit = at("── Completion audit, pass 2 of 2");
 const architecture = at("const architectureFindings = findArchitectureGaps(allFiles);");
-const dbSuccess = at('        status: "success",');
+// The status is now decided by the gates, so this anchors on the write itself
+// rather than on the literal it used to contain.
+const dbSuccess = at('        status: gatesFailed ? "completed" : "success",');
 const terminalEvent = at('      type: "build/end",');
 
 check("the repair chain is awaited before the completion audit", awaitChain < audit);
@@ -247,6 +249,27 @@ check(
 check(
   "a schema that applied counts as a connected database",
   build.includes("databaseConnected: ownSupabaseConnected || schemaApply?.ok === true"),
+);
+
+// The row has to agree with the gates, not with the model's summary.
+check(
+  "a failing gate is not recorded as success",
+  build.includes('status: gatesFailed ? "completed" : "success"'),
+);
+check(
+  "only page and types decide it",
+  build.includes('const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail"'),
+);
+// "completed", not "failed": the build did produce an app, and the frontend
+// maps both completed and success to the same "complete" state, so the person
+// still gets their preview — only the claim changes.
+check(
+  "it still counts as finished, so the preview is not taken away",
+  !build.includes('status: gatesFailed ? "failed"'),
+);
+check(
+  "and the downgrade is logged",
+  build.includes("[build] honest-status session="),
 );
 
 console.log(`\n${checks} lifecycle checks passed`);

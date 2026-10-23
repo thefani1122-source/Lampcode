@@ -4574,10 +4574,28 @@ export async function runFastBuild(
       `tests=${outcome.checkTests}/${outcome.staleCheckTests ?? 0} lost=${recorder.lostCount()}`,
     );
 
+    // A build whose page does not render, or whose code does not compile, is
+    // not a success — and saying so in the row is the difference between a
+    // history the owner can trust and one that agrees with whatever the model
+    // claimed. Measured 2026-10-23 (session df827368): checkPage=fail,
+    // checkTypes=fail, both fresh, row written status="success".
+    //
+    // "completed" rather than "failed": the build DID produce an app, and the
+    // frontend already maps completed and success to the same "complete" state
+    // (extractBuildStatus), so the person still gets their preview. What
+    // changes is that the record stops claiming the work is good.
+    const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
+    if (gatesFailed) {
+      console.log(
+        `[build] honest-status session=${sessionId} status=completed ` +
+        `page=${outcome.checkPage} types=${outcome.checkTypes}`,
+      );
+    }
+
     await db
       .update(buildSessions)
       .set({
-        status: "success",
+        status: gatesFailed ? "completed" : "success",
         phase: 2,
         outputDir,
         creditsUsed,
