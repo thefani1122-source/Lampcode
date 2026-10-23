@@ -110,6 +110,13 @@ export type BuildPlan = {
   summary: string;
   /** The files to write, in the order they should be written. */
   files: PlannedFile[];
+  /** How the thing actually works, decided before any file was listed: what
+   *  the user does step by step, what has to be stored, what has to be
+   *  computed, and WHO does the work — for a calorie tracker, whether the
+   *  calories come from a lookup table the app ships, something the user types
+   *  in, or a model call. A file list cannot express any of that, and a build
+   *  that never decided it produces an app that looks right and does nothing. */
+  approach?: string[];
   /** Anything the planner judged out of scope, so the build does not drift
    *  into it and the user can see what was deliberately left out. */
   outOfScope?: string[];

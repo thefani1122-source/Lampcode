@@ -28,149 +28,73 @@ function check(name: string, got: unknown, want: unknown): void {
 
 // ── shouldPlan ────────────────────────────────────────────────────────────────
 
+// EVERY agentic build plans now. Two things used to stand in the way and both
+// are gone, each for a reason worth keeping:
+//
+//  - An EDIT never planned, on the reasoning that it already has a layout. True
+//    about layout, beside the point about understanding: "add a camera so
+//    people can photograph a dish and get its calories" skipped the only pass
+//    that works out what a feature needs, and the agent improvised it for ten
+//    minutes.
+//  - A SHORT build never planned, on a word count that had been retuned twice
+//    (60, then 38) and patched with three keyword lists. "build me a calorie
+//    tracker" is five words and matches none of them, so the request that most
+//    needed working out — who logs the calories, what is stored, is a database
+//    needed at all — got nothing.
+//
+// The 2026-10-03 measurement that drove those patches is why they were never
+// going to work: across twenty eval prompts, length CANNOT separate complexity
+// (hard 41-62 words, core 38-51, smoke 29-50). A heuristic retuned twice and
+// patched three times is a guess, not a threshold.
+//
+// So the only questions left are the two real exclusions.
+
 const longPrompt = Array.from({ length: 80 }, (_, i) => `word${i}`).join(" ");
-const shortPrompt = "build me a counter app";
 
 check(
-  "a long new agentic build is planned",
-  shouldPlan({ prompt: longPrompt, hasExistingCode: false, agenticBuild: true, minWords: 60 }),
+  "a new agentic build is planned",
+  shouldPlan({ prompt: longPrompt, hasExistingCode: false, agenticBuild: true }),
   true,
 );
-// REVERSED 2026-10-23. This asserted that an edit is never planned, on the
-// reasoning that an edit already has a layout — the project's own, and that
-// planning one again invites the model to restructure a working app. The first
-// half is true and the second is handled by the prompt, which now tells the
-// planner it is planning ONE CHANGE and must not redesign the app around it.
-//
-// What the old rule actually cost: "add a camera so people can photograph a
-// dish and get its calories" skipped the only pass that works out what a
-// feature requires, and the agent improvised it for ten minutes. A request
-// made in one line needs that pass MORE than a long first prompt does.
+
 check(
   "an edit is planned too — that is where the request gets understood",
-  shouldPlan({ prompt: longPrompt, hasExistingCode: true, agenticBuild: true, minWords: 60 }),
+  shouldPlan({ prompt: longPrompt, hasExistingCode: true, agenticBuild: true }),
   true,
 );
-// And with no length or keyword test in front of it: the heuristics below are
-// what let the camera request through in the first place.
+
+// The two prompts that were measured failing in production, named so a future
+// threshold cannot quietly exclude them again.
 check(
-  "a short edit plans as well",
-  shouldPlan({ prompt: "add a camera", hasExistingCode: true, agenticBuild: true, minWords: 60 }),
+  "the five-word first build that used to get nothing",
+  shouldPlan({ prompt: "build me a calorie tracker", hasExistingCode: false, agenticBuild: true }),
   true,
 );
+
+check(
+  "the one-line edit that used to get nothing",
+  shouldPlan({ prompt: "add a camera", hasExistingCode: true, agenticBuild: true }),
+  true,
+);
+
+check(
+  "a trivial prompt plans as well — length decides nothing any more",
+  shouldPlan({ prompt: "build me a counter app", hasExistingCode: false, agenticBuild: true }),
+  true,
+);
+
 // The pipeline emits one shot of fenced files and never reads a plan, so
-// planning for it would be paid for and thrown away.
+// planning for it would be paid for and thrown away. This is a real exclusion
+// and must stay.
 check(
   "the pipeline path is never planned",
-  shouldPlan({ prompt: longPrompt, hasExistingCode: false, agenticBuild: false, minWords: 60 }),
-  false,
-);
-check(
-  "a short build is not planned",
-  shouldPlan({ prompt: shortPrompt, hasExistingCode: false, agenticBuild: true, minWords: 60 }),
-  false,
-);
-// Exactly at the threshold counts — otherwise the documented number is off by
-// one from the behaviour.
-const exactly60 = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
-check(
-  "a prompt of exactly minWords is planned",
-  shouldPlan({ prompt: exactly60, hasExistingCode: false, agenticBuild: true, minWords: 60 }),
-  true,
-);
-check(
-  "one word short of the threshold is not planned",
-  shouldPlan({
-    prompt: Array.from({ length: 59 }, (_, i) => `w${i}`).join(" "),
-    hasExistingCode: false, agenticBuild: true, minWords: 60,
-  }),
-  false,
-);
-// Whitespace must not inflate the count into a planning pass.
-check(
-  "runs of whitespace do not count as words",
-  shouldPlan({
-    prompt: "  build    a\n\n\tcounter   ", hasExistingCode: false, agenticBuild: true, minWords: 4,
-  }),
+  shouldPlan({ prompt: longPrompt, hasExistingCode: false, agenticBuild: false }),
   false,
 );
 
-// Measured 2026-10-03: word count cannot separate complexity — the eval tiers
-// overlap (hard 41-62, core 38-51, smoke 29-50). The old 60-word bar let only
-// 1 of 5 hard builds plan. So length is a low bar now, and these signals force
-// a plan for a prompt that is terse but structurally large.
-
 check(
-  "a terse prompt naming four views still plans",
-  shouldPlan({
-    prompt: "A CRM with four views behind a sidebar.",
-    hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-check(
-  "a digit count works as well as a word",
-  shouldPlan({
-    prompt: "An app with 5 screens.", hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-check(
-  "three distinct screen nouns plan without a count",
-  shouldPlan({
-    prompt: "Build a dashboard, a kanban and a settings area.",
-    hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-check(
-  "two screen nouns are not enough on their own",
-  shouldPlan({
-    prompt: "A dashboard with a sidebar.", hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  false,
-);
-// The spreadsheet case: 53 words under the old bar, no plan, 3 files.
-check(
-  "a terse prompt with hard logic plans",
-  shouldPlan({
-    prompt: "A grid where a cell starting with = evaluates a formula.",
-    hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-check(
-  "undo/redo counts as hard logic",
-  shouldPlan({
-    prompt: "A note editor with undo and redo.", hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-// A genuine one-liner still must not pay for a plan.
-check(
-  "a trivial one-liner does not plan",
-  shouldPlan({
-    prompt: "Build a counter with plus and minus buttons.",
-    hasExistingCode: false, agenticBuild: true, minWords: 38,
-  }),
-  false,
-);
-// The pipeline exclusion still wins over every signal above; the edit one is
-// gone on purpose (see the reversal note near the top of this file).
-check(
-  "an edit that names four views plans, like every other edit",
-  shouldPlan({
-    prompt: "A CRM with four views and a formula evaluator.",
-    hasExistingCode: true, agenticBuild: true, minWords: 38,
-  }),
-  true,
-);
-check(
-  "the pipeline never plans even when it names four views",
-  shouldPlan({
-    prompt: "A CRM with four views and a formula evaluator.",
-    hasExistingCode: false, agenticBuild: false, minWords: 38,
-  }),
+  "the pipeline is not planned on an edit either",
+  shouldPlan({ prompt: longPrompt, hasExistingCode: true, agenticBuild: false }),
   false,
 );
 
@@ -302,6 +226,44 @@ check("the one-file habit is still ruled out", /one large file/.test(block), tru
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });
 check("no out-of-scope section when there is nothing to exclude", /Do not build these/.test(noScope), false);
+
+
+
+// ── approach: the decisions a file list cannot carry ─────────────────────────
+
+{
+  const plan = parsePlan(JSON.stringify({
+    summary: "A calorie tracker.",
+    approach: [
+      "calories come from a built-in food table, no model call",
+      "entries persist in localStorage; no database needed",
+      "",
+    ],
+    files: [{ path: "src/App.tsx", purpose: "shell" }],
+  }));
+  check("approach is parsed", plan?.approach?.length, 2);
+  check("and blank entries are dropped", plan?.approach?.includes(""), false);
+
+  const text = formatPlanForPrompt(plan!);
+  // Ahead of the paths on purpose: a builder that reads only the file list
+  // rebuilds the shell and leaves the middle of the app empty.
+  check(
+    "the decisions come before the file list",
+    text.indexOf("built-in food table") < text.indexOf("src/App.tsx"),
+    true,
+  );
+  check(
+    "and they are stated as decisions, not suggestions",
+    text.includes("they are not suggestions"),
+    true,
+  );
+}
+
+check(
+  "a plan with no approach still formats",
+  typeof formatPlanForPrompt({ summary: "x", files: [{ path: "src/App.tsx", purpose: "shell" }] }),
+  "string",
+);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

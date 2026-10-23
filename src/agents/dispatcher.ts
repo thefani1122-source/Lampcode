@@ -718,6 +718,7 @@ export class AgentDispatcher {
         for (const tc of streamResult.toolCalls) {
           try {
             getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+              id: tc.id,
               tool: tc.name,
               result: "error",
               sessionId,
@@ -860,6 +861,7 @@ export class AgentDispatcher {
 
         try {
           getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+            id: tc.id,
             tool: tc.name,
             result: result.startsWith("Error:") ? "error" : "success",
             label: narration.label,

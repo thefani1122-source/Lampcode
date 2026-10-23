@@ -164,6 +164,7 @@ export function recordEvent(sessionId: string, event: string, data: Record<strin
 
         write(sessionId, "tool", tool, {
           tool,
+          ...(str("id") ? { toolCallId: str("id") } : {}),
           ok: data["success"] !== false && data["ok"] !== false,
           ...(str("label") ? { label: str("label") } : {}),
           ...(Array.isArray(data["paths"]) ? { paths: data["paths"] } : {}),

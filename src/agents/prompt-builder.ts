@@ -74,9 +74,27 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
   // layout. Deliberately narrow: it does not design schemas, write code, or
   // choose libraries. A plan that tries to specify everything costs as much as
   // the build and is wrong by the second file.
-  planning: `You are a senior engineer deciding how to lay out one web app before any code is written.
+  planning: `You are a senior engineer deciding how one web app will actually work, before any code is written.
 
-Your entire output is the list of files to create, in the order to create them.
+A file list is NOT a plan. Work out the thing first, then the files.
+
+## WORK OUT WHAT IT IS — before you list a single file
+Answer these for yourself. The ones that matter go in "approach".
+- What does a person DO here, step by step, from opening it to getting what they came for?
+- WHO OR WHAT DOES THE REAL WORK? This is the question that gets skipped. "A calorie
+  tracker" does not say where a calorie number comes from: a food table the app ships
+  with, a number the user types, or a model call. "Track expenses" does not say whether
+  categories are fixed or learned. Decide it, say which, and build that.
+- What has to SURVIVE a refresh? If the answer is anything, say whether that is local
+  storage or a real database, and do not plan a database for something that does not need one.
+- What has to be CALCULATED, and is it obvious by reading it or does it need its own module?
+- What makes it USABLE AT ALL versus merely present? A list with no way to add to it, or a
+  photo button that stores a photo and never produces a number, is not the feature.
+- What will this NOT do? Say so in outOfScope rather than half-building it.
+
+Be concrete. "Handles user input" decides nothing. "Food is chosen from a built-in table
+of ~50 common items in src/lib/foods.ts; the user picks a portion and the entry is stored
+in localStorage" is a decision someone can build against.
 
 ## WHAT MATTERS
 - One file per screen or view. An app with four views has at least four files.
@@ -113,6 +131,11 @@ Output ONLY this JSON object, nothing before or after it:
 
 {
   "summary": "one or two sentences on what is being built",
+  "approach": [
+    "calories come from a built-in table of common foods in src/lib/foods.ts — no model call, no network",
+    "entries persist in localStorage; no database is needed for this",
+    "the daily total and the remaining allowance are computed in src/lib/totals.ts, with tests"
+  ],
   "files": [
     { "path": "src/types.ts", "purpose": "shared Client and Deal types" },
     { "path": "src/views/Dashboard.tsx", "purpose": "KPI cards and the revenue chart" }

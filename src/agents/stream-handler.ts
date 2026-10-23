@@ -175,6 +175,11 @@ export async function handleAgentStream(
             // the live status line and the finished row always agree.
             const narration = narrateTool(chunk.toolCall.name, chunk.toolCall.arguments)
             emit("build:tool_call", {
+              // The model's own id for this call. Without it the client had to
+              // guess which row a result belonged to by matching the tool NAME
+              // against the last row still running, so two calls to the same
+              // tool could settle the wrong one.
+              id: chunk.toolCall.id,
               tool: chunk.toolCall.name,
               args: chunk.toolCall.arguments,
               label: narration.label,

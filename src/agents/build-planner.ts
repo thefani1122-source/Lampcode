@@ -33,38 +33,21 @@ const PLAN_COST_CEILING_USD = 0.25;
 /**
  * Does this build earn a planning pass?
  *
- * Only new builds, only in agentic mode, and only when the request is actually
- * large. Each exclusion is deliberate:
- *  - An EDIT already has a file layout — the project's own. Planning one again
- *    would invite the model to restructure a working app, which is the exact
- *    opposite of what an edit should do.
- *  - The PIPELINE path emits one shot of fenced files and never reads a plan,
- *    so planning for it would be paid for and thrown away.
- *  - A SMALL build does not need a plan and should not pay for one. "Build me
- *    a counter" has one sensible layout and the model already knows it.
+ * Every agentic build plans — new or edit, long prompt or four words. ONE
+ * exclusion is left, and it is about plumbing rather than judgement: the
+ * PIPELINE path emits a single shot of fenced files and never reads a plan, so
+ * planning for it would be paid for and thrown away.
  *
- * Pure and exported so the threshold is testable without spending a build.
+ * Everything else that used to stand here — a word count, and three keyword
+ * lists bolted on when the word count did not work — is gone. See the body for
+ * what each of them cost.
+ *
+ * Pure and exported so the rule is testable without spending a build.
  */
-/** A prompt that names several screens needs a layout decided up front, however
- *  briefly it says so. Either an explicit count ("four views", "3 screens") or
- *  three or more distinct screen nouns. */
-const VIEW_COUNT_RE =
-  /\b(two|three|four|five|six|seven|eight|[2-9]|1[0-2])\s+(views?|screens?|pages?|tabs?|sections?|steps?|panels?)\b/i;
-
-const SCREEN_NOUN_RE =
-  /\b(dashboard|kanban|pipeline|calendar|settings|inbox|timeline|gallery|board|wizard|checkout|cart|report|profile|admin|editor|preview|sidebar|detail.panel|data.table)\b/gi;
-
-/** Logic whose correctness is not visible by reading it. These are the builds
- *  where the plan's other job matters — pulling that logic into its own module
- *  with a sibling test, instead of burying it in a component. */
-const HARD_LOGIC_RE =
-  /\b(formula|evaluator|circular.reference|undo|redo|recurrenc|time.tracking|timer|invoice|tax|currency|proration|schedul|sort(?:ing)?.by|pagination|validation.rules?|reducer|conflict)\b/i;
-
 export function shouldPlan(opts: {
   prompt: string;
   hasExistingCode: boolean;
   agenticBuild: boolean;
-  minWords?: number;
 }): boolean {
   if (!config.BUILD_PLANNING_ENABLED) return false;
   // The pipeline path never reads a plan.
@@ -87,29 +70,24 @@ export function shouldPlan(opts: {
   // misunderstood feature costs the build.
   if (opts.hasExistingCode) return true;
 
-  const prompt = opts.prompt;
-  const words = prompt.trim().split(/\s+/).filter(Boolean).length;
-
-  // Measured 2026-10-03 across all twenty eval prompts: word count CANNOT
-  // separate complexity. editor-undo (hard) is 41 words, dashboard (core) 46,
-  // form-validation (smoke) 50 — the tiers overlap. The old 60 let only 1 of 5
-  // hard tasks plan, and the spreadsheet (53 words, a formula evaluator with
-  // circular-reference detection) wrote 3 files for want of a layout.
+  // EVERY build plans. The word count and the three keyword tests that used to
+  // stand here are gone, and their removal is the point.
   //
-  // So length is now a low bar rather than a complexity test — it only screens
-  // out one-liners — and two signals force a plan regardless of how terse the
-  // prompt is. The asymmetry justifies erring toward planning: an unnecessary
-  // plan costs about $0.05, while a missing one costs a 3-file spreadsheet or a
-  // one-file app that is expensive to edit for the rest of its life.
-  if (words >= (opts.minWords ?? config.BUILD_PLAN_MIN_WORDS)) return true;
-
-  if (VIEW_COUNT_RE.test(prompt)) return true;
-
-  SCREEN_NOUN_RE.lastIndex = 0;
-  const screens = new Set((prompt.match(SCREEN_NOUN_RE) ?? []).map((m) => m.toLowerCase()));
-  if (screens.size >= 3) return true;
-
-  return HARD_LOGIC_RE.test(prompt);
+  // What they cost, measured on real builds 2026-10-23: "build me a calorie
+  // tracker" is five words and matches no keyword, so the request that most
+  // needed working out — who logs the calories, what gets stored, does this
+  // need a database at all — went straight to code with nothing decided. The
+  // threshold had already been tuned twice (60, then 38) and the 2026-10-03
+  // measurement across twenty eval prompts had already found that length
+  // CANNOT separate complexity: editor-undo (hard) is 41 words, dashboard 46,
+  // form-validation (smoke) 50. Three keyword lists were added to patch around
+  // that, and a short prompt for a hard app still slipped through all of them.
+  //
+  // A heuristic that has been retuned twice and patched three times is not a
+  // threshold, it is a guess. The asymmetry settles it: a plan costs about
+  // $0.05, and a build that never worked out what it was making costs the
+  // build. BUILD_PLANNING_ENABLED remains the way to turn this off.
+  return true;
 }
 
 /**
@@ -164,6 +142,10 @@ export function parsePlan(raw: string): BuildPlan | null {
   if (files.length === 0) return null;
 
   const summary = typeof obj["summary"] === "string" ? obj["summary"].trim() : "";
+  const approach = Array.isArray(obj["approach"])
+    ? obj["approach"].filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    : [];
+
   const outOfScope = Array.isArray(obj["outOfScope"])
     ? obj["outOfScope"].filter((x): x is string => typeof x === "string" && x.trim() !== "")
     : [];
@@ -171,6 +153,7 @@ export function parsePlan(raw: string): BuildPlan | null {
   return {
     summary: summary || "no summary given",
     files,
+    ...(approach.length > 0 ? { approach } : {}),
     ...(outOfScope.length > 0 ? { outOfScope } : {}),
   };
 }
@@ -185,12 +168,26 @@ export function parsePlan(raw: string): BuildPlan | null {
  */
 export function formatPlanForPrompt(plan: BuildPlan): string {
   const lines = [
-    "\n\nPLANNED FILE LAYOUT",
-    `A planning pass ran before this build and decided the layout below. ${plan.summary}`,
+    "\n\nWHAT THE PLANNING PASS DECIDED",
+    `A planning pass ran before this build. ${plan.summary}`,
+  ];
+
+  // Ahead of the file list on purpose: how the thing works is what the file
+  // list is FOR, and a builder that reads only the paths rebuilds the shell
+  // and leaves the middle of the app empty.
+  if (plan.approach && plan.approach.length > 0) {
+    lines.push(
+      "",
+      "How it works — build to these decisions, they are not suggestions:",
+      ...plan.approach.map((a) => `- ${a}`),
+    );
+  }
+
+  lines.push(
     "",
     "Write these files, in this order:",
     ...plan.files.map((f, i) => `${i + 1}. ${f.path} — ${f.purpose}`),
-  ];
+  );
   if (plan.outOfScope && plan.outOfScope.length > 0) {
     lines.push(
       "",

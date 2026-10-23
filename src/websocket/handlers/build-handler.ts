@@ -179,6 +179,10 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
   let summary = "";
   let hint: string | undefined;
   let checks: unknown;
+  // Replayed rows need an id for the same reason live ones do, and both halves
+  // of a pair must carry the SAME one. A row stored before ids existed gets a
+  // synthesised one from its position, which is stable for this replay.
+  let toolSeq = 0;
   for (const m of history) {
     switch (m.role) {
       case "user":
@@ -196,17 +200,23 @@ async function settleFinishedSession(socket: BuildSocket, sessionId: string): Pr
         // tool names. The label is recomputed when an older row predates it,
         // so history written before this existed still reads properly.
         const meta = m.metadata as Record<string, unknown>;
+        const toolCallId =
+          typeof meta["toolCallId"] === "string" && meta["toolCallId"]
+            ? meta["toolCallId"]
+            : `${sessionId}:replay:${toolSeq++}`;
         const stored = typeof meta["label"] === "string" ? meta["label"] : "";
         const narration = narrateTool(m.content);
         const label = stored || narration.label;
         emitRaw("build:tool_call", {
           sessionId,
+          id: toolCallId,
           tool: m.content,
           label,
           active: narration.active,
         });
         emitRaw("build:tool_result", {
           sessionId,
+          id: toolCallId,
           tool: m.content,
           result: meta["ok"] === false ? "error" : "success",
           label,

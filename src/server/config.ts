@@ -201,7 +201,6 @@ const envSchema = z.object({
   // the old 60 let only 1 of 5 hard builds plan. 38 is where the smoke tier
   // ends and core begins; shouldPlan's own signals force a plan for a terse but
   // multi-screen or logic-heavy prompt regardless of this.
-  BUILD_PLAN_MIN_WORDS: z.coerce.number().int().positive().default(38),
   // The outside check on whether the build did what was asked — two cheap
   // dispatches that cannot write a file (src/verify/completion-audit.ts).
   // Same explicit-string parsing as the two flags above, same reason.
