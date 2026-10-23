@@ -4465,7 +4465,17 @@ export async function runFastBuild(
           requested: isFullstackBuild,
           browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && !ownSupabaseConnected,
           backendFiles: backendFileCount,
-          databaseConnected: ownSupabaseConnected,
+          // `ownSupabaseConnected` is decided at the TOP of the build, and the
+          // database card can be answered while the build is still running —
+          // which is exactly what happened on 2026-10-23 (session c777a195):
+          // the schema applied to a real project and created a real `tasks`
+          // table, while this block still said false, so the closing message
+          // was ready to tell the user "Database: not connected, so nothing is
+          // saved on a server" about a database it had just written to.
+          //
+          // A schema that applied is proof a database was connected, whatever
+          // the flag captured minutes earlier.
+          databaseConnected: ownSupabaseConnected || schemaApply?.ok === true,
           tablesDeclared: declared.size,
           tablesQueried: new Set(queried.map((q) => q.table)).size,
           fakePersistenceFiles: fakeFiles.length,

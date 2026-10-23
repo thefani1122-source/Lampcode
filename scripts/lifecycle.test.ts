@@ -238,4 +238,15 @@ check(
   build.includes("Send me a follow-up message and I will fix this"),
 );
 
+// Measured 2026-10-23 (session c777a195): schemaApply {ran:true, ok:true} —
+// a real `tasks` table with RLS and four policies was created in a real
+// project — while the same record said databaseConnected:false, because the
+// flag is captured at the top of the build and the database card was answered
+// while it was still running. The closing message was ready to say "nothing is
+// saved on a server" about a database it had just written to.
+check(
+  "a schema that applied counts as a connected database",
+  build.includes("databaseConnected: ownSupabaseConnected || schemaApply?.ok === true"),
+);
+
 console.log(`\n${checks} lifecycle checks passed`);
