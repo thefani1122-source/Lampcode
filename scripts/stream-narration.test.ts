@@ -34,12 +34,12 @@ const dir = mkdtempSync(join(tmpdir(), "narration-"));
 
 /** Records what reached the room, instead of a real socket server. */
 function recorder() {
-  const events: string[] = [];
+  const events: Array<{ event: string; data: Record<string, unknown> | undefined }> = [];
   return {
     events,
     wsServer: {
-      emitToRoom: (_room: string, event: string) => {
-        events.push(event);
+      emitToRoom: (_room: string, event: string, data?: Record<string, unknown>) => {
+        events.push({ event, data });
       },
     },
   };
@@ -47,7 +47,7 @@ function recorder() {
 
 async function* reasoningThenText() {
   yield { type: "reasoning", reasoning: "weighing the options" };
-  yield { type: "content", text: '{ "criteria": [ { "text": "User can create notes" } ] }' };
+  yield { type: "content", content: 'I will plan the best approach. { "criteria": [ { "text": "User can create notes" } ] }' };
   yield { type: "done", inputTokens: 1, outputTokens: 1 };
 }
 
@@ -60,7 +60,7 @@ async function narrationFor(agentType: string): Promise<number> {
     outputPath: join(dir, `${agentType}.txt`),
     wsServer: wsServer as never,
   });
-  return events.filter((e) => e === "build:thinking" || e === "build:token").length;
+  return events.filter((e) => e.event === "build:thinking" || e.event === "build:token").length;
 }
 
 // Every pass that produces structured data for the system rather than prose
@@ -78,12 +78,26 @@ for (const agentType of ["acceptance", "audit", "review", "planning"]) {
   check(`${agentType} narrates nothing to the user`, await narrationFor(agentType), 0);
 }
 
-// The build agent itself. This must keep narrating — silencing everything would
-// leave the user staring at an empty panel for the length of a build, which is
-// the opposite failure and a worse one.
+// The build agent reports a concise, typed phase. Provider reasoning and
+// pre-code planning prose are not progress events and must stay private.
 for (const agentType of ["frontend", "backend", "fix"]) {
-  const count = await narrationFor(agentType);
-  check(`${agentType} still narrates`, count > 0, true);
+  const { events, wsServer } = recorder();
+  await handleAgentStream(reasoningThenText() as never, {
+    sessionId: "s1",
+    agentType,
+    taskId: "t1",
+    outputPath: join(dir, `${agentType}-build.txt`),
+    wsServer: wsServer as never,
+  });
+  const thinking = events.filter((event) => event.event === "build:thinking");
+  check(`${agentType} emits one structured phase`, thinking.length, 1);
+  check(`${agentType} phase is marked internal`, thinking[0]?.data?.internal, true);
+  check(`${agentType} phase names useful work`, thinking[0]?.data?.text, "Understanding your request");
+  check(
+    `${agentType} does not expose provider reasoning or planning prose`,
+    events.some((event) => JSON.stringify(event.data).includes("weighing the options") || JSON.stringify(event.data).includes("criteria")),
+    false,
+  );
 }
 
 // The guard that would have caught this: a pass told to answer in JSON must

@@ -101,10 +101,6 @@ export async function handleAgentStream(
     emit(event, data)
   }
 
-  // Only emit thinking text that appears BEFORE the first code fence.
-  // Claude Sonnet sometimes streams the entire response as one large chunk,
-  // making per-chunk fence detection unreliable. Instead we gate on whether
-  // fullContent already contains a fence, which is always accurate.
   let codeStarted = false
   let chunkCount = 0
   let contentChunkCount = 0
@@ -118,7 +114,11 @@ export async function handleAgentStream(
   const pseudoReasoning = new PseudoToolFilter()
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
-  narrate("build:thinking", { text: "Analyzing your prompt and planning the build...", sessionId })
+  narrate("build:thinking", {
+    text: "Understanding your request",
+    sessionId,
+    internal: true,
+  })
 
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
@@ -129,8 +129,10 @@ export async function handleAgentStream(
         // Reasoning / thinking tokens (DeepSeek R1, o1, etc.)
         case "reasoning":
           if (chunk.reasoning) {
-            const safe = pseudoReasoning.push(chunk.reasoning)
-            if (safe) narrate("build:thinking", { text: safe, sessionId })
+            // Keep filtering for pseudo-tool diagnostics, but never put private
+            // model reasoning into the user transcript. Real tool rows and
+            // explicit pipeline status messages provide observable progress.
+            pseudoReasoning.push(chunk.reasoning)
           }
           break
 
@@ -145,23 +147,16 @@ export async function handleAgentStream(
           contentChunkCount++
           console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
 
-          // Mark code as started the moment ANY fence appears. This used to look
-          // only for "```filename:", so whenever the model opened with a plain
-          // ```tsx fence — or a "### src/App.tsx" heading above one — codeStarted
-          // stayed false and raw source code streamed straight into the thinking
-          // panel. A fence of any kind means prose is over.
           if (!codeStarted && (/```/.test(fullContent) || /^#{1,4}\s+\S+\.\w{1,10}\s*$/m.test(fullContent))) {
             codeStarted = true
           }
 
-          if (!codeStarted) {
-            // Forward pre-code planning/explanation text to the thinking panel,
-            // with typed tool-call syntax held back — see pseudo-tools.ts for
-            // the production leak this exists to stop.
-            const safe = pseudoFilter.push(text)
-            if (safe) narrate("build:thinking", { text: safe, sessionId })
-          } else {
-            // Detect file transitions — scan only when fence count may have changed
+          // Keep parsing typed tool syntax for diagnostics, but do not expose
+          // model planning prose as if it were a progress report.
+          pseudoFilter.push(text)
+
+          if (codeStarted) {
+            // Detect file transitions — scan only when fence count may have changed.
             const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
             if (fenceMatches.length > lastFenceCount) {
               lastFenceCount = fenceMatches.length
@@ -244,9 +239,8 @@ export async function handleAgentStream(
   // Release anything the filter was holding. Empty when the model left a
   // pseudo-tool region open, which is the right answer: there is nothing in an
   // unterminated <tool_code> block for a person to read.
-  for (const trailing of [pseudoFilter.flush(), pseudoReasoning.flush()]) {
-    if (trailing.trim()) narrate("build:thinking", { text: trailing, sessionId })
-  }
+  pseudoFilter.flush()
+  pseudoReasoning.flush()
 
   const typedToolNames = [...new Set([...pseudoFilter.names(), ...pseudoReasoning.names()])]
   if (typedToolNames.length > 0) {
