@@ -115,7 +115,7 @@ export async function handleAgentStream(
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   narrate("build:thinking", {
-    text: "Understanding your request",
+    text: "Thinking",
     sessionId,
     internal: true,
   })
@@ -126,13 +126,11 @@ export async function handleAgentStream(
       chunkCount++
 
       switch (chunk.type) {
-        // Reasoning / thinking tokens (DeepSeek R1, o1, etc.)
+        // Reasoning / thinking tokens (DeepSeek R1, Claude extended thinking, o1, etc.)
         case "reasoning":
           if (chunk.reasoning) {
-            // Keep filtering for pseudo-tool diagnostics, but never put private
-            // model reasoning into the user transcript. Real tool rows and
-            // explicit pipeline status messages provide observable progress.
-            pseudoReasoning.push(chunk.reasoning)
+            const safe = pseudoReasoning.push(chunk.reasoning)
+            if (safe) narrate("build:thinking", { text: safe, sessionId })
           }
           break
 
@@ -239,8 +237,9 @@ export async function handleAgentStream(
   // Release anything the filter was holding. Empty when the model left a
   // pseudo-tool region open, which is the right answer: there is nothing in an
   // unterminated <tool_code> block for a person to read.
-  pseudoFilter.flush()
-  pseudoReasoning.flush()
+  for (const trailing of [pseudoFilter.flush(), pseudoReasoning.flush()]) {
+    if (trailing.trim()) narrate("build:thinking", { text: trailing, sessionId })
+  }
 
   const typedToolNames = [...new Set([...pseudoFilter.names(), ...pseudoReasoning.names()])]
   if (typedToolNames.length > 0) {
