@@ -1384,11 +1384,9 @@ export async function runFastBuild(
     // failed chat emit cannot become an unhandled rejection.
     void criteriaPromise
       .then((result) => {
-        for (const line of formatCriteriaForUser(result)) {
-          server?.thinking(sessionId, { text: line, sessionId });
-        }
+        // Retained for completion audit at the end of build; omitted from chat thinking stream
       })
-      .catch((err) => logger.warn({ sessionId, err }, "Could not show extracted requirements in chat"));
+      .catch((err) => logger.warn({ sessionId, err }, "Could not extract requirements"));
 
     // ── What must NOT be possible in this app (G2) ──────────────────────────
     // The same trick as the audit above, aimed at security: a pass that cannot
@@ -1416,9 +1414,7 @@ export async function runFastBuild(
             `generic=${result.generic ?? 0} dropped=${result.dropped ?? 0}`,
           );
         }
-        for (const line of formatThreatsForUser(result.threats)) {
-          server?.thinking(sessionId, { text: line, sessionId });
-        }
+        // Retained for threat security audit; omitted from chat thinking stream
       })
       .catch((err) => logger.warn({ sessionId, err }, "Could not show the threat model in chat"));
 
