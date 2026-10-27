@@ -33,10 +33,10 @@ export async function checkMcpServer(input: {
   let stage: "connect" | "list_tools" = "connect";
   let client: Client | undefined;
   try {
-    const connected = await connectMcpClient({
+    const connected = await connectMcpClient<Array<{ name: string }>>({
       url: input.url,
       clientName: "lampcode-connect-check",
-      headers: input.headers,
+      headers: input.headers ?? {},
       fetch: input.fetch ?? secureMcpFetch,
       timeoutMs: input.timeoutMs ?? 8_000,
     }, async (activeClient) => {
