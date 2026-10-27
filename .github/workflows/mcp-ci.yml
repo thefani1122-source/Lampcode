@@ -1,0 +1,46 @@
+name: MCP CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/mcp/**"
+      - "src/agents/mcp-tool-classifier.ts"
+      - "src/agents/mcp-relevance.ts"
+      - "src/server/routes/integrations.ts"
+      - "scripts/mcp-*.test.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mcp-ci.yml"
+  pull_request:
+    paths:
+      - "src/mcp/**"
+      - "src/agents/mcp-tool-classifier.ts"
+      - "src/agents/mcp-relevance.ts"
+      - "src/server/routes/integrations.ts"
+      - "scripts/mcp-*.test.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mcp-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.18.1"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: MCP test suites
+        run: npm run test:mcp
+      - name: Production build
+        run: npm run build
