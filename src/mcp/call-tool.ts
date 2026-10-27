@@ -1,6 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { connectMcpClient } from "./client.js";
 import { logger } from "../server/logger.js";
 import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
 import { createMcpOAuthProvider } from "./oauth-client.js";
@@ -60,7 +59,7 @@ export async function callMcpTool(
   clientName = "lampcode-mcp",
   fetchImpl: FetchLike = secureMcpFetch,
 ): Promise<string> {
-  const client = new Client({ name: clientName, version: "1.0.0" });
+  let client: Client | undefined;
   const headers: Record<string, string> = { ...(target.authHeaders ?? {}) };
   if (target.authToken !== null) headers["Authorization"] = `Bearer ${target.authToken}`;
   const oauth = target.oauthSession && target.oauthRedirectUrl
@@ -72,35 +71,41 @@ export async function callMcpTool(
         saveStateHash: async () => undefined,
       })
     : null;
-  const isSse = target.serverUrl.toLowerCase().endsWith("/sse");
-  const transport = isSse
-    ? new SSEClientTransport(new URL(target.serverUrl), {
-        requestInit: { headers },
-        fetch: fetchImpl,
-        ...(oauth ? { authProvider: oauth.provider } : {}),
-      })
-    : new StreamableHTTPClientTransport(new URL(target.serverUrl), {
-        requestInit: { headers },
-        fetch: fetchImpl,
-        redirectPolicy: "same-origin",
-        ...(oauth ? { authProvider: oauth.provider } : {}),
-      });
 
   try {
-    // The SDK's transport doesn't structurally satisfy its own Transport
-    // interface under exactOptionalPropertyTypes — a type-only friction point
-    // between the SDK and this tsconfig, not a real mismatch. Same cast as
-    // mcp-tool-classifier.ts.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await client.connect(transport as any);
+    const connected = await connectMcpClient({
+      url: target.serverUrl,
+      clientName,
+      headers,
+      fetch: fetchImpl,
+      timeoutMs: 8_000,
+      ...(oauth ? { authProvider: oauth.provider } : {}),
+    }, async (activeClient) => {
+      const { tools } = await activeClient.listTools();
+      if (!tools.some((tool) => tool.name === target.mcpToolName)) {
+        throw new Error("mcp_tool_not_found");
+      }
+      return true;
+    });
+    client = connected.client;
 
-    const callTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("callTool timed out")), CALL_TOOL_TIMEOUT_MS),
-    );
-    const callResult = await Promise.race([
-      client.callTool({ name: target.mcpToolName, arguments: args }),
-      callTimeout,
-    ]);
+    const callResult = await (async () => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const callTimeout = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error("callTool timed out")),
+            CALL_TOOL_TIMEOUT_MS,
+          );
+        });
+        return await Promise.race([
+          connected.client.callTool({ name: target.mcpToolName, arguments: args }),
+          callTimeout,
+        ]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
+    })();
 
     const blocks = callResult.content as Array<{ type: string; text?: string }>;
     const text = blocks.map((b) => b.text ?? `[${b.type}]`).join("\n");
@@ -121,7 +126,7 @@ export async function callMcpTool(
     );
     return `Error: could not execute ${target.mcpToolName} on ${target.serverSlug} (${category}): ${redactTargetCredentials(err instanceof Error ? err.message : String(err), target)}`;
   } finally {
-    await client.close().catch(() => undefined);
+    await client?.close().catch(() => undefined);
   }
 }
 

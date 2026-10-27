@@ -16,6 +16,11 @@ check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNA
 check("OAuth connection uses stored access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { oauth_access_token: "oauth-token" })?.headers,
   { Authorization: "Bearer oauth-token" });
 check("OAuth-only Vercel does not advertise a static token field", MCP_REGISTRY.vercel!.credentialFields, []);
+
+for (const slug of ["notion", "figma", "sentry"] as const) {
+  check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
+  check(`${slug} hosted MCP has no incompatible static credential form`, MCP_REGISTRY[slug]!.credentialFields, []);
+}
 check("custom server can use explicit header auth", resolveCustomMcpAuth({ url: "https://mcp.example.com/mcp", authType: "api_key", token: "k", headerName: "X-API-Key" })?.headers,
   { "X-API-Key": "k" });
 ok("cleartext non-local custom MCP URLs are rejected", resolveCustomMcpAuth({ url: "http://mcp.example.com/mcp", authType: "none" }) === null);

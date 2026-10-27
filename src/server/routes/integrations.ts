@@ -779,20 +779,28 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
   }
 });
 
+function mcpOAuthReturnUrl(status: "connected" | "error", provider?: string, reason?: string): string {
+  const target = new URL("/mcp", config.FRONTEND_URL ?? config.FRONTEND_ORIGIN);
+  target.searchParams.set("mcp_oauth", status);
+  if (provider) target.searchParams.set("provider", provider);
+  if (reason) target.searchParams.set("reason", reason);
+  return target.toString();
+}
+
 mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
   const state = c.req.query("state");
   const code = c.req.query("code");
-  if (!state) return c.json({ error: "Invalid or expired MCP authorization state" }, 400);
+  if (!state) return c.redirect(mcpOAuthReturnUrl("error", undefined, "invalid_state"), 302);
   const now = new Date();
   const rows = await db.delete(mcpOAuthTransactions).where(and(
     eq(mcpOAuthTransactions.stateHash, hashOAuthState(state)),
     gt(mcpOAuthTransactions.expiresAt, now),
   )).returning();
   const pending = rows[0];
-  if (!pending) return c.json({ error: "Invalid or expired MCP authorization state" }, 400);
-  if (c.req.query("error") || !code) return c.json({ error: "MCP authorization was not completed" }, 400);
+  if (!pending) return c.redirect(mcpOAuthReturnUrl("error", undefined, "invalid_state"), 302);
+  if (c.req.query("error") || !code) return c.redirect(mcpOAuthReturnUrl("error", undefined, "cancelled"), 302);
   const provider = getMcpProvider(pending.providerSlug);
-  if (!provider || provider.authType !== "oauth") return c.json({ error: "MCP provider is unavailable" }, 400);
+  if (!provider || provider.authType !== "oauth") return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "provider_unavailable"), 302);
   const session = decryptOAuthSession(pending);
   const redirectUrl = oauthCallbackUrl();
   const oauth = createMcpOAuthProvider({
@@ -810,7 +818,7 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
     await client.connect(transport as any);
     const { tools } = await client.listTools();
     if (tools.length === 0 || !session.tokens?.access_token) {
-      return c.json({ error: "Authorization succeeded, but the MCP server exposed no usable tools" }, 422);
+      return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "no_tools"), 302);
     }
     const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens.access_token }));
     await db.insert(userMcpConnections).values({
@@ -821,10 +829,10 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
       target: [userMcpConnections.userId, userMcpConnections.providerSlug],
       set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date() },
     });
-    return c.json({ provider: pending.providerSlug, status: "connected", toolCount: tools.length });
+    return c.redirect(mcpOAuthReturnUrl("connected", pending.providerSlug), 302);
   } catch {
     logger.warn({ provider: pending.providerSlug, category: "oauth_callback_failed" }, "MCP OAuth callback failed");
-    return c.json({ error: "MCP authorization could not be completed; reconnect and try again" }, 422);
+    return c.redirect(mcpOAuthReturnUrl("error", undefined, "authorization_failed"), 302);
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -845,7 +853,7 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   // the owner's GitHub connection invisible to every build.
   const creds = unwrapCreds(body);
 
-  if (provider.authType === "oauth" && !creds["vercel_token"] && !creds["oauth_access_token"] && !creds["token"] && !creds["access_token"]) {
+  if (provider.authType === "oauth") {
     throw new AppError(400, "Start the provider's OAuth flow instead", "OAUTH_REQUIRED");
   }
 

@@ -1,6 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { connectMcpClient } from "../mcp/client.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import { mapTool, type Capability } from "../mcp/capabilities.js";
@@ -116,7 +115,7 @@ async function discoverServerTools(
   failures: McpDiscoveryFailure[],
   fetchImpl: FetchLike,
 ): Promise<ClassifiedTool[]> {
-  const client = new Client({ name: "lampcode-discovery", version: "1.0.0" });
+  let client: Client | undefined;
   const headers: Record<string, string> = { ...(server.authHeaders ?? {}) };
   if (server.authToken) headers["Authorization"] = `Bearer ${server.authToken}`;
 
@@ -129,32 +128,18 @@ async function discoverServerTools(
         saveStateHash: async () => undefined,
       })
     : null;
-  const isSse = server.url.toLowerCase().endsWith("/sse");
-  const transport = isSse
-    ? new SSEClientTransport(new URL(server.url), {
-        requestInit: { headers },
-        fetch: fetchImpl,
-        ...(oauth ? { authProvider: oauth.provider } : {}),
-      })
-    : new StreamableHTTPClientTransport(new URL(server.url), {
-        requestInit: { headers },
-        fetch: fetchImpl,
-        redirectPolicy: "same-origin",
-        ...(oauth ? { authProvider: oauth.provider } : {}),
-      });
-
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`discovery timed out after ${DISCOVERY_TIMEOUT_MS}ms`)), DISCOVERY_TIMEOUT_MS),
-  );
 
   try {
-    // The SDK's own transport class doesn't structurally satisfy its Transport
-    // interface under this project's exactOptionalPropertyTypes setting
-    // (sessionId: string vs the interface's string | undefined) — a type-only
-    // friction point between the SDK and this tsconfig, not a real mismatch.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await Promise.race([client.connect(transport as any), timeout]);
-    const { tools } = await Promise.race([client.listTools(), timeout]);
+    const connected = await connectMcpClient({
+      url: server.url,
+      clientName: "lampcode-discovery",
+      headers,
+      fetch: fetchImpl,
+      timeoutMs: DISCOVERY_TIMEOUT_MS,
+      ...(oauth ? { authProvider: oauth.provider } : {}),
+    }, async (activeClient) => (await activeClient.listTools()).tools);
+    client = connected.client;
+    const tools = connected.validation;
 
     const secrets = serverSecrets(server);
     const safeTools = tools.filter((tool) => safeDiscoveredToolName(tool.name, secrets));
@@ -172,9 +157,9 @@ async function discoverServerTools(
       if (capabilityIsRead && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
       }
-      if (annotations?.readOnlyHint === true && !destructiveByName(tool.name)) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only", inputSchema };
-      }
+      // A remote provider's readOnlyHint is untrusted metadata. Do not use it
+      // by itself as permission to execute without approval; only app-owned
+      // capability mappings or conservative name checks can establish a read.
       if (READ_VERB_RE.test(tool.name) && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", inputSchema };
       }
@@ -198,7 +183,7 @@ async function discoverServerTools(
     });
     return [];
   } finally {
-    await client.close().catch(() => undefined);
+    await client?.close().catch(() => undefined);
   }
 }
 
