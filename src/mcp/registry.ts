@@ -145,7 +145,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🪲",
     description: "Query errors, manage issues, and view performance data via the Sentry MCP server",
     mcpServerUrl: "https://mcp.sentry.dev/mcp",
-    authType: "bearer_token",
+    authType: "oauth",
     credentialFields: [
       {
         key: "sentry_token",
@@ -165,7 +165,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "📝",
     description: "Read and write pages, databases, and blocks via the Notion MCP server",
     mcpServerUrl: "https://mcp.notion.com/mcp",
-    authType: "bearer_token",
+    authType: "oauth",
     credentialFields: [
       {
         key: "notion_token",
@@ -253,7 +253,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🎨",
     description: "Read Figma files, components, and design tokens via the Figma MCP server",
     mcpServerUrl: "https://mcp.figma.com/mcp",
-    authType: "bearer_token",
+    authType: "oauth",
     credentialFields: [
       {
         key: "figma_access_token",
