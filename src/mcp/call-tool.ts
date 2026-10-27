@@ -89,13 +89,23 @@ export async function callMcpTool(
     });
     client = connected.client;
 
-    const callTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("callTool timed out")), CALL_TOOL_TIMEOUT_MS),
-    );
-    const callResult = await Promise.race([
-      client.callTool({ name: target.mcpToolName, arguments: args }),
-      callTimeout,
-    ]);
+    const callResult = await (async () => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const callTimeout = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error("callTool timed out")),
+            CALL_TOOL_TIMEOUT_MS,
+          );
+        });
+        return await Promise.race([
+          connected.client.callTool({ name: target.mcpToolName, arguments: args }),
+          callTimeout,
+        ]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
+    })();
 
     const blocks = callResult.content as Array<{ type: string; text?: string }>;
     const text = blocks.map((b) => b.text ?? `[${b.type}]`).join("\n");
