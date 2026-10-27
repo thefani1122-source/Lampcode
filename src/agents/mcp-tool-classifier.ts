@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import { mapTool, type Capability } from "../mcp/capabilities.js";
@@ -17,6 +18,8 @@ import { secureMcpFetch } from "../mcp/secure-fetch.js";
 // docs' own recommended pattern for wanting a confirmation step is denylisting
 // the tool ahead of time. This module builds that denylist for real, per
 // build, from each connected server's actual advertised tools — not a guess.
+
+const READ_VERB_RE = /^(?:get|list|search|fetch|read|describe|find|query|check|inspect|show|view|count)(?:[A-Z_]|$)/i;
 
 // Discovery must not hang a build waiting on a flaky/slow external MCP server.
 const DISCOVERY_TIMEOUT_MS = 5_000;
@@ -126,12 +129,19 @@ async function discoverServerTools(
         saveStateHash: async () => undefined,
       })
     : null;
-  const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-    requestInit: { headers },
-    fetch: fetchImpl,
-    redirectPolicy: "same-origin",
-    ...(oauth ? { authProvider: oauth.provider } : {}),
-  });
+  const isSse = server.url.toLowerCase().endsWith("/sse");
+  const transport = isSse
+    ? new SSEClientTransport(new URL(server.url), {
+        requestInit: { headers },
+        fetch: fetchImpl,
+        ...(oauth ? { authProvider: oauth.provider } : {}),
+      })
+    : new StreamableHTTPClientTransport(new URL(server.url), {
+        requestInit: { headers },
+        fetch: fetchImpl,
+        redirectPolicy: "same-origin",
+        ...(oauth ? { authProvider: oauth.provider } : {}),
+      });
 
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error(`discovery timed out after ${DISCOVERY_TIMEOUT_MS}ms`)), DISCOVERY_TIMEOUT_MS),
@@ -161,6 +171,12 @@ async function discoverServerTools(
       const capabilityIsRead = capability !== null && (capability.endsWith(".read") || capability === "db.query");
       if (capabilityIsRead && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
+      }
+      if (annotations?.readOnlyHint === true && !destructiveByName(tool.name)) {
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only", inputSchema };
+      }
+      if (READ_VERB_RE.test(tool.name) && !destructiveByName(tool.name)) {
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", inputSchema };
       }
       return {
         serverSlug: server.slug,

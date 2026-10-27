@@ -52,13 +52,29 @@ export function resolveMcpAuth(
   if (provider.authType === "mcp_url") return { url: url.toString(), headers };
   if (provider.authType === "none") return { url: url.toString(), headers };
   if (provider.authType === "oauth") {
-    const token = creds["oauth_access_token"] ?? creds["access_token"];
+    const token = creds["oauth_access_token"] ?? creds["access_token"] ?? creds["vercel_token"] ?? creds["token"];
     if (token) headers.Authorization = `Bearer ${token}`;
     return { url: url.toString(), headers };
   }
 
   const credentialKey = provider.credentialFields?.find((field) => field.type === "password")?.key;
-  const token = credentialKey ? creds[credentialKey] : undefined;
+  let token = credentialKey ? creds[credentialKey] : undefined;
+  if (!token && provider.credentialFields) {
+    for (const field of provider.credentialFields) {
+      if (typeof creds[field.key] === "string" && creds[field.key]) {
+        token = creds[field.key];
+        break;
+      }
+    }
+  }
+  if (!token) {
+    for (const key of ["token", "apiKey", "api_key", "secret_key", "key"]) {
+      if (typeof creds[key] === "string" && creds[key]) {
+        token = creds[key];
+        break;
+      }
+    }
+  }
   if (!token) return null;
 
   if (provider.authType === "api_key") {

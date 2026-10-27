@@ -836,7 +836,6 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   const slug = c.req.param("slug");
   const provider = getMcpProvider(slug);
   if (!provider) throw new AppError(404, `Unknown provider: ${slug}`, "UNKNOWN_PROVIDER");
-  if (provider.authType === "oauth") throw new AppError(400, "Start the provider's OAuth flow instead", "OAUTH_REQUIRED");
 
   const body = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR");
@@ -845,6 +844,10 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   // Normalise before storing so new rows never carry the envelope that made
   // the owner's GitHub connection invisible to every build.
   const creds = unwrapCreds(body);
+
+  if (provider.authType === "oauth" && !creds["vercel_token"] && !creds["oauth_access_token"] && !creds["token"] && !creds["access_token"]) {
+    throw new AppError(400, "Start the provider's OAuth flow instead", "OAUTH_REQUIRED");
+  }
 
   const resolved = resolveMcpAuth(provider, creds);
   if (!resolved) throw new AppError(422, "Provider credentials or MCP endpoint are incomplete", "MCP_CREDENTIALS_INCOMPLETE");

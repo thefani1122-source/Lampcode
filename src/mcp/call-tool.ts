@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { logger } from "../server/logger.js";
 import { safeMcpFailureCategory, sanitizeMcpError } from "./health.js";
 import { createMcpOAuthProvider } from "./oauth-client.js";
@@ -71,12 +72,19 @@ export async function callMcpTool(
         saveStateHash: async () => undefined,
       })
     : null;
-  const transport = new StreamableHTTPClientTransport(new URL(target.serverUrl), {
-    requestInit: { headers },
-    fetch: fetchImpl,
-    redirectPolicy: "same-origin",
-    ...(oauth ? { authProvider: oauth.provider } : {}),
-  });
+  const isSse = target.serverUrl.toLowerCase().endsWith("/sse");
+  const transport = isSse
+    ? new SSEClientTransport(new URL(target.serverUrl), {
+        requestInit: { headers },
+        fetch: fetchImpl,
+        ...(oauth ? { authProvider: oauth.provider } : {}),
+      })
+    : new StreamableHTTPClientTransport(new URL(target.serverUrl), {
+        requestInit: { headers },
+        fetch: fetchImpl,
+        redirectPolicy: "same-origin",
+        ...(oauth ? { authProvider: oauth.provider } : {}),
+      });
 
   try {
     // The SDK's transport doesn't structurally satisfy its own Transport

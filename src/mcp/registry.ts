@@ -73,8 +73,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "💳",
     description: "Manage payments, customers, subscriptions, and products via the Stripe MCP server",
     mcpServerUrl: "https://mcp.stripe.com",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "stripe_key",
+        label: "Stripe API Key",
+        type: "password",
+        placeholder: "sk_live_... or rk_live_...",
+        help: "Use a Restricted Key from dashboard.stripe.com/apikeys for least privilege",
+      },
+    ],
     supportsRealMCP: true,
   },
 
@@ -137,8 +145,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🪲",
     description: "Query errors, manage issues, and view performance data via the Sentry MCP server",
     mcpServerUrl: "https://mcp.sentry.dev/mcp",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "sentry_token",
+        label: "Sentry Internal Integration Token",
+        type: "password",
+        placeholder: "...",
+        help: "Create an Internal Integration at sentry.io/settings/ → Integrations",
+      },
+    ],
     supportsRealMCP: true,
   },
 
@@ -149,8 +165,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "📝",
     description: "Read and write pages, databases, and blocks via the Notion MCP server",
     mcpServerUrl: "https://mcp.notion.com/mcp",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "notion_token",
+        label: "Notion Integration Token",
+        type: "password",
+        placeholder: "secret_...",
+        help: "Create an integration at notion.com/profile/integrations and share pages with it",
+      },
+    ],
     supportsRealMCP: true,
   },
 
@@ -229,8 +253,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🎨",
     description: "Read Figma files, components, and design tokens via the Figma MCP server",
     mcpServerUrl: "https://mcp.figma.com/mcp",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "figma_access_token",
+        label: "Figma Personal Access Token",
+        type: "password",
+        placeholder: "figd_...",
+        help: "Create at figma.com → Account → Personal Access Tokens",
+      },
+    ],
     supportsRealMCP: true,
   },
 

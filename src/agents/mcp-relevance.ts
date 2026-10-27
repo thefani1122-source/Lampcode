@@ -48,6 +48,9 @@ const CATEGORY_HINTS: Record<string, RegExp> = {
   cms: /\b(wordpress|shopify|cms|storefront|e-?commerce)\b/i,
   design: /\b(figma|design\s*file|mockup)\b/i,
   tracker: /\b(linear|jira|sentry|issue\s*tracker|bug\s*report)\b/i,
+  payment: /\b(stripe|payment|payments|pay|checkout|billing|invoice|subscription|subscriptions|pricing|charge)\b/i,
+  content: /\b(notion|wiki|doc|docs|documentation|note|notes|knowledge)\b/i,
+  database: /\b(supabase|postgres|sql|db|database|table|tables|schema|migration|mongo|mongodb)\b/i,
 };
 
 /** Which category each known server belongs to. Unknown slugs match by name. */
@@ -68,6 +71,10 @@ const SERVER_CATEGORY: Record<string, keyof typeof CATEGORY_HINTS> = {
   linear: "tracker",
   sentry: "tracker",
   jira: "tracker",
+  stripe: "payment",
+  notion: "content",
+  supabase: "database",
+  mongodb: "database",
 };
 
 /**

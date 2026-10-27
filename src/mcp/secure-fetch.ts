@@ -96,10 +96,15 @@ const dispatcher = new Agent({
 export async function secureMcpFetch(input: string | URL, init?: RequestInit): Promise<Response> {
   const url = parseUrl(input);
   await resolvePublic(url.hostname);
+  const headers = new Headers(init?.headers);
+  if (!headers.has("User-Agent")) {
+    headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+  }
   // Manual redirects let the MCP SDK enforce its same-origin policy. Every
   // follow-up request re-enters this wrapper and the pinned socket lookup.
   return await undiciFetch(input as UndiciRequestInfo, {
     ...(init as unknown as UndiciRequestInit),
+    headers,
     redirect: "manual",
     dispatcher,
   } as UndiciRequestInit & { dispatcher: Agent }) as unknown as Response;
