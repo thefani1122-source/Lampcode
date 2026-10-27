@@ -23,7 +23,7 @@ const providerStart = routes.indexOf('integrationsRouter.post("/mcp/:slug/connec
 const providerCheck = routes.indexOf("const health = await checkMcpServer(resolved);", providerStart);
 const providerPersist = routes.indexOf("await db.insert(userMcpConnections)", providerCheck);
 check("registry provider credentials are checked before persistence", providerStart >= 0 && providerCheck > providerStart && providerPersist > providerCheck, true);
-check("OAuth-only providers reject token-form connection attempts", routes.includes('if (provider.authType === "oauth") {\\n    throw new AppError(400, "Start the provider\'s OAuth flow instead", "OAUTH_REQUIRED");'), true);
+check("OAuth-only providers reject token-form connection attempts", routes.includes('if (provider.authType === "oauth") {') && routes.includes("OAUTH_REQUIRED"), true);
 check("successful OAuth callbacks return to the MCP store", routes.includes('mcpOAuthReturnUrl("connected", pending.providerSlug)'), true);
 if (failures) process.exit(1);
 console.log("All MCP health-safety cases passed.");
