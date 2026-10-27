@@ -1,8 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { secureMcpFetch } from "./secure-fetch.js";
+import { connectMcpClient } from "./client.js";
 
 export type McpHealthResult =
   | { ok: true; toolCount: number }
@@ -30,45 +30,28 @@ export async function checkMcpServer(input: {
   timeoutMs?: number | undefined;
   fetch?: FetchLike | undefined;
 }): Promise<McpHealthResult> {
-  const isSse = input.url.toLowerCase().endsWith("/sse");
-  const client = new Client({ name: "lampcode-connect-check", version: "1.0.0" });
-  const transport = isSse
-    ? new SSEClientTransport(new URL(input.url), {
-        requestInit: { headers: input.headers ?? {}, signal: AbortSignal.timeout(input.timeoutMs ?? 8_000) },
-        fetch: input.fetch ?? secureMcpFetch,
-      })
-    : new StreamableHTTPClientTransport(new URL(input.url), {
-        requestInit: { headers: input.headers ?? {}, signal: AbortSignal.timeout(input.timeoutMs ?? 8_000) },
-        fetch: input.fetch ?? secureMcpFetch,
-        redirectPolicy: "same-origin",
-      });
   let stage: "connect" | "list_tools" = "connect";
+  let client: Client | undefined;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await client.connect(transport as any);
-    stage = "list_tools";
-    const { tools } = await client.listTools();
-    if (tools.length === 0) return { ok: false, stage: "list_tools", category: "empty_tool_list" };
-    return { ok: true, toolCount: tools.length };
-  } catch (error) {
-    if (!isSse) {
-      try {
-        const sseClient = new Client({ name: "lampcode-connect-check-sse", version: "1.0.0" });
-        const sseTransport = new SSEClientTransport(new URL(input.url), {
-          requestInit: { headers: input.headers ?? {}, signal: AbortSignal.timeout(input.timeoutMs ?? 8_000) },
-          fetch: input.fetch ?? secureMcpFetch,
-        });
-        await sseClient.connect(sseTransport as any);
-        const { tools } = await sseClient.listTools();
-        await sseClient.close().catch(() => undefined);
-        if (tools.length > 0) return { ok: true, toolCount: tools.length };
-      } catch {
-        // SSE fallback failed, fall through to reporting original error
-      }
+    const connected = await connectMcpClient({
+      url: input.url,
+      clientName: "lampcode-connect-check",
+      headers: input.headers,
+      fetch: input.fetch ?? secureMcpFetch,
+      timeoutMs: input.timeoutMs ?? 8_000,
+    }, async (activeClient) => {
+      stage = "list_tools";
+      const { tools } = await activeClient.listTools();
+      return tools;
+    });
+    client = connected.client;
+    if (connected.validation.length === 0) {
+      return { ok: false, stage: "list_tools", category: "empty_tool_list" };
     }
+    return { ok: true, toolCount: connected.validation.length };
+  } catch (error) {
     return { ok: false, stage, category: safeMcpFailureCategory(error) };
   } finally {
-    await client.close().catch(() => undefined);
+    await client?.close().catch(() => undefined);
   }
 }
-
