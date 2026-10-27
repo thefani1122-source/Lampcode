@@ -2,7 +2,7 @@ name: MCP CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     paths:
       - "src/mcp/**"
       - "src/agents/mcp-tool-classifier.ts"
