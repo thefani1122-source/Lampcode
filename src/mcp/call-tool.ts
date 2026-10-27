@@ -72,13 +72,7 @@ export async function callMcpTool(
       })
     : null;
 
-
   try {
-    // The SDK's transport doesn't structurally satisfy its own Transport
-    // interface under exactOptionalPropertyTypes — a type-only friction point
-    // between the SDK and this tsconfig, not a real mismatch. Same cast as
-    // mcp-tool-classifier.ts.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const connected = await connectMcpClient({
       url: target.serverUrl,
       clientName,
