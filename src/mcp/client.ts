@@ -7,6 +7,12 @@ import { secureMcpFetch } from "./secure-fetch.js";
 
 export type McpTransportKind = "streamable-http" | "sse";
 
+export function mcpTransportOrder(rawUrl: string): McpTransportKind[] {
+  const parsed = new URL(rawUrl);
+  const ssePath = /\/sse\/?$/i.test(parsed.pathname);
+  return ssePath ? ["sse", "streamable-http"] : ["streamable-http", "sse"];
+}
+
 export interface McpClientOptions {
   url: string;
   clientName: string;
@@ -30,10 +36,7 @@ export async function connectMcpClient<T>(
   validate: (client: Client) => Promise<T>,
 ): Promise<{ client: Client; validation: T; transport: McpTransportKind }> {
   const parsed = new URL(options.url);
-  const ssePath = /\/sse\/?$/i.test(parsed.pathname);
-  const attempts: McpTransportKind[] = ssePath
-    ? ["sse", "streamable-http"]
-    : ["streamable-http", "sse"];
+  const attempts = mcpTransportOrder(options.url);
   const headers = options.headers ?? {};
   const fetchImpl = options.fetch ?? secureMcpFetch;
   let lastError: unknown;
