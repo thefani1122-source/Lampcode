@@ -5,6 +5,7 @@ import { classifyMcpQueryIntent } from "../../agents/mcp-query-intent.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { getConnectedRestIntegrations, parseRestConnection, REST_PROVIDER_SLUGS, testRestConnection, type RestProviderSlug } from "../../mcp/rest-integrations.js";
+import { buildRestQueryTools, selectRestConnections } from "../../mcp/rest-query-tools.js";
 import { z } from "zod";
 import { eq, and, gt } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -739,22 +740,31 @@ integrationsRouter.post("/mcp/query", async (c) => {
   try {
     const connected = await getConnectedMcpServers(userId);
     const { kept, dropped } = serversForPrompt(prompt, connected);
+    const restConnections = await getConnectedRestIntegrations(userId);
+    const selectedRest = selectRestConnections(prompt, restConnections, kept.map((server) => server.slug));
+    const restQuery = buildRestQueryTools(selectedRest);
+    const selectedProviders = [
+      ...kept.map((server) => ({ slug: server.slug, name: server.name })),
+      ...restQuery.providers,
+    ];
     logger.info(
       {
         userId,
         projectId,
-        selectedProviders: kept.map((server) => server.slug),
-        droppedProviders: dropped,
+        selectedMcpProviders: kept.map((server) => server.slug),
+        selectedRestProviders: restQuery.providers.map((provider) => provider.slug),
+        droppedMcpProviders: dropped,
+        droppedRestProviders: restConnections.filter((connection) => !selectedRest.some((chosen) => chosen.slug === connection.slug)).map((connection) => connection.slug),
         intent: intent.reason,
       },
       "[mcp-query] provider selection",
     );
 
-    if (kept.length === 0) {
+    if (kept.length === 0 && restQuery.tools.length === 0) {
       return c.json({
         handled: true,
         verified: false,
-        answer: "I couldn't find a connected MCP provider for this request, so I couldn't verify live service data. No project files were changed.",
+        answer: "I couldn't find a connected, query-capable provider for this request, so I couldn't verify live service data. No project files were changed.",
         providers: [],
         tools: [],
       });
@@ -783,6 +793,8 @@ integrationsRouter.post("/mcp/query", async (c) => {
       costGuard: { cumulativeUsd: 0, maxUsd: 0.15 },
       mcpServers: kept,
       mcpQueryOnly: true,
+      mcpQueryTools: restQuery.tools,
+      mcpQueryExecutors: restQuery.executors,
       userPrompt: prompt,
       onEvent: (event) => {
         const record = event as unknown as Record<string, unknown>;
@@ -801,8 +813,9 @@ integrationsRouter.post("/mcp/query", async (c) => {
 
     // Only names tied to a selected provider are shown as MCP tool activity;
     // the dispatcher additionally guarantees that only its read registry ran.
+    const providerSlugs = new Set(selectedProviders.map((provider) => provider.slug));
     const tools = toolEvents
-      .filter((event) => kept.some((server) => event.name.startsWith(server.slug + "__")))
+      .filter((event) => [...providerSlugs].some((slug) => event.name.startsWith(slug + "__")))
       .map((event) => {
         const separator = event.name.indexOf("__");
         const slug = separator > 0 ? event.name.slice(0, separator) : "";
@@ -821,7 +834,7 @@ integrationsRouter.post("/mcp/query", async (c) => {
       {
         userId,
         projectId,
-        providers: kept.map((server) => server.slug),
+        providers: selectedProviders.map((provider) => provider.slug),
         tools: tools.map(({ provider: slug, name, success }) => ({ provider: slug, name, success })),
         verified,
         rounds: dispatch.rounds,
@@ -833,7 +846,7 @@ integrationsRouter.post("/mcp/query", async (c) => {
       handled: true,
       verified,
       answer,
-      providers: kept.map((server) => ({ slug: server.slug, name: server.name })),
+      providers: selectedProviders,
       tools,
     });
   } catch (err) {
