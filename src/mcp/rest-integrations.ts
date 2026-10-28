@@ -158,14 +158,14 @@ export async function testRestConnection(
     switch (provider) {
       case "netlify":
         response = await requestJson(fetcher, "https://api.netlify.com/api/v1/user", {
-          headers: { Authorization: `Bearer ${credentials.netlify_token}`, Accept: "application/json" },
+          headers: { Authorization: `Bearer ${credentials.netlify_token ?? ""}`, Accept: "application/json" },
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "Netlify credential verification failed."), meta: {} };
         break;
       case "railway":
         response = await requestJson(fetcher, "https://backboard.railway.com/graphql/v2", {
           method: "POST",
-          headers: { Authorization: `Bearer ${credentials.api_token}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${credentials.api_token ?? ""}`, "Content-Type": "application/json" },
           body: JSON.stringify({ query: "query LampCodeConnectionCheck { me { name email } }" }),
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "Railway credential verification failed."), meta: {} };
@@ -177,7 +177,7 @@ export async function testRestConnection(
       case "shopify":
         response = await requestJson(fetcher, `https://${credentials.shopify_store_domain}/admin/api/2026-10/graphql.json`, {
           method: "POST",
-          headers: { "X-Shopify-Access-Token": credentials.shopify_admin_token, "Content-Type": "application/json" },
+          headers: { "X-Shopify-Access-Token": credentials.shopify_admin_token ?? "", "Content-Type": "application/json" },
           body: JSON.stringify({ query: "query LampCodeConnectionCheck { shop { id name } products(first: 1) { edges { node { id title } } } }" }),
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "Shopify credential verification failed."), meta: {} };
@@ -188,7 +188,7 @@ export async function testRestConnection(
         break;
       case "wordpress": {
         const base = safeWordPressBase(credentials.wordpress_site_url ?? "");
-        const auth = Buffer.from(`${credentials.wordpress_username}:${credentials.wordpress_app_password}`).toString("base64");
+        const auth = Buffer.from(`${credentials.wordpress_username ?? ""}:${credentials.wordpress_app_password ?? ""}`).toString("base64");
         response = await requestJson(fetcher, `${base}/wp/v2/users/me?context=edit`, {
           headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
         });
@@ -200,7 +200,7 @@ export async function testRestConnection(
         const region = apiKey.match(/-([a-z0-9]+)$/i)?.[1];
         if (!region) return { ok: false, error: "Mailchimp API key must include its data-center suffix (for example, -us19).", meta: {} };
         response = await requestJson(fetcher, `https://${region}.api.mailchimp.com/3.0/ping`, {
-          headers: { Authorization: "Basic " + Buffer.from("anystring:" + credentials.api_key).toString("base64"), Accept: "application/json" },
+          headers: { Authorization: "Basic " + Buffer.from("anystring:" + apiKey).toString("base64"), Accept: "application/json" },
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "Mailchimp credential verification failed."), meta: {} };
         break;
