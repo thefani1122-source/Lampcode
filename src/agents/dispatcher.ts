@@ -10,6 +10,7 @@ import {
   type AgentTaskType,
   type ChatMessage,
   type MessageContentBlock,
+  type ToolDefinition,
 } from "./model-gateway.js";
 import { diffFile, type FileDiff } from "./file-diff.js";
 import { modalStream } from "./modal-gateway.js";
@@ -130,6 +131,10 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    * external write proxy are withheld and rejected again at dispatch time.
    */
   mcpQueryOnly?: boolean | undefined;
+  /** Additional explicitly read-only REST/API tools for the isolated query route. */
+  mcpQueryTools?: ToolDefinition[] | undefined;
+  /** Server-side REST read executors; never exposed to the model as credential data. */
+  mcpQueryExecutors?: Map<string, (args: Record<string, unknown>) => Promise<string>> | undefined;
   /** The person's own request, used ONLY to rank MCP tools when there are more
    *  of them than a round can carry. Absent means no ranking signal, which
    *  degrades to "keep the first N in a stable order" — never to sending all. */
