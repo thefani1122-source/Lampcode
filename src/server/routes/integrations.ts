@@ -4,6 +4,7 @@ import { getDispatcher } from "../../agents/dispatcher.js";
 import { classifyMcpQueryIntent } from "../../agents/mcp-query-intent.js";
 import { serversForPrompt } from "../../agents/mcp-relevance.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
+import { getConnectedRestIntegrations, parseRestConnection, REST_PROVIDER_SLUGS, testRestConnection, type RestProviderSlug } from "../../mcp/rest-integrations.js";
 import { z } from "zod";
 import { eq, and, gt } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -848,6 +849,68 @@ integrationsRouter.post("/mcp/query", async (c) => {
       tools: [],
     });
   }
+});
+
+// ── Existing REST/API catalogue providers ──────────────────────────────────────
+// These adapters are not MCP servers. They verify a provider-specific,
+// non-mutating API call and store credentials in the same per-user encrypted
+// connection table. Provider-specific adapters never accept arbitrary URLs
+// from the model; only WordPress uses a user-supplied public HTTPS site URL.
+
+integrationsRouter.post("/rest/:slug/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credential object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  const result = await testRestConnection(slug, creds);
+  if (!result.ok) throw new AppError(422, result.error ?? "REST connection test failed", "REST_CONNECT_FAILED");
+  logger.info({ userId, slug, stage: "test", verified: true }, "REST integration credentials verified");
+  return c.json({ slug, status: "verified", meta: result.meta });
+});
+
+integrationsRouter.post("/rest/:slug/connect", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credential object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  const result = await testRestConnection(slug, creds);
+  if (!result.ok) throw new AppError(422, result.error ?? "REST connection test failed", "REST_CONNECT_FAILED");
+  const parsed = parseRestConnection(slug, creds, result.meta);
+  if (!parsed) throw new AppError(422, "The credentials did not match this provider's supported fields", "REST_CREDENTIALS_INVALID");
+  const enc = encrypt(JSON.stringify(parsed.credentials));
+  await db.insert(userMcpConnections).values({
+    id: randomUUID(), userId, providerSlug: parsed.slug,
+    encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+    meta: result.meta, isCustom: false, connectedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: {
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: result.meta, isCustom: false, connectedAt: new Date(),
+    },
+  });
+  logger.info({ userId, slug, verified: true }, "REST integration connected");
+  return c.json({ slug, status: "connected", meta: result.meta }, 201);
+});
+
+integrationsRouter.delete("/rest/:slug", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  await db.delete(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId),
+    eq(userMcpConnections.providerSlug, slug),
+    eq(userMcpConnections.isCustom, false),
+  ));
+  // Remove legacy records stored by the earlier generic integration route.
+  if (slug === "wordpress") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "wordpress")));
+  if (slug === "shopify") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "shopify")));
+  if (slug === "railway") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "railway")));
+  return c.json({ success: true });
 });
 
 // ── MCP Provider routes ────────────────────────────────────────────────────────
