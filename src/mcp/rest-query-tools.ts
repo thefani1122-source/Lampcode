@@ -194,8 +194,8 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
     }
 
     if (slug === "wordpress") {
-      const base = creds.wordpress_site_url.replace(/\/+$/, "") + "/wp-json/wp/v2";
-      const auth = "Basic " + Buffer.from(creds.wordpress_username + ":" + creds.wordpress_app_password).toString("base64");
+      const base = requiredCredential(creds, "wordpress_site_url").replace(/\/+$/, "") + "/wp-json/wp/v2";
+      const auth = "Basic " + Buffer.from(requiredCredential(creds, "wordpress_username") + ":" + requiredCredential(creds, "wordpress_app_password")).toString("base64");
       const headers = { Authorization: auth, Accept: "application/json" };
       add(connection, "list_posts", "Read posts from the connected WordPress site.", limitField, [], async (args) =>
         jsonRequest(fetcher, base + "/posts?per_page=" + boundedLimit(args.limit) + "&_fields=id,date,slug,status,link,title", { headers }));
@@ -227,14 +227,14 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
       const accountSid = requiredCredential(creds, "account_sid");
       const headers = { Authorization: "Basic " + Buffer.from(accountSid + ":" + requiredCredential(creds, "auth_token")).toString("base64"), Accept: "application/json" };
       add(connection, "list_messages", "Read recent Twilio messages from the connected account.", limitField, [], async (args) =>
-        jsonRequest(fetcher, "https://api.twilio.com/2010-04-01/Accounts/" + encodeURIComponent(creds.account_sid) + "/Messages.json?PageSize=" + boundedLimit(args.limit), { headers }));
+        jsonRequest(fetcher, "https://api.twilio.com/2010-04-01/Accounts/" + encodeURIComponent(accountSid) + "/Messages.json?PageSize=" + boundedLimit(args.limit), { headers }));
       add(connection, "list_calls", "Read recent Twilio calls from the connected account.", limitField, [], async (args) =>
-        jsonRequest(fetcher, "https://api.twilio.com/2010-04-01/Accounts/" + encodeURIComponent(creds.account_sid) + "/Calls.json?PageSize=" + boundedLimit(args.limit), { headers }));
+        jsonRequest(fetcher, "https://api.twilio.com/2010-04-01/Accounts/" + encodeURIComponent(accountSid) + "/Calls.json?PageSize=" + boundedLimit(args.limit), { headers }));
       continue;
     }
 
     if (slug === "sendgrid") {
-      const headers = { Authorization: "Bearer " + creds.api_key, Accept: "application/json" };
+      const headers = { Authorization: "Bearer " + requiredCredential(creds, "api_key"), Accept: "application/json" };
       add(connection, "list_scopes", "Read permissions granted to this SendGrid API key. SendGrid does not provide general sent-email history through this API.", {}, [], async () =>
         jsonRequest(fetcher, "https://api.sendgrid.com/v3/scopes", { headers }));
     }
