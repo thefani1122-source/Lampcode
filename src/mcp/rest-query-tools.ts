@@ -236,7 +236,7 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
   return { tools, executors, providers: [...providersBySlug.values()] };
 }
 
-function labelFor(slug: string): string {
+function labelFor(slug: RestProviderSlug): string {
   switch (slug) {
     case "netlify": return "Netlify";
     case "railway": return "Railway";
@@ -249,4 +249,5 @@ function labelFor(slug: string): string {
     case "framer": return "Framer";
     case "mongodb": return "MongoDB Atlas";
   }
+  return slug;
 }
