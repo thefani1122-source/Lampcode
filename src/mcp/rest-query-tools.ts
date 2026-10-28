@@ -199,7 +199,7 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
     if (slug === "mailchimp") {
       const region = creds.api_key.match(/-([a-z0-9]+)$/i)?.[1];
       if (!region) continue;
-      const headers = { Authorization: "Bearer " + creds.api_key, Accept: "application/json" };
+      const headers = { Authorization: "Basic " + Buffer.from("anystring:" + creds.api_key).toString("base64"), Accept: "application/json" };
       add(connection, "list_campaigns", "Read recent Mailchimp campaigns and their status/send time.", limitField, [], async (args) =>
         jsonRequest(fetcher, "https://" + region + ".api.mailchimp.com/3.0/campaigns?count=" + boundedLimit(args.limit) + "&sort_field=send_time&sort_dir=DESC", { headers }));
       add(connection, "list_audiences", "Read Mailchimp audiences and subscriber counts.", limitField, [], async (args) =>
