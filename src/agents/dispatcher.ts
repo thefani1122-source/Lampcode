@@ -124,6 +124,12 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  is already warming. Turn count is bounded by config.AGENTIC_MAX_TURNS and,
    *  as the real budget, by the same in-loop costGuard every tool round uses. */
   agenticBuild?: boolean | undefined;
+  /**
+   * Read-only connected-service query mode. This is a hard execution boundary:
+   * only discovered read MCP proxies may execute; native build tools and every
+   * external write proxy are withheld and rejected again at dispatch time.
+   */
+  mcpQueryOnly?: boolean | undefined;
   /** The person's own request, used ONLY to rank MCP tools when there are more
    *  of them than a round can carry. Absent means no ranking signal, which
    *  degrades to "keep the first N in a stable order" — never to sending all. */
@@ -379,7 +385,8 @@ export class AgentDispatcher {
     // in agentic mode the model is told to build via write_files instead of
     // printing ```filename fences, and that instruction has to be in the
     // system prompt that the first round is built from.
-    const agenticBuild = options.agenticBuild === true && enableTools && Boolean(projectId);
+    const mcpQueryOnly = options.mcpQueryOnly === true;
+    const agenticBuild = !mcpQueryOnly && options.agenticBuild === true && enableTools && Boolean(projectId);
 
     // Discover + classify each connected server's real tools once per dispatch
     // (not per round — the classification doesn't change mid-loop). Read-only
@@ -412,15 +419,17 @@ export class AgentDispatcher {
           });
         } catch { /* ws not available — the log line above still carries it */ }
       }
-      const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
-      writeProxyRegistry = writeProxies.registry;
-      // The registry keeps EVERY tool; only the definitions sent to the model
-      // are capped. A tool trimmed from this round's list is still executable
-      // if the model names it from an earlier round, which is the difference
-      // between "not offered right now" and "gone".
-      const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
-      writeProxyDefs = cappedWrites.kept;
-      mcpToolsOmitted += cappedWrites.omitted;
+      if (!mcpQueryOnly) {
+        const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
+        writeProxyRegistry = writeProxies.registry;
+        // The registry keeps EVERY tool; only the definitions sent to the model
+        // are capped. A tool trimmed from this round's list is still executable
+        // if the model names it from an earlier round, which is the difference
+        // between "not offered right now" and "gone".
+        const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
+        writeProxyDefs = cappedWrites.kept;
+        mcpToolsOmitted += cappedWrites.omitted;
+      }
       // Both model providers receive the same local function tools. Lampcode
       // executes reads locally and gates every write before it reaches a server.
       const readTools = buildReadToolDefinitions(report, mcpServers);
@@ -459,13 +468,31 @@ export class AgentDispatcher {
       : task;
 
     // Build prompt
-    const { systemPrompt, userMessage, estimatedInputTokens } =
-      await this.promptBuilder.build(agentType, effectiveTask, {
-        projectId: projectId ?? "unknown",
-        userId: userId ?? "anonymous",
-        mode: "fast",
-        prompt: task.description,
-      }, workspaceDir, contextFiles);
+    const {
+      systemPrompt: builtSystemPrompt,
+      userMessage: builtUserMessage,
+      estimatedInputTokens,
+    } = await this.promptBuilder.build(agentType, effectiveTask, {
+      projectId: projectId ?? "unknown",
+      userId: userId ?? "anonymous",
+      mode: "fast",
+      prompt: task.description,
+    }, workspaceDir, contextFiles);
+
+    // A dedicated read-only system prompt replaces build-oriented instructions.
+    // The execution guard below is the real boundary; this prompt keeps the
+    // model aligned with the narrow set of tools it is actually offered.
+    const systemPrompt = mcpQueryOnly
+      ? [
+          "You are LampCode's read-only connected-service inspector.",
+          "Answer the user's question by calling only the connected-service read-only MCP tools supplied in this request.",
+          "Never create, edit, delete, or write project files. Never start a build, deploy, publish, send a message, trigger a workflow, change settings, or perform any external write.",
+          "Use the provider tool results as the only evidence for live state. Do not guess or invent deployments, projects, statuses, timestamps, or tool results.",
+          "If a tool fails, say that live data could not be verified and explain only the safe error details returned by the tool.",
+          "Keep the response concise. State which provider/tool results you used when available.",
+        ].join("\\n")
+      : builtSystemPrompt;
+    const userMessage = mcpQueryOnly ? task.description : builtUserMessage;
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker
@@ -494,7 +521,7 @@ export class AgentDispatcher {
     // max_tokens is a ceiling, not a charge: a small build still only bills for
     // what it generates, so raising it costs nothing and removes a whole class
     // of truncation failure.
-    const maxTokens = 32_000;
+    const maxTokens = mcpQueryOnly ? 2_500 : 32_000;
 
     // Still distinguished for the thinking budget below — that one is about how
     // much planning the task warrants, which genuinely does differ, not about
@@ -586,7 +613,9 @@ export class AgentDispatcher {
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
-          ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
+          ? (mcpQueryOnly
+              ? readToolDefs
+              : [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])])
           : undefined,
       };
       // What the model was ACTUALLY offered this round. Three different models
@@ -755,42 +784,51 @@ export class AgentDispatcher {
         // identity is enough and nothing large is duplicated per tool call.
         const filesBefore = new Map(Object.entries(generatedFiles));
         const deletedBefore = new Set(deletedFiles);
-        const result = await executeTool(tc.name, tc.arguments, {
-          contextFiles,
-          sessionId,
-          writeMcpRegistry: writeProxyRegistry,
-          readMcpRegistry,
-          writeDenied,
-          toolCallId: tc.id,
-          ...(agenticBuild
-            ? {
-                projectId,
-                generatedFiles,
-                deletedFiles,
-                checkpoints,
-                onLog: options.onSandboxLog,
-                projectFiles: options.projectFiles,
-                gateResults,
-                lastRender,
-                interactionsProbed,
-                pendingImages,
-                writeCounter,
-                churn,
-                deadCode,
-                review,
-                // review_code runs a model of its own, so it needs the
-                // dispatcher and the identity to bill against. Not a recursion
-                // risk: the review dispatch offers NO tools, so it cannot reach
-                // review_code again.
-                dispatcher: this,
-                userId: options.userId,
-                provider: effectiveProvider,
-                ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
-              }
-            : {}),
-        }).catch(
-          (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // Defense in depth: never let a guessed, stale, or provider-injected
+        // tool name reach the general tool executor in query-only mode. Merely
+        // omitting write tools from the model request is not a security boundary.
+        let result: string;
+        if (mcpQueryOnly && !readMcpRegistry.has(tc.name)) {
+          result = "Error: this read-only service query may only execute verified read-only MCP tools. No action was performed.";
+          logger.warn({ sessionId, tool: tc.name }, "Blocked non-read tool in MCP query mode");
+        } else {
+          result = await executeTool(tc.name, tc.arguments, {
+            contextFiles,
+            sessionId,
+            writeMcpRegistry: writeProxyRegistry,
+            readMcpRegistry,
+            writeDenied,
+            toolCallId: tc.id,
+            ...(agenticBuild
+              ? {
+                  projectId,
+                  generatedFiles,
+                  deletedFiles,
+                  checkpoints,
+                  onLog: options.onSandboxLog,
+                  projectFiles: options.projectFiles,
+                  gateResults,
+                  lastRender,
+                  interactionsProbed,
+                  pendingImages,
+                  writeCounter,
+                  churn,
+                  deadCode,
+                  review,
+                  // review_code runs a model of its own, so it needs the
+                  // dispatcher and the identity to bill against. Not a recursion
+                  // risk: the review dispatch offers NO tools, so it cannot reach
+                  // review_code again.
+                  dispatcher: this,
+                  userId: options.userId,
+                  provider: effectiveProvider,
+                  ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
+                }
+              : {}),
+          }).catch(
+            (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         emitEvent({ type: "tool/result", name: tc.name, ok: !result.startsWith("Error:"), round });
 
         // A gate's verdict, at the moment it was given.
