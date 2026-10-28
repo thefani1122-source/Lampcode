@@ -291,6 +291,7 @@ export async function getConnectedRestIntegrations(userId: string): Promise<Rest
 
   const legacyRows = await db.select().from(userIntegrations).where(eq(userIntegrations.userId, userId));
   for (const row of legacyRows) {
+    if (row.status !== "connected") continue;
     if (seen.has(row.provider) || !REST_PROVIDER_SLUGS.includes(row.provider as RestProviderSlug)) continue;
     const cfg = row.config;
     if (!cfg.encryptedCreds || !cfg.encryptedCredsIv || !cfg.encryptedCredsTag) continue;
