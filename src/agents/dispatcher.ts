@@ -490,7 +490,7 @@ export class AgentDispatcher {
           "Use the provider tool results as the only evidence for live state. Do not guess or invent deployments, projects, statuses, timestamps, or tool results.",
           "If a tool fails, say that live data could not be verified and explain only the safe error details returned by the tool.",
           "Keep the response concise. State which provider/tool results you used when available.",
-        ].join("\\n")
+        ].join("\n")
       : builtSystemPrompt;
     const userMessage = mcpQueryOnly ? task.description : builtUserMessage;
 
