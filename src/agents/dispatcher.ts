@@ -458,7 +458,21 @@ export class AgentDispatcher {
       );
     }
 
-    logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
+    // The query-only request carries only conservatively-classified MCP reads
+    // and purpose-built REST reads. Cap their combined count, not each source
+    // separately, so a user with many connected accounts cannot overflow a call.
+    const queryToolDefs = mcpQueryOnly
+      ? capMcpTools(options.userPrompt ?? task.description, [...readToolDefs, ...(options.mcpQueryTools ?? [])]).kept
+      : [];
+
+    logger.info(
+      {
+        agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0,
+        mcpQueryOnly,
+        queryToolsOffered: queryToolDefs.map((tool) => tool.name),
+      },
+      "Dispatching agent",
+    );
 
     // Resolve workspace directory for project-specific brain files
     const workspaceDir = projectId !== undefined
@@ -619,7 +633,7 @@ export class AgentDispatcher {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
           ? (mcpQueryOnly
-              ? readToolDefs
+              ? queryToolDefs
               : [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])])
           : undefined,
       };
@@ -793,8 +807,25 @@ export class AgentDispatcher {
         // tool name reach the general tool executor in query-only mode. Merely
         // omitting write tools from the model request is not a security boundary.
         let result: string;
-        if (mcpQueryOnly && !readMcpRegistry.has(tc.name)) {
-          result = "Error: this read-only service query may only execute verified read-only MCP tools. No action was performed.";
+        const visibleQueryTools = new Set((gatewayRequest.tools ?? []).map((tool) => tool.name));
+        const restQueryExecutor = options.mcpQueryExecutors?.get(tc.name);
+        if (mcpQueryOnly && !visibleQueryTools.has(tc.name)) {
+          result = "Error: this tool was not offered in the read-only service query. No action was performed.";
+          logger.warn({ sessionId, tool: tc.name }, "Blocked unoffered tool in MCP query mode");
+        } else if (mcpQueryOnly && restQueryExecutor) {
+          try {
+            const parsedArgs = JSON.parse(tc.arguments || "{}") as unknown;
+            if (!parsedArgs || typeof parsedArgs !== "object" || Array.isArray(parsedArgs)) {
+              throw new Error("Tool arguments must be a JSON object.");
+            }
+            result = await restQueryExecutor(parsedArgs as Record<string, unknown>);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "REST query failed.";
+            result = "Error: " + message;
+            logger.warn({ sessionId, tool: tc.name }, "Read-only REST tool failed");
+          }
+        } else if (mcpQueryOnly && !readMcpRegistry.has(tc.name)) {
+          result = "Error: only verified read-only MCP/API tools may execute in this mode. No action was performed.";
           logger.warn({ sessionId, tool: tc.name }, "Blocked non-read tool in MCP query mode");
         } else {
           result = await executeTool(tc.name, tc.arguments, {
