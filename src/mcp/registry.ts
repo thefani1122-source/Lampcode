@@ -106,6 +106,21 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     supportsRealMCP: true,
   },
 
+  netlify: {
+    slug: "netlify",
+    name: "Netlify",
+    category: "devtools",
+    icon: "◆",
+    description: "List Netlify sites and deployments through the Netlify REST API",
+    mcpServerUrl: null,
+    authType: "bearer_token",
+    credentialFields: [
+      { key: "netlify_token", label: "Netlify Personal Access Token", type: "password", placeholder: "nfp_..." },
+    ],
+    supportsRealMCP: false,
+    restApiHint: "Netlify REST API: https://api.netlify.com/api/v1. Use Authorization: Bearer {netlify_token}. Safe reads include GET /user, GET /sites, and GET /sites/{site_id}/deploys.",
+  },
+
   vercel: {
     slug: "vercel",
     name: "Vercel",
@@ -312,7 +327,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Shopify Admin GraphQL API: https://{shopify_store_domain}/admin/api/2025-07/graphql.json\nHeader: X-Shopify-Access-Token: {shopify_admin_token}",
+    restApiHint: "Shopify Admin GraphQL API: POST https://{shopify_store_domain}/admin/api/2026-10/graphql.json with X-Shopify-Access-Token: {shopify_admin_token}. Queries require the relevant Admin API scopes.",
   },
 
   wordpress: {
@@ -330,6 +345,13 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
         type: "url",
         placeholder: "https://yoursite.com",
         help: "The root URL of your WordPress site",
+      },
+      {
+        key: "wordpress_username",
+        label: "WordPress Username",
+        type: "text",
+        placeholder: "username",
+        help: "The account that owns the application password",
       },
       {
         key: "wordpress_app_password",
@@ -353,15 +375,22 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     authType: "rest_api",
     credentialFields: [
       {
+        key: "framer_project_url",
+        label: "Framer Project URL",
+        type: "url",
+        placeholder: "https://framer.com/projects/...",
+        help: "The project-scoped URL used by the Framer Server API",
+      },
+      {
         key: "framer_api_token",
-        label: "Framer API Token",
+        label: "Framer Server API Key",
         type: "password",
         placeholder: "...",
-        help: "Create at framer.com/developers → API Tokens",
+        help: "Create a project-scoped key in Site Settings → General",
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Framer REST API: https://api.framer.com/store/v1\nHeader: Authorization: Bearer {framer_api_token}",
+    restApiHint: "Framer Server API uses the official framer-api Node package and requires a project URL plus project-scoped API key; it is not a generic HTTP bearer-token endpoint.",
   },
 
   mailchimp: {
@@ -502,7 +531,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Railway GraphQL API: POST https://backboard.railway.app/graphql/v2\nHeader: Authorization: Bearer {api_token}",
+    restApiHint: "Railway Public GraphQL API: POST https://backboard.railway.com/graphql/v2. Account/workspace tokens use Authorization: Bearer; project tokens use Project-Access-Token.",
   },
 };
 
