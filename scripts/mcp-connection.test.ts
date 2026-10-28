@@ -13,9 +13,9 @@ check("GitHub uses its documented bearer credential", resolveMcpAuth(MCP_REGISTR
 check("Stitch does not invent a static API-key header for its OAuth flow", resolveMcpAuth(MCP_REGISTRY["google-stitch"]!, {})?.headers, {});
 check("embedded-token endpoint does not duplicate URL auth", resolveMcpAuth(MCP_REGISTRY.make!, { make_mcp_url: "https://eu2.make.com/mcp/stateless" })?.headers, {});
 check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNAL_MCP_PROVIDERS.exa!, {})?.headers, {});
-check("OAuth connection uses stored access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { oauth_access_token: "oauth-token" })?.headers,
-  { Authorization: "Bearer oauth-token" });
-check("OAuth-only Vercel does not advertise a static token field", MCP_REGISTRY.vercel!.credentialFields, []);
+check("Vercel connection uses bearer access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { vercel_token: "v_token" })?.headers,
+  { Authorization: "Bearer v_token" });
+check("Vercel advertises a static token field", MCP_REGISTRY.vercel!.credentialFields.length, 1);
 
 for (const slug of ["notion", "figma", "sentry"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
