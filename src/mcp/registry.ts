@@ -113,8 +113,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "▲",
     description: "Deploy projects, manage domains, and view deployments via the Vercel MCP server",
     mcpServerUrl: "https://mcp.vercel.com",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "vercel_token",
+        label: "Vercel Access Token",
+        type: "password",
+        placeholder: "...",
+        help: "Create a Personal Access Token at vercel.com/account/tokens",
+      },
+    ],
     supportsRealMCP: true,
   },
 
