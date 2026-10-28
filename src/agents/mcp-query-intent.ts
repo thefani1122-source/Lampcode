@@ -13,16 +13,16 @@ export interface McpQueryIntent {
 }
 
 const READ_INTENT_RE =
-  /\\b(check|show|list|fetch|get|find|search|inspect|review|read|view|summari[sz]e|explain|tell\\s+me|what|which|how\\s+many|recent|latest|last|current|status|health|history|overview)\\b/i;
+  /\b(check|show|list|fetch|get|find|search|inspect|review|read|view|summari[sz]e|explain|tell\s+me|what|which|how\s+many|recent|latest|last|current|status|health|history|overview)\b/i;
 
 const SERVICE_DATA_RE =
-  /\\b(deployments?|build\\s+logs?|deploy\\s+logs?|domains?|projects?|services?|previews?|releases?|errors?|exceptions?|issues?|pull\\s*requests?|prs?|commits?|branches?|repositories|repos?|workflows?|executions?|scenarios?|products?|orders?|customers?|audiences?|campaigns?|emails?|messages?|calls?|pages?|documents?|notes?|files?|components?|design\\s+files?|analytics|usage|transactions?|subscriptions?|invoices?|environments?|databases?|collections?|records?|posts?|sites?|functions?|workers?|dns|alerts?|incidents?)\\b/i;
+  /\b(deployments?|build\s+logs?|deploy\s+logs?|domains?|projects?|services?|previews?|releases?|errors?|exceptions?|issues?|pull\s*requests?|prs?|commits?|branches?|repositories|repos?|workflows?|executions?|scenarios?|products?|orders?|customers?|audiences?|campaigns?|emails?|messages?|calls?|pages?|documents?|notes?|files?|components?|design\s+files?|analytics|usage|transactions?|subscriptions?|invoices?|environments?|databases?|collections?|records?|posts?|sites?|functions?|workers?|dns|alerts?|incidents?)\b/i;
 
 const CODE_MUTATION_RE =
-  /\\b(?:build|create|generate|implement|write|edit|modify|rewrite|refactor|change|fix|update)\\s+(?:(?:me|us)\\s+)?(?:(?:a|an|the|my|our|this|these)\\s+)?(?:app|website|web\\s+site|feature|component|page|dashboard|code|files?|repository|repo|implementation|bug|functionality|integration|project)\\b/i;
+  /\b(?:build|create|generate|implement|write|edit|modify|rewrite|refactor|change|fix|update)\s+(?:(?:me|us)\s+)?(?:(?:a|an|the|my|our|this|these)\s+)?(?:app|website|web\s+site|feature|component|page|dashboard|code|files?|repository|repo|implementation|bug|functionality|integration|project)\b/i;
 
 const EXTERNAL_WRITE_RE =
-  /\\b(?:redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision|deploy\\s+(?:to|this|it|the)|create\\s+(?:a|an|the)?\\s*(?:deployment|pull\\s+request|issue|branch|repository|repo)|update\\s+(?:the|my|our)?\\s*(?:environment\\s+variables?|settings|domains?|deployment|issue|pull\\s+request)|change\\s+(?:the|my|our)?\\s*(?:settings|environment|domain|deployment))\\b/i;
+  /\b(?:redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision|deploy\s+(?:to|this|it|the)|create\s+(?:a|an|the)?\s*(?:deployment|pull\s+request|issue|branch|repository|repo)|update\s+(?:the|my|our)?\s*(?:environment\s+variables?|settings|domains?|deployment|issue|pull\s+request)|change\s+(?:the|my|our)?\s*(?:settings|environment|domain|deployment))\b/i;
 
 export function classifyMcpQueryIntent(prompt: string): McpQueryIntent {
   const text = typeof prompt === "string" ? prompt.trim() : "";
