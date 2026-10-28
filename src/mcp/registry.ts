@@ -146,6 +146,29 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     supportsRealMCP: true,
   },
 
+  // Supabase's existing connection form stores a PAT + optional project ref
+  // in userMcpConnections. Expose that same stored connection to the shared
+  // read-only MCP dispatcher instead of silently skipping it as unknown.
+  supabase: {
+    slug: "supabase",
+    name: "Supabase",
+    category: "database",
+    icon: "⚡",
+    description: "Read project metadata through Supabase's hosted remote MCP server",
+    mcpServerUrl: (creds: Record<string, string>) => {
+      const url = new URL("https://mcp.supabase.com/mcp");
+      if (creds["projectRef"]) url.searchParams.set("project_ref", creds["projectRef"]);
+      url.searchParams.set("read_only", "true");
+      return url.toString();
+    },
+    authType: "bearer_token",
+    credentialFields: [
+      { key: "accessToken", label: "Personal Access Token", type: "password", placeholder: "sbp_..." },
+      { key: "projectRef", label: "Project Ref", type: "text", optional: true },
+    ],
+    supportsRealMCP: true,
+  },
+
   sentry: {
     slug: "sentry",
     name: "Sentry",
