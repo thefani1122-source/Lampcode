@@ -708,6 +708,148 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
   return c.json({ success: true });
 });
 
+// ── Read-only MCP query route ──────────────────────────────────────────────────
+// This endpoint never enters runFastBuild. Its dispatcher mode exposes only
+// discovered, conservatively classified read tools and rejects all other tool
+// names again at execution time. Frontend errors must not fall through to build.
+const mcpQuerySchema = z.object({
+  prompt: z.string().trim().min(1).max(6_000),
+  projectId: z.string().min(1).max(200).optional(),
+});
+
+integrationsRouter.post("/mcp/query", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const parsed = mcpQuerySchema.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
+  }
+
+  const { prompt, projectId } = parsed.data;
+  const intent = classifyMcpQueryIntent(prompt);
+  if (!intent.handled) return c.json({ handled: false, reason: intent.reason });
+
+  // Read-only queries consume model budget too; use the same pre-flight gate as
+  // builds, then apply a much smaller per-dispatch ceiling.
+  await assertHasBudget(userId);
+
+  try {
+    const connected = await getConnectedMcpServers(userId);
+    const { kept, dropped } = serversForPrompt(prompt, connected);
+    logger.info(
+      {
+        userId,
+        projectId,
+        selectedProviders: kept.map((server) => server.slug),
+        droppedProviders: dropped,
+        intent: intent.reason,
+      },
+      "[mcp-query] provider selection",
+    );
+
+    if (kept.length === 0) {
+      return c.json({
+        handled: true,
+        verified: false,
+        answer: "I couldn't find a connected MCP provider for this request, so I couldn't verify live service data. No project files were changed.",
+        providers: [],
+        tools: [],
+      });
+    }
+
+    const provider: "anthropic" | "modal" =
+      config.LLM_PROVIDER_MODE === "openai"
+        ? "modal"
+        : config.LLM_PROVIDER_MODE === "anthropic"
+          ? "anthropic"
+          : await getUserPlan(userId)
+              .then((plan) => (plan === "free" ? "modal" : "anthropic"))
+              .catch(() => "anthropic");
+
+    // Record actual tool executions in order. Arguments and provider responses
+    // are deliberately excluded from logs/API diagnostics to avoid leaking data.
+    const toolEvents: Array<{ name: string; success?: boolean }> = [];
+    const dispatch = await getDispatcher().dispatch({
+      agentType: "connection",
+      task: { description: prompt, outputFormat: "prose" },
+      sessionId: randomUUID(),
+      userId,
+      ...(projectId ? { projectId } : {}),
+      provider,
+      enableTools: true,
+      costGuard: { cumulativeUsd: 0, maxUsd: 0.15 },
+      mcpServers: kept,
+      mcpQueryOnly: true,
+      userPrompt: prompt,
+      onEvent: (event) => {
+        const record = event as unknown as Record<string, unknown>;
+        if (record.type === "tool/call" && typeof record.name === "string") {
+          toolEvents.push({ name: record.name });
+        } else if (record.type === "tool/result" && typeof record.name === "string") {
+          for (let index = toolEvents.length - 1; index >= 0; index--) {
+            if (toolEvents[index]?.name === record.name && toolEvents[index]?.success === undefined) {
+              toolEvents[index]!.success = record.ok === true;
+              break;
+            }
+          }
+        }
+      },
+    });
+
+    // Only names tied to a selected provider are shown as MCP tool activity;
+    // the dispatcher additionally guarantees that only its read registry ran.
+    const tools = toolEvents
+      .filter((event) => kept.some((server) => event.name.startsWith(server.slug + "__")))
+      .map((event) => {
+        const separator = event.name.indexOf("__");
+        const slug = separator > 0 ? event.name.slice(0, separator) : "";
+        return {
+          name: event.name.slice(separator + 2),
+          provider: slug,
+          success: event.success === true,
+        };
+      });
+    const verified = tools.some((tool) => tool.success);
+    const answer = verified
+      ? (dispatch.finalContent.trim() || dispatch.content.trim() || "The provider returned live data, but the model did not produce a summary.")
+      : "I couldn't verify current service data because no read-only MCP tool completed successfully. No project files were changed and no external write action was performed."; 
+
+    logger.info(
+      {
+        userId,
+        projectId,
+        providers: kept.map((server) => server.slug),
+        tools: tools.map(({ provider: slug, name, success }) => ({ provider: slug, name, success })),
+        verified,
+        rounds: dispatch.rounds,
+      },
+      "[mcp-query] completed",
+    );
+
+    return c.json({
+      handled: true,
+      verified,
+      answer,
+      providers: kept.map((server) => ({ slug: server.slug, name: server.name })),
+      tools,
+    });
+  } catch (err) {
+    logger.warn(
+      { userId, projectId, category: safeMcpFailureCategory(err) },
+      "[mcp-query] unable to verify service data",
+    );
+    return c.json({
+      handled: true,
+      verified: false,
+      answer: "I couldn't verify live service data because the connected-service query failed. No project files were changed and no external write action was performed. Check the provider connection and try again.",
+      providers: [],
+      tools: [],
+    });
+  }
+});
+
 // ── MCP Provider routes ────────────────────────────────────────────────────────
 
 integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
