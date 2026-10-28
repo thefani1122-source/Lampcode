@@ -31,7 +31,7 @@ export interface RestTestResult {
   meta: Record<string, string>;
 }
 
-type Fetcher = typeof fetch;
+type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const schemas: Record<RestProviderSlug, z.ZodType<Record<string, string>>> = {
   netlify: z.object({ netlify_token: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
@@ -196,7 +196,8 @@ export async function testRestConnection(
         break;
       }
       case "mailchimp": {
-        const region = credentials.api_key.match(/-([a-z0-9]+)$/i)?.[1];
+        const apiKey = credentials.api_key ?? "";
+        const region = apiKey.match(/-([a-z0-9]+)$/i)?.[1];
         if (!region) return { ok: false, error: "Mailchimp API key must include its data-center suffix (for example, -us19).", meta: {} };
         response = await requestJson(fetcher, `https://${region}.api.mailchimp.com/3.0/ping`, {
           headers: { Authorization: "Basic " + Buffer.from("anystring:" + credentials.api_key).toString("base64"), Accept: "application/json" },
