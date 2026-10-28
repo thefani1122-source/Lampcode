@@ -34,26 +34,26 @@ export interface RestTestResult {
 type Fetcher = typeof fetch;
 
 const schemas: Record<RestProviderSlug, z.ZodType<Record<string, string>>> = {
-  netlify: z.object({ netlify_token: z.string().min(8) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  railway: z.object({ api_token: z.string().min(8) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
+  netlify: z.object({ netlify_token: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
+  railway: z.object({ api_token: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
   shopify: z.object({
     shopify_store_domain: z.string().regex(/^[a-z0-9-]+\.myshopify\.com$/i),
     shopify_admin_token: z.string().min(8),
-  }).passthrough() as unknown as z.ZodType<Record<string, string>>,
+  }) as unknown as z.ZodType<Record<string, string>>,
   wordpress: z.object({
     wordpress_site_url: z.string().url(),
     wordpress_username: z.string().min(1),
     wordpress_app_password: z.string().min(8),
-  }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  mailchimp: z.object({ api_key: z.string().regex(/^.{8,}-[a-z0-9]+$/i) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  resend: z.object({ api_key: z.string().min(8) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  twilio: z.object({ account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i), auth_token: z.string().min(8), phone_number: z.string().optional().default("") }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  sendgrid: z.object({ api_key: z.string().min(8) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
+  }) as unknown as z.ZodType<Record<string, string>>,
+  mailchimp: z.object({ api_key: z.string().regex(/^.{8,}-[a-z0-9]+$/i) }) as unknown as z.ZodType<Record<string, string>>,
+  resend: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
+  twilio: z.object({ account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i), auth_token: z.string().min(8), phone_number: z.string().optional().default("") }) as unknown as z.ZodType<Record<string, string>>,
+  sendgrid: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
   // These two providers do not have a simple authenticated REST endpoint for
   // the fields in the current UI. They must not be marked connected by a shape
   // check alone. See testRestConnection() below.
-  framer: z.object({ framer_api_token: z.string().min(8), framer_project_url: z.string().url().optional() }).passthrough() as unknown as z.ZodType<Record<string, string>>,
-  mongodb: z.object({ connection_string: z.string().min(15) }).passthrough() as unknown as z.ZodType<Record<string, string>>,
+  framer: z.object({ framer_api_token: z.string().min(8), framer_project_url: z.string().url().optional() }) as unknown as z.ZodType<Record<string, string>>,
+  mongodb: z.object({ connection_string: z.string().min(15) }) as unknown as z.ZodType<Record<string, string>>,
 };
 
 export const REST_PROVIDER_SLUGS: readonly RestProviderSlug[] = [
