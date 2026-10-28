@@ -24,12 +24,17 @@ const CODE_MUTATION_RE =
 const EXTERNAL_WRITE_RE =
   /\b(?:redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision|deploy\s+(?:to|this|it|the)|create\s+(?:a|an|the)?\s*(?:deployment|pull\s+request|issue|branch|repository|repo)|update\s+(?:the|my|our)?\s*(?:environment\s+variables?|settings|domains?|deployment|issue|pull\s+request)|change\s+(?:the|my|our)?\s*(?:settings|environment|domain|deployment))\b/i;
 
+// A service read followed by a consequential follow-up is not a read-only query
+// even when the requested write target is implicit ("check deploys, then fix it").
+const FOLLOWUP_WRITE_RE =
+  /\\b(?:and|then|also|after\\s+that|once\\s+you\\s+finish)\\s+(?:please\\s+)?(?:fix|repair|edit|modify|rewrite|refactor|change|update|deploy|redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision)\\b/i;
+
 export function classifyMcpQueryIntent(prompt: string): McpQueryIntent {
   const text = typeof prompt === "string" ? prompt.trim() : "";
   if (!text || !READ_INTENT_RE.test(text) || !SERVICE_DATA_RE.test(text)) {
     return { handled: false, reason: "not-a-read-only-service-query" };
   }
-  if (CODE_MUTATION_RE.test(text) || EXTERNAL_WRITE_RE.test(text)) {
+  if (CODE_MUTATION_RE.test(text) || EXTERNAL_WRITE_RE.test(text) || FOLLOWUP_WRITE_RE.test(text)) {
     return { handled: false, reason: "not-a-read-only-service-query" };
   }
   return { handled: true, reason: "read-only-service-query" };
