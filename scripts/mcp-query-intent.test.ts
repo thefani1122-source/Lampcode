@@ -30,6 +30,8 @@ const buildOrWriteCases = [
   "Create a GitHub repository and push the code",
   "Update the Vercel environment variables",
   "Build a deployment monitor website",
+  "Check recent Vercel deployments, then fix it",
+  "Check recent deployments and restart the failed service",
 ];
 for (const prompt of buildOrWriteCases) {
   check(`write/build request stays out of read-only mode: ${prompt}`, classifyMcpQueryIntent(prompt).handled, false);
