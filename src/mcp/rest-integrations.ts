@@ -7,6 +7,10 @@
  * existing per-user connection isolation and disconnect UI remain consistent.
  */
 import { z } from "zod";
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { userIntegrations, userMcpConnections } from "../db/schema.js";
+import { decrypt } from "../server/env-crypto.js";
 import { secureMcpFetch } from "./secure-fetch.js";
 import { sanitizeMcpError } from "./health.js";
 
@@ -251,4 +255,70 @@ export function parseRestConnection(slug: string, input: unknown, meta: unknown)
   if (!parsed.success) return null;
   const publicMeta = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, string> : {};
   return { slug: slug as RestProviderSlug, credentials: parsed.data, meta: publicMeta };
+}
+
+
+/**
+ * Loads already-saved REST integrations from the encrypted connection store.
+ * Also reads the older user_integrations rows for the two providers that used
+ * the previous generic form, so users do not have to reconnect after upgrades.
+ */
+export async function getConnectedRestIntegrations(userId: string): Promise<RestConnection[]> {
+  const rows = await db
+    .select()
+    .from(userMcpConnections)
+    .where(and(eq(userMcpConnections.userId, userId), inArray(userMcpConnections.providerSlug, [...REST_PROVIDER_SLUGS])));
+  const connections: RestConnection[] = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    if (row.isCustom) continue;
+    try {
+      const credentials = JSON.parse(decrypt({
+        encrypted: row.encryptedCreds,
+        iv: row.encryptedCredsIv,
+        tag: row.encryptedCredsTag,
+      })) as unknown;
+      const connection = parseRestConnection(row.providerSlug, credentials, row.meta);
+      if (!connection) continue;
+      connections.push(connection);
+      seen.add(connection.slug);
+    } catch {
+      // Never log decrypted credentials. A corrupt row stays unavailable.
+    }
+  }
+
+  const legacyRows = await db.select().from(userIntegrations).where(eq(userIntegrations.userId, userId));
+  for (const row of legacyRows) {
+    if (seen.has(row.provider) || !REST_PROVIDER_SLUGS.includes(row.provider as RestProviderSlug)) continue;
+    const cfg = row.config;
+    if (!cfg.encryptedCreds || !cfg.encryptedCredsIv || !cfg.encryptedCredsTag) continue;
+    try {
+      const parsed = JSON.parse(decrypt({
+        encrypted: cfg.encryptedCreds,
+        iv: cfg.encryptedCredsIv,
+        tag: cfg.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      const normalized: Record<string, unknown> = { ...parsed };
+      if (row.provider === "wordpress") {
+        normalized.wordpress_site_url ??= parsed.siteUrl;
+        normalized.wordpress_username ??= parsed.username;
+        normalized.wordpress_app_password ??= parsed.appPassword;
+      } else if (row.provider === "shopify") {
+        normalized.shopify_store_domain ??= parsed.shopDomain;
+        normalized.shopify_admin_token ??= parsed.adminApiAccessToken;
+      } else if (row.provider === "railway") {
+        normalized.api_token ??= parsed.api_token;
+      }
+      const connection = parseRestConnection(row.provider, normalized, cfg.meta ?? {});
+      if (connection) {
+        connections.push(connection);
+        seen.add(connection.slug);
+      }
+    } catch {
+      // Legacy connection was unreadable; do not mark it working.
+    }
+  }
+
+  return connections;
 }
