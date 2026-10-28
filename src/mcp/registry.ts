@@ -79,8 +79,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
         key: "stripe_key",
         label: "Stripe API Key",
         type: "password",
-        placeholder: "sk_live_... or rk_live_...",
-        help: "Use a Restricted Key from dashboard.stripe.com/apikeys for least privilege",
+        placeholder: "rk_test_... or rk_live_...",
+        help: "Use a restricted key from dashboard.stripe.com/apikeys with only the permissions this agent needs",
       },
     ],
     supportsRealMCP: true,
@@ -113,8 +113,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "▲",
     description: "Deploy projects, manage domains, and view deployments via the Vercel MCP server",
     mcpServerUrl: "https://mcp.vercel.com",
-    authType: "oauth",
-    credentialFields: [],
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "vercel_token",
+        label: "Vercel Access Token",
+        type: "password",
+        placeholder: "...",
+        help: "Create a Personal Access Token at vercel.com/account/tokens",
+      },
+    ],
     supportsRealMCP: true,
   },
 
@@ -145,16 +153,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🪲",
     description: "Query errors, manage issues, and view performance data via the Sentry MCP server",
     mcpServerUrl: "https://mcp.sentry.dev/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "sentry_token",
-        label: "Sentry Internal Integration Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create an Internal Integration at sentry.io/settings/ → Integrations",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -165,16 +165,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "📝",
     description: "Read and write pages, databases, and blocks via the Notion MCP server",
     mcpServerUrl: "https://mcp.notion.com/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "notion_token",
-        label: "Notion Integration Token",
-        type: "password",
-        placeholder: "secret_...",
-        help: "Create an integration at notion.com/profile/integrations and share pages with it",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -253,16 +245,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🎨",
     description: "Read Figma files, components, and design tokens via the Figma MCP server",
     mcpServerUrl: "https://mcp.figma.com/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "figma_access_token",
-        label: "Figma Personal Access Token",
-        type: "password",
-        placeholder: "figd_...",
-        help: "Create at figma.com → Account → Personal Access Tokens",
-      },
-    ],
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
