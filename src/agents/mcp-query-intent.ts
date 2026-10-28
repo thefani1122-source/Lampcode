@@ -27,7 +27,7 @@ const EXTERNAL_WRITE_RE =
 // A service read followed by a consequential follow-up is not a read-only query
 // even when the requested write target is implicit ("check deploys, then fix it").
 const FOLLOWUP_WRITE_RE =
-  /\\b(?:and|then|also|after\\s+that|once\\s+you\\s+finish)\\s+(?:please\\s+)?(?:fix|repair|edit|modify|rewrite|refactor|change|update|deploy|redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision)\\b/i;
+  /\b(?:and|then|also|after\s+that|once\s+you\s+finish)\s+(?:please\s+)?(?:fix|repair|edit|modify|rewrite|refactor|change|update|deploy|redeploy|publish|push|commit|merge|delete|remove|restart|rollback|trigger|send|provision)\b/i;
 
 export function classifyMcpQueryIntent(prompt: string): McpQueryIntent {
   const text = typeof prompt === "string" ? prompt.trim() : "";
