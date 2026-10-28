@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
+import { getDispatcher } from "../../agents/dispatcher.js";
+import { classifyMcpQueryIntent } from "../../agents/mcp-query-intent.js";
+import { serversForPrompt } from "../../agents/mcp-relevance.js";
+import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { z } from "zod";
 import { eq, and, gt } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
