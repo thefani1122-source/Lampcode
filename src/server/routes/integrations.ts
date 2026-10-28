@@ -220,6 +220,24 @@ integrationsRouter.post("/supabase", async (c) => {
 // The PAT + service key never leave the backend; only the anon key (public,
 // RLS-safe) is ever injected into a preview.
 
+// Test an existing Supabase PAT without inserting/upserting or mutating a connection.
+integrationsRouter.post("/supabase/mcp/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  const parsed = connectSupabaseMcpSchema.safeParse(body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((issue) => issue.message).join("; "), "VALIDATION_ERROR");
+  try {
+    const tools = await listSupabaseMcpTools({ accessToken: parsed.data.accessToken, projectRef: parsed.data.projectRef });
+    if (tools.length === 0) throw new AppError(422, "Supabase MCP returned no tools", "MCP_NO_TOOLS");
+    logger.info({ userId, provider: "supabase", stage: "test", toolCount: tools.length }, "Supabase MCP test passed");
+    return c.json({ slug: "supabase", status: "verified", toolCount: tools.length });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    const category = safeMcpFailureCategory(err);
+    logger.warn({ userId, provider: "supabase", stage: "test", category }, "Supabase MCP test failed");
+    throw new AppError(422, "Supabase MCP test failed (" + category + ")", "MCP_CONNECT_FAILED");
+  }
+});
 integrationsRouter.post("/supabase/mcp", async (c) => {
   const { id: userId } = c.get("authUser");
 
@@ -1060,6 +1078,27 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
   }
 });
 
+// Test provider credentials and perform authenticated initialize + tools/list.
+// This route is deliberately non-persistent; tests must never overwrite a good connection.
+integrationsRouter.post("/mcp/:slug/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  const provider = getMcpProvider(slug);
+  if (!provider || !provider.supportsRealMCP) throw new AppError(404, "Unknown remote MCP provider", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credentials object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  if (provider.authType === "oauth") throw new AppError(400, "Use the provider OAuth flow to test an existing authorization", "OAUTH_REQUIRED");
+  const resolved = resolveMcpAuth(provider, creds);
+  if (!resolved) throw new AppError(422, "Provider credentials or MCP endpoint are incomplete", "MCP_CREDENTIALS_INCOMPLETE");
+  const health = await checkMcpServer(resolved);
+  if (!health.ok) {
+    logger.warn({ userId, provider: slug, stage: health.stage, category: health.category }, "MCP credentials test failed");
+    throw new AppError(422, "MCP test failed during " + health.stage + " (" + health.category + ")", "MCP_CONNECT_FAILED");
+  }
+  logger.info({ userId, provider: slug, stage: "test", toolCount: health.toolCount }, "MCP credentials test passed");
+  return c.json({ slug, status: "verified", toolCount: health.toolCount });
+});
 // POST /api/integrations/mcp/:slug/connect
 integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   const { id: userId } = c.get("authUser");
