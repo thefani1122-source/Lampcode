@@ -199,7 +199,7 @@ export async function testRestConnection(
         const region = credentials.api_key.match(/-([a-z0-9]+)$/i)?.[1];
         if (!region) return { ok: false, error: "Mailchimp API key must include its data-center suffix (for example, -us19).", meta: {} };
         response = await requestJson(fetcher, `https://${region}.api.mailchimp.com/3.0/ping`, {
-          headers: { Authorization: `Bearer ${credentials.api_key}`, Accept: "application/json" },
+          headers: { Authorization: "Basic " + Buffer.from("anystring:" + credentials.api_key).toString("base64"), Accept: "application/json" },
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "Mailchimp credential verification failed."), meta: {} };
         break;
