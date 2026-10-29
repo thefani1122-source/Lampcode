@@ -84,6 +84,8 @@ const railwayConnection: RestConnection = {
 };
 const railwayQueries: Array<{ query: string; variables?: unknown }> = [];
 const railwayFetch: typeof fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+  observedUrl = String(_input);
+  observedMethod = init?.method ?? "GET";
   const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: unknown };
   railwayQueries.push({ query: body.query ?? "", variables: body.variables });
   return new Response(JSON.stringify({ data: { deployments: { edges: [], pageInfo: { hasNextPage: false } } } }), {
