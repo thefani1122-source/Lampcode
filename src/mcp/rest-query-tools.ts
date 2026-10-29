@@ -29,7 +29,7 @@ const PROVIDER_ALIASES: Record<string, string[]> = {
   netlify: ["netlify"], railway: ["railway"], shopify: ["shopify"],
   wordpress: ["wordpress", "woocommerce", "wp"], mailchimp: ["mailchimp"],
   resend: ["resend"], twilio: ["twilio"], sendgrid: ["sendgrid"],
-  framer: ["framer"], mongodb: ["mongodb", "mongo"],
+
 };
 
 function explicitProvider(prompt: string, slug: string): boolean {
@@ -271,9 +271,6 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
       add(connection, "list_scopes", "Read permissions granted to this SendGrid API key. SendGrid does not provide general sent-email history through this API.", {}, [], async () =>
         jsonRequest(fetcher, "https://api.sendgrid.com/v3/scopes", { headers }));
     }
-    // Framer requires the official framer-api Node Server API package and
-    // MongoDB requires an installed database driver. They intentionally expose
-    // no query tools until their connection can be authenticated and tested.
   }
 
   return { tools, executors, providers: [...providersBySlug.values()] };
