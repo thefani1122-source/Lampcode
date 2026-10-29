@@ -596,8 +596,8 @@ function needsAuth(prompt: string): boolean {
 }
 
 /** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
-function buildFullstackPrompt(prompt: string): string {
-  const prefix = needsAuth(prompt) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
+function buildFullstackPrompt(prompt: string, authWanted?: boolean): string {
+  const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
   return `${prefix}\n${prompt}`;
 }
 
@@ -1170,7 +1170,7 @@ export async function runFastBuild(
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
-            ? buildFullstackPrompt(prompt)
+            ? buildFullstackPrompt(prompt, classification?.needsAuth)
             : expandUserPrompt(prompt);
 
     const requirements = isTokenOnlyEdit
