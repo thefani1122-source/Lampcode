@@ -997,7 +997,10 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     await client.connect(transport as any);
     const { tools } = await client.listTools();
     if (tools.length === 0) throw new Error("empty_tool_list");
-    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens?.access_token }));
+    // Public MCP tools may be discoverable without authentication. That alone
+    // must not create a green authenticated OAuth connection.
+    if (!session.tokens?.access_token) throw new Error("oauth_token_missing");
+    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens.access_token }));
     await db.insert(userMcpConnections).values({
       id: randomUUID(), userId, providerSlug: slug,
       encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
@@ -1088,7 +1091,43 @@ integrationsRouter.post("/mcp/:slug/test", async (c) => {
   const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credentials object", "VALIDATION_ERROR");
   const creds = unwrapCreds(body as Record<string, unknown>);
-  if (provider.authType === "oauth") throw new AppError(400, "Use the provider OAuth flow to test an existing authorization", "OAUTH_REQUIRED");
+  if (provider.authType === "oauth") {
+    // Test the already-authorized, per-user OAuth session without accepting an
+    // arbitrary token in the form or saving a new connection as a side effect.
+    const active = (await getConnectedMcpServers(userId)).find((server) => server.slug === slug);
+    const session = active?.oauthSession;
+    if (!active || !session?.tokens?.access_token || !active.oauthRedirectUrl) {
+      throw new AppError(422, "Connect this provider with OAuth before testing it.", "OAUTH_REQUIRED");
+    }
+    const oauth = createMcpOAuthProvider({
+      serverUrl: active.url,
+      redirectUrl: active.oauthRedirectUrl,
+      session,
+      persist: active.persistOAuthSession ?? (async () => undefined),
+      saveStateHash: async () => undefined,
+    });
+    const oauthClient = new Client({ name: "lampcode-oauth-test", version: "1.0.0" });
+    const oauthTransport = new StreamableHTTPClientTransport(new URL(active.url), {
+      authProvider: oauth.provider,
+      fetch: secureMcpFetch,
+      redirectPolicy: "same-origin",
+    });
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await oauthClient.connect(oauthTransport as any);
+      const { tools } = await oauthClient.listTools();
+      if (tools.length === 0) throw new AppError(422, "OAuth authorized but the MCP server returned no tools.", "MCP_NO_TOOLS");
+      logger.info({ userId, provider: slug, stage: "oauth_test", toolCount: tools.length }, "OAuth MCP connection test passed");
+      return c.json({ slug, status: "verified", toolCount: tools.length });
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      const category = safeMcpFailureCategory(error);
+      logger.warn({ userId, provider: slug, stage: "oauth_test", category }, "OAuth MCP test failed");
+      throw new AppError(422, "OAuth MCP test failed (" + category + "). Reconnect if authorization has expired.", "MCP_CONNECT_FAILED");
+    } finally {
+      await oauthClient.close().catch(() => undefined);
+    }
+  }
   const resolved = resolveMcpAuth(provider, creds);
   if (!resolved) throw new AppError(422, "Provider credentials or MCP endpoint are incomplete", "MCP_CREDENTIALS_INCOMPLETE");
   const health = await checkMcpServer(resolved);
