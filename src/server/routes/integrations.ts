@@ -18,6 +18,10 @@ import { secureMcpFetch } from "../../mcp/secure-fetch.js";
 import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession } from "../../mcp/oauth-client.js";
 import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
 import { config } from "../config.js";
+import { getDispatcher, type DispatchResult } from "../../agents/dispatcher.js";
+import { getUserPlan } from "../../build/credits.js";
+import { isReadOnlyMcpQuery } from "../../agents/mcp-intent.js";
+import { serversForPrompt } from "../../agents/mcp-relevance.js";
 
 export const integrationsRouter = new Hono();
 integrationsRouter.use("/*", requireAuth);
@@ -704,7 +708,209 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
   return c.json({ success: true });
 });
 
-// ── MCP Provider routes ────────────────────────────────────────────────────────
+// ── Read-only connected-service query ─────────────────────────────────────────
+// The workspace composer historically sent every follow-up to /api/build/fast.
+// This route is deliberately separate: it accepts only observational intent and
+// dispatches with mcpQueryOnly=true, which removes every build/file/write tool.
+
+const mcpQuerySchema = z.object({
+  prompt: z.string().trim().min(3).max(8_000),
+});
+
+const KNOWN_SERVICE_ALIASES: Array<{ slug: string; aliases: string[] }> = [
+  { slug: "vercel", aliases: ["vercel"] },
+  { slug: "github", aliases: ["github"] },
+  { slug: "gitlab", aliases: ["gitlab"] },
+  { slug: "railway", aliases: ["railway"] },
+  { slug: "netlify", aliases: ["netlify"] },
+  { slug: "cloudflare", aliases: ["cloudflare"] },
+  { slug: "sentry", aliases: ["sentry"] },
+  { slug: "notion", aliases: ["notion"] },
+  { slug: "figma", aliases: ["figma"] },
+  { slug: "linear", aliases: ["linear"] },
+  { slug: "stripe", aliases: ["stripe"] },
+  { slug: "shopify", aliases: ["shopify"] },
+  { slug: "wordpress", aliases: ["wordpress"] },
+  { slug: "framer", aliases: ["framer"] },
+  { slug: "mailchimp", aliases: ["mailchimp"] },
+  { slug: "resend", aliases: ["resend"] },
+  { slug: "twilio", aliases: ["twilio"] },
+  { slug: "sendgrid", aliases: ["sendgrid"] },
+  { slug: "mongodb", aliases: ["mongodb", "mongo db"] },
+  { slug: "supabase", aliases: ["supabase"] },
+  { slug: "n8n", aliases: ["n8n"] },
+  { slug: "zapier", aliases: ["zapier"] },
+  { slug: "make", aliases: ["make.com", "make scenarios", "make mcp"] },
+  { slug: "google-stitch", aliases: ["google stitch", "google-stitch"] },
+];
+
+function matchesPhrase(input: string, phrase: string): boolean {
+  const escaped = phrase.replace(/[.*+?^$()|[\]\\]/g, "\\// ── MCP Provider routes ────────────────────────────────────────────────────────
+
+integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {");
+  return new RegExp("(^|[^a-z0-9])" + escaped + "($|[^a-z0-9])", "i").test(input);
+}
+
+function namedMcpProviders(prompt: string): string[] {
+  return KNOWN_SERVICE_ALIASES
+    .filter((provider) => provider.aliases.some((alias) => matchesPhrase(prompt, alias)))
+    .map((provider) => provider.slug);
+}
+
+integrationsRouter.post("/mcp/query", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const parsed = mcpQuerySchema.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues.map((issue) => issue.message).join("; "), "VALIDATION_ERROR");
+  }
+  const prompt = parsed.data.prompt;
+
+  // Not a read-only external-service request? Let the normal workspace build
+  // route continue. The UI runs the same conservative predicate before calling
+  // this endpoint, and this backend check is the independent safety boundary.
+  if (!isReadOnlyMcpQuery(prompt)) return c.json({ routed: false });
+
+  const allServers = await getConnectedMcpServers(userId);
+  if (allServers.length === 0) {
+    return c.json({
+      routed: true,
+      ok: false,
+      status: "not_connected",
+      content: "I couldn't check live service data because no remote MCP integrations are connected to this account. No project files were changed. Connect the relevant service and try again.",
+      selectedProviders: [],
+      toolsOffered: [],
+      toolsUsed: [],
+    });
+  }
+
+  const mentionedSlugs = namedMcpProviders(prompt);
+  const explicitServers = allServers.filter((server) =>
+    mentionedSlugs.includes(server.slug) ||
+    matchesPhrase(prompt, server.name) ||
+    matchesPhrase(prompt, server.slug.replace(/-/g, " ")),
+  );
+
+  // An explicitly named provider must never be silently substituted with a
+  // different connected service. Without an explicit provider, category
+  // relevance narrows candidates; if it cannot decide, tool schemas/descriptions
+  // are left to guide selection rather than relying on a hard keyword gate.
+  if (mentionedSlugs.length > 0 && explicitServers.length === 0) {
+    const requested = mentionedSlugs.join(", ");
+    return c.json({
+      routed: true,
+      ok: false,
+      status: "not_connected",
+      content: "I couldn't check live data because the requested provider (" + requested + ") is not connected to this account. I did not substitute another provider or change project files.",
+      selectedProviders: [],
+      toolsOffered: [],
+      toolsUsed: [],
+    });
+  }
+
+  let selectedServers = explicitServers;
+  let selectionReason = "explicit_provider_match";
+  if (selectedServers.length === 0) {
+    const relevant = serversForPrompt(prompt, allServers);
+    selectedServers = relevant.kept.length > 0 ? relevant.kept : allServers;
+    selectionReason = relevant.kept.length > 0 ? "provider_category_relevance" : "all_connected_candidates_tool_schema_selection";
+  }
+
+  logger.info({
+    userId,
+    mode: "read_only_mcp_query",
+    selectionReason,
+    selectedProviders: selectedServers.map((server) => server.slug),
+    droppedProviders: allServers.filter((server) => !selectedServers.includes(server)).map((server) => server.slug),
+    promptLength: prompt.length,
+  }, "[mcp-query] route intent and candidate servers");
+
+  const provider: "anthropic" | "modal" =
+    config.LLM_PROVIDER_MODE === "openai"
+      ? "modal"
+      : config.LLM_PROVIDER_MODE === "anthropic"
+        ? "anthropic"
+        : await getUserPlan(userId)
+            .then((plan) => (plan === "free" ? "modal" : "anthropic"))
+            .catch(() => "anthropic");
+
+  let result: DispatchResult;
+  try {
+    result = await getDispatcher().dispatch({
+      agentType: "monitor",
+      usageCategory: "build",
+      task: { description: prompt, outputFormat: "prose" },
+      sessionId: randomUUID(),
+      userId,
+      provider,
+      enableTools: true,
+      costGuard: { cumulativeUsd: 0, maxUsd: 0.25 },
+      userPrompt: prompt,
+      mcpServers: selectedServers,
+      mcpQueryOnly: true,
+    });
+  } catch (error) {
+    logger.warn({
+      userId,
+      provider: selectedServers.map((server) => server.slug),
+      errorType: error instanceof Error ? error.name : typeof error,
+    }, "[mcp-query] query dispatch failed");
+    throw new AppError(502, "The connected-service query failed. No project files were changed. Check the provider connection and retry.", "MCP_QUERY_FAILED");
+  }
+
+  const toolOutcomes = result.mcpReadToolResults ?? [];
+  const successfulCalls = toolOutcomes.filter((tool) => tool.ok);
+  const failedCalls = toolOutcomes.filter((tool) => !tool.ok);
+  const toolsOffered = result.mcpToolsOffered ?? [];
+  const toolsUsed = toolOutcomes.map((tool) => ({
+    name: tool.name,
+    ok: tool.ok,
+    ...(tool.error ? { error: tool.error } : {}),
+  }));
+
+  let content = (result.finalContent || result.content || "").trim();
+  let status: "working" | "not_verified" | "no_read_tools" | "incomplete" = "working";
+  if (toolsOffered.length === 0) {
+    status = "no_read_tools";
+    content = "I couldn't verify live data: none of the selected providers exposed a usable read-only MCP tool for this query. Check provider access and tool discovery. No project files were changed.";
+  } else if (successfulCalls.length === 0) {
+    status = "not_verified";
+    const failures = failedCalls.map((tool) => tool.error).filter(Boolean).slice(0, 2).join("\n");
+    content = "I couldn't verify live data because no read-only tool call completed successfully. " +
+      (failures ? "Provider response: " + failures : "The model did not complete a read-only tool call.") +
+      "\nNo project files were changed.";
+  } else if (result.turnsExhausted) {
+    status = "incomplete";
+    if (!content) content = "A read-only provider tool returned data, but the model did not finish summarizing it. No project files were changed.";
+  } else if (!content) {
+    status = "incomplete";
+    content = "A read-only provider tool returned data, but the assistant did not produce a summary. No project files were changed.";
+  }
+
+  logger.info({
+    userId,
+    status,
+    selectedProviders: selectedServers.map((server) => server.slug),
+    toolsOffered,
+    toolsUsed: toolsUsed.map((tool) => ({ name: tool.name, ok: tool.ok })),
+    toolCountOmitted: result.mcpToolsOmitted ?? 0,
+  }, "[mcp-query] completed with tool evidence");
+
+  return c.json({
+    routed: true,
+    ok: successfulCalls.length > 0 && status === "working",
+    status,
+    content,
+    selectedProviders: selectedServers.map((server) => server.name),
+    selectionReason,
+    toolsOffered,
+    toolsUsed,
+    toolsOmitted: result.mcpToolsOmitted ?? 0,
+    rounds: result.rounds,
+  });
+});
 
 integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
   const { id: userId } = c.get("authUser");
