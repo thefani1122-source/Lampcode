@@ -184,8 +184,10 @@ export interface DispatchResult {
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** MCP tool calls actually executed (server-side, already resolved) this dispatch. */
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>;
+  /** Names of read-only MCP tools actually offered to the model in query mode. */
+  mcpToolsOffered?: string[];
   /** Outcomes of locally executed read-only MCP tool calls. */
-  mcpReadToolResults?: Array<{ name: string; ok: boolean }>;
+  mcpReadToolResults?: Array<{ name: string; ok: boolean; error?: string }>;
   /** True if the model called request_write_action — a write/destructive
    *  action was needed but isn't available yet. Lets the caller distinguish
    *  "declined a write action" from "generation genuinely produced nothing". */
@@ -414,6 +416,7 @@ export class AgentDispatcher {
     let readToolDefs: typeof TOOL_DEFINITIONS = [];
     let readMcpRegistry: WriteProxyRegistry = new Map();
     let mcpToolsOmitted = 0;
+    let mcpToolsOffered: string[] = [];
     const mcpEscalated: string[] = [];
     if (enableTools && mcpServers && mcpServers.length > 0) {
       const { report, failures } = await classifyMcpServers(mcpServers);
@@ -559,7 +562,7 @@ export class AgentDispatcher {
     let totalOutputTokens = 0;
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
-    const mcpReadToolResults: Array<{ name: string; ok: boolean }> = [];
+    const mcpReadToolResults: Array<{ name: string; ok: boolean; error?: string }> = [];
     let requestedWriteAction = false;
     let loopCostUsd = 0;
     let lastStopReason: string | undefined;
@@ -624,6 +627,8 @@ export class AgentDispatcher {
       // have now returned zero tool calls with tools supposedly in the request,
       // which points at the request rather than the models — and nothing so far
       // logs what was really sent, so this is guesswork until it does.
+      const toolsSent = gatewayRequest.tools?.map((t) => t.name) ?? [];
+      if (mcpQueryOnly) mcpToolsOffered = toolsSent;
       logger.info(
         {
           sessionId,
@@ -631,7 +636,8 @@ export class AgentDispatcher {
           round,
           provider: effectiveProvider,
           agenticBuild,
-          toolsSent: gatewayRequest.tools?.map((t) => t.name) ?? [],
+          mcpQueryOnly,
+          toolsSent,
         },
         "Gateway request: tools offered",
       );
@@ -825,9 +831,11 @@ export class AgentDispatcher {
           (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         if (mcpQueryOnly) {
+          const ok = readMcpRegistry.has(tc.name) && !/^Error(?::|\\s+from\\b)/i.test(result);
           mcpReadToolResults.push({
             name: tc.name,
-            ok: readMcpRegistry.has(tc.name) && !/^Error(?::|\\s+from\\b)/i.test(result),
+            ok,
+            ...(ok ? {} : { error: result.slice(0, 300) }),
           });
         }
         emitEvent({ type: "tool/result", name: tc.name, ok: !result.startsWith("Error:"), round });
@@ -1003,6 +1011,7 @@ export class AgentDispatcher {
       reasoning: "",
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
+      mcpToolsOffered,
       mcpReadToolResults,
       requestedWriteAction,
       stopReason: lastStopReason,
