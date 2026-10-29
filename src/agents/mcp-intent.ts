@@ -12,7 +12,9 @@ const RECENCY_SIGNAL = /\b(?:recent|latest|newest|current|last|status|history|ov
 
 const EXTERNAL_OBJECT = /\b(?:deployments?|projects?|domains?|environment\s+variables?|build\s+logs?|logs?|errors?|incidents?|issues?|pull\s+requests?|prs?|repositories|repos|branches|commits|workflows?|workflow\s+runs?|executions?|scenarios?|pages?|documents?|docs?|databases?|tables?|queries|products?|orders?|customers?|subscriptions?|payments?|billing|campaigns?|audiences?|emails?|messages?|sms|releases?|versions?|services?|zones?|workers?|buckets?|files?|design\s+files?|components?|events?|metrics|usage|transactions?|invoices?|refunds?|members?|users?|contacts?|records?)\b/i;
 
-const MUTATION_REQUEST = /\b(?:build|create|write|edit|modify|change|update|delete|remove|destroy|publish|deploy|redeploy|rollback|restart|trigger|execute|run|send\s+(?:an?\s+)?(?:email|message|sms)|push|commit|merge|close|resolve|assign|refund|cancel|install|migrate|fix|repair|provision|add|rename|overwrite|create|launch|promote)\b/i;
+const MUTATION_REQUEST = /\b(?:create|write|edit|modify|change|update|delete|remove|destroy|publish|redeploy|rollback|restart|trigger|execute|send\s+(?:an?\s+)?(?:email|message|sms)|push|commit|merge|close|resolve|assign|refund|cancel|install|migrate|fix|repair|provision|add|rename|overwrite|launch|promote)\b/i;
+const BUILD_OR_DEPLOY_ACTION = /^\s*(?:please\s+)?(?:build|make|generate|implement|code|deploy|redeploy|publish)\b/i;
+const WORKFLOW_ACTION = /\b(?:run|execute|trigger)\s+(?:the\s+)?(?:workflow|scenario|job|deployment|migration|campaign|message|query|build)\b/i;
 
 /**
  * True only for a strong read/query intent over an external service.
