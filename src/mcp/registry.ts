@@ -481,20 +481,11 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "MongoDB Atlas",
     category: "database",
     icon: "🍃",
-    description: "MongoDB Atlas database for generated apps — connect via connection string",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "connection_string",
-        label: "MongoDB Atlas Connection String",
-        type: "password",
-        placeholder: "mongodb+srv://user:pass@cluster.mongodb.net/dbname",
-        help: "Get from cloud.mongodb.com → Database → Connect → Drivers",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "MongoDB Atlas: use MONGODB_URI={connection_string} with Mongoose in the Node backend",
+    description: "Query and inspect MongoDB Atlas through its official managed MCP server",
+    mcpServerUrl: "https://mcp.mongodb.com",
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
   },
 
   railway: {
