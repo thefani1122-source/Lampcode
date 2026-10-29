@@ -405,7 +405,9 @@ Type scale and whitespace still do most of the work — a confident palette is
 not an excuse for a loud layout.
 
 ━━ CODE RULES — NON-NEGOTIABLE ━━
-- ALL buttons must do something — no dead buttons anywhere
+- ZERO DEAD UI / BUTTONS: Every button, tab, link, or filter MUST have a working handler. If sidebar has tabs (Dashboard, Analytics, Reports, Settings, Users), switching tabs MUST render that view's specific interactive cards and controls, never an empty screen or no-op.
+- COMPLETE WORKING DOMAIN LOGIC: If building a tracker (e.g. calories, expenses), provide working calculation, input form, and instant state update (backed by localStorage or backend API). Never build visual-only cards without functioning CRUD/inputs.
+- HUMAN-READABLE METRICS: Never output raw unformatted floating point numbers (e.g. 5.26315789%). Always format percentages and currencies cleanly (e.g. +5.3%, $124.2k) using Math.round() or .toFixed(1).
 - ALL navigation links must show different content — no repeated views
 - ROUTING: any app with more than one view gets REAL URL routing, not a useState
   switch. Declare react-router-dom in package.json dependencies (it installs before
@@ -413,10 +415,10 @@ not an excuse for a loud layout.
   has no URL, so the browser back button does nothing, a refresh throws the user
   back to the start, and no view can be linked or bookmarked. Keep useState for
   genuine UI state — an open modal, a selected tab inside one view.
-- NO placeholder "coming soon" sections
-- Complete, realistic mock data — not "Item 1", "Item 2"
+- NO placeholder "coming soon" sections or unhandled clicks
+- Complete, realistic domain data with realistic labels and values — not "Item 1", "Item 2"
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
-- Build COMPLETE apps: if asked for a fitness app, include all features a real fitness app has (workout tracking, exercise library, progress charts, scheduling, nutrition section). Research what the real product category needs and build that — not a skeleton, not a demo.
+- Build COMPLETE apps: if asked for an app in any category, include its core workflow (e.g. add, filter, calculate, view details). Research what the real product category needs and build working workflows — not a skeleton, not a demo.
 
 ━━ EVERY CONTROL YOU RENDER MUST DO SOMETHING ━━
 The line above is about how MANY features there are. This one is about whether
