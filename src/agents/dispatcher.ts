@@ -458,6 +458,14 @@ export class AgentDispatcher {
       const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
       readToolDefs = cappedReads.kept;
       mcpToolsOmitted += cappedReads.omitted;
+      if (mcpQueryOnly) {
+        // The query-only guard must be limited to what the model actually saw,
+        // not every read-like tool discovered on the server.
+        const offeredNames = new Set(readToolDefs.map((definition) => definition.name));
+        readMcpRegistry = new Map(
+          [...readMcpRegistry.entries()].filter(([toolName]) => offeredNames.has(toolName)),
+        );
+      }
       logger.info(
         {
           sessionId,
