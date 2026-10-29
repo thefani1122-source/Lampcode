@@ -43,7 +43,6 @@ function categoryFor(slug: string): "deploy" | "content" | "email" | "messaging"
   if (["wordpress", "shopify"].includes(slug)) return "content";
   if (["mailchimp", "resend", "sendgrid"].includes(slug)) return "email";
   if (slug === "twilio") return "messaging";
-  if (slug === "mongodb") return "database";
   return null;
 }
 function categoryHint(category: ReturnType<typeof categoryFor>, prompt: string): boolean {
@@ -291,7 +290,6 @@ function labelFor(slug: RestProviderSlug): string {
     case "twilio": return "Twilio";
     case "sendgrid": return "SendGrid";
     case "framer": return "Framer";
-    case "mongodb": return "MongoDB Atlas";
   }
   return slug;
 }
