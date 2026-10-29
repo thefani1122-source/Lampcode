@@ -16,8 +16,7 @@ import { sanitizeMcpError } from "./health.js";
 
 export type RestProviderSlug =
   | "netlify" | "railway" | "shopify" | "wordpress"
-  | "mailchimp" | "resend" | "twilio" | "sendgrid"
-  | "mongodb";
+  | "mailchimp" | "resend" | "twilio" | "sendgrid";
 
 export interface RestConnection {
   slug: RestProviderSlug;
@@ -49,13 +48,11 @@ const schemas: Record<RestProviderSlug, z.ZodType<Record<string, string>>> = {
   resend: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
   twilio: z.object({ account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i), auth_token: z.string().min(8), phone_number: z.string().optional().default("") }) as unknown as z.ZodType<Record<string, string>>,
   sendgrid: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
-  // MongoDB Atlas needs a driver-backed authenticated ping (currently unavailable).
-  mongodb: z.object({ connection_string: z.string().min(15) }) as unknown as z.ZodType<Record<string, string>>,
 };
 
 export const REST_PROVIDER_SLUGS: readonly RestProviderSlug[] = [
   "netlify", "railway", "shopify", "wordpress", "mailchimp",
-  "resend", "twilio", "sendgrid", "mongodb",
+  "resend", "twilio", "sendgrid",
 ];
 
 function safeMeta(slug: RestProviderSlug, credentials: Record<string, string>): Record<string, string> {
@@ -75,7 +72,6 @@ function safeMeta(slug: RestProviderSlug, credentials: Record<string, string>): 
     case "resend": return { auth: "REST API", endpoint: "api.resend.com" };
     case "twilio": return { auth: "REST API", account: credentials.account_sid ?? "", endpoint: "api.twilio.com" };
     case "sendgrid": return { auth: "REST API", endpoint: "api.sendgrid.com" };
-    case "mongodb": return { auth: "MongoDB driver" };
   }
 }
 
@@ -215,12 +211,6 @@ export async function testRestConnection(
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "SendGrid credential verification failed."), meta: {} };
         break;
-      case "mongodb":
-        return {
-          ok: false,
-          error: "MongoDB Atlas needs a MongoDB driver to authenticate and ping this connection string. This backend has no MongoDB driver installed, so the URI has not been saved as connected.",
-          meta: {},
-        };
     }
 
     return { ok: true, error: null, meta: safeMeta(provider, credentials) };
