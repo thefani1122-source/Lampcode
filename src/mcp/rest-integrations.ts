@@ -189,7 +189,7 @@ export async function testRestConnection(
       case "wordpress": {
         const base = safeWordPressBase(credentials.wordpress_site_url ?? "");
         const auth = Buffer.from(`${credentials.wordpress_username ?? ""}:${credentials.wordpress_app_password ?? ""}`).toString("base64");
-        response = await requestJson(fetcher, `${base}/wp/v2/users/me?context=edit`, {
+        response = await requestJson(fetcher, `${base}/wp/v2/users/me`, {
           headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "WordPress credential verification failed."), meta: {} };
