@@ -77,6 +77,43 @@ if (listSites) {
   check("list-sites bounds a caller limit", observedUrl, "https://api.netlify.com/api/v1/sites?per_page=20");
   check("list-sites never mutates provider state", observedMethod, "GET");
 }
+const railwayConnection: RestConnection = {
+  slug: "railway",
+  credentials: { api_token: "railway-token" },
+  meta: {},
+};
+const railwayQueries: Array<{ query: string; variables?: unknown }> = [];
+const railwayFetch: typeof fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+  const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: unknown };
+  railwayQueries.push({ query: body.query ?? "", variables: body.variables });
+  return new Response(JSON.stringify({ data: { deployments: { edges: [], pageInfo: { hasNextPage: false } } } }), {
+    status: 200, headers: { "content-type": "application/json" },
+  });
+}) as typeof fetch;
+const railwayTools = buildRestQueryTools([railwayConnection], railwayFetch);
+check(
+  "Railway exposes project, service, deployment and log read tools",
+  railwayTools.tools.map((tool) => tool.name).sort(),
+  [
+    "railway__get_deployment_logs",
+    "railway__list_deployments",
+    "railway__list_projects",
+    "railway__list_services",
+  ],
+);
+const railwayDeployments = railwayTools.executors.get("railway__list_deployments");
+ok("Railway deployment tool has an executor", Boolean(railwayDeployments));
+if (railwayDeployments) {
+  await railwayDeployments({ project_id: "project-1", service_id: "service-1", limit: 4 });
+  check("Railway deployment query uses the provider's public GraphQL API", observedUrl, "https://backboard.railway.com/graphql/v2");
+  check("Railway deployment query is read-only GraphQL", observedMethod, "POST");
+  check(
+    "Railway deployment query passes bounded project/service IDs as variables",
+    JSON.stringify(railwayQueries.at(-1)?.variables),
+    JSON.stringify({ input: { projectId: "project-1", serviceId: "service-1" }, first: 4 }),
+  );
+}
+
 const listDeployments = query.executors.get("netlify__list_deployments");
 ok("the advertised deployment tool has an executor", Boolean(listDeployments));
 if (listDeployments) {
