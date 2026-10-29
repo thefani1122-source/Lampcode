@@ -186,6 +186,8 @@ export interface DispatchResult {
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>;
   /** Names of read-only MCP tools actually offered to the model in query mode. */
   mcpToolsOffered?: string[];
+  /** Discovered tool definitions omitted by the per-dispatch context cap. */
+  mcpToolsOmitted?: number;
   /** Outcomes of locally executed read-only MCP tool calls. */
   mcpReadToolResults?: Array<{ name: string; ok: boolean; error?: string }>;
   /** True if the model called request_write_action — a write/destructive
@@ -1012,6 +1014,7 @@ export class AgentDispatcher {
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
       mcpToolsOffered,
+      mcpToolsOmitted,
       mcpReadToolResults,
       requestedWriteAction,
       stopReason: lastStopReason,
