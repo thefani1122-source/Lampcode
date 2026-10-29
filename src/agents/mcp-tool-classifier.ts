@@ -20,6 +20,13 @@ import { secureMcpFetch } from "../mcp/secure-fetch.js";
 
 const READ_VERB_RE = /^(?:get|list|search|fetch|read|describe|find|query|check|inspect|show|view|count)(?:[A-Z_]|$)/i;
 
+// A read-like prefix never makes a compound mutation read-only. Tool names are
+// provider-supplied and cannot be trusted as a permission declaration.
+export function writeActionByName(toolName: string): boolean {
+  if (typeof toolName !== "string") return true;
+  return /(?:^|[_\-.])(?:create|add|update|edit|modify|write|set|patch|put|post|upsert|mutate|delete|remove|destroy|drop|reset|clear|publish|deploy|redeploy|rollback|restart|trigger|execute|run|send|push|commit|merge|close|resolve|assign|refund|cancel|install|migrate|fix|repair|provision|rename|overwrite|launch|promote|enable|disable|connect|disconnect|revoke|rotate|approve|invite|reopen|suspend|archive|restore|submit|start|stop|pause|resume|activate|deactivate|upload|transfer|charge|capture|confirm|complete|apply|invoke|fire|release)(?:$|[_\-.])/i.test(toolName);
+}
+
 // Discovery must not hang a build waiting on a flaky/slow external MCP server.
 const DISCOVERY_TIMEOUT_MS = 5_000;
 
@@ -154,13 +161,13 @@ async function discoverServerTools(
       }
       const capability = mapTool(server.slug, tool.name);
       const capabilityIsRead = capability !== null && (capability.endsWith(".read") || capability === "db.query");
-      if (capabilityIsRead && !destructiveByName(tool.name)) {
+      if (capabilityIsRead && !writeActionByName(tool.name) && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
       }
       // A remote provider's readOnlyHint is untrusted metadata. Do not use it
       // by itself as permission to execute without approval; only app-owned
       // capability mappings or conservative name checks can establish a read.
-      if (READ_VERB_RE.test(tool.name) && !destructiveByName(tool.name)) {
+      if (READ_VERB_RE.test(tool.name) && !writeActionByName(tool.name) && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", inputSchema };
       }
       return {

@@ -24,6 +24,7 @@ import {
 import {
   buildReadToolDefinitions,
   buildWriteProxyDefinitions,
+  writeActionByName,
   type ClassifiedTool,
 } from "../src/agents/mcp-tool-classifier.js";
 import type { ActiveMcpServer } from "../src/server/routes/integrations.js";
@@ -39,6 +40,19 @@ function check(name: string, got: unknown, want: unknown): void {
 }
 function ok(name: string, cond: boolean): void {
   check(name, cond, true);
+}
+
+// Read-like prefixes must not smuggle compound mutation tools into query mode.
+for (const name of [
+  "get_or_create_deployment",
+  "get_repository_and_create_branch",
+  "list_projects_and_deploy",
+  "search_and_update_issue",
+]) {
+  check(`compound write name is not read-only: ${name}`, writeActionByName(name), true);
+}
+for (const name of ["get_deployments", "list_projects", "search_issues", "get_file_contents"]) {
+  check(`read name remains eligible: ${name}`, writeActionByName(name), false);
 }
 
 const SERVERS: ActiveMcpServer[] = [
