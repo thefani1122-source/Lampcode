@@ -787,11 +787,14 @@ integrationsRouter.post("/mcp/query", async (c) => {
   }
 
   const mentionedSlugs = namedMcpProviders(prompt);
-  const explicitServers = allServers.filter((server) =>
-    mentionedSlugs.includes(server.slug) ||
-    matchesPhrase(prompt, server.name) ||
-    matchesPhrase(prompt, server.slug.replace(/-/g, " ")),
-  );
+  const explicitServers = allServers.filter((server) => {
+    // "Make" is a common verb in prompts, not a reliable service mention.
+    // Require one of the provider's unambiguous aliases for Make.com.
+    if (server.slug === "make") return mentionedSlugs.includes("make");
+    return mentionedSlugs.includes(server.slug) ||
+      matchesPhrase(prompt, server.name) ||
+      matchesPhrase(prompt, server.slug.replace(/-/g, " "));
+  });
 
   // An explicitly named provider must never be silently substituted with a
   // different connected service. Without an explicit provider, category
