@@ -286,7 +286,6 @@ function labelFor(slug: RestProviderSlug): string {
     case "resend": return "Resend";
     case "twilio": return "Twilio";
     case "sendgrid": return "SendGrid";
-    case "framer": return "Framer";
   }
   return slug;
 }
