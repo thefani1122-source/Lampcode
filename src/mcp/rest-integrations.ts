@@ -17,7 +17,7 @@ import { sanitizeMcpError } from "./health.js";
 export type RestProviderSlug =
   | "netlify" | "railway" | "shopify" | "wordpress"
   | "mailchimp" | "resend" | "twilio" | "sendgrid"
-  | "framer" | "mongodb";
+  | "mongodb";
 
 export interface RestConnection {
   slug: RestProviderSlug;
@@ -49,16 +49,13 @@ const schemas: Record<RestProviderSlug, z.ZodType<Record<string, string>>> = {
   resend: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
   twilio: z.object({ account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i), auth_token: z.string().min(8), phone_number: z.string().optional().default("") }) as unknown as z.ZodType<Record<string, string>>,
   sendgrid: z.object({ api_key: z.string().min(8) }) as unknown as z.ZodType<Record<string, string>>,
-  // These two providers do not have a simple authenticated REST endpoint for
-  // the fields in the current UI. They must not be marked connected by a shape
-  // check alone. See testRestConnection() below.
-  framer: z.object({ framer_api_token: z.string().min(8), framer_project_url: z.string().url().optional() }) as unknown as z.ZodType<Record<string, string>>,
+  // MongoDB Atlas needs a driver-backed authenticated ping (currently unavailable).
   mongodb: z.object({ connection_string: z.string().min(15) }) as unknown as z.ZodType<Record<string, string>>,
 };
 
 export const REST_PROVIDER_SLUGS: readonly RestProviderSlug[] = [
   "netlify", "railway", "shopify", "wordpress", "mailchimp",
-  "resend", "twilio", "sendgrid", "framer", "mongodb",
+  "resend", "twilio", "sendgrid", "mongodb",
 ];
 
 function safeMeta(slug: RestProviderSlug, credentials: Record<string, string>): Record<string, string> {
@@ -78,11 +75,6 @@ function safeMeta(slug: RestProviderSlug, credentials: Record<string, string>): 
     case "resend": return { auth: "REST API", endpoint: "api.resend.com" };
     case "twilio": return { auth: "REST API", account: credentials.account_sid ?? "", endpoint: "api.twilio.com" };
     case "sendgrid": return { auth: "REST API", endpoint: "api.sendgrid.com" };
-    case "framer": {
-      let host = "";
-      try { host = new URL(credentials.framer_project_url ?? "").host; } catch { /* optional field */ }
-      return { auth: "Server API", ...(host ? { project: host } : {}) };
-    }
     case "mongodb": return { auth: "MongoDB driver" };
   }
 }
@@ -223,12 +215,6 @@ export async function testRestConnection(
         });
         if (!response.ok) return { ok: false, error: safeFailure(response.status, "SendGrid credential verification failed."), meta: {} };
         break;
-      case "framer":
-        return {
-          ok: false,
-          error: "Framer's official Server API uses the framer-api package and a project URL; this token-only REST form is not a valid HTTP API connection. No credentials were saved.",
-          meta: {},
-        };
       case "mongodb":
         return {
           ok: false,
