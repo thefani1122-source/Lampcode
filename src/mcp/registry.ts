@@ -370,27 +370,11 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Framer",
     category: "design",
     icon: "🖼️",
-    description: "Import animated components and layouts via the Framer API",
-    mcpServerUrl: null,
-    authType: "rest_api",
-    credentialFields: [
-      {
-        key: "framer_project_url",
-        label: "Framer Project URL",
-        type: "url",
-        placeholder: "https://framer.com/projects/...",
-        help: "The project-scoped URL used by the Framer Server API",
-      },
-      {
-        key: "framer_api_token",
-        label: "Framer Server API Key",
-        type: "password",
-        placeholder: "...",
-        help: "Create a project-scoped key in Site Settings → General",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Framer Server API uses the official framer-api Node package and requires a project URL plus project-scoped API key; it is not a generic HTTP bearer-token endpoint.",
+    description: "Inspect and manage Framer sites, pages, CMS and branches via Framer's hosted MCP server",
+    mcpServerUrl: "https://mcp.framer.com/mcp",
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
   },
 
   mailchimp: {
