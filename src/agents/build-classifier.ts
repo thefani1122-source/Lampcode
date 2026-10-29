@@ -263,7 +263,7 @@ export async function classifyBuild(
     return decide(signals, "frontend", false, "the request names browser storage", "explicit-client");
   }
   if (signals.namedServerThing) {
-    return decide(signals, "fullstack", signals.authSystem, "the request names a database or backend", "explicit-server");
+    return decide(signals, "fullstack", false, "the request names a database or backend", "explicit-server");
   }
 
   // ── 2. Everything else: the model reads it ────────────────────────────────
@@ -313,7 +313,7 @@ export async function classifyBuild(
         return decide(
           signals,
           parsed.needsServer ? "fullstack" : "frontend",
-          parsed.needsSignIn || signals.authSystem,
+          parsed.needsSignIn,
           parsed.why ? `read from the request: ${parsed.why}` : "read from the request",
           "model",
         );
