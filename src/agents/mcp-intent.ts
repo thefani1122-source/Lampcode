@@ -24,7 +24,7 @@ const MUTATION_REQUEST = /\b(?:build|create|write|edit|modify|change|update|dele
 export function isReadOnlyMcpQuery(prompt: string): boolean {
   if (typeof prompt !== "string" || prompt.trim().length < 3 || prompt.length > 8_000) return false;
   const text = prompt.trim();
-  if (MUTATION_REQUEST.test(text)) return false;
+  if (MUTATION_REQUEST.test(text) || BUILD_OR_DEPLOY_ACTION.test(text) || WORKFLOW_ACTION.test(text)) return false;
 
   const hasReadSignal = READ_REQUEST.test(text) || RECENCY_SIGNAL.test(text);
   const hasExternalTarget = EXTERNAL_OBJECT.test(text);
