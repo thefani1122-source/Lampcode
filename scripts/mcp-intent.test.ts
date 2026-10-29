@@ -37,6 +37,21 @@ const cases: Array<{ name: string; prompt: string; expected: boolean }> = [
     expected: false,
   },
   {
+    name: "combined read and deploy actions must not use read-only mode",
+    prompt: "Check recent deployments and deploy the failed one.",
+    expected: false,
+  },
+  {
+    name: "polite build request must stay in build mode",
+    prompt: "Could you please build a dashboard that shows recent deployments?",
+    expected: false,
+  },
+  {
+    name: "polite read request remains eligible for query-only mode",
+    prompt: "Could you please list recent Vercel deployments?",
+    expected: true,
+  },
+  {
     name: "write request must not use read-only mode",
     prompt: "Create a GitHub issue for the failing deployment.",
     expected: false,
