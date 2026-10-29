@@ -745,10 +745,10 @@ const KNOWN_SERVICE_ALIASES: Array<{ slug: string; aliases: string[] }> = [
 ];
 
 function matchesPhrase(input: string, phrase: string): boolean {
-  const escaped = phrase.replace(/[.*+?^$()|[\]\\]/g, "\\// ── MCP Provider routes ────────────────────────────────────────────────────────
-
-integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {");
-  return new RegExp("(^|[^a-z0-9])" + escaped + "($|[^a-z0-9])", "i").test(input);
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const source = " " + normalize(input) + " ";
+  const target = " " + normalize(phrase) + " ";
+  return source.includes(target);
 }
 
 function namedMcpProviders(prompt: string): string[] {
