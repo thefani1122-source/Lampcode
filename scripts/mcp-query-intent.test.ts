@@ -16,6 +16,8 @@ const readCases = [
   "List my recent GitHub pull requests",
   "Summarize the latest Sentry errors",
   "What's the current status of my Notion pages?",
+  "Check my MongoDB Atlas collections",
+  "List Framer CMS pages",
   "Check recent deployments",
 ];
 for (const prompt of readCases) {
