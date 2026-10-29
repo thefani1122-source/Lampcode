@@ -178,8 +178,42 @@ export function buildRestQueryTools(connections: RestConnection[], fetcher: Fetc
 
     if (slug === "railway") {
       const headers = { Authorization: "Bearer " + requiredCredential(creds, "api_token") };
-      add(connection, "list_projects", "Read projects available to this Railway account token.", {}, [], async () =>
-        graphqlRequest(fetcher, "https://backboard.railway.com/graphql/v2", headers, "query LampCodeProjects { me { projects { edges { node { id name } } } } }"));
+      const endpoint = "https://backboard.railway.com/graphql/v2";
+      add(connection, "list_projects", "Read projects available to this Railway account token. Use a returned project ID with list_services.", {}, [], async () =>
+        graphqlRequest(fetcher, endpoint, headers, "query LampCodeProjects { me { projects { edges { node { id name } } } } }"));
+      add(connection, "list_services", "Read services in a Railway project. Use the project ID returned by list_projects.", {
+        project_id: schemaField("string", "Project ID from list_projects."),
+      }, ["project_id"], async (args) => graphqlRequest(
+        fetcher, endpoint, headers,
+        "query LampCodeServices($id: String!) { project(id: $id) { id name services { edges { node { id name } } } } }",
+        { id: boundedString(args.project_id, "project_id") },
+      ));
+      add(connection, "list_deployments", "Read recent Railway deployments for a project and service ID. This query does not deploy or change anything.", {
+        project_id: schemaField("string", "Project ID from list_projects."),
+        service_id: schemaField("string", "Service ID from list_services."),
+        limit: schemaField("integer", "Maximum deployments to return (1–20)."),
+      }, ["project_id", "service_id"], async (args) => graphqlRequest(
+        fetcher, endpoint, headers,
+        "query LampCodeDeployments($input: DeploymentListInput!, $first: Int!) { deployments(input: $input, first: $first) { edges { node { id status createdAt } } pageInfo { hasNextPage endCursor } } }",
+        {
+          input: {
+            projectId: boundedString(args.project_id, "project_id"),
+            serviceId: boundedString(args.service_id, "service_id"),
+          },
+          first: boundedLimit(args.limit),
+        },
+      ));
+      add(connection, "get_deployment_logs", "Read logs for one Railway deployment ID. This only retrieves logs; it does not restart or redeploy the service.", {
+        deployment_id: schemaField("string", "Deployment ID from list_deployments."),
+        limit: schemaField("integer", "Maximum log entries to return (1–100)."),
+      }, ["deployment_id"], async (args) => graphqlRequest(
+        fetcher, endpoint, headers,
+        "query LampCodeDeploymentLogs($deploymentId: String!, $limit: Int) { deploymentLogs(deploymentId: $deploymentId, limit: $limit) { timestamp message severity } }",
+        {
+          deploymentId: boundedString(args.deployment_id, "deployment_id"),
+          limit: boundedLimit(args.limit, 50, 100),
+        },
+      ));
       continue;
     }
 
