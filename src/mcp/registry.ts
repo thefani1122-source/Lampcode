@@ -106,6 +106,21 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     supportsRealMCP: true,
   },
 
+  netlify: {
+    slug: "netlify",
+    name: "Netlify",
+    category: "devtools",
+    icon: "◆",
+    description: "List Netlify sites and deployments through the Netlify REST API",
+    mcpServerUrl: null,
+    authType: "bearer_token",
+    credentialFields: [
+      { key: "netlify_token", label: "Netlify Personal Access Token", type: "password", placeholder: "nfp_..." },
+    ],
+    supportsRealMCP: false,
+    restApiHint: "Netlify REST API: https://api.netlify.com/api/v1. Use Authorization: Bearer {netlify_token}. Safe reads include GET /user, GET /sites, and GET /sites/{site_id}/deploys.",
+  },
+
   vercel: {
     slug: "vercel",
     name: "Vercel",
@@ -142,6 +157,29 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
         placeholder: "...",
         help: "Create at dash.cloudflare.com/profile/api-tokens",
       },
+    ],
+    supportsRealMCP: true,
+  },
+
+  // Supabase's existing connection form stores a PAT + optional project ref
+  // in userMcpConnections. Expose that same stored connection to the shared
+  // read-only MCP dispatcher instead of silently skipping it as unknown.
+  supabase: {
+    slug: "supabase",
+    name: "Supabase",
+    category: "database",
+    icon: "⚡",
+    description: "Read project metadata through Supabase's hosted remote MCP server",
+    mcpServerUrl: (creds: Record<string, string>) => {
+      const url = new URL("https://mcp.supabase.com/mcp");
+      if (creds["projectRef"]) url.searchParams.set("project_ref", creds["projectRef"]);
+      url.searchParams.set("read_only", "true");
+      return url.toString();
+    },
+    authType: "bearer_token",
+    credentialFields: [
+      { key: "accessToken", label: "Personal Access Token", type: "password", placeholder: "sbp_..." },
+      { key: "projectRef", label: "Project Ref", type: "text", optional: true },
     ],
     supportsRealMCP: true,
   },
@@ -289,7 +327,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Shopify Admin GraphQL API: https://{shopify_store_domain}/admin/api/2025-07/graphql.json\nHeader: X-Shopify-Access-Token: {shopify_admin_token}",
+    restApiHint: "Shopify Admin GraphQL API: POST https://{shopify_store_domain}/admin/api/2026-10/graphql.json with X-Shopify-Access-Token: {shopify_admin_token}. Queries require the relevant Admin API scopes.",
   },
 
   wordpress: {
@@ -309,6 +347,13 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
         help: "The root URL of your WordPress site",
       },
       {
+        key: "wordpress_username",
+        label: "WordPress Username",
+        type: "text",
+        placeholder: "username",
+        help: "The account that owns the application password",
+      },
+      {
         key: "wordpress_app_password",
         label: "Application Password",
         type: "password",
@@ -325,20 +370,11 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Framer",
     category: "design",
     icon: "🖼️",
-    description: "Import animated components and layouts via the Framer API",
-    mcpServerUrl: null,
-    authType: "rest_api",
-    credentialFields: [
-      {
-        key: "framer_api_token",
-        label: "Framer API Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create at framer.com/developers → API Tokens",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Framer REST API: https://api.framer.com/store/v1\nHeader: Authorization: Bearer {framer_api_token}",
+    description: "Inspect and manage Framer sites, pages, CMS and branches via Framer's hosted MCP server",
+    mcpServerUrl: "https://mcp.framer.com/mcp",
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
   },
 
   mailchimp: {
@@ -445,20 +481,11 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "MongoDB Atlas",
     category: "database",
     icon: "🍃",
-    description: "MongoDB Atlas database for generated apps — connect via connection string",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "connection_string",
-        label: "MongoDB Atlas Connection String",
-        type: "password",
-        placeholder: "mongodb+srv://user:pass@cluster.mongodb.net/dbname",
-        help: "Get from cloud.mongodb.com → Database → Connect → Drivers",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "MongoDB Atlas: use MONGODB_URI={connection_string} with Mongoose in the Node backend",
+    description: "Query and inspect MongoDB Atlas through its official managed MCP server",
+    mcpServerUrl: "https://mcp.mongodb.com",
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
   },
 
   railway: {
@@ -479,7 +506,7 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Railway GraphQL API: POST https://backboard.railway.app/graphql/v2\nHeader: Authorization: Bearer {api_token}",
+    restApiHint: "Railway Public GraphQL API: POST https://backboard.railway.com/graphql/v2. Account/workspace tokens use Authorization: Bearer; project tokens use Project-Access-Token.",
   },
 };
 

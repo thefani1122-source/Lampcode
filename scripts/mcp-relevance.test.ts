@@ -76,6 +76,21 @@ check(
 // real word in a package.json conversation and means nothing about deploying.
 ok("'prepublished' does not count as publish", !keptSlugs("the prepublished draft").includes("vercel"));
 
+// Explicit provider mentions should narrow a category instead of attaching every
+// server in that category. A request for Vercel's deployments must not also
+// send Railway and Cloudflare's tools just because all are deployment services.
+check(
+  "an explicit Vercel query keeps Vercel only",
+  keptSlugs("check Vercel recent deployments").sort(),
+  ["vercel"],
+);
+check(
+  "an explicit provider plus a different category keeps the needed implicit provider",
+  keptSlugs("check Vercel deployments and open a GitHub pull request").sort(),
+  ["github", "vercel"],
+);
+
+
 // ── the ceiling ──────────────────────────────────────────────────────────────
 
 const defs = (n: number, prefix: string): ToolDefinition[] =>

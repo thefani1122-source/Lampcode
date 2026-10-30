@@ -16,8 +16,11 @@ check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNA
 check("Vercel connection uses bearer access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { vercel_token: "v_token" })?.headers,
   { Authorization: "Bearer v_token" });
 check("Vercel advertises a static token field", MCP_REGISTRY.vercel!.credentialFields.length, 1);
+check("Framer uses the hosted remote MCP endpoint", MCP_REGISTRY.framer!.mcpServerUrl, "https://mcp.framer.com/mcp");
+check("MongoDB Atlas uses the managed MCP endpoint", MCP_REGISTRY.mongodb!.mcpServerUrl, "https://mcp.mongodb.com");
+check("Netlify is explicitly registered as a REST adapter", MCP_REGISTRY.netlify!.supportsRealMCP, false);
 
-for (const slug of ["notion", "figma", "sentry"] as const) {
+for (const slug of ["notion", "figma", "sentry", "framer", "mongodb"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
   check(`${slug} hosted MCP has no incompatible static credential form`, MCP_REGISTRY[slug]!.credentialFields, []);
 }

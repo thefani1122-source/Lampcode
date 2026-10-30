@@ -100,22 +100,46 @@ function wordsOf(prompt: string): string[] {
  * decision can be logged — a server that silently vanishes is the failure mode
  * this whole area keeps producing.
  */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.+?^$()|[\]{}]/g, "\\$&").replace(/[-*\\/]/g, "\\$&");
+}
+
+function serverNamedInPrompt(prompt: string, server: ActiveMcpServer): boolean {
+  return [server.slug, server.name].filter(Boolean).some((candidate) => {
+    const normalized = candidate.toLowerCase().trim();
+    if (!normalized) return false;
+    const pattern = normalized.split(/\s+/).map(escapeRegExp).join("\\s+");
+    return new RegExp("(?:^|[^a-z0-9])" + pattern + "(?:$|[^a-z0-9])", "i").test(prompt);
+  });
+}
+
 export function serversForPrompt(
   prompt: string,
   servers: ActiveMcpServer[],
 ): { kept: ActiveMcpServer[]; dropped: string[] } {
+  // A named provider takes precedence over broad category hints. Without this,
+  // "check Vercel deployments" attached every deployment provider (Vercel,
+  // Railway, Cloudflare, Netlify) simply because the noun "deployments"
+  // matched the category regex. Also retain implicit providers for a different
+  // category the prompt needs, e.g. GitHub for a repo task alongside Vercel.
+  const explicitlyNamed = servers.filter((server) => serverNamedInPrompt(prompt, server));
+  const namedCategories = new Set(
+    explicitlyNamed
+      .map((server) => SERVER_CATEGORY[server.slug.toLowerCase()])
+      .filter((category): category is keyof typeof CATEGORY_HINTS => Boolean(category)),
+  );
+
   const kept: ActiveMcpServer[] = [];
   const dropped: string[] = [];
 
-  for (const s of servers) {
-    const slug = s.slug.toLowerCase();
-    // Named outright — always keep, whatever the category rules say. Someone
-    // who types "vercel" means Vercel even in a sentence about nothing else.
-    const named = new RegExp(`\\b${slug.replace(/[^a-z0-9]/g, "\\$&")}\\b`, "i").test(prompt);
+  for (const server of servers) {
+    const slug = server.slug.toLowerCase();
+    const named = explicitlyNamed.includes(server);
     const category = SERVER_CATEGORY[slug];
     const byCategory = category ? CATEGORY_HINTS[category]!.test(prompt) : false;
-    if (named || byCategory) kept.push(s);
-    else dropped.push(s.slug);
+    const categoryAlreadyCovered = category !== undefined && namedCategories.has(category);
+    if (named || (byCategory && !categoryAlreadyCovered)) kept.push(server);
+    else dropped.push(server.slug);
   }
 
   return { kept, dropped };

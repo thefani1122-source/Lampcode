@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
+import { getDispatcher } from "../../agents/dispatcher.js";
+import { classifyMcpQueryIntent } from "../../agents/mcp-query-intent.js";
+import { serversForPrompt } from "../../agents/mcp-relevance.js";
+import { assertHasBudget, getUserPlan } from "../../build/credits.js";
+import { getConnectedRestIntegrations, parseRestConnection, REST_PROVIDER_SLUGS, testRestConnection, type RestProviderSlug } from "../../mcp/rest-integrations.js";
+import { buildRestQueryTools, selectRestConnections } from "../../mcp/rest-query-tools.js";
 import { z } from "zod";
 import { eq, and, gt } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -214,6 +220,24 @@ integrationsRouter.post("/supabase", async (c) => {
 // The PAT + service key never leave the backend; only the anon key (public,
 // RLS-safe) is ever injected into a preview.
 
+// Test an existing Supabase PAT without inserting/upserting or mutating a connection.
+integrationsRouter.post("/supabase/mcp/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  const parsed = connectSupabaseMcpSchema.safeParse(body);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues.map((issue) => issue.message).join("; "), "VALIDATION_ERROR");
+  try {
+    const tools = await listSupabaseMcpTools({ accessToken: parsed.data.accessToken, projectRef: parsed.data.projectRef });
+    if (tools.length === 0) throw new AppError(422, "Supabase MCP returned no tools", "MCP_NO_TOOLS");
+    logger.info({ userId, provider: "supabase", stage: "test", toolCount: tools.length }, "Supabase MCP test passed");
+    return c.json({ slug: "supabase", status: "verified", toolCount: tools.length });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    const category = safeMcpFailureCategory(err);
+    logger.warn({ userId, provider: "supabase", stage: "test", category }, "Supabase MCP test failed");
+    throw new AppError(422, "Supabase MCP test failed (" + category + ")", "MCP_CONNECT_FAILED");
+  }
+});
 integrationsRouter.post("/supabase/mcp", async (c) => {
   const { id: userId } = c.get("authUser");
 
@@ -704,6 +728,222 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
   return c.json({ success: true });
 });
 
+// ── Read-only MCP query route ──────────────────────────────────────────────────
+// This endpoint never enters runFastBuild. Its dispatcher mode exposes only
+// discovered, conservatively classified read tools and rejects all other tool
+// names again at execution time. Frontend errors must not fall through to build.
+const mcpQuerySchema = z.object({
+  prompt: z.string().trim().min(1).max(6_000),
+  projectId: z.string().min(1).max(200).optional(),
+});
+
+integrationsRouter.post("/mcp/query", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const body = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const parsed = mcpQuerySchema.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
+  }
+
+  const { prompt, projectId } = parsed.data;
+  const intent = classifyMcpQueryIntent(prompt);
+  if (!intent.handled) return c.json({ handled: false, reason: intent.reason });
+
+  // Read-only queries consume model budget too; use the same pre-flight gate as
+  // builds, then apply a much smaller per-dispatch ceiling.
+  await assertHasBudget(userId);
+
+  try {
+    const connected = await getConnectedMcpServers(userId);
+    const { kept, dropped } = serversForPrompt(prompt, connected);
+    const restConnections = await getConnectedRestIntegrations(userId);
+    const selectedRest = selectRestConnections(prompt, restConnections, kept.map((server) => server.slug));
+    const restQuery = buildRestQueryTools(selectedRest);
+    const selectedProviders = [
+      ...kept.map((server) => ({ slug: server.slug, name: server.name })),
+      ...restQuery.providers,
+    ];
+    logger.info(
+      {
+        userId,
+        projectId,
+        selectedMcpProviders: kept.map((server) => server.slug),
+        selectedRestProviders: restQuery.providers.map((provider) => provider.slug),
+        droppedMcpProviders: dropped,
+        droppedRestProviders: restConnections.filter((connection) => !selectedRest.some((chosen) => chosen.slug === connection.slug)).map((connection) => connection.slug),
+        intent: intent.reason,
+      },
+      "[mcp-query] provider selection",
+    );
+
+    if (kept.length === 0 && restQuery.tools.length === 0) {
+      return c.json({
+        handled: true,
+        verified: false,
+        answer: "I couldn't find a connected, query-capable provider for this request, so I couldn't verify live service data. No project files were changed.",
+        providers: [],
+        tools: [],
+      });
+    }
+
+    const provider: "anthropic" | "modal" =
+      config.LLM_PROVIDER_MODE === "openai"
+        ? "modal"
+        : config.LLM_PROVIDER_MODE === "anthropic"
+          ? "anthropic"
+          : await getUserPlan(userId)
+              .then((plan) => (plan === "free" ? "modal" : "anthropic"))
+              .catch(() => "anthropic");
+
+    // Record actual tool executions in order. Arguments and provider responses
+    // are deliberately excluded from logs/API diagnostics to avoid leaking data.
+    const toolEvents: Array<{ name: string; success?: boolean }> = [];
+    const dispatch = await getDispatcher().dispatch({
+      agentType: "connection",
+      task: { description: prompt, outputFormat: "prose" },
+      sessionId: randomUUID(),
+      userId,
+      ...(projectId ? { projectId } : {}),
+      provider,
+      enableTools: true,
+      costGuard: { cumulativeUsd: 0, maxUsd: 0.15 },
+      mcpServers: kept,
+      mcpQueryOnly: true,
+      mcpQueryTools: restQuery.tools,
+      mcpQueryExecutors: restQuery.executors,
+      userPrompt: prompt,
+      onEvent: (event) => {
+        const record = event as unknown as Record<string, unknown>;
+        if (record.type === "tool/call" && typeof record.name === "string") {
+          toolEvents.push({ name: record.name });
+        } else if (record.type === "tool/result" && typeof record.name === "string") {
+          for (let index = toolEvents.length - 1; index >= 0; index--) {
+            if (toolEvents[index]?.name === record.name && toolEvents[index]?.success === undefined) {
+              toolEvents[index]!.success = record.ok === true;
+              break;
+            }
+          }
+        }
+      },
+    });
+
+    // Only names tied to a selected provider are shown as MCP tool activity;
+    // the dispatcher additionally guarantees that only its read registry ran.
+    const providerSlugs = new Set(selectedProviders.map((provider) => provider.slug));
+    const tools = toolEvents
+      .filter((event) => [...providerSlugs].some((slug) => event.name.startsWith(slug + "__")))
+      .map((event) => {
+        const separator = event.name.indexOf("__");
+        const slug = separator > 0 ? event.name.slice(0, separator) : "";
+        return {
+          name: event.name.slice(separator + 2),
+          provider: slug,
+          success: event.success === true,
+        };
+      });
+    const verified = tools.some((tool) => tool.success);
+    const answer = verified
+      ? (dispatch.finalContent.trim() || dispatch.content.trim() || "The provider returned live data, but the model did not produce a summary.")
+      : "I couldn't verify current service data because no read-only MCP tool completed successfully. No project files were changed and no external write action was performed."; 
+
+    logger.info(
+      {
+        userId,
+        projectId,
+        providers: selectedProviders.map((provider) => provider.slug),
+        tools: tools.map(({ provider: slug, name, success }) => ({ provider: slug, name, success })),
+        verified,
+        rounds: dispatch.rounds,
+      },
+      "[mcp-query] completed",
+    );
+
+    return c.json({
+      handled: true,
+      verified,
+      answer,
+      providers: selectedProviders,
+      tools,
+    });
+  } catch (err) {
+    logger.warn(
+      { userId, projectId, category: safeMcpFailureCategory(err) },
+      "[mcp-query] unable to verify service data",
+    );
+    return c.json({
+      handled: true,
+      verified: false,
+      answer: "I couldn't verify live service data because the connected-service query failed. No project files were changed and no external write action was performed. Check the provider connection and try again.",
+      providers: [],
+      tools: [],
+    });
+  }
+});
+
+// ── Existing REST/API catalogue providers ──────────────────────────────────────
+// These adapters are not MCP servers. They verify a provider-specific,
+// non-mutating API call and store credentials in the same per-user encrypted
+// connection table. Provider-specific adapters never accept arbitrary URLs
+// from the model; only WordPress uses a user-supplied public HTTPS site URL.
+
+integrationsRouter.post("/rest/:slug/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credential object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  const result = await testRestConnection(slug, creds);
+  if (!result.ok) throw new AppError(422, result.error ?? "REST connection test failed", "REST_CONNECT_FAILED");
+  logger.info({ userId, slug, stage: "test", verified: true }, "REST integration credentials verified");
+  return c.json({ slug, status: "verified", meta: result.meta });
+});
+
+integrationsRouter.post("/rest/:slug/connect", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credential object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  const result = await testRestConnection(slug, creds);
+  if (!result.ok) throw new AppError(422, result.error ?? "REST connection test failed", "REST_CONNECT_FAILED");
+  const parsed = parseRestConnection(slug, creds, result.meta);
+  if (!parsed) throw new AppError(422, "The credentials did not match this provider's supported fields", "REST_CREDENTIALS_INVALID");
+  const enc = encrypt(JSON.stringify(parsed.credentials));
+  await db.insert(userMcpConnections).values({
+    id: randomUUID(), userId, providerSlug: parsed.slug,
+    encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+    meta: result.meta, isCustom: false, connectedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: {
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: result.meta, isCustom: false, connectedAt: new Date(),
+    },
+  });
+  logger.info({ userId, slug, verified: true }, "REST integration connected");
+  return c.json({ slug, status: "connected", meta: result.meta }, 201);
+});
+
+integrationsRouter.delete("/rest/:slug", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  if (!REST_PROVIDER_SLUGS.includes(slug as RestProviderSlug)) throw new AppError(404, "Unknown REST integration", "UNKNOWN_PROVIDER");
+  await db.delete(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId),
+    eq(userMcpConnections.providerSlug, slug),
+    eq(userMcpConnections.isCustom, false),
+  ));
+  // Remove legacy records stored by the earlier generic integration route.
+  if (slug === "wordpress") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "wordpress")));
+  if (slug === "shopify") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "shopify")));
+  if (slug === "railway") await db.delete(userIntegrations).where(and(eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "railway")));
+  return c.json({ success: true });
+});
+
 // ── MCP Provider routes ────────────────────────────────────────────────────────
 
 integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
@@ -757,7 +997,10 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     await client.connect(transport as any);
     const { tools } = await client.listTools();
     if (tools.length === 0) throw new Error("empty_tool_list");
-    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens?.access_token }));
+    // Public MCP tools may be discoverable without authentication. That alone
+    // must not create a green authenticated OAuth connection.
+    if (!session.tokens?.access_token) throw new Error("oauth_token_missing");
+    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens.access_token }));
     await db.insert(userMcpConnections).values({
       id: randomUUID(), userId, providerSlug: slug,
       encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
@@ -838,6 +1081,63 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
   }
 });
 
+// Test provider credentials and perform authenticated initialize + tools/list.
+// This route is deliberately non-persistent; tests must never overwrite a good connection.
+integrationsRouter.post("/mcp/:slug/test", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const slug = c.req.param("slug");
+  const provider = getMcpProvider(slug);
+  if (!provider || !provider.supportsRealMCP) throw new AppError(404, "Unknown remote MCP provider", "UNKNOWN_PROVIDER");
+  const body = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR"); });
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError(400, "Invalid credentials object", "VALIDATION_ERROR");
+  const creds = unwrapCreds(body as Record<string, unknown>);
+  if (provider.authType === "oauth") {
+    // Test the already-authorized, per-user OAuth session without accepting an
+    // arbitrary token in the form or saving a new connection as a side effect.
+    const active = (await getConnectedMcpServers(userId)).find((server) => server.slug === slug);
+    const session = active?.oauthSession;
+    if (!active || !session?.tokens?.access_token || !active.oauthRedirectUrl) {
+      throw new AppError(422, "Connect this provider with OAuth before testing it.", "OAUTH_REQUIRED");
+    }
+    const oauth = createMcpOAuthProvider({
+      serverUrl: active.url,
+      redirectUrl: active.oauthRedirectUrl,
+      session,
+      persist: active.persistOAuthSession ?? (async () => undefined),
+      saveStateHash: async () => undefined,
+    });
+    const oauthClient = new Client({ name: "lampcode-oauth-test", version: "1.0.0" });
+    const oauthTransport = new StreamableHTTPClientTransport(new URL(active.url), {
+      authProvider: oauth.provider,
+      fetch: secureMcpFetch,
+      redirectPolicy: "same-origin",
+    });
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await oauthClient.connect(oauthTransport as any);
+      const { tools } = await oauthClient.listTools();
+      if (tools.length === 0) throw new AppError(422, "OAuth authorized but the MCP server returned no tools.", "MCP_NO_TOOLS");
+      logger.info({ userId, provider: slug, stage: "oauth_test", toolCount: tools.length }, "OAuth MCP connection test passed");
+      return c.json({ slug, status: "verified", toolCount: tools.length });
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      const category = safeMcpFailureCategory(error);
+      logger.warn({ userId, provider: slug, stage: "oauth_test", category }, "OAuth MCP test failed");
+      throw new AppError(422, "OAuth MCP test failed (" + category + "). Reconnect if authorization has expired.", "MCP_CONNECT_FAILED");
+    } finally {
+      await oauthClient.close().catch(() => undefined);
+    }
+  }
+  const resolved = resolveMcpAuth(provider, creds);
+  if (!resolved) throw new AppError(422, "Provider credentials or MCP endpoint are incomplete", "MCP_CREDENTIALS_INCOMPLETE");
+  const health = await checkMcpServer(resolved);
+  if (!health.ok) {
+    logger.warn({ userId, provider: slug, stage: health.stage, category: health.category }, "MCP credentials test failed");
+    throw new AppError(422, "MCP test failed during " + health.stage + " (" + health.category + ")", "MCP_CONNECT_FAILED");
+  }
+  logger.info({ userId, provider: slug, stage: "test", toolCount: health.toolCount }, "MCP credentials test passed");
+  return c.json({ slug, status: "verified", toolCount: health.toolCount });
+});
 // POST /api/integrations/mcp/:slug/connect
 integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   const { id: userId } = c.get("authUser");
