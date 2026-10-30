@@ -407,6 +407,7 @@ not an excuse for a loud layout.
 ━━ CODE RULES — NON-NEGOTIABLE ━━
 - ZERO DEAD UI / BUTTONS: Every button, tab, link, or filter MUST have a working handler. If sidebar has tabs (Dashboard, Analytics, Reports, Settings, Users), switching tabs MUST render that view's specific interactive cards and controls, never an empty screen or no-op.
 - COMPLETE WORKING DOMAIN LOGIC: If building a tracker (e.g. calories, expenses), provide working calculation, input form, and instant state update (backed by localStorage or backend API). Never build visual-only cards without functioning CRUD/inputs.
+- ALWAYS SEED REALISTIC INITIAL DATA: Never launch an app with an empty screen, $0.00, empty tables, or "No items yet". Pre-populate with 6-10 rich, realistic, domain-specific records by default (e.g. realistic expense transactions, real categories, varied dates and amounts) so charts, lists, and summary cards are immediately alive and visually impressive on first render. Users can still add, edit, and delete items.
 - HUMAN-READABLE METRICS: Never output raw unformatted floating point numbers (e.g. 5.26315789%). Always format percentages and currencies cleanly (e.g. +5.3%, $124.2k) using Math.round() or .toFixed(1).
 - ALL navigation links must show different content — no repeated views
 - ROUTING: any app with more than one view gets REAL URL routing, not a useState
