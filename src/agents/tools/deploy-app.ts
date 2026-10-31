@@ -16,6 +16,14 @@ export const deployAppHandler: ToolHandler = async (args: Record<string, unknown
           "Tell them that and stop — do not try again."
         );
       }
+      // A scanner needs a stable project identity for diagnostics and policy scope.
+      // Missing identity is not a reason to substitute a guessed project id.
+      if (!ctx.projectId) {
+        const message =
+          "Deployment blocked: project identity is missing, so security verification cannot be scoped safely.";
+        ctx.onLog?.(message);
+        return message;
+      }
       // Re-scan the exact in-memory snapshot that will be sent to Vercel.
       // Any previous build verdict is stale as soon as a file changes.
       const scanResult = await runSecurityChecksSafely(
