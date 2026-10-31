@@ -439,6 +439,12 @@ async function loadProjectEnvVars(projectId: string): Promise<{ key: string; val
   }
 }
 
+/** True only when this project has its own encrypted MongoDB URI configured. */
+export async function hasProjectMongoUri(projectId: string): Promise<boolean> {
+  const vars = await loadProjectEnvVars(projectId);
+  return vars.some(({ key, value }) => key === "MONGODB_URI" && value.trim().length > 0);
+}
+
 /**
  * Writes the preview `.env` with the Supabase credentials the generated app
  * needs to initialise its client. Must run BEFORE the dev server starts — Vite
@@ -487,10 +493,6 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
       (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
     if (serviceKey) log("Backend has service-role access to your own Supabase project");
   }
-  if (mongoUri) {
-    env += `MONGODB_URI=${mongoUri}\n`;
-    log("Backend has a MongoDB connection (MONGODB_URI)");
-  }
   // Stable per-project secret for custom (MongoDB) JWT auth.
   if (!securityHold) env += `JWT_SECRET=lampcode_${projectId}\n`;
 
@@ -515,7 +517,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
       sandboxSecrets.delete(projectId);
       log("Security hold active — cleared the preview environment file and all injected secrets");
     } else {
-      log("No preview DB configured — skipping .env injection");
+      log("No database credentials configured for this project — skipping .env injection");
     }
     return;
   }
