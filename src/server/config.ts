@@ -49,9 +49,6 @@ const envSchema = z.object({
   // the part that is NOT fixed: a backend holding only the anon key has no
   // user identity, so `auth.uid()` is null and every owner-scoped RLS policy
   // denies it. The real answer is forwarding the caller's JWT per request.
-  // Shared preview MongoDB connection string — injected into the backend env
-  // (MONGODB_URI) so generated MongoDB apps can connect & persist in the preview.
-  PREVIEW_MONGODB_URI: z.string().min(1).optional(),
   // Socket.IO's Redis adapter exists for ONE reason: letting several instances
   // of this server share a broadcast. It costs one Redis PUBLISH per emit, and
   // this app streams model output over the socket — so a single build is
