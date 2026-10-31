@@ -2558,12 +2558,15 @@ export async function runFastBuild(
           message: "Security verification could not complete. The app preview will run without database or external credentials. Production deployment is blocked until security verification succeeds.",
         });
       } else {
+        const reportFindings = finalSecurityScan.report.checks.filter(
+          (finding) => finding.status === "fail" || finding.status === "warn",
+        );
         const unresolved = blockingSecurityFindings(finalSecurityScan.report.checks);
         securityIsolationRequired = unresolved.length > 0;
         securityPreviewBlocked = unresolved.some((finding) => finding.id.startsWith("secret-"));
         securityOutcome = {
-          status: unresolved.length === 0 ? "passed" : "needs-attention",
-          findings: unresolved.map((finding) => ({
+          status: reportFindings.length === 0 ? "passed" : "needs-attention",
+          findings: reportFindings.map((finding) => ({
             id: finding.id,
             severity: finding.severity,
             ...(finding.file ? { file: finding.file } : {}),
@@ -2575,15 +2578,20 @@ export async function runFastBuild(
           previewIsolated: securityIsolationRequired && !securityPreviewBlocked,
           previewBlocked: securityPreviewBlocked,
         };
-        if (unresolved.length > 0) {
-          const summary = unresolved.map((finding) => `${finding.severity}: ${finding.message}`).join("; ");
-          logger.warn({ sessionId, projectId, unresolved }, "Unresolved security findings — preview isolation enabled, production deploy remains blocked");
+        if (reportFindings.length > 0) {
+          const summary = reportFindings.map((finding) => `${finding.severity}: ${finding.message}`).join("; ");
+          logger.warn(
+            { sessionId, projectId, reportFindings, unresolvedBlockers: unresolved.length },
+            "Security findings remain after repair",
+          );
           server?.emitToRoom(sessionId, "build:warning", {
             sessionId,
             message: securityPreviewBlocked
               ? `A secret exposure remains after ${repairAttempts} repair attempt(s). The preview is withheld to avoid exposing the credential. Rotate any real credential found in source. Production deployment is blocked.`
-              : `Some security issues remain after ${repairAttempts} repair attempt(s): ${summary}. The preview will open with database and external credentials withheld. Production deployment remains blocked until these findings are fixed.`,
-            validationErrors: unresolved.map((finding) => `${finding.file ?? "project"}: ${finding.message}`),
+              : securityIsolationRequired
+                ? `Some high/critical security issues remain after ${repairAttempts} repair attempt(s): ${summary}. The preview will open without database and external credentials. Production deployment remains blocked until these findings are fixed.`
+                : `Some non-blocking security advisories remain: ${summary}. They are recorded for review; the release gate only blocks unresolved high/critical findings.`,
+            validationErrors: reportFindings.map((finding) => `${finding.file ?? "project"}: ${finding.message}`),
           });
         }
       }
@@ -4860,7 +4868,9 @@ export async function runFastBuild(
       closingLines.push(
         securityPreviewBlocked
           ? "• Security: unresolved secret exposure remains. The preview was withheld and production deployment is blocked. Rotate any real credential that was present in source."
-          : `• Security: ${securityOutcome.findings.length} high/critical finding(s) remain. The preview was isolated from databases and external credentials; production deployment is blocked until they are fixed.`,
+          : securityIsolationRequired
+          ? `• Security: ${securityOutcome.findings.length} finding(s) need attention, including high/critical blockers. The preview was isolated from databases and external credentials; production deployment is blocked until the blockers are fixed.`
+          : `• Security: ${securityOutcome.findings.length} non-blocking finding(s) need attention. Static checks did not identify an unresolved high/critical release blocker.`,
       );
     } else if (securityOutcome?.status === "not-verified") {
       closingLines.push("• Security: NOT VERIFIED. The preview was isolated from database and external credentials, and production deployment is blocked until the security checks can run successfully.");
