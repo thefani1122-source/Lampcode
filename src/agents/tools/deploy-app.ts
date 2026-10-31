@@ -30,9 +30,9 @@ export const deployAppHandler: ToolHandler = async (args: Record<string, unknown
       const blockers = blockingSecurityFindings(securityScan.report.checks);
       if (blockers.length > 0) {
         return (
-          "Deployment blocked by unresolved high/critical security findings:\\n" +
-          blockers.map((finding) => `- [${finding.severity}] ${finding.message}`).join("\\n") +
-          "\\nFix these findings and run deployment again. Nothing was sent to Vercel."
+          "Deployment blocked by unresolved high/critical security findings:\n" +
+          blockers.map((finding) => `- [${finding.severity}] ${finding.message}`).join("\n") +
+          "\nFix these findings and run deployment again. Nothing was sent to Vercel."
         );
       }
 
