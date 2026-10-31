@@ -56,7 +56,7 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
-import { runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
+import { getBlockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
@@ -2417,6 +2417,29 @@ export async function runFastBuild(
     {
       const MAX_SECURITY_FIX_ATTEMPTS = 2;
       let lastSecurityFingerprint = "";
+      const failForBlockingSecurityFindings = async (
+        blocking: SecurityCheck[],
+        context: string,
+      ): Promise<void> => {
+        const reason =
+          `Build blocked: unresolved critical/high security findings ${context}: ` +
+          blocking.map((check) => `[${check.severity}] ${check.message}`).join("; ");
+        logger.error({ sessionId, projectId, blocking }, "Unresolved critical/high security findings — blocking preview");
+        server?.buildFailed(sessionId, {
+          sessionId,
+          phase: "BUILD",
+          reason,
+          logs: "",
+          timestamp: new Date().toISOString(),
+        });
+        await Promise.all([
+          db.update(buildSessions)
+            .set({ status: "failed", error: reason, completedAt: new Date() })
+            .where(eq(buildSessions.id, sessionId)),
+          db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+        ]);
+        console.log("[build] unresolved critical/high security findings, build aborted");
+      };
       for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
         const fileTree: FileTree = new Map(Object.entries(allFiles));
         const scanResult = await runSecurityChecksSafely(projectId, async () => fileTree);
@@ -2477,7 +2500,15 @@ export async function runFastBuild(
         // Everything remaining in `failing` is auto-fixable at this point.
         const fingerprint = failing.map((c) => `${c.id}:${c.file ?? ""}:${c.message}`).sort().join("|");
         if (attempt === MAX_SECURITY_FIX_ATTEMPTS || fingerprint === lastSecurityFingerprint) {
-          logger.warn({ sessionId, projectId, failing }, "Security findings remain after fix attempts");
+          const blocking = getBlockingSecurityFindings(failing);
+          if (blocking.length > 0) {
+            await failForBlockingSecurityFindings(
+              blocking,
+              `after ${attempt} security repair attempt(s)`,
+            );
+            return;
+          }
+          logger.warn({ sessionId, projectId, failing }, "Non-blocking security findings remain after fix attempts");
           server?.emitToRoom(sessionId, "build:warning", {
             sessionId,
             message: `Some security issues remain: ${failing.map((c) => c.message).join("; ")}. Try a follow-up prompt to fix them.`,
@@ -2524,13 +2555,15 @@ export async function runFastBuild(
 
         try {
           const fixResult = await dispatcher.dispatch({
-            agentType: "backend",
+            agentType: "security",
             usageCategory: "security_fix",
             provider,
             task: {
               description: fixDescription,
               requirements: [
                 "Fix ONLY the reported security issues — do not change unrelated logic.",
+                "Never weaken, remove, bypass or suppress a security control or test to make a finding disappear.",
+                "Enforce access control on the server/database; frontend-only hiding is not a fix.",
                 "Return the COMPLETE corrected file for each file you touch.",
                 "Use the exact format: ```filename:<path> for each file.",
               ],
@@ -2547,7 +2580,15 @@ export async function runFastBuild(
             if (knownPaths.has(f.path)) allFiles[f.path] = f.code;
           }
         } catch (fixErr) {
-          logger.error({ sessionId, fixErr }, "Security fix dispatch failed");
+          logger.error({ sessionId, fixErr }, "Security repair agent dispatch failed");
+          const blocking = getBlockingSecurityFindings(failing);
+          if (blocking.length > 0) {
+            await failForBlockingSecurityFindings(
+              blocking,
+              "because the security repair agent could not complete",
+            );
+            return;
+          }
           break;
         }
       }
