@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  getBlockingSecurityFindings,
   runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
@@ -22,6 +23,18 @@ function check(name: string, got: unknown, want: unknown): void {
 }
 function ok(name: string, condition: boolean): void { check(name, condition, true); }
 const tree = (files: Record<string, string>): FileTree => new Map(Object.entries(files));
+
+check(
+  "only failed critical/high checks block release",
+  getBlockingSecurityFindings([
+    { id: "critical-fail", status: "fail", severity: "critical", message: "critical" },
+    { id: "high-fail", status: "fail", severity: "high", message: "high" },
+    { id: "medium-fail", status: "fail", severity: "medium", message: "medium" },
+    { id: "critical-warn", status: "warn", severity: "critical", message: "warn" },
+    { id: "high-pass", status: "pass", severity: "high", message: "pass" },
+  ]).map((check) => check.id),
+  ["critical-fail", "high-fail"],
+);
 
 check(
   "packages flags an imported undeclared dependency",
@@ -314,7 +327,15 @@ console.log("\n— both run in the build —");
   ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
   ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
-  ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
+  ok("secret and suspicious-package findings remain immediate hard blocks",
+    build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
+  ok("unresolved critical/high findings block preview after repair attempts",
+    build.includes("getBlockingSecurityFindings(failing)") &&
+    build.includes("Unresolved critical/high security findings — blocking preview"));
+  ok("security fixes use the dedicated security agent",
+    build.includes('agentType: "security"') && build.includes('usageCategory: "security_fix"'));
+  ok("the security repair agent is told not to weaken controls",
+    build.includes("Never weaken, remove, bypass or suppress a security control or test"));
 
   const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
   const scanStart = build.indexOf(scanCall);
@@ -345,6 +366,30 @@ console.log("\n— both run in the build —");
     "the build returns before normal security findings or preview work continue",
     scanFailureHandling.includes("return;"),
   );
+}
+
+// ── The final deployment snapshot is scanned again, not trusted from build time.
+{
+  const deploy = readFileSync(new URL("../src/agents/tools/deploy-app.ts", import.meta.url), "utf8");
+  ok("deploy uses the independent security scanner",
+    deploy.includes("runSecurityChecksSafely("));
+  ok("deploy scans the exact current file snapshot",
+    deploy.includes("new Map(Object.entries(files))"));
+  ok("scanner unavailable blocks before Vercel is called",
+    deploy.indexOf("if (!scanResult.ok)") < deploy.indexOf("deployToVercel({"));
+  ok("critical/high findings block before Vercel is called",
+    deploy.indexOf("getBlockingSecurityFindings(scanResult.report.checks)") < deploy.indexOf("deployToVercel({"));
+  ok("unverified high/critical checks are not described as security verified",
+    deploy.includes("Do not describe this app as fully security-verified"));
+}
+{
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("coding agents receive a secure-by-default contract",
+    prompt.includes("SECURITY CONTRACT — REQUIRED FOR EVERY APP") &&
+    prompt.includes("Enforce authentication AND authorization on the server"));
+  ok("security code repair has a distinct prompt mode",
+    prompt.includes("SECURITY_REPAIR_SYSTEM_PROMPT") &&
+    prompt.includes("independent verifier will re-scan the result"));
 }
 
 // ── An INSERT that does not bind the owner column ───────────────────────────
