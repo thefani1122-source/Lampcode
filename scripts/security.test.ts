@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
 
@@ -312,7 +313,38 @@ console.log("\n— both run in the build —");
   const sec = readFileSync(new URL("../src/verify/security.ts", import.meta.url), "utf8");
   ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
-  ok("and runSecurityChecks is what the build calls", build.includes("runSecurityChecks(projectId"));
+  ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
+  ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
+
+  const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
+  const scanStart = build.indexOf(scanCall);
+  const normalVerdict = build.indexOf("const failing = report.checks.filter", scanStart);
+  const scanFailureHandling =
+    scanStart >= 0 && normalVerdict > scanStart
+      ? build.slice(scanStart, normalVerdict)
+      : "";
+
+  ok(
+    "a scanner exception is not converted into an empty passing report",
+    scanFailureHandling.length > 0 &&
+      scanFailureHandling.includes("if (!scanResult.ok)") &&
+      !scanFailureHandling.includes("passed: true") &&
+      !scanFailureHandling.includes("checks: []"),
+  );
+  ok(
+    "a scanner exception emits a failed build event",
+    scanFailureHandling.includes("server?.buildFailed(sessionId") &&
+      scanFailureHandling.includes("Security verification could not complete"),
+  );
+  ok(
+    "a scanner exception persists failed session and project states",
+    scanFailureHandling.includes('.set({ status: "failed", error: reason, completedAt: new Date() })') &&
+      scanFailureHandling.includes('db.update(projects).set({ status: "failed" })'),
+  );
+  ok(
+    "the build returns before normal security findings or preview work continue",
+    scanFailureHandling.includes("return;"),
+  );
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 }
 
@@ -359,6 +391,19 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   ok("the prompt requires DEFAULT auth.uid() on owner columns", prompt.includes("DEFAULT auth.uid() REFERENCES auth.users(id)"));
   ok("and binding the owner in the INSERT policy", prompt.includes("WITH CHECK (auth.uid() = created_by)"));
   ok("and says a shared table still scopes its writes", prompt.includes("A shared table still"));
+}
+
+// A scanner exception is an unavailable result, never a passing report.
+{
+  const expectedError = new Error("simulated scanner failure");
+  const result = await runSecurityChecksSafely("project-test", async () => {
+    throw expectedError;
+  });
+  ok("scanner errors are returned as unavailable, not thrown or passed", !result.ok);
+  ok(
+    "the original scanner error is retained for diagnostics",
+    !result.ok && result.error === expectedError,
+  );
 }
 
 if (failures > 0) {
