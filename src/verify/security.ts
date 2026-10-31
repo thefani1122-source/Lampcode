@@ -590,3 +590,24 @@ export async function runSecurityChecks(
   ];
   return { passed: checks.every((c) => c.status !== "fail"), checks };
 }
+
+/** Result of attempting a security scan. A failed scan is not a clean scan. */
+export type SecurityScanResult =
+  | { ok: true; report: SecurityReport }
+  | { ok: false; error: unknown };
+
+/**
+ * Run the verifier while preserving the distinction between a completed scan
+ * and one that could not complete. Callers must treat `ok: false` as unknown,
+ * never as an empty passing report.
+ */
+export async function runSecurityChecksSafely(
+  projectId: string,
+  reader?: (id: string) => Promise<FileTree>,
+): Promise<SecurityScanResult> {
+  try {
+    return { ok: true, report: await runSecurityChecks(projectId, reader) };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
