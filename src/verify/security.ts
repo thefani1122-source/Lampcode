@@ -25,6 +25,37 @@ export interface SecurityReport {
   checks: SecurityCheck[];
 }
 
+export interface SecurityRepairContext {
+  files: Array<{ path: string; content: string }>;
+  omittedPaths: string[];
+}
+
+/** Select the complete files named by findings; never send truncated source as a whole file. */
+export function selectSecurityRepairContext(
+  findings: readonly SecurityCheck[],
+  files: Record<string, string>,
+  maxFiles = 8,
+  maxChars = 120_000,
+): SecurityRepairContext {
+  const paths = [...new Set(findings.map((finding) => finding.file).filter(
+    (path): path is string => Boolean(path && files[path] !== undefined),
+  ))];
+  const selected: SecurityRepairContext["files"] = [];
+  const omittedPaths: string[] = [];
+  let remaining = maxChars;
+  for (const path of paths) {
+    const content = files[path];
+    if (content === undefined) continue;
+    if (selected.length >= maxFiles || content.length > remaining) {
+      omittedPaths.push(path);
+      continue;
+    }
+    selected.push({ path, content });
+    remaining -= content.length;
+  }
+  return { files: selected, omittedPaths };
+}
+
 /**
  * Findings that must stop a preview promotion or production deployment.
  *
@@ -135,13 +166,28 @@ const OWNER_COLUMN_RE = /\b(user_id|owner_id|author_id|created_by|profile_id|acc
 const ALWAYS_TRUE_RE = /\b(?:using|with\s+check)\s*\(\s*(?:true|1\s*=\s*1)\s*\)/i;
 const WRITE_ACTION_RE = /\bfor\s+(insert|update|delete|all)\b/i;
 
-/** Each CREATE POLICY statement, with the table it is on and its body. */
+function normalizeSqlIdentifier(raw: string): string {
+  const value = raw.trim();
+  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/""/g, '"').toLowerCase();
+  if (value.startsWith("`") && value.endsWith("`")) return value.slice(1, -1).replace(/``/g, "`").toLowerCase();
+  if (value.startsWith("[") && value.endsWith("]")) return value.slice(1, -1).toLowerCase();
+  return value.toLowerCase();
+}
+
+function extractSqlNames(sql: string, re: RegExp): string[] {
+  const names: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(sql)) !== null) if (match[1]) names.push(normalizeSqlIdentifier(match[1]));
+  return names;
+}
+
+/** Each CREATE POLICY statement, including quoted names and schema-qualified tables. */
 function policyStatements(sql: string): Array<{ table: string; body: string }> {
   const out: Array<{ table: string; body: string }> = [];
-  const re = /CREATE\s+POLICY\s+[^\s]+\s+ON\s+["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?([\s\S]*?);/gi;
+  const re = /CREATE\s+POLICY\s+(?:"(?:[^"]|"")*"|\S+)\s+ON\s+(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)([\s\S]*?);/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.push({ table: m[1].toLowerCase(), body: m[2] ?? "" });
+    if (m[1]) out.push({ table: normalizeSqlIdentifier(m[1]), body: m[2] ?? "" });
   }
   return out;
 }
@@ -149,10 +195,10 @@ function policyStatements(sql: string): Array<{ table: string; body: string }> {
 /** The body of each CREATE TABLE, so a table's columns can be inspected. */
 function tableBodies(sql: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.set(m[1].toLowerCase(), m[2] ?? "");
+    if (m[1]) out.set(normalizeSqlIdentifier(m[1]), m[2] ?? "");
   }
   return out;
 }
@@ -272,20 +318,9 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const allSql = sqlFiles.map(([, c]) => c).join("\n");
 
-  const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?/gi;
-  const rlsRe   = /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
-  const polRe   = /CREATE\s+POLICY\s+\S+\s+ON\s+["'`]?(\w+)["'`]?/gi;
-
-  const extractNames = (re: RegExp): string[] => {
-    const out: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(allSql)) !== null) { if (m[1]) out.push(m[1].toLowerCase()); }
-    return out;
-  };
-
-  const tables  = extractNames(tableRe);
-  const rlsOn   = extractNames(rlsRe);
-  const polOn   = extractNames(polRe);
+  const tables = extractSqlNames(allSql, /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)/gi);
+  const rlsOn = extractSqlNames(allSql, /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi);
+  const polOn = policyStatements(allSql).map((policy) => policy.table);
 
   const noRls = tables.filter((t) => !rlsOn.includes(t));
   if (noRls.length > 0) {
