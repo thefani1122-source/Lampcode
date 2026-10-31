@@ -56,7 +56,7 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
-import { runSecurityChecks, type SecurityCheck, type SecurityReport, type FileTree } from "../../verify/security.js";
+import { runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
@@ -2419,16 +2419,14 @@ export async function runFastBuild(
       let lastSecurityFingerprint = "";
       for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
         const fileTree: FileTree = new Map(Object.entries(allFiles));
-        let report: SecurityReport;
-        try {
-          report = await runSecurityChecks(projectId, async () => fileTree);
-        } catch (scanError) {
+        const scanResult = await runSecurityChecksSafely(projectId, async () => fileTree);
+        if (!scanResult.ok) {
           // A scan that did not complete is not evidence that the project is safe.
           // Stop before emitting backendReady or creating a preview sandbox.
           const reason =
             "Security verification could not complete. This build was stopped because its security status is unknown. Please retry; if the problem continues, contact support.";
           logger.error(
-            { sessionId, projectId, err: scanError },
+            { sessionId, projectId, err: scanResult.error },
             "Security verification unavailable — blocking build",
           );
           server?.buildFailed(sessionId, {
@@ -2447,6 +2445,7 @@ export async function runFastBuild(
           console.log("[build] security verification unavailable, build aborted");
           return;
         }
+        const report = scanResult.report;
         const failing = report.checks.filter((c) => c.status === "fail");
         if (failing.length === 0) break;
 
