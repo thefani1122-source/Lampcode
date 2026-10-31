@@ -4392,7 +4392,7 @@ export async function runFastBuild(
         !securityIsolationRequired &&
         (ownSupabaseConnected ||
           Boolean(config.PREVIEW_SUPABASE_URL && config.PREVIEW_SUPABASE_ANON_KEY) ||
-          Boolean(config.PREVIEW_MONGODB_URI)),
+          ownMongoConnected),
       schemaApplied: ownSupabaseConnected && !securityIsolationRequired,
     });
     for (const line of formatDataLayerForUser(dataLayerFindings)) {
