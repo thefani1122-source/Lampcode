@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  blockingSecurityFindings,
   runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
@@ -403,6 +404,41 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   ok(
     "the original scanner error is retained for diagnostics",
     !result.ok && result.error === expectedError,
+  );
+}
+
+
+{
+  const findings = [
+    { id: "critical-fail", status: "fail", severity: "critical", message: "critical fail" },
+    { id: "high-warn", status: "warn", severity: "high", message: "high warning" },
+    { id: "high-skip", status: "skip", severity: "high", message: "not applicable" },
+    { id: "medium-fail", status: "fail", severity: "medium", message: "medium finding" },
+    { id: "high-pass", status: "pass", severity: "high", message: "passed" },
+  ] as const;
+  check(
+    "only unresolved high/critical fail or warning findings block release",
+    blockingSecurityFindings([...findings]).map((finding) => finding.id),
+    ["critical-fail", "high-warn"],
+  );
+}
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok(
+    "the build performs a fresh final security scan after the repair loop",
+    build.includes("const finalSecurityScan = await runSecurityChecksSafely") &&
+      build.includes("blockingSecurityFindings(finalSecurityScan.report.checks)"),
+  );
+  const deploy = readFileSync(new URL("../src/agents/tools/deploy-app.ts", import.meta.url), "utf8");
+  ok(
+    "deploy_app re-scans the exact deployment file snapshot",
+    deploy.includes("runSecurityChecksSafely(") &&
+      deploy.includes("new Map(Object.entries(files))") &&
+      deploy.includes("blockingSecurityFindings(securityScan.report.checks)"),
+  );
+  ok(
+    "deploy_app refuses to call Vercel when verification is unavailable",
+    deploy.indexOf("if (!securityScan.ok)") < deploy.indexOf("deployToVercel({"),
   );
 }
 
