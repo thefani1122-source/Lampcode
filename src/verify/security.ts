@@ -25,6 +25,20 @@ export interface SecurityReport {
   checks: SecurityCheck[];
 }
 
+/**
+ * Findings that must stop a preview promotion or production deployment.
+ *
+ * A high/critical warning means the verifier could not establish the required
+ * property; it is not evidence of safety. Informational/medium findings remain
+ * visible to the user without turning every advisory into a release blocker.
+ */
+export function blockingSecurityFindings(checks: readonly SecurityCheck[]): SecurityCheck[] {
+  return checks.filter((check) =>
+    (check.status === "fail" || check.status === "warn") &&
+    (check.severity === "critical" || check.severity === "high"),
+  );
+}
+
 // ── Workspace reader ──────────────────────────────────────────────────────────
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
