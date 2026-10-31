@@ -28,6 +28,7 @@ export interface SecurityReport {
 export interface SecurityRepairContext {
   files: Array<{ path: string; content: string }>;
   omittedPaths: string[];
+  redactedPaths: string[];
 }
 
 /** Select the complete files named by findings; never send truncated source as a whole file. */
@@ -42,10 +43,22 @@ export function selectSecurityRepairContext(
   ))];
   const selected: SecurityRepairContext["files"] = [];
   const omittedPaths: string[] = [];
+  const redactedPaths: string[] = [];
   let remaining = maxChars;
   for (const path of paths) {
-    const content = files[path];
-    if (content === undefined) continue;
+    const rawContent = files[path];
+    if (rawContent === undefined) continue;
+
+    // A real credential must never be copied into a second model prompt just
+    // because the repair agent needs the surrounding file. Replace known
+    // credential shapes in the handoff only; the source snapshot is unchanged.
+    let content = rawContent;
+    for (const { re } of SECRET_PATTERNS) {
+      const global = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+      content = content.replace(global, "[REDACTED_SECRET]");
+    }
+    if (content !== rawContent) redactedPaths.push(path);
+
     if (selected.length >= maxFiles || content.length > remaining) {
       omittedPaths.push(path);
       continue;
@@ -53,7 +66,7 @@ export function selectSecurityRepairContext(
     selected.push({ path, content });
     remaining -= content.length;
   }
-  return { files: selected, omittedPaths };
+  return { files: selected, omittedPaths, redactedPaths };
 }
 
 /**
