@@ -58,7 +58,7 @@ export interface ClassifiedTool {
   serverSlug: string;
   toolName: string;
   allowed: boolean;
-  reason: "annotation-read-only" | "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
+  reason: "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
   /** Raw inputSchema from MCP listTools — stored for write-proxy ToolDefinition generation. */
   inputSchema?: Record<string, unknown> | undefined;
 }
@@ -172,9 +172,9 @@ async function discoverServerTools(
       if (capabilityIsRead && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
       }
-      if (annotations?.readOnlyHint === true && !destructiveByName(tool.name)) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "annotation-read-only", inputSchema };
-      }
+      // A remote provider's readOnlyHint is untrusted metadata. It cannot
+      // grant approval-free execution; only app-owned capability mappings or
+      // conservative name checks can establish a read.
       if (READ_VERB_RE.test(tool.name) && !destructiveByName(tool.name)) {
         return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", inputSchema };
       }
