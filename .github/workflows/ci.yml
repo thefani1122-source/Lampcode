@@ -68,8 +68,8 @@ jobs:
           node-version: '20.18.1'
           cache: npm
 
-      - name: Install the committed baseline
-        run: npm ci
+      - name: Generate lockfile from the reviewed manifest
+        run: npm install --package-lock-only
 
       - name: Apply semver-compatible fixes without major upgrades
         shell: bash
