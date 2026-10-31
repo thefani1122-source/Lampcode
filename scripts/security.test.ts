@@ -4,6 +4,8 @@ import {
   checkPackages,
   checkRLS,
   checkRlsScoping,
+  checkProfilePrivilegeUpdates,
+  checkRecursiveRlsPolicies,
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
@@ -441,6 +443,41 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
     "deploy_app refuses to call Vercel when verification is unavailable",
     deploy.indexOf("if (!securityScan.ok)") < deploy.indexOf("deployToVercel({"),
   );
+}
+
+console.log("\n— profile privilege escalation and RLS recursion —");
+{
+  const profileSql = `
+CREATE TABLE profiles (
+  id uuid primary key,
+  organization_id uuid not null,
+  role text not null
+);
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
+`;
+  check("self-service profile update cannot freely mutate role or organization", checkProfilePrivilegeUpdates(tree({
+    "src/db/schema.sql": profileSql,
+  })).status, "fail");
+}
+{
+  const recursiveSql = `
+CREATE TABLE profiles (
+  id uuid primary key,
+  organization_id uuid not null,
+  role text not null
+);
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view profiles in their organization" ON profiles
+  FOR SELECT USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid()));
+`;
+  check("self-referencing profiles RLS policy is reported as recursive", checkRecursiveRlsPolicies(tree({
+    "src/db/schema.sql": recursiveSql,
+  })).status, "fail");
+  check("a policy using a non-recursive helper is not reported", checkRecursiveRlsPolicies(tree({
+    "src/db/schema.sql": recursiveSql.replace("EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid())", "public.is_org_member(organization_id)"),
+  })).status, "pass");
 }
 
 console.log("\n— quoted and schema-qualified SQL identifiers —");
