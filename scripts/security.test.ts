@@ -446,7 +446,10 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
 console.log("\n— quoted and schema-qualified SQL identifiers —");
 {
   const quoted = `
-CREATE TABLE public."team leads" (\n  id uuid primary key,\n  user_id uuid not null\n);
+CREATE TABLE public."team leads" (
+  id uuid primary key,
+  user_id uuid not null
+);
 ALTER TABLE public."team leads" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "members can read team leads" ON public."team leads"
   FOR SELECT USING (auth.uid() = user_id);
