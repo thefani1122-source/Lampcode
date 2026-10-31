@@ -54,12 +54,10 @@ jobs:
       - name: Build
         run: npm run build
 
+
   audit:
     runs-on: ubuntu-latest
-    # Advisory. A new advisory against a transitive dependency is not a reason
-    # to stop a merge at 2am, but it is a reason to see it — and `|| true`
-    # inside the step keeps the job green while leaving the report in the log.
-    continue-on-error: true
+    # Security gate: fail the PR when any dependency advisory remains.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,5 +65,5 @@ jobs:
           node-version: '20.18.1'
           cache: npm
       - run: npm ci
-      - name: Audit production dependencies
-        run: npm audit --omit=dev || true
+      - name: Audit dependencies
+        run: npm audit
