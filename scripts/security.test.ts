@@ -488,6 +488,12 @@ console.log("\n— security repair context —");
   ], { "large.sql": "x".repeat(20), "small.sql": "small" }, 8, 10);
   check("oversized files are omitted whole rather than truncated", capped.files.map((f) => f.path), ["small.sql"]);
   check("omitted paths are explicitly reported", capped.omittedPaths, ["large.sql"]);
+  const exposed = ["sk-", "A".repeat(28)].join("");
+  const redacted = selectSecurityRepairContext([
+    { id: "secret", status: "fail", severity: "critical", file: "src/App.tsx", message: "key exposed" },
+  ], { "src/App.tsx": `const key = "${exposed}";` });
+  check("secret values are redacted before the repair model receives source", !redacted.files[0]?.content.includes(exposed), true);
+  check("the redacted file path is reported", redacted.redactedPaths, ["src/App.tsx"]);
 }
 
 {
