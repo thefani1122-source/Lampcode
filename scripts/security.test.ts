@@ -313,7 +313,7 @@ console.log("\n— both run in the build —");
   const sec = readFileSync(new URL("../src/verify/security.ts", import.meta.url), "utf8");
   ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
-  ok("and runSecurityChecks is what the build calls", build.includes("runSecurityChecks(projectId"));
+  ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 
   const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
