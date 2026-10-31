@@ -25,6 +25,21 @@ export interface SecurityReport {
   checks: SecurityCheck[];
 }
 
+/**
+ * Findings that must stop a preview release or production deployment.
+ * Warnings/skips are not silently upgraded to passes, but only completed
+ * critical/high failures are hard blockers here.
+ */
+export function getBlockingSecurityFindings(
+  checks: readonly SecurityCheck[],
+): SecurityCheck[] {
+  return checks.filter(
+    (check) =>
+      check.status === "fail" &&
+      (check.severity === "critical" || check.severity === "high"),
+  );
+}
+
 // ── Workspace reader ──────────────────────────────────────────────────────────
 
 const WORKSPACE_BASE = join(process.cwd(), "workspace");
