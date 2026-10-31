@@ -345,8 +345,8 @@ export function checkRecursiveRlsPolicies(files: FileTree): SecurityCheck {
   if (sqlFiles.length === 0) return { id: "rls-policy-recursion", status: "skip", severity: "critical", message: "No SQL migration files available to inspect RLS policy recursion" };
   const allSql = sqlFiles.map(([, content]) => content).join("\n");
   const recursive = policyStatements(allSql).filter(({ table, body }) => {
-    const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\// ── 2. checkRLS ───────────────────────────────────────────────────────────────");
-    const fromRe = new RegExp("\\bfrom\\s+(?:(?:[a-z_][a-z0-9_$]*)\\s*\\.\\s*)?[\\"`]?"+escaped+"[\\"`]?\\b", "i");
+    const escaped = table.split("").map((char) => "\\.^$*+?()[]{}|".includes(char) ? String.fromCharCode(92) + char : char).join("");
+    const fromRe = new RegExp("\\bfrom\\s+(?:(?:[a-z_][a-z0-9_$]*)\\s*\\.\\s*)?(?:\"" + escaped + "\"|" + escaped + ")(?:\\b|\\s|$)", "i");
     return fromRe.test(body);
   });
   if (recursive.length > 0) return {
