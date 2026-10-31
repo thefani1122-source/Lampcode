@@ -479,7 +479,6 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // the same project `override.url` points at, which the person connected
   // themselves and whose schema we apply for them.
   const serviceKey = securityHold ? undefined : override?.serviceKey;
-  const mongoUri = securityHold ? undefined : config.PREVIEW_MONGODB_URI;
 
   // VITE_* → frontend (import.meta.env); plain keys → Node backend (process.env
   // via tsx --env-file). SERVICE/JWT/MONGO keys have NO VITE_ prefix, so Vite
