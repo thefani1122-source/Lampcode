@@ -8,6 +8,7 @@ import {
   checkSecrets,
   checkServiceRole,
   blockingSecurityFindings,
+  selectSecurityRepairContext,
   runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
@@ -442,6 +443,56 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   );
 }
 
+console.log("\n— quoted and schema-qualified SQL identifiers —");
+{
+  const quoted = `
+CREATE TABLE public."team leads" (id uuid primary key, user_id uuid not null);
+ALTER TABLE public."team leads" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "members can read team leads" ON public."team leads"
+  FOR SELECT USING (auth.uid() = user_id);
+`;
+  check("RLS parser recognises a quoted policy name containing spaces", checkRLS(tree({
+    "src/db/schema.sql": quoted,
+  })).status, "pass");
+  check("scoping parser detects a dangerous quoted policy", checkRlsScoping(tree({
+    "src/db/schema.sql": quoted.replace("auth.uid() = user_id", "true"),
+  })).status, "fail");
+  check("scoping parser accepts a correctly scoped quoted policy", checkRlsScoping(tree({
+    "src/db/schema.sql": quoted,
+  })).status, "pass");
+}
+
+console.log("\n— security repair context —");
+{
+  const files = {
+    "src/db/schema.sql": "CREATE TABLE a (id uuid);",
+    "src/server/routes/api.ts": "export const api = true;",
+    "src/App.tsx": "export default function App() {}",
+  };
+  const picked = selectSecurityRepairContext([
+    { id: "rls", status: "fail", severity: "critical", file: "src/db/schema.sql", message: "RLS issue" },
+    { id: "auth", status: "fail", severity: "high", file: "src/server/routes/api.ts", message: "Auth issue" },
+  ], files);
+  check("repair receives only the files named by findings", picked.files.map((f) => f.path), [
+    "src/db/schema.sql", "src/server/routes/api.ts",
+  ]);
+  check("repair context includes complete source content", picked.files.map((f) => f.content), [
+    files["src/db/schema.sql"], files["src/server/routes/api.ts"],
+  ]);
+  const capped = selectSecurityRepairContext([
+    { id: "large", status: "fail", severity: "critical", file: "large.sql", message: "large" },
+    { id: "small", status: "fail", severity: "high", file: "small.sql", message: "small" },
+  ], { "large.sql": "x".repeat(20), "small.sql": "small" }, 8, 10);
+  check("oversized files are omitted whole rather than truncated", capped.files.map((f) => f.path), ["small.sql"]);
+  check("omitted paths are explicitly reported", capped.omittedPaths, ["large.sql"]);
+}
+
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("security repair dispatch attaches the flagged source files", build.includes("contextFiles: repairContext.files"));
+  ok("security repairs are re-scanned after every dispatch", build.includes("runSecurityChecksSafely(projectId, async () => fileTree)"));
+  ok("unresolved findings no longer use the old hard build-stop message", !build.includes("Build blocked by unresolved high/critical security verification"));
+}
 if (failures > 0) {
   console.error("\n" + failures + " security case(s) FAILED");
   process.exit(1);
