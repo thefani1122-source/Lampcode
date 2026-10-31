@@ -56,7 +56,7 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
-import { runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
+import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
@@ -2551,6 +2551,62 @@ export async function runFastBuild(
           break;
         }
       }
+    }
+
+
+    // A repair dispatch can fail, produce no usable files, or leave findings after
+    // the retry ceiling. Never let a loop's last warning become an implicit pass:
+    // scan the exact final in-memory files once more and block unresolved high/
+    // critical failures or warnings before preview creation continues.
+    const finalSecurityScan = await runSecurityChecksSafely(
+      projectId,
+      async () => new Map(Object.entries(allFiles)),
+    );
+    if (!finalSecurityScan.ok) {
+      const reason =
+        "Security verification could not complete after repair. This build was stopped because its security status is unknown.";
+      logger.error(
+        { sessionId, projectId, err: finalSecurityScan.error },
+        "Final security verification unavailable — blocking build",
+      );
+      server?.buildFailed(sessionId, {
+        sessionId,
+        phase: "BUILD",
+        reason,
+        logs: "",
+        timestamp: new Date().toISOString(),
+      });
+      await Promise.all([
+        db.update(buildSessions)
+          .set({ status: "failed", error: reason, completedAt: new Date() })
+          .where(eq(buildSessions.id, sessionId)),
+        db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+      ]);
+      return;
+    }
+    const unresolvedSecurity = blockingSecurityFindings(finalSecurityScan.report.checks);
+    if (unresolvedSecurity.length > 0) {
+      const reason =
+        "Build blocked by unresolved high/critical security verification: " +
+        unresolvedSecurity.map((c) => c.message).join("; ");
+      logger.warn(
+        { sessionId, projectId, unresolvedSecurity },
+        "Unresolved high/critical security findings — blocking build",
+      );
+      server?.buildFailed(sessionId, {
+        sessionId,
+        phase: "BUILD",
+        reason,
+        logs: "",
+        timestamp: new Date().toISOString(),
+      });
+      await Promise.all([
+        db.update(buildSessions)
+          .set({ status: "failed", error: reason, completedAt: new Date() })
+          .where(eq(buildSessions.id, sessionId)),
+        db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+      ]);
+      return;
     }
 
     // ── Take the fake out before anyone sees it ─────────────────────────────
