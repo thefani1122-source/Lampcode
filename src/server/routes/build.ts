@@ -4388,11 +4388,9 @@ export async function runFastBuild(
     // passes every gate looking finished. This is the only check that can tell
     // those apart, and like wiring it reports and never blocks.
     const dataLayerFindings = findDataLayerGaps(allFiles, {
-      configured:
-        !securityIsolationRequired &&
-        (ownSupabaseConnected ||
-          Boolean(config.PREVIEW_SUPABASE_URL && config.PREVIEW_SUPABASE_ANON_KEY) ||
-          ownMongoConnected),
+      // The shared preview Supabase has no generated app tables; only a
+      // database owned/configured by this project counts as persistence.
+      configured: !securityIsolationRequired && (ownSupabaseConnected || ownMongoConnected),
       schemaApplied: ownSupabaseConnected && !securityIsolationRequired,
     });
     for (const line of formatDataLayerForUser(dataLayerFindings)) {
