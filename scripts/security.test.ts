@@ -316,6 +316,12 @@ console.log("\n— both run in the build —");
 {
   const sec = readFileSync(new URL("../src/verify/security.ts", import.meta.url), "utf8");
   ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
+  ok("recursive RLS is part of the automatic build scan", sec.includes("checkRecursiveRlsPolicies(files)"));
+  ok("profile privilege updates are part of the automatic build scan", sec.includes("checkProfilePrivilegeUpdates(files)"));
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("Supabase prompt forbids self-service role and tenant changes", prompt.includes("Never let a user self-promote"));
+  ok("Supabase prompt forbids recursive profile policies", prompt.includes("Never write an RLS policy on profiles that queries profiles again"));
+
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
   ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
