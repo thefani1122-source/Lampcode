@@ -115,7 +115,7 @@ export async function handleAgentStream(
 
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   narrate("build:thinking", {
-    text: "Thinking",
+    text: "Understanding your request",
     sessionId,
     internal: true,
   })
@@ -128,10 +128,10 @@ export async function handleAgentStream(
       switch (chunk.type) {
         // Reasoning / thinking tokens (DeepSeek R1, Claude extended thinking, o1, etc.)
         case "reasoning":
-          if (chunk.reasoning) {
-            const safe = pseudoReasoning.push(chunk.reasoning)
-            if (safe) narrate("build:thinking", { text: safe, sessionId })
-          }
+          // Provider reasoning is internal model output, never user-facing progress.
+          // Still feed it through the pseudo-tool filter so typed tool syntax is
+          // detected and kept out of the chat.
+          if (chunk.reasoning) pseudoReasoning.push(chunk.reasoning)
           break
 
         // Normal response tokens
@@ -234,12 +234,11 @@ export async function handleAgentStream(
     throw err
   }
 
-  // Release anything the filter was holding. Empty when the model left a
-  // pseudo-tool region open, which is the right answer: there is nothing in an
-  // unterminated <tool_code> block for a person to read.
-  for (const trailing of [pseudoFilter.flush(), pseudoReasoning.flush()]) {
-    if (trailing.trim()) narrate("build:thinking", { text: trailing, sessionId })
-  }
+  // Flush internal filters for diagnostics, but never emit raw provider
+  // reasoning or pre-code planning prose as if it were verified build progress.
+  // Structured progress is emitted through the initial phase and tool events.
+  pseudoFilter.flush()
+  pseudoReasoning.flush()
 
   const typedToolNames = [...new Set([...pseudoFilter.names(), ...pseudoReasoning.names()])]
   if (typedToolNames.length > 0) {
