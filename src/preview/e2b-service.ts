@@ -492,7 +492,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
     log("Backend has a MongoDB connection (MONGODB_URI)");
   }
   // Stable per-project secret for custom (MongoDB) JWT auth.
-  env += `JWT_SECRET=lampcode_${projectId}\n`;
+  if (!securityHold) env += `JWT_SECRET=lampcode_${projectId}\n`;
 
   // The project's OWN variables, last so they win on a name clash: the person
   // set them deliberately for their own app, and the platform defaults are
@@ -510,7 +510,13 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   }
 
   if (!env.trim()) {
-    log("No preview DB configured — skipping .env injection");
+    if (securityHold) {
+      await sandbox.files.write(`${PROJECT_DIR}/.env`, "");
+      sandboxSecrets.delete(projectId);
+      log("Security hold active — cleared the preview environment file and all injected secrets");
+    } else {
+      log("No preview DB configured — skipping .env injection");
+    }
     return;
   }
   try {
