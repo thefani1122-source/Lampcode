@@ -3,9 +3,9 @@ import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
 import { downloadProjectFiles } from "../storage/project-files.js";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { projectEnvVars } from "../db/schema.js";
+import { buildSessions, projectEnvVars } from "../db/schema.js";
 import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
@@ -221,10 +221,44 @@ async function isProjectPreviewSecurityHeld(projectId: string): Promise<boolean>
       redis.get(previewSecurityRedisKey(projectId)),
       "get-security-hold",
     );
-    if (value === "1") projectPreviewSecurityHold.add(projectId);
-    return value === "1";
+    if (value === "1") {
+      projectPreviewSecurityHold.add(projectId);
+      return true;
+    }
+    if (value === "0") return false;
   } catch (err) {
     logger.error({ projectId, err }, "[e2b] security hold lookup failed — withholding preview credentials");
+    return true;
+  }
+
+  // Redis may not yet have a record for projects built before this control
+  // existed, or a prior SET may have failed while Redis was offline. The
+  // newest persisted build verdict is the fallback source of truth.
+  try {
+    const rows = await db
+      .select({ buildOutcome: buildSessions.buildOutcome })
+      .from(buildSessions)
+      .where(eq(buildSessions.projectId, projectId))
+      .orderBy(desc(buildSessions.createdAt))
+      .limit(30);
+    const latest = rows.find((row) => row.buildOutcome?.security !== undefined);
+    const security = latest?.buildOutcome?.security;
+    const held = Boolean(
+      security &&
+      security.status !== "passed" &&
+      (security.previewIsolated || security.previewBlocked),
+    );
+    if (held) projectPreviewSecurityHold.add(projectId);
+    // Cache only a positive fallback. A later build explicitly writes "0".
+    if (held) {
+      await withRedisTimeout(
+        redis.set(previewSecurityRedisKey(projectId), "1"),
+        "cache-security-hold",
+      ).catch(() => {});
+    }
+    return held;
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] persisted security verdict lookup failed — withholding preview credentials");
     return true;
   }
 }
@@ -235,13 +269,16 @@ export async function setProjectPreviewSecurityHold(
   held: boolean,
 ): Promise<boolean> {
   const wasHeld = await isProjectPreviewSecurityHeld(projectId);
-  if (held) {
-    projectPreviewSecurityHold.add(projectId);
-    await withRedisTimeout(redis.set(previewSecurityRedisKey(projectId), "1"), "set-security-hold");
-  } else {
-    await withRedisTimeout(redis.del(previewSecurityRedisKey(projectId)), "clear-security-hold");
-    projectPreviewSecurityHold.delete(projectId);
-  }
+  if (held) projectPreviewSecurityHold.add(projectId);
+
+  // "0" is a durable clear marker. Deleting the key would make a restart
+  // consult an older unresolved build receipt and re-enable the hold.
+  await withRedisTimeout(
+    redis.set(previewSecurityRedisKey(projectId), held ? "1" : "0"),
+    held ? "set-security-hold" : "clear-security-hold",
+  );
+
+  if (!held) projectPreviewSecurityHold.delete(projectId);
   return wasHeld !== held;
 }
 
