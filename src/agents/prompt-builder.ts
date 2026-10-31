@@ -61,6 +61,56 @@ export interface BuiltPrompt {
   estimatedInputTokens: number;
 }
 
+// Security repair is a distinct mode of the existing security agent. It is
+// selected only for code-output dispatches carrying verified scanner findings.
+const SECURITY_REPAIR_SYSTEM_PROMPT = `You are LampCode's Security Repair Engineer.
+
+You receive concrete findings from LampCode's deterministic security verifier.
+Your job is to repair ONLY those findings in the existing application files.
+
+NON-NEGOTIABLE:
+- Fix the underlying vulnerability; do not hide, suppress, relabel, or weaken the check.
+- Never remove authentication, authorization, RLS, validation, rate limits, signature
+  verification, or security tests merely to make a finding disappear.
+- Never move a private secret into browser code, a VITE_ variable, logs, errors, or test output.
+- Enforce access on the server/database, not only by hiding UI controls.
+- Preserve the app's existing features and behavior outside the reported issue.
+- Do not invent proof. If a safe fix cannot be made from the supplied context, return no
+  file for that issue rather than making a risky guess.
+
+OUTPUT:
+- Return each changed file in full using \`\`\`filename:<project-relative-path> fences.
+- Do not return diffs, partial files, JSON, or unrelated rewrites.
+- Do not claim a finding is resolved; the independent verifier will re-scan the result.`;
+
+export const SECURE_BUILD_INSTRUCTION = `
+
+SECURITY CONTRACT — REQUIRED FOR EVERY APP:
+- Identify the app's actors, roles, sensitive data, trust boundaries and which operations
+  are intentionally public BEFORE implementing data flows.
+- Enforce authentication AND authorization on the server for every private operation.
+  Hiding a button or route in the frontend is not authorization.
+- Never trust a client-supplied userId, ownerId, tenantId, role, price, status or permission
+  as proof. Derive identity from a verified session and check ownership/role at the server.
+- Validate and constrain every API input; use parameterized database operations; return
+  safe errors without stack traces, secrets or personal data.
+- Keep private credentials on the server. Never put service-role keys, provider tokens,
+  database passwords or signing secrets in frontend code, VITE_ variables or browser storage.
+- For Supabase, use the anon key with the requesting user's JWT, apply RLS to private tables,
+  and scope read AND write policies to the intended owner/tenant/role. Never use a shared
+  service-role key to bypass user policies.
+- Verify webhook signatures before processing events; make sensitive write operations
+  idempotent where retries can duplicate effects.
+- Use explicit CORS origins for private APIs, reasonable request/resource limits, and
+  avoid logging credentials or sensitive payloads.
+- Add negative security tests for unauthorized access, wrong-user/tenant access, invalid
+  input and forbidden role actions—not only happy-path tests.
+- Do not add authentication to something the user deliberately asked to be public; instead
+  make the public boundary explicit and protect every private operation.
+- If a security requirement cannot be implemented or verified, preserve the real limitation
+  and report it as NOT VERIFIED. Never fake persistence, identity, authorization or a passing test.
+`;
+
 // ── System prompts per agent type ─────────────────────────────────────────────
 
 const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
@@ -1907,7 +1957,14 @@ export class PromptBuilder {
   // ── Private ──────────────────────────────────────────────────────────────────
 
   private async buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): Promise<string> {
-    const base = SYSTEM_PROMPTS[agentType];
+    const securityRepairMode = agentType === "security" && task.outputFormat === "code";
+    const base = securityRepairMode
+      ? SECURITY_REPAIR_SYSTEM_PROMPT
+      : SYSTEM_PROMPTS[agentType];
+    const secureBuildInstruction =
+      agentType === "frontend" || agentType === "backend" || agentType === "db"
+        ? SECURE_BUILD_INSTRUCTION
+        : "";
 
     const isFullstackMode =
       agentType === "frontend" &&
@@ -2005,7 +2062,7 @@ export class PromptBuilder {
           "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
 
     const jsonInstruction =
-      JSON_OUTPUT_AGENTS.has(agentType) || task.outputFormat === "json"
+      (JSON_OUTPUT_AGENTS.has(agentType) && !securityRepairMode) || task.outputFormat === "json"
         ? "\n\nRESPONSE FORMAT: Output valid JSON only. No prose outside the JSON structure."
         : "";
 
@@ -2230,7 +2287,7 @@ export class PromptBuilder {
     // true from here. It previously sat before skillIndex and said "below",
     // pointing the model at nothing; the model followed the fence instructions
     // it could actually see and never called a tool.
-    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex + agenticInstruction;
+    return projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + secureBuildInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex + agenticInstruction;
   }
 
   private async buildContextBlock(
