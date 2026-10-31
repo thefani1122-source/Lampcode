@@ -206,10 +206,42 @@ const projectPreviewEnv = new Map<string, { url: string; anonKey: string; servic
  */
 const projectPreviewSecurityHold = new Set<string>();
 
-export function setProjectPreviewSecurityHold(projectId: string, held: boolean): boolean {
-  const wasHeld = projectPreviewSecurityHold.has(projectId);
-  if (held) projectPreviewSecurityHold.add(projectId);
-  else projectPreviewSecurityHold.delete(projectId);
+function previewSecurityRedisKey(projectId: string): string {
+  return `e2b:security-hold:${projectId}`;
+}
+
+/**
+ * Redis is the durable source for this hold; the in-memory set is only a cache.
+ * If Redis cannot answer, fail closed and withhold credentials from the preview.
+ */
+async function isProjectPreviewSecurityHeld(projectId: string): Promise<boolean> {
+  if (projectPreviewSecurityHold.has(projectId)) return true;
+  try {
+    const value = await withRedisTimeout(
+      redis.get(previewSecurityRedisKey(projectId)),
+      "get-security-hold",
+    );
+    if (value === "1") projectPreviewSecurityHold.add(projectId);
+    return value === "1";
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] security hold lookup failed — withholding preview credentials");
+    return true;
+  }
+}
+
+/** Persist the hold until a later, independently verified build clears it. */
+export async function setProjectPreviewSecurityHold(
+  projectId: string,
+  held: boolean,
+): Promise<boolean> {
+  const wasHeld = await isProjectPreviewSecurityHeld(projectId);
+  if (held) {
+    projectPreviewSecurityHold.add(projectId);
+    await withRedisTimeout(redis.set(previewSecurityRedisKey(projectId), "1"), "set-security-hold");
+  } else {
+    await withRedisTimeout(redis.del(previewSecurityRedisKey(projectId)), "clear-security-hold");
+    projectPreviewSecurityHold.delete(projectId);
+  }
   return wasHeld !== held;
 }
 
@@ -455,7 +487,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // Prefer the USER'S own connected Supabase project (set per-project at build
   // start) over the shared preview project — so each user's app runs on their
   // own database. The anon key is public/RLS-safe.
-  const securityHold = projectPreviewSecurityHold.has(projectId);
+  const securityHold = await isProjectPreviewSecurityHeld(projectId);
   const override = securityHold ? undefined : projectPreviewEnv.get(projectId);
   let url = securityHold ? undefined : (override?.url ?? config.PREVIEW_SUPABASE_URL);
   let anon = securityHold ? undefined : (override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY);
@@ -2197,6 +2229,9 @@ export async function ensurePreviewForProject(
       sandboxes.set(projectId, resumed);
       const framework = sandboxFrameworks.get(projectId) ?? persistedFramework ?? "react";
       sandboxFrameworks.set(projectId, framework);
+      // E2B snapshots retain the old process environment. Rebuild .env from
+      // the current durable security hold BEFORE restarting any app process.
+      await writePreviewEnv(resumed, projectId, log);
       await ensureDevServer(resumed, log, framework);
       return resumed;
     })().finally(() => warmingSandboxes.delete(projectId));
