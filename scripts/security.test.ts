@@ -486,6 +486,17 @@ CREATE POLICY "Users can view profiles in their organization" ON profiles
   })).status, "pass");
 }
 
+
+console.log("\n— preview database credential isolation —");
+{
+  const preview = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("shared PREVIEW_MONGODB_URI is never injected into generated sandboxes", !preview.includes("config.PREVIEW_MONGODB_URI"));
+  ok("a user's own project MONGODB_URI can still be loaded", preview.includes('key === "MONGODB_URI"'));
+  ok("user-owned env vars are withheld while security isolation is active", preview.includes("const ownVars = securityHold ? [] : await loadProjectEnvVars(projectId)"));
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("database verification recognises a user's own MongoDB connection", build.includes("ownMongoConnected = await hasProjectMongoUri(projectId)"));
+}
+ 
 console.log("\n— quoted and schema-qualified SQL identifiers —");
 {
   const quoted = `
