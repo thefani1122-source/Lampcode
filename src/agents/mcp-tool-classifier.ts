@@ -351,7 +351,7 @@ export function buildWriteProxyDefinitions(
     // automatically callable. It becomes callable WITH the user's approval,
     // which is what the gate is for. Vanishing is not a safer default than
     // asking — it is the same denial with the reason hidden from everyone.
-    if (t.reason === "annotation-read-only" || t.reason === "capability-read-only" || t.reason === "name-pattern-match") continue;
+    if (t.reason === "capability-read-only" || t.reason === "name-pattern-match") continue;
     if (t.reason === "discovery-failed") continue;
     const server = serversBySlug.get(t.serverSlug);
     if (!server) continue;
