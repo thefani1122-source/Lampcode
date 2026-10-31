@@ -375,6 +375,8 @@ console.log("\n— both run in the build —");
     deploy.includes("runSecurityChecksSafely("));
   ok("deploy scans the exact current file snapshot",
     deploy.includes("new Map(Object.entries(files))"));
+  ok("missing project identity blocks before security scan",
+    deploy.indexOf("if (!ctx.projectId)") < deploy.indexOf("runSecurityChecksSafely("));
   ok("scanner unavailable blocks before Vercel is called",
     deploy.indexOf("if (!scanResult.ok)") < deploy.indexOf("deployToVercel({"));
   ok("critical/high findings block before Vercel is called",
