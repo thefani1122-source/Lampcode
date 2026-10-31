@@ -58,7 +58,7 @@ export interface ClassifiedTool {
   serverSlug: string;
   toolName: string;
   allowed: boolean;
-  reason: "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
+  reason: "annotation-read-only" | "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
   /** Raw inputSchema from MCP listTools — stored for write-proxy ToolDefinition generation. */
   inputSchema?: Record<string, unknown> | undefined;
 }
