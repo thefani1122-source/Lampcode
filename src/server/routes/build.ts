@@ -3901,6 +3901,60 @@ export async function runFastBuild(
     };
 
     if (wantsE2BPreview) {
+      // Other quality/repair stages can still change allFiles after the main
+      // security repair loop. Verify the exact final snapshot immediately
+      // before it is written into or used to create a preview sandbox.
+      const finalSecurityScan = await runSecurityChecksSafely(
+        projectId,
+        async () => new Map(Object.entries(allFiles)),
+      );
+      if (!finalSecurityScan.ok) {
+        const reason =
+          "Preview blocked: final security verification could not complete. This version is NOT verified.";
+        logger.error(
+          { sessionId, projectId, err: finalSecurityScan.error },
+          "Final security verification unavailable — blocking preview",
+        );
+        server?.buildFailed(sessionId, {
+          sessionId,
+          phase: "BUILD",
+          reason,
+          logs: "",
+          timestamp: new Date().toISOString(),
+        });
+        await Promise.all([
+          db.update(buildSessions)
+            .set({ status: "failed", error: reason, completedAt: new Date() })
+            .where(eq(buildSessions.id, sessionId)),
+          db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+        ]);
+        return;
+      }
+      const finalBlockingFindings = getBlockingSecurityFindings(finalSecurityScan.report.checks);
+      if (finalBlockingFindings.length > 0) {
+        const reason =
+          "Preview blocked: critical/high security findings were introduced or remain in the final files: " +
+          finalBlockingFindings.map((check) => check.message).join("; ");
+        logger.error(
+          { sessionId, projectId, finalBlockingFindings },
+          "Final security findings — blocking preview",
+        );
+        server?.buildFailed(sessionId, {
+          sessionId,
+          phase: "BUILD",
+          reason,
+          logs: "",
+          timestamp: new Date().toISOString(),
+        });
+        await Promise.all([
+          db.update(buildSessions)
+            .set({ status: "failed", error: reason, completedAt: new Date() })
+            .where(eq(buildSessions.id, sessionId)),
+          db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+        ]);
+        return;
+      }
+
       const sandboxAlreadyRunning = hasSandbox(projectId);
       if (sandboxAlreadyRunning) {
         // Live in this process — push files straight in (Vite HMR refreshes).
