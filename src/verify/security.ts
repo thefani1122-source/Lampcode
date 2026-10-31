@@ -312,6 +312,49 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   };
 }
 
+/**
+ * Catch self-service profile policies that allow a user to change role or tenant fields.
+ * Row ownership alone does not protect authorization attributes from self-promotion.
+ */
+export function checkProfilePrivilegeUpdates(files: FileTree): SecurityCheck {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) return { id: "profile-privilege-update", status: "skip", severity: "high", message: "No SQL migration files available to inspect profile privilege updates" };
+  const allSql = sqlFiles.map(([, content]) => content).join("\n");
+  const bodies = tableBodies(allSql);
+  const policies = policyStatements(allSql);
+  const sensitive = /\b(role|organization_id|tenant_id|is_admin|is_owner|permissions|permission_level)\b/i;
+  const problems: string[] = [];
+  for (const [table, columns] of bodies) {
+    if (!/^(profiles?|user_profiles?|memberships?)$/i.test(table) || !sensitive.test(columns)) continue;
+    for (const policy of policies.filter((candidate) => candidate.table === table && /\bfor\s+(update|all)\b/i.test(candidate.body))) {
+      const body = policy.body;
+      const hasPrivilegeGuard = /\b(role|organization_id|tenant_id|is_admin|is_owner|permissions|permission_level)\b/i.test(body) && /\b(owner|admin|superuser|service_role|is_admin|has_role|can_manage)\b/i.test(body);
+      if (!hasPrivilegeGuard) problems.push(table + ": an UPDATE policy scopes the row to a user but does not protect role/tenant/permission fields from self-modification");
+    }
+  }
+  if (problems.length > 0) return {
+    id: "profile-privilege-update", status: "fail", severity: "high", file: sqlFiles[0]?.[0],
+    message: problems.join("; ") + ". Prevent self-service changes to privileged columns using column-level privileges, a guarded trigger, or a narrowly scoped server-side admin operation; then test role escalation with two users.",
+  };
+  return { id: "profile-privilege-update", status: "pass", severity: "high", message: "No unguarded self-service UPDATE policy found on profile or membership privilege fields" };
+}
+
+/** Detect policies that query their own protected table and can recurse. */
+export function checkRecursiveRlsPolicies(files: FileTree): SecurityCheck {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) return { id: "rls-policy-recursion", status: "skip", severity: "critical", message: "No SQL migration files available to inspect RLS policy recursion" };
+  const allSql = sqlFiles.map(([, content]) => content).join("\n");
+  const recursive = policyStatements(allSql).filter(({ table, body }) => {
+    const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\// ── 2. checkRLS ───────────────────────────────────────────────────────────────");
+    const fromRe = new RegExp("\\bfrom\\s+(?:(?:[a-z_][a-z0-9_$]*)\\s*\\.\\s*)?[\\"`]?"+escaped+"[\\"`]?\\b", "i");
+    return fromRe.test(body);
+  });
+  if (recursive.length > 0) return {
+    id: "rls-policy-recursion", status: "fail", severity: "critical", file: sqlFiles[0]?.[0],
+    message: "RLS policy queries its own protected table (" + [...new Set(recursive.map((item) => item.table))].join(", ") + "), which can cause infinite recursion. Move membership lookups into a narrowly scoped SECURITY DEFINER helper with a fixed search_path and restricted EXECUTE grants, or use a non-recursive policy design.",
+  };
+  return { id: "rls-policy-recursion", status: "pass", severity: "critical", message: "No direct self-referencing RLS policy query detected" };
+}
 // ── 2. checkRLS ───────────────────────────────────────────────────────────────
 
 export function checkRLS(files: FileTree): SecurityCheck {
@@ -645,6 +688,8 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
+    checkRecursiveRlsPolicies(files),
+    checkProfilePrivilegeUpdates(files),
     checkServiceRole(files),
     checkCallerIdentity(files),
     ...checkSecrets(files),
