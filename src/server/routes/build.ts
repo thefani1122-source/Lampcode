@@ -40,7 +40,7 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, setProjectPreviewSecurityHold, refreshPreviewEnvironment, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, setProjectPreviewSecurityHold, refreshPreviewEnvironment, hasProjectMongoUri, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken } from "./integrations.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -1038,6 +1038,7 @@ export async function runFastBuild(
     // it: applying `schema.sql` only ever happens against a Supabase the user
     // connected themselves, so this flag IS "the app's tables will exist".
     let ownSupabaseConnected = false;
+    let ownMongoConnected = false;
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP), point this
@@ -1115,6 +1116,7 @@ export async function runFastBuild(
 
       setProjectPreviewEnv(projectId, userSupa);
       ownSupabaseConnected = userSupa !== null;
+      ownMongoConnected = await hasProjectMongoUri(projectId).catch(() => false);
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.
@@ -1266,7 +1268,7 @@ export async function runFastBuild(
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
                     "Backend: Hono.js + Mongoose (MongoDB) — NOT Supabase, NOT @supabase/supabase-js; export const api = new Hono(); routes prefixed /api/; Zod validation.",
                     "src/db/schema.ts must export Mongoose schemas/models for every collection; src/lib/db.ts must export connectDB() per the DATABASE section.",
-                    "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
+                    "Do NOT generate package.json or .env. MONGODB_URI exists only when the user has configured their OWN connection string in project environment settings; never assume a shared preview database.",
                   ]
                 : wantsPython
                 ? [
@@ -1339,7 +1341,7 @@ export async function runFastBuild(
       const planned = await planBuild({
         dispatcher, prompt, sessionId, userId, projectId, provider,
         ...(hasExistingCode ? { existingFiles } : {}),
-        shape: { fullstack: isFullstackBuild, databaseConnected: ownSupabaseConnected },
+        shape: { fullstack: isFullstackBuild, databaseConnected: ownSupabaseConnected || ownMongoConnected },
       });
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;
@@ -4578,7 +4580,7 @@ export async function runFastBuild(
     const fullstackEvidence = fullstackRequested
       ? {
           requested: isFullstackBuild,
-          browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && (!ownSupabaseConnected || securityIsolationRequired),
+          browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && (!(ownSupabaseConnected || ownMongoConnected) || securityIsolationRequired),
           backendFiles: backendFileCount,
           // `ownSupabaseConnected` is decided at the TOP of the build, and the
           // database card can be answered while the build is still running —
@@ -4590,7 +4592,7 @@ export async function runFastBuild(
           //
           // A schema that applied is proof a database was connected, whatever
           // the flag captured minutes earlier.
-          databaseConnected: !securityIsolationRequired && (ownSupabaseConnected || schemaApply?.ok === true),
+          databaseConnected: !securityIsolationRequired && (ownSupabaseConnected || ownMongoConnected || schemaApply?.ok === true),
           tablesDeclared: declared.size,
           tablesQueried: new Set(queried.map((q) => q.table)).size,
           fakePersistenceFiles: fakeFiles.length,
