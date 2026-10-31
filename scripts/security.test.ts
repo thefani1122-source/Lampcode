@@ -326,35 +326,36 @@ console.log("\n— both run in the build —");
   ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 
-  const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
-  const scanStart = build.indexOf(scanCall);
-  const normalVerdict = build.indexOf("const failing = report.checks.filter", scanStart);
-  const scanFailureHandling =
-    scanStart >= 0 && normalVerdict > scanStart
-      ? build.slice(scanStart, normalVerdict)
-      : "";
-
+  const securityStart = build.indexOf("const MAX_SECURITY_FIX_ATTEMPTS");
+  const securityEnd = build.indexOf("// ── Take the fake out", securityStart);
+  const securityFlow = securityStart >= 0 && securityEnd > securityStart
+    ? build.slice(securityStart, securityEnd)
+    : "";
   ok(
     "a scanner exception is not converted into an empty passing report",
-    scanFailureHandling.length > 0 &&
-      scanFailureHandling.includes("if (!scanResult.ok)") &&
-      !scanFailureHandling.includes("passed: true") &&
-      !scanFailureHandling.includes("checks: []"),
+    securityFlow.includes("if (!scanResult.ok)") &&
+      !securityFlow.includes("passed: true") &&
+      !securityFlow.includes("checks: []"),
   );
   ok(
-    "a scanner exception emits a failed build event",
-    scanFailureHandling.includes("server?.buildFailed(sessionId") &&
-      scanFailureHandling.includes("Security verification could not complete"),
+    "a scanner exception records NOT VERIFIED and isolates preview credentials",
+    securityFlow.includes('status: "not-verified"') &&
+      securityFlow.includes("securityIsolationRequired = true") &&
+      securityFlow.includes("setProjectPreviewSecurityHold(projectId, securityIsolationRequired)") &&
+      securityFlow.includes("refreshPreviewEnvironment"),
   );
   ok(
-    "a scanner exception persists failed session and project states",
-    scanFailureHandling.includes('.set({ status: "failed", error: reason, completedAt: new Date() })') &&
-      scanFailureHandling.includes('db.update(projects).set({ status: "failed" })'),
+    "a scanner exception does not fail the whole build just because verification is unavailable",
+    !securityFlow.includes("server?.buildFailed(sessionId") &&
+      !securityFlow.includes('db.update(buildSessions).set({ status: "failed"'),
   );
+  const deploy = readFileSync(new URL("../src/agents/tools/deploy-app.ts", import.meta.url), "utf8");
   ok(
-    "the build returns before normal security findings or preview work continue",
-    scanFailureHandling.includes("return;"),
+    "production deploy is blocked when security verification is unavailable",
+    deploy.indexOf("if (!securityScan.ok)") >= 0 &&
+      deploy.indexOf("if (!securityScan.ok)") < deploy.indexOf("deployToVercel({"),
   );
+
 }
 
 // ── An INSERT that does not bind the owner column ───────────────────────────
