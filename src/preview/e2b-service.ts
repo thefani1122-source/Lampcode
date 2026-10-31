@@ -199,6 +199,20 @@ function devKillPattern(framework: FullstackFramework): string {
 // Per-project preview Supabase override (the project owner's OWN connected
 // Supabase). Set at build start; used by writePreviewEnv before Vite boots.
 const projectPreviewEnv = new Map<string, { url: string; anonKey: string; serviceKey?: string }>();
+/**
+ * A preview with unresolved high/critical security findings must not receive
+ * project, database, or third-party credentials. The UI can still be previewed
+ * against an isolated, credential-free sandbox; production release stays gated.
+ */
+const projectPreviewSecurityHold = new Set<string>();
+
+export function setProjectPreviewSecurityHold(projectId: string, held: boolean): boolean {
+  const wasHeld = projectPreviewSecurityHold.has(projectId);
+  if (held) projectPreviewSecurityHold.add(projectId);
+  else projectPreviewSecurityHold.delete(projectId);
+  return wasHeld !== held;
+}
+
 
 /** Point a project's preview at the owner's connected Supabase (anon key only). */
 export function setProjectPreviewEnv(
@@ -435,10 +449,12 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // Prefer the USER'S own connected Supabase project (set per-project at build
   // start) over the shared preview project — so each user's app runs on their
   // own database. The anon key is public/RLS-safe.
-  const override = projectPreviewEnv.get(projectId);
-  let url = override?.url ?? config.PREVIEW_SUPABASE_URL;
-  let anon = override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY;
-  if (override) log("Using the project owner's connected Supabase for the preview");
+  const securityHold = projectPreviewSecurityHold.has(projectId);
+  const override = securityHold ? undefined : projectPreviewEnv.get(projectId);
+  let url = securityHold ? undefined : (override?.url ?? config.PREVIEW_SUPABASE_URL);
+  let anon = securityHold ? undefined : (override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY);
+  if (securityHold) log("Security verification is unresolved — external credentials are withheld from this preview");
+  else if (override) log("Using the project owner's connected Supabase for the preview");
 
   // SAFETY: never point a generated preview app at Lampcode's OWN Supabase
   // project — test sign-ups/data would pollute the real product. Drop it.
@@ -456,8 +472,8 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // key no longer exists in config at all, so this can only ever be the key for
   // the same project `override.url` points at, which the person connected
   // themselves and whose schema we apply for them.
-  const serviceKey = override?.serviceKey;
-  const mongoUri = config.PREVIEW_MONGODB_URI;
+  const serviceKey = securityHold ? undefined : override?.serviceKey;
+  const mongoUri = securityHold ? undefined : config.PREVIEW_MONGODB_URI;
 
   // VITE_* → frontend (import.meta.env); plain keys → Node backend (process.env
   // via tsx --env-file). SERVICE/JWT/MONGO keys have NO VITE_ prefix, so Vite
@@ -487,7 +503,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // every generated app that needed one ran without it, silently. That covers
   // the AI-agent path the template ships crewai, langgraph and
   // langchain-anthropic for: all installed, none of them able to authenticate.
-  const ownVars = await loadProjectEnvVars(projectId);
+  const ownVars = securityHold ? [] : await loadProjectEnvVars(projectId);
   if (ownVars.length > 0) {
     for (const { key, value } of ownVars) env += `${key}=${value}\n`;
     log(`Injected ${ownVars.length} project variable(s) from your settings`);
@@ -2010,6 +2026,34 @@ async function awaitWarming(projectId: string): Promise<void> {
  * Throws if no live sandbox is held for the project — callers should guard
  * with `hasSandbox(projectId)` first.
  */
+
+/**
+ * Rewrite the preview environment after a security verdict changes. A live
+ * Vite/Node process has already read its old .env, so restart it after writing
+ * the credential policy. When no sandbox is live, the hold is still retained
+ * and createPreviewSandbox will apply it on the next start.
+ */
+export async function refreshPreviewEnvironment(
+  projectId: string,
+  onLog?: PreviewLogCallback,
+): Promise<boolean> {
+  await awaitWarming(projectId);
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return false;
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ projectId, line }, "[e2b:security-env]");
+  };
+  const framework = sandboxFrameworks.get(projectId) ?? "react";
+  await writePreviewEnv(sandbox, projectId, log);
+
+  await sandbox.commands.run(`pkill -f ${devKillPattern(framework)} || true`, { timeoutMs: 10_000 }).catch(() => {});
+  await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
+  await ensureDevServer(sandbox, log, framework);
+  return true;
+}
+
 export async function writeFilesToSandbox(
   projectId: string,
   files: Record<string, string>,
