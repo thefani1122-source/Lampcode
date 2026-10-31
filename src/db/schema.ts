@@ -423,6 +423,21 @@ export type BuildOutcome = {
     deep: number; total: number; unreviewed: number;
     findings: number; dropped: number; costUsd: number;
   };
+  /** Independent security verifier result for the exact final source snapshot. */
+  security?: {
+    status: "passed" | "needs-attention" | "not-verified";
+    findings: Array<{
+      id: string;
+      severity: "critical" | "high" | "medium" | "low" | "info";
+      file?: string;
+      line?: number;
+      message: string;
+    }>;
+    repairAttempts: number;
+    credentialRotationRecommended: boolean;
+    previewIsolated: boolean;
+    previewBlocked: boolean;
+  };
   /** The outside check: what the user asked for, and which of it this build can
    *  actually prove. Lives inside build_outcome rather than in a column of its
    *  own so no migration is needed; the trade-off is that it is persisted when

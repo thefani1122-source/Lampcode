@@ -4,10 +4,13 @@ import {
   checkPackages,
   checkRLS,
   checkRlsScoping,
+  checkProfilePrivilegeUpdates,
+  checkRecursiveRlsPolicies,
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
   blockingSecurityFindings,
+  selectSecurityRepairContext,
   runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
@@ -313,39 +316,46 @@ console.log("\n— both run in the build —");
 {
   const sec = readFileSync(new URL("../src/verify/security.ts", import.meta.url), "utf8");
   ok("both are in runSecurityChecks", sec.includes("checkServiceRole(files)") && sec.includes("checkCallerIdentity(files)"));
+  ok("recursive RLS is part of the automatic build scan", sec.includes("checkRecursiveRlsPolicies(files)"));
+  ok("profile privilege updates are part of the automatic build scan", sec.includes("checkProfilePrivilegeUpdates(files)"));
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("Supabase prompt forbids self-service role and tenant changes", prompt.includes("Never let a user self-promote"));
+  ok("Supabase prompt forbids recursive profile policies", prompt.includes("Never write an RLS policy on profiles that queries profiles again"));
+
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
   ok("and the safe security runner is what the build calls", build.includes("runSecurityChecksSafely(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 
-  const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
-  const scanStart = build.indexOf(scanCall);
-  const normalVerdict = build.indexOf("const failing = report.checks.filter", scanStart);
-  const scanFailureHandling =
-    scanStart >= 0 && normalVerdict > scanStart
-      ? build.slice(scanStart, normalVerdict)
-      : "";
-
+  const securityStart = build.indexOf("const MAX_SECURITY_FIX_ATTEMPTS");
+  const securityEnd = build.indexOf("// ── Take the fake out", securityStart);
+  const securityFlow = securityStart >= 0 && securityEnd > securityStart
+    ? build.slice(securityStart, securityEnd)
+    : "";
   ok(
     "a scanner exception is not converted into an empty passing report",
-    scanFailureHandling.length > 0 &&
-      scanFailureHandling.includes("if (!scanResult.ok)") &&
-      !scanFailureHandling.includes("passed: true") &&
-      !scanFailureHandling.includes("checks: []"),
+    securityFlow.includes("if (!scanResult.ok)") &&
+      !securityFlow.includes("passed: true") &&
+      !securityFlow.includes("checks: []"),
   );
   ok(
-    "a scanner exception emits a failed build event",
-    scanFailureHandling.includes("server?.buildFailed(sessionId") &&
-      scanFailureHandling.includes("Security verification could not complete"),
+    "a scanner exception records NOT VERIFIED and isolates preview credentials",
+    securityFlow.includes('status: "not-verified"') &&
+      securityFlow.includes("securityIsolationRequired = true") &&
+      securityFlow.includes("setProjectPreviewSecurityHold(projectId, securityIsolationRequired)") &&
+      securityFlow.includes("refreshPreviewEnvironment"),
   );
   ok(
-    "a scanner exception persists failed session and project states",
-    scanFailureHandling.includes('.set({ status: "failed", error: reason, completedAt: new Date() })') &&
-      scanFailureHandling.includes('db.update(projects).set({ status: "failed" })'),
+    "a scanner exception does not fail the whole build just because verification is unavailable",
+    !securityFlow.includes("server?.buildFailed(sessionId") &&
+      !securityFlow.includes('db.update(buildSessions).set({ status: "failed"'),
   );
+  const deploy = readFileSync(new URL("../src/agents/tools/deploy-app.ts", import.meta.url), "utf8");
   ok(
-    "the build returns before normal security findings or preview work continue",
-    scanFailureHandling.includes("return;"),
+    "production deploy is blocked when security verification is unavailable",
+    deploy.indexOf("if (!securityScan.ok)") >= 0 &&
+      deploy.indexOf("if (!securityScan.ok)") < deploy.indexOf("deployToVercel({"),
   );
+
 }
 
 // ── An INSERT that does not bind the owner column ───────────────────────────
@@ -442,6 +452,111 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   );
 }
 
+console.log("\n— profile privilege escalation and RLS recursion —");
+{
+  const profileSql = `
+CREATE TABLE profiles (
+  id uuid primary key,
+  organization_id uuid not null,
+  role text not null
+);
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
+`;
+  check("self-service profile update cannot freely mutate role or organization", checkProfilePrivilegeUpdates(tree({
+    "src/db/schema.sql": profileSql,
+  })).status, "fail");
+}
+{
+  const recursiveSql = `
+CREATE TABLE profiles (
+  id uuid primary key,
+  organization_id uuid not null,
+  role text not null
+);
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view profiles in their organization" ON profiles
+  FOR SELECT USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid()));
+`;
+  check("self-referencing profiles RLS policy is reported as recursive", checkRecursiveRlsPolicies(tree({
+    "src/db/schema.sql": recursiveSql,
+  })).status, "fail");
+  check("a policy using a non-recursive helper is not reported", checkRecursiveRlsPolicies(tree({
+    "src/db/schema.sql": recursiveSql.replace("EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid())", "public.is_org_member(organization_id)"),
+  })).status, "pass");
+}
+
+
+console.log("\n— preview database credential isolation —");
+{
+  const preview = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("shared PREVIEW_MONGODB_URI is never injected into generated sandboxes", !preview.includes("config.PREVIEW_MONGODB_URI"));
+  ok("a user's own project MONGODB_URI can still be loaded", preview.includes('key === "MONGODB_URI"'));
+  ok("user-owned env vars are withheld while security isolation is active", preview.includes("const ownVars = securityHold ? [] : await loadProjectEnvVars(projectId)"));
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("database verification recognises a user's own MongoDB connection", build.includes("ownMongoConnected = await hasProjectMongoUri(projectId)"));
+}
+ 
+console.log("\n— quoted and schema-qualified SQL identifiers —");
+{
+  const quoted = `
+CREATE TABLE public."team leads" (
+  id uuid primary key,
+  user_id uuid not null
+);
+ALTER TABLE public."team leads" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "members can read team leads" ON public."team leads"
+  FOR SELECT USING (auth.uid() = user_id);
+`;
+  check("RLS parser recognises a quoted policy name containing spaces", checkRLS(tree({
+    "src/db/schema.sql": quoted,
+  })).status, "pass");
+  check("scoping parser detects a dangerous quoted policy", checkRlsScoping(tree({
+    "src/db/schema.sql": quoted.replace("auth.uid() = user_id", "true"),
+  })).status, "fail");
+  check("scoping parser accepts a correctly scoped quoted policy", checkRlsScoping(tree({
+    "src/db/schema.sql": quoted,
+  })).status, "pass");
+}
+
+console.log("\n— security repair context —");
+{
+  const files = {
+    "src/db/schema.sql": "CREATE TABLE a (id uuid);",
+    "src/server/routes/api.ts": "export const api = true;",
+    "src/App.tsx": "export default function App() {}",
+  };
+  const picked = selectSecurityRepairContext([
+    { id: "rls", status: "fail", severity: "critical", file: "src/db/schema.sql", message: "RLS issue" },
+    { id: "auth", status: "fail", severity: "high", file: "src/server/routes/api.ts", message: "Auth issue" },
+  ], files);
+  check("repair receives only the files named by findings", picked.files.map((f) => f.path), [
+    "src/db/schema.sql", "src/server/routes/api.ts",
+  ]);
+  check("repair context includes complete source content", picked.files.map((f) => f.content), [
+    files["src/db/schema.sql"], files["src/server/routes/api.ts"],
+  ]);
+  const capped = selectSecurityRepairContext([
+    { id: "large", status: "fail", severity: "critical", file: "large.sql", message: "large" },
+    { id: "small", status: "fail", severity: "high", file: "small.sql", message: "small" },
+  ], { "large.sql": "x".repeat(20), "small.sql": "small" }, 8, 10);
+  check("oversized files are omitted whole rather than truncated", capped.files.map((f) => f.path), ["small.sql"]);
+  check("omitted paths are explicitly reported", capped.omittedPaths, ["large.sql"]);
+  const exposed = ["sk-", "A".repeat(28)].join("");
+  const redacted = selectSecurityRepairContext([
+    { id: "secret", status: "fail", severity: "critical", file: "src/App.tsx", message: "key exposed" },
+  ], { "src/App.tsx": `const key = "${exposed}";` });
+  check("secret values are redacted before the repair model receives source", !redacted.files[0]?.content.includes(exposed), true);
+  check("the redacted file path is reported", redacted.redactedPaths, ["src/App.tsx"]);
+}
+
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("security repair dispatch attaches the flagged source files", build.includes("contextFiles: repairContext.files"));
+  ok("security repairs are re-scanned after every dispatch", build.includes("runSecurityChecksSafely(projectId, async () => fileTree)"));
+  ok("unresolved findings no longer use the old hard build-stop message", !build.includes("Build blocked by unresolved high/critical security verification"));
+}
 if (failures > 0) {
   console.error("\n" + failures + " security case(s) FAILED");
   process.exit(1);

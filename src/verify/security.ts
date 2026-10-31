@@ -25,6 +25,50 @@ export interface SecurityReport {
   checks: SecurityCheck[];
 }
 
+export interface SecurityRepairContext {
+  files: Array<{ path: string; content: string }>;
+  omittedPaths: string[];
+  redactedPaths: string[];
+}
+
+/** Select the complete files named by findings; never send truncated source as a whole file. */
+export function selectSecurityRepairContext(
+  findings: readonly SecurityCheck[],
+  files: Record<string, string>,
+  maxFiles = 8,
+  maxChars = 120_000,
+): SecurityRepairContext {
+  const paths = [...new Set(findings.map((finding) => finding.file).filter(
+    (path): path is string => Boolean(path && files[path] !== undefined),
+  ))];
+  const selected: SecurityRepairContext["files"] = [];
+  const omittedPaths: string[] = [];
+  const redactedPaths: string[] = [];
+  let remaining = maxChars;
+  for (const path of paths) {
+    const rawContent = files[path];
+    if (rawContent === undefined) continue;
+
+    // A real credential must never be copied into a second model prompt just
+    // because the repair agent needs the surrounding file. Replace known
+    // credential shapes in the handoff only; the source snapshot is unchanged.
+    let content = rawContent;
+    for (const { re } of SECRET_PATTERNS) {
+      const global = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+      content = content.replace(global, "[REDACTED_SECRET]");
+    }
+    if (content !== rawContent) redactedPaths.push(path);
+
+    if (selected.length >= maxFiles || content.length > remaining) {
+      omittedPaths.push(path);
+      continue;
+    }
+    selected.push({ path, content });
+    remaining -= content.length;
+  }
+  return { files: selected, omittedPaths, redactedPaths };
+}
+
 /**
  * Findings that must stop a preview promotion or production deployment.
  *
@@ -135,13 +179,28 @@ const OWNER_COLUMN_RE = /\b(user_id|owner_id|author_id|created_by|profile_id|acc
 const ALWAYS_TRUE_RE = /\b(?:using|with\s+check)\s*\(\s*(?:true|1\s*=\s*1)\s*\)/i;
 const WRITE_ACTION_RE = /\bfor\s+(insert|update|delete|all)\b/i;
 
-/** Each CREATE POLICY statement, with the table it is on and its body. */
+function normalizeSqlIdentifier(raw: string): string {
+  const value = raw.trim();
+  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/""/g, '"').toLowerCase();
+  if (value.startsWith("`") && value.endsWith("`")) return value.slice(1, -1).replace(/``/g, "`").toLowerCase();
+  if (value.startsWith("[") && value.endsWith("]")) return value.slice(1, -1).toLowerCase();
+  return value.toLowerCase();
+}
+
+function extractSqlNames(sql: string, re: RegExp): string[] {
+  const names: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(sql)) !== null) if (match[1]) names.push(normalizeSqlIdentifier(match[1]));
+  return names;
+}
+
+/** Each CREATE POLICY statement, including quoted names and schema-qualified tables. */
 function policyStatements(sql: string): Array<{ table: string; body: string }> {
   const out: Array<{ table: string; body: string }> = [];
-  const re = /CREATE\s+POLICY\s+[^\s]+\s+ON\s+["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?([\s\S]*?);/gi;
+  const re = /CREATE\s+POLICY\s+(?:"(?:[^"]|"")*"|\S+)\s+ON\s+(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)([\s\S]*?);/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.push({ table: m[1].toLowerCase(), body: m[2] ?? "" });
+    if (m[1]) out.push({ table: normalizeSqlIdentifier(m[1]), body: m[2] ?? "" });
   }
   return out;
 }
@@ -149,10 +208,10 @@ function policyStatements(sql: string): Array<{ table: string; body: string }> {
 /** The body of each CREATE TABLE, so a table's columns can be inspected. */
 function tableBodies(sql: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.set(m[1].toLowerCase(), m[2] ?? "");
+    if (m[1]) out.set(normalizeSqlIdentifier(m[1]), m[2] ?? "");
   }
   return out;
 }
@@ -253,6 +312,49 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   };
 }
 
+/**
+ * Catch self-service profile policies that allow a user to change role or tenant fields.
+ * Row ownership alone does not protect authorization attributes from self-promotion.
+ */
+export function checkProfilePrivilegeUpdates(files: FileTree): SecurityCheck {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) return { id: "profile-privilege-update", status: "skip", severity: "high", message: "No SQL migration files available to inspect profile privilege updates" };
+  const allSql = sqlFiles.map(([, content]) => content).join("\n");
+  const bodies = tableBodies(allSql);
+  const policies = policyStatements(allSql);
+  const sensitive = /\b(role|organization_id|tenant_id|is_admin|is_owner|permissions|permission_level)\b/i;
+  const problems: string[] = [];
+  for (const [table, columns] of bodies) {
+    if (!/^(profiles?|user_profiles?|memberships?)$/i.test(table) || !sensitive.test(columns)) continue;
+    for (const policy of policies.filter((candidate) => candidate.table === table && /\bfor\s+(update|all)\b/i.test(candidate.body))) {
+      const body = policy.body;
+      const hasPrivilegeGuard = /\b(role|organization_id|tenant_id|is_admin|is_owner|permissions|permission_level)\b/i.test(body) && /\b(owner|admin|superuser|service_role|is_admin|has_role|can_manage)\b/i.test(body);
+      if (!hasPrivilegeGuard) problems.push(table + ": an UPDATE policy scopes the row to a user but does not protect role/tenant/permission fields from self-modification");
+    }
+  }
+  if (problems.length > 0) return {
+    id: "profile-privilege-update", status: "fail", severity: "high", file: sqlFiles[0]?.[0],
+    message: problems.join("; ") + ". Prevent self-service changes to privileged columns using column-level privileges, a guarded trigger, or a narrowly scoped server-side admin operation; then test role escalation with two users.",
+  };
+  return { id: "profile-privilege-update", status: "pass", severity: "high", message: "No unguarded self-service UPDATE policy found on profile or membership privilege fields" };
+}
+
+/** Detect policies that query their own protected table and can recurse. */
+export function checkRecursiveRlsPolicies(files: FileTree): SecurityCheck {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) return { id: "rls-policy-recursion", status: "skip", severity: "critical", message: "No SQL migration files available to inspect RLS policy recursion" };
+  const allSql = sqlFiles.map(([, content]) => content).join("\n");
+  const recursive = policyStatements(allSql).filter(({ table, body }) => {
+    const escaped = table.split("").map((char) => "\\.^$*+?()[]{}|".includes(char) ? String.fromCharCode(92) + char : char).join("");
+    const fromRe = new RegExp("\\bfrom\\s+(?:(?:[a-z_][a-z0-9_$]*)\\s*\\.\\s*)?(?:\"" + escaped + "\"|" + escaped + ")(?:\\b|\\s|$)", "i");
+    return fromRe.test(body);
+  });
+  if (recursive.length > 0) return {
+    id: "rls-policy-recursion", status: "fail", severity: "critical", file: sqlFiles[0]?.[0],
+    message: "RLS policy queries its own protected table (" + [...new Set(recursive.map((item) => item.table))].join(", ") + "), which can cause infinite recursion. Move membership lookups into a narrowly scoped SECURITY DEFINER helper with a fixed search_path and restricted EXECUTE grants, or use a non-recursive policy design.",
+  };
+  return { id: "rls-policy-recursion", status: "pass", severity: "critical", message: "No direct self-referencing RLS policy query detected" };
+}
 // ── 2. checkRLS ───────────────────────────────────────────────────────────────
 
 export function checkRLS(files: FileTree): SecurityCheck {
@@ -272,20 +374,9 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const allSql = sqlFiles.map(([, c]) => c).join("\n");
 
-  const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?/gi;
-  const rlsRe   = /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
-  const polRe   = /CREATE\s+POLICY\s+\S+\s+ON\s+["'`]?(\w+)["'`]?/gi;
-
-  const extractNames = (re: RegExp): string[] => {
-    const out: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(allSql)) !== null) { if (m[1]) out.push(m[1].toLowerCase()); }
-    return out;
-  };
-
-  const tables  = extractNames(tableRe);
-  const rlsOn   = extractNames(rlsRe);
-  const polOn   = extractNames(polRe);
+  const tables = extractSqlNames(allSql, /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)/gi);
+  const rlsOn = extractSqlNames(allSql, /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?("[^"]+"|\w+)\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi);
+  const polOn = policyStatements(allSql).map((policy) => policy.table);
 
   const noRls = tables.filter((t) => !rlsOn.includes(t));
   if (noRls.length > 0) {
@@ -597,6 +688,8 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
+    checkRecursiveRlsPolicies(files),
+    checkProfilePrivilegeUpdates(files),
     checkServiceRole(files),
     checkCallerIdentity(files),
     ...checkSecrets(files),

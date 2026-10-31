@@ -3,9 +3,9 @@ import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
 import { downloadProjectFiles } from "../storage/project-files.js";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { projectEnvVars } from "../db/schema.js";
+import { buildSessions, projectEnvVars } from "../db/schema.js";
 import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
@@ -199,6 +199,89 @@ function devKillPattern(framework: FullstackFramework): string {
 // Per-project preview Supabase override (the project owner's OWN connected
 // Supabase). Set at build start; used by writePreviewEnv before Vite boots.
 const projectPreviewEnv = new Map<string, { url: string; anonKey: string; serviceKey?: string }>();
+/**
+ * A preview with unresolved high/critical security findings must not receive
+ * project, database, or third-party credentials. The UI can still be previewed
+ * against an isolated, credential-free sandbox; production release stays gated.
+ */
+const projectPreviewSecurityHold = new Set<string>();
+
+function previewSecurityRedisKey(projectId: string): string {
+  return `e2b:security-hold:${projectId}`;
+}
+
+/**
+ * Redis is the durable source for this hold; the in-memory set is only a cache.
+ * If Redis cannot answer, fail closed and withhold credentials from the preview.
+ */
+async function isProjectPreviewSecurityHeld(projectId: string): Promise<boolean> {
+  if (projectPreviewSecurityHold.has(projectId)) return true;
+  try {
+    const value = await withRedisTimeout(
+      redis.get(previewSecurityRedisKey(projectId)),
+      "get-security-hold",
+    );
+    if (value === "1") {
+      projectPreviewSecurityHold.add(projectId);
+      return true;
+    }
+    if (value === "0") return false;
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] security hold lookup failed — withholding preview credentials");
+    return true;
+  }
+
+  // Redis may not yet have a record for projects built before this control
+  // existed, or a prior SET may have failed while Redis was offline. The
+  // newest persisted build verdict is the fallback source of truth.
+  try {
+    const rows = await db
+      .select({ buildOutcome: buildSessions.buildOutcome })
+      .from(buildSessions)
+      .where(eq(buildSessions.projectId, projectId))
+      .orderBy(desc(buildSessions.createdAt))
+      .limit(30);
+    const latest = rows.find((row) => row.buildOutcome?.security !== undefined);
+    const security = latest?.buildOutcome?.security;
+    const held = Boolean(
+      security &&
+      security.status !== "passed" &&
+      (security.previewIsolated || security.previewBlocked),
+    );
+    if (held) projectPreviewSecurityHold.add(projectId);
+    // Cache only a positive fallback. A later build explicitly writes "0".
+    if (held) {
+      await withRedisTimeout(
+        redis.set(previewSecurityRedisKey(projectId), "1"),
+        "cache-security-hold",
+      ).catch(() => {});
+    }
+    return held;
+  } catch (err) {
+    logger.error({ projectId, err }, "[e2b] persisted security verdict lookup failed — withholding preview credentials");
+    return true;
+  }
+}
+
+/** Persist the hold until a later, independently verified build clears it. */
+export async function setProjectPreviewSecurityHold(
+  projectId: string,
+  held: boolean,
+): Promise<boolean> {
+  const wasHeld = await isProjectPreviewSecurityHeld(projectId);
+  if (held) projectPreviewSecurityHold.add(projectId);
+
+  // "0" is a durable clear marker. Deleting the key would make a restart
+  // consult an older unresolved build receipt and re-enable the hold.
+  await withRedisTimeout(
+    redis.set(previewSecurityRedisKey(projectId), held ? "1" : "0"),
+    held ? "set-security-hold" : "clear-security-hold",
+  );
+
+  if (!held) projectPreviewSecurityHold.delete(projectId);
+  return wasHeld !== held;
+}
+
 
 /** Point a project's preview at the owner's connected Supabase (anon key only). */
 export function setProjectPreviewEnv(
@@ -425,6 +508,12 @@ async function loadProjectEnvVars(projectId: string): Promise<{ key: string; val
   }
 }
 
+/** True only when this project has its own encrypted MongoDB URI configured. */
+export async function hasProjectMongoUri(projectId: string): Promise<boolean> {
+  const vars = await loadProjectEnvVars(projectId);
+  return vars.some(({ key, value }) => key === "MONGODB_URI" && value.trim().length > 0);
+}
+
 /**
  * Writes the preview `.env` with the Supabase credentials the generated app
  * needs to initialise its client. Must run BEFORE the dev server starts — Vite
@@ -435,10 +524,12 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // Prefer the USER'S own connected Supabase project (set per-project at build
   // start) over the shared preview project — so each user's app runs on their
   // own database. The anon key is public/RLS-safe.
-  const override = projectPreviewEnv.get(projectId);
-  let url = override?.url ?? config.PREVIEW_SUPABASE_URL;
-  let anon = override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY;
-  if (override) log("Using the project owner's connected Supabase for the preview");
+  const securityHold = await isProjectPreviewSecurityHeld(projectId);
+  const override = securityHold ? undefined : projectPreviewEnv.get(projectId);
+  let url = securityHold ? undefined : (override?.url ?? config.PREVIEW_SUPABASE_URL);
+  let anon = securityHold ? undefined : (override?.anonKey ?? config.PREVIEW_SUPABASE_ANON_KEY);
+  if (securityHold) log("Security verification is unresolved — external credentials are withheld from this preview");
+  else if (override) log("Using the project owner's connected Supabase for the preview");
 
   // SAFETY: never point a generated preview app at Lampcode's OWN Supabase
   // project — test sign-ups/data would pollute the real product. Drop it.
@@ -456,8 +547,7 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // key no longer exists in config at all, so this can only ever be the key for
   // the same project `override.url` points at, which the person connected
   // themselves and whose schema we apply for them.
-  const serviceKey = override?.serviceKey;
-  const mongoUri = config.PREVIEW_MONGODB_URI;
+  const serviceKey = securityHold ? undefined : override?.serviceKey;
 
   // VITE_* → frontend (import.meta.env); plain keys → Node backend (process.env
   // via tsx --env-file). SERVICE/JWT/MONGO keys have NO VITE_ prefix, so Vite
@@ -471,12 +561,8 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
       (serviceKey ? `SUPABASE_SERVICE_KEY=${serviceKey}\nSUPABASE_SERVICE_ROLE_KEY=${serviceKey}\n` : "");
     if (serviceKey) log("Backend has service-role access to your own Supabase project");
   }
-  if (mongoUri) {
-    env += `MONGODB_URI=${mongoUri}\n`;
-    log("Backend has a MongoDB connection (MONGODB_URI)");
-  }
   // Stable per-project secret for custom (MongoDB) JWT auth.
-  env += `JWT_SECRET=lampcode_${projectId}\n`;
+  if (!securityHold) env += `JWT_SECRET=lampcode_${projectId}\n`;
 
   // The project's OWN variables, last so they win on a name clash: the person
   // set them deliberately for their own app, and the platform defaults are
@@ -487,14 +573,20 @@ async function writePreviewEnv(sandbox: Sandbox, projectId: string, log: Preview
   // every generated app that needed one ran without it, silently. That covers
   // the AI-agent path the template ships crewai, langgraph and
   // langchain-anthropic for: all installed, none of them able to authenticate.
-  const ownVars = await loadProjectEnvVars(projectId);
+  const ownVars = securityHold ? [] : await loadProjectEnvVars(projectId);
   if (ownVars.length > 0) {
     for (const { key, value } of ownVars) env += `${key}=${value}\n`;
     log(`Injected ${ownVars.length} project variable(s) from your settings`);
   }
 
   if (!env.trim()) {
-    log("No preview DB configured — skipping .env injection");
+    if (securityHold) {
+      await sandbox.files.write(`${PROJECT_DIR}/.env`, "");
+      sandboxSecrets.delete(projectId);
+      log("Security hold active — cleared the preview environment file and all injected secrets");
+    } else {
+      log("No database credentials configured for this project — skipping .env injection");
+    }
     return;
   }
   try {
@@ -2010,6 +2102,34 @@ async function awaitWarming(projectId: string): Promise<void> {
  * Throws if no live sandbox is held for the project — callers should guard
  * with `hasSandbox(projectId)` first.
  */
+
+/**
+ * Rewrite the preview environment after a security verdict changes. A live
+ * Vite/Node process has already read its old .env, so restart it after writing
+ * the credential policy. When no sandbox is live, the hold is still retained
+ * and createPreviewSandbox will apply it on the next start.
+ */
+export async function refreshPreviewEnvironment(
+  projectId: string,
+  onLog?: PreviewLogCallback,
+): Promise<boolean> {
+  await awaitWarming(projectId);
+  const sandbox = sandboxes.get(projectId);
+  if (!sandbox) return false;
+
+  const log = (line: string): void => {
+    onLog?.(line);
+    logger.debug({ projectId, line }, "[e2b:security-env]");
+  };
+  const framework = sandboxFrameworks.get(projectId) ?? "react";
+  await writePreviewEnv(sandbox, projectId, log);
+
+  await sandbox.commands.run(`pkill -f ${devKillPattern(framework)} || true`, { timeoutMs: 10_000 }).catch(() => {});
+  await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
+  await ensureDevServer(sandbox, log, framework);
+  return true;
+}
+
 export async function writeFilesToSandbox(
   projectId: string,
   files: Record<string, string>,
@@ -2146,6 +2266,9 @@ export async function ensurePreviewForProject(
       sandboxes.set(projectId, resumed);
       const framework = sandboxFrameworks.get(projectId) ?? persistedFramework ?? "react";
       sandboxFrameworks.set(projectId, framework);
+      // E2B snapshots retain the old process environment. Rebuild .env from
+      // the current durable security hold BEFORE restarting any app process.
+      await writePreviewEnv(resumed, projectId, log);
       await ensureDevServer(resumed, log, framework);
       return resumed;
     })().finally(() => warmingSandboxes.delete(projectId));
