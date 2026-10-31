@@ -5255,3 +5255,25 @@ deterministic repair loops are forced. The rest the model chose.
 
 Worth knowing before anyone tries to make simple builds faster by capping rounds:
 the thing that would be cut is the part that fixes the errors.
+
+
+## 2026-10-31 — security repair agent connected to non-bypassable release gates
+
+- Added one shared release-blocking policy for completed critical/high findings with
+  status `fail`. Warnings and skipped checks remain distinct; they are not passes.
+- The post-build security repair loop now dispatches through the dedicated `security`
+  agent in code-repair mode, rather than the generic backend agent. Its instructions
+  prohibit weakening, removing, bypassing or suppressing security controls. The
+  deterministic verifier remains the authority and re-runs after each repair attempt.
+- If critical/high findings remain after repair attempts, or the repair dispatch fails,
+  the build session is marked failed before preview creation.
+- The deploy tool re-scans the exact current in-memory file snapshot immediately before
+  sending files to Vercel. Scanner failure or unresolved critical/high findings block
+  deployment. High/critical warnings are explicitly marked NOT VERIFIED in the result.
+- Frontend, backend and database coding prompts now receive a secure-by-default contract
+  covering identity, ownership, validation, secrets, Supabase RLS, webhooks, CORS,
+  request limits and negative authorization tests.
+- These controls do not constitute a full dynamic penetration test, do not prove
+  multi-user isolation against a live database, and do not provide post-launch continuous
+  monitoring. Those remain separate work; no app should be described as fully secure
+  from this gate alone.
