@@ -21,10 +21,10 @@ jobs:
           node-version: '20.18.1'
           cache: npm
 
-      - name: Install locked baseline
-        run: npm ci
+      - name: Generate lockfile from the reviewed manifest
+        run: npm install --package-lock-only
 
-      - name: Apply semver-compatible audit fixes only
+      - name: Apply remaining semver-compatible audit fixes
         shell: bash
         run: |
           set +e
