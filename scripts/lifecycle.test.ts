@@ -248,7 +248,7 @@ check(
 // saved on a server" about a database it had just written to.
 check(
   "a schema that applied counts as a connected database",
-  build.includes("databaseConnected: ownSupabaseConnected || schemaApply?.ok === true"),
+  build.includes("databaseConnected: !securityIsolationRequired && (ownSupabaseConnected || ownMongoConnected || schemaApply?.ok === true)"),
 );
 
 // The row has to agree with the gates, not with the model's summary.
