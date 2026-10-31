@@ -2598,8 +2598,26 @@ export async function runFastBuild(
         }
       }
 
-      const holdChanged = setProjectPreviewSecurityHold(projectId, securityIsolationRequired);
-      if (securityIsolationRequired || holdChanged) {
+      let holdChanged = false;
+      try {
+        holdChanged = await setProjectPreviewSecurityHold(projectId, securityIsolationRequired);
+      } catch (holdErr) {
+        logger.error({ sessionId, projectId, holdErr }, "Could not persist preview security isolation state");
+        // A hold that cannot survive an API restart is not safe to treat as
+        // isolated. Keep the live preview closed rather than risk restoring a
+        // snapshot with stale database or third-party credentials.
+        securityPreviewBlocked = true;
+        if (securityOutcome) {
+          securityOutcome.previewIsolated = false;
+          securityOutcome.previewBlocked = true;
+        }
+        await killSandbox(projectId).catch(() => {});
+        server?.emitPreviewError(sessionId, {
+          sessionId,
+          message: "Preview withheld because its security isolation state could not be saved safely. Your source code is retained; retry after the platform storage connection recovers.",
+        });
+      }
+      if (!securityPreviewBlocked && (securityIsolationRequired || holdChanged)) {
         try {
           await refreshPreviewEnvironment(projectId, (line) =>
             server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
