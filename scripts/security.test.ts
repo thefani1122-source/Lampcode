@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  runSecurityChecksSafely,
   type FileTree,
 } from "../src/verify/security.js";
 
@@ -315,7 +316,7 @@ console.log("\n— both run in the build —");
   ok("and runSecurityChecks is what the build calls", build.includes("runSecurityChecks(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
 
-  const scanCall = "report = await runSecurityChecks(projectId, async () => fileTree)";
+  const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
   const scanStart = build.indexOf(scanCall);
   const normalVerdict = build.indexOf("const failing = report.checks.filter", scanStart);
   const scanFailureHandling =
@@ -326,6 +327,7 @@ console.log("\n— both run in the build —");
   ok(
     "a scanner exception is not converted into an empty passing report",
     scanFailureHandling.length > 0 &&
+      scanFailureHandling.includes("if (!scanResult.ok)") &&
       !scanFailureHandling.includes("passed: true") &&
       !scanFailureHandling.includes("checks: []"),
   );
@@ -388,6 +390,20 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   ok("the prompt requires DEFAULT auth.uid() on owner columns", prompt.includes("DEFAULT auth.uid() REFERENCES auth.users(id)"));
   ok("and binding the owner in the INSERT policy", prompt.includes("WITH CHECK (auth.uid() = created_by)"));
   ok("and says a shared table still scopes its writes", prompt.includes("A shared table still"));
+}
+
+
+// The safe runner must preserve scanner failure as an unavailable result.
+{
+  const expectedError = new Error("simulated scanner failure");
+  const result = await runSecurityChecksSafely("project-test", async () => {
+    throw expectedError;
+  });
+  ok("scanner errors are returned as unavailable, not thrown or passed", !result.ok);
+  ok(
+    "the original scanner error is retained for diagnostics",
+    !result.ok && result.error === expectedError,
+  );
 }
 
 if (failures > 0) {
