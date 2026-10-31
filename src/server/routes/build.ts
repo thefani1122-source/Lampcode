@@ -2413,7 +2413,7 @@ export async function runFastBuild(
       }
     }
 
-    // ── Independent security verifier → repair agent → re-verification ─────
+    // ── Security validation + auto-fix (independent verifier → repair agent) ──
     // The builder cannot approve its own work. The verifier sends concrete
     // findings AND the complete affected files to a separate repair dispatch,
     // then scans the exact changed file map again. A warning is not silently
