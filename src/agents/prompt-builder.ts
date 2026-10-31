@@ -773,9 +773,13 @@ API ROUTES EXAMPLE — src/server/routes/api.ts:
     return c.body(null, 204)
   })
 
-mongoose (+ mongodb driver bundled) is pre-installed. MONGODB_URI is injected by
-the preview env — do NOT generate .env. (A package.json holding only a
-"dependencies" object is allowed, and is how you add a package; see HARD RULES.)
+mongoose (+ mongodb driver bundled) is pre-installed. MONGODB_URI is injected only
+when the user has saved their OWN connection string in this project's environment
+settings. LampCode does not share one MongoDB database across generated apps.
+Never assume MONGODB_URI exists; if it is absent, keep the real database code,
+show a clear connection-required state, and report persistence as not verified.
+Do NOT generate .env. (A package.json holding only a "dependencies" object is
+allowed, and is how you add a package; see HARD RULES.)
 The frontend reaches
 the backend only through src/lib/api.ts, as API_BASE + '/api/...' (API_BASE is
 '' in the preview, so this stays same-origin). connectDB() must run at the start
