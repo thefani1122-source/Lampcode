@@ -336,6 +336,19 @@ console.log("\n— both run in the build —");
     build.includes('agentType: "security"') && build.includes('usageCategory: "security_fix"'));
   ok("the security repair agent is told not to weaken controls",
     build.includes("Never weaken, remove, bypass or suppress a security control or test"));
+  const previewGateStart = build.lastIndexOf("if (wantsE2BPreview)");
+  const finalScanStart = build.indexOf("runSecurityChecksSafely(", previewGateStart);
+  const sandboxWriteStart = build.indexOf("writeFilesToSandbox(", previewGateStart);
+  const sandboxCreateStart = build.indexOf("createPreviewSandbox(", previewGateStart);
+  ok("the final allFiles snapshot is re-scanned before preview writes or creation",
+    previewGateStart >= 0 &&
+    finalScanStart > previewGateStart &&
+    sandboxWriteStart > finalScanStart &&
+    sandboxCreateStart > finalScanStart);
+  ok("final scanner failure blocks the preview chain",
+    build.includes("Final security verification unavailable — blocking preview"));
+  ok("final critical/high regressions block the preview chain",
+    build.includes("Final security findings — blocking preview"));
 
   const scanCall = "runSecurityChecksSafely(projectId, async () => fileTree)";
   const scanStart = build.indexOf(scanCall);
