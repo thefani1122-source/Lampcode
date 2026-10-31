@@ -684,6 +684,23 @@ CREATE POLICY "team_member_insert" ON {table_name} FOR INSERT WITH CHECK (
   EXISTS (SELECT 1 FROM team_members WHERE team_members.team_id = {table_name}.team_id AND team_members.user_id = auth.uid())
 );
 
+MULTI-TENANT AND PROFILE SECURITY — DO NOT INFER THIS FROM RLS BEING ENABLED:
+- A user's ability to update their own profile row does NOT grant permission to update role,
+  organization_id, tenant_id, is_admin, permissions, billing state or ownership fields.
+  Protect privileged columns with column-level UPDATE grants, a guarded database trigger,
+  or a narrowly scoped server-side admin operation. Never let a user self-promote.
+- Never write an RLS policy on profiles that queries profiles again in its predicate.
+  That can recursively invoke the same policy. Use a narrowly scoped SECURITY DEFINER
+  membership helper only when needed; set a fixed search_path, schema-qualify referenced
+  objects, revoke EXECUTE from PUBLIC/anon, and grant only the minimum required role.
+- For organization-owned rows, check membership in the organization/team membership table.
+  Do NOT compare auth.uid() directly to organization_id or tenant_id: those are different IDs.
+- INSERT policies must bind the new row to an organization the caller actually belongs to.
+  UPDATE policies need both USING and WITH CHECK semantics so a row cannot be moved into
+  another tenant by changing organization_id/team_id in the request.
+- Role-specific actions (owner/admin/member) must be checked server-side and, where possible,
+  enforced by database policies too. Hiding a frontend button is not authorization.
+
 NEVER FAKE A FEATURE TO MAKE IT LOOK FIXED — no exception, ever:
 - Do NOT add a "demo mode", mock data, an in-memory store, or a localStorage
   fallback because an API call is failing. That makes a broken feature LOOK
