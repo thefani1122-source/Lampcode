@@ -1,8 +1,5 @@
 name: Temporary dependency audit remediation
 on:
-  push:
-    branches:
-      - chore/dependency-audit-fix-20261031
   pull_request:
     branches:
       - main
@@ -43,6 +40,8 @@ jobs:
             echo "No package-lock changes to commit"
           else
             git commit -m "chore(security): update patched dependency lockfile [skip ci]"
+            git fetch origin chore/dependency-audit-fix-20261031
+            git rebase origin/chore/dependency-audit-fix-20261031
             git push origin HEAD:chore/dependency-audit-fix-20261031
           fi
 
