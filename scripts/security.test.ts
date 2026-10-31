@@ -314,6 +314,35 @@ console.log("\n— both run in the build —");
   const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
   ok("and runSecurityChecks is what the build calls", build.includes("runSecurityChecks(projectId"));
   ok("neither can abort the build", build.includes('c.id.startsWith("secret-") || c.id.startsWith("packages-undeclared-")'));
+
+  const scanCall = "report = await runSecurityChecks(projectId, async () => fileTree)";
+  const scanStart = build.indexOf(scanCall);
+  const normalVerdict = build.indexOf("const failing = report.checks.filter", scanStart);
+  const scanFailureHandling =
+    scanStart >= 0 && normalVerdict > scanStart
+      ? build.slice(scanStart, normalVerdict)
+      : "";
+
+  ok(
+    "a scanner exception is not converted into an empty passing report",
+    scanFailureHandling.length > 0 &&
+      !scanFailureHandling.includes("passed: true") &&
+      !scanFailureHandling.includes("checks: []"),
+  );
+  ok(
+    "a scanner exception emits a failed build event",
+    scanFailureHandling.includes("server?.buildFailed(sessionId") &&
+      scanFailureHandling.includes("Security verification could not complete"),
+  );
+  ok(
+    "a scanner exception persists failed session and project states",
+    scanFailureHandling.includes('.set({ status: "failed", error: reason, completedAt: new Date() })') &&
+      scanFailureHandling.includes('db.update(projects).set({ status: "failed" })'),
+  );
+  ok(
+    "the build returns before normal security findings or preview work continue",
+    scanFailureHandling.includes("return;"),
+  );
 }
 
 // ── An INSERT that does not bind the owner column ───────────────────────────
