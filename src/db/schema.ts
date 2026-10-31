@@ -434,6 +434,7 @@ export type BuildOutcome = {
       message: string;
     }>;
     repairAttempts: number;
+    credentialRotationRecommended: boolean;
     previewIsolated: boolean;
     previewBlocked: boolean;
   };
