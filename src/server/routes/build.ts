@@ -2420,14 +2420,13 @@ export async function runFastBuild(
       const MAX_SECURITY_FIX_ATTEMPTS = 2;
       let lastSecurityFingerprint = "";
       let repairAttempts = 0;
+      let credentialExposureDetected = false;
       let latestFindings: SecurityCheck[] = [];
-      let scanUnavailable = false;
 
       for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
         const fileTree: FileTree = new Map(Object.entries(allFiles));
         const scanResult = await runSecurityChecksSafely(projectId, async () => fileTree);
         if (!scanResult.ok) {
-          scanUnavailable = true;
           logger.error({ sessionId, projectId, err: scanResult.error, attempt }, "Security verifier unavailable");
           if (attempt < MAX_SECURITY_FIX_ATTEMPTS) {
             server?.thinking(sessionId, {
@@ -2439,7 +2438,6 @@ export async function runFastBuild(
           break;
         }
 
-        scanUnavailable = false;
         latestFindings = scanResult.report.checks.filter((check) => check.status === "fail");
         if (latestFindings.length === 0) break;
 
@@ -2464,6 +2462,9 @@ export async function runFastBuild(
           break;
         }
         const hardBlocked = latestFindings.filter(isHardBlockSecurityCheck);
+        if (hardBlocked.some((finding) => finding.id.startsWith("secret-"))) {
+          credentialExposureDetected = true;
+        }
         const findingText = latestFindings.map((check) =>
           `- [${check.severity.toUpperCase()}] ${check.id}${check.file ? ` ${check.file}${check.line ? `:${check.line}` : ""}` : ""}: ${check.message}`
         ).join("\n");
@@ -2543,6 +2544,7 @@ export async function runFastBuild(
           status: "not-verified",
           findings: [],
           repairAttempts,
+          credentialRotationRecommended: credentialExposureDetected,
           previewIsolated: true,
           previewBlocked: false,
         };
@@ -2567,6 +2569,7 @@ export async function runFastBuild(
             message: finding.message,
           })),
           repairAttempts,
+          credentialRotationRecommended: credentialExposureDetected,
           previewIsolated: securityIsolationRequired && !securityPreviewBlocked,
           previewBlocked: securityPreviewBlocked,
         };
