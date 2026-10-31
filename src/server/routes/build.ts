@@ -2438,7 +2438,7 @@ export async function runFastBuild(
           break;
         }
 
-        latestFindings = scanResult.report.checks.filter((check) => check.status === "fail");
+        latestFindings = blockingSecurityFindings(scanResult.report.checks);
         if (latestFindings.length === 0) break;
 
         const fingerprint = latestFindings
@@ -2549,7 +2549,6 @@ export async function runFastBuild(
           previewBlocked: false,
         };
         securityIsolationRequired = true;
-        scanUnavailable = true;
         logger.error({ sessionId, projectId, err: finalSecurityScan.error }, "Final security verification unavailable — isolating preview and blocking deploy");
         server?.emitToRoom(sessionId, "build:warning", {
           sessionId,
@@ -2607,6 +2606,9 @@ export async function runFastBuild(
         }
       }
       if (securityPreviewBlocked) {
+        await killSandbox(projectId).catch((err) =>
+          logger.error({ sessionId, projectId, err }, "Could not stop preview after unresolved client secret finding"),
+        );
         server?.emitPreviewError(sessionId, {
           sessionId,
           message: "Preview withheld because an unresolved secret exposure or credential-isolation failure could expose private credentials. Fix the security finding before opening a live preview.",
@@ -4565,7 +4567,7 @@ export async function runFastBuild(
     const fullstackEvidence = fullstackRequested
       ? {
           requested: isFullstackBuild,
-          browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && !ownSupabaseConnected,
+          browserOnlyPersistence: writesBrowserStorage && backendFileCount === 0 && (!ownSupabaseConnected || securityIsolationRequired),
           backendFiles: backendFileCount,
           // `ownSupabaseConnected` is decided at the TOP of the build, and the
           // database card can be answered while the build is still running —
@@ -4795,7 +4797,11 @@ export async function runFastBuild(
         // The tables are the difference between a connected database and a
         // working one. A failure here used to reach a log line and nothing
         // else, while the closing message said the build was complete.
-        if (fs.schemaApply?.ran === false && fs.schemaApply.error === "no Supabase connected") {
+        if (fs.schemaApply?.ran === false && fs.schemaApply.error?.startsWith("Skipped because security verification is unresolved")) {
+          closingLines.push(
+            "• Tables: I deliberately did NOT apply this schema to your connected database because security verification is unresolved. Your database was left unchanged.",
+          );
+        } else if (fs.schemaApply?.ran === false && fs.schemaApply.error === "no Supabase connected") {
           closingLines.push(
             "• Tables: I wrote the schema but there was no database to create it in, so every save will fail until you connect one.",
           );
@@ -4844,6 +4850,9 @@ export async function runFastBuild(
     // What the build did about what the audit found. Said here as well as in
     // the live stream, because this block is what the user can scroll back to.
     if (auditRepair) closingLines.push(repairStatusLine(auditRepair));
+    if (securityOutcome?.credentialRotationRecommended && securityOutcome.status === "passed") {
+      closingLines.push("• Security: a credential-shaped value was found and removed during repair. If it was a real credential, rotate it because it may already have been exposed.");
+    }
     if (securityOutcome?.status === "needs-attention") {
       closingLines.push(
         securityPreviewBlocked
