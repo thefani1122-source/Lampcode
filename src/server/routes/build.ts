@@ -2419,9 +2419,34 @@ export async function runFastBuild(
       let lastSecurityFingerprint = "";
       for (let attempt = 0; attempt <= MAX_SECURITY_FIX_ATTEMPTS; attempt++) {
         const fileTree: FileTree = new Map(Object.entries(allFiles));
-        const report: SecurityReport = await runSecurityChecks(projectId, async () => fileTree).catch(
-          (): SecurityReport => ({ passed: true, checks: [] }),
-        );
+        let report: SecurityReport;
+        try {
+          report = await runSecurityChecks(projectId, async () => fileTree);
+        } catch (scanError) {
+          // A scan that did not complete is not evidence that the project is safe.
+          // Stop before emitting backendReady or creating a preview sandbox.
+          const reason =
+            "Security verification could not complete. This build was stopped because its security status is unknown. Please retry; if the problem continues, contact support.";
+          logger.error(
+            { sessionId, projectId, err: scanError },
+            "Security verification unavailable — blocking build",
+          );
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+          ]);
+          console.log("[build] security verification unavailable, build aborted");
+          return;
+        }
         const failing = report.checks.filter((c) => c.status === "fail");
         if (failing.length === 0) break;
 
