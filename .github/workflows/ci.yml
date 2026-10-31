@@ -54,6 +54,58 @@ jobs:
       - name: Build
         run: npm run build
 
+
+  # TEMPORARY: runs only on PR #12 to produce an audited lockfile artifact.
+  # This probe is removed before any dependency change is proposed for merge.
+  dependency-remediation-probe:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.1'
+          cache: npm
+
+      - name: Install the committed baseline
+        run: npm ci
+
+      - name: Apply semver-compatible fixes without major upgrades
+        shell: bash
+        run: |
+          set +e
+          npm audit fix --package-lock-only --json > audit-fix-report.json
+          fix_code=$?
+          echo "AUDIT_FIX_EXIT=$fix_code"
+          set -e
+
+      - name: Verify the resulting lockfile installs cleanly
+        run: npm ci
+
+      - name: Typecheck, test and build the resulting dependency tree
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Capture package and audit evidence
+        shell: bash
+        run: |
+          mkdir -p dependency-audit-artifact
+          cp package.json package-lock.json dependency-audit-artifact/
+          cp audit-fix-report.json dependency-audit-artifact/
+          npm audit --omit=dev --json > dependency-audit-artifact/audit-report-after.json || true
+          npm audit --json > dependency-audit-artifact/audit-report-all.json || true
+          npm ls --all --json > dependency-audit-artifact/npm-tree.json || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lampcode-dependency-audit-remediation
+          path: dependency-audit-artifact/
+          if-no-files-found: error
+          retention-days: 3
+
   audit:
     runs-on: ubuntu-latest
     # Advisory. A new advisory against a transitive dependency is not a reason
