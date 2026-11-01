@@ -602,7 +602,12 @@ export async function runSecurityChecks(
     ...checkSecrets(files),
     ...checkPackages(files),
   ];
-  return { passed: checks.every((c) => c.status !== "fail"), checks };
+  // "passed" must match the release policy: a high/critical warning means
+  // the required property was not established, just like a failed check.
+  const passed =
+    checks.every((c) => c.status !== "fail") &&
+    blockingSecurityFindings(checks).length === 0;
+  return { passed, checks };
 }
 
 /** Result of attempting a security scan. A failed scan is not a clean scan. */
