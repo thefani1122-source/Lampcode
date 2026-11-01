@@ -2523,13 +2523,13 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         }
 
         const fixDescription =
-          \`These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation). The complete affected source files are supplied in context; inspect them before editing. Fix the underlying security property, not just the scanner message.\n\n\` +
+          `These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation). The complete affected source files are supplied in context; inspect them before editing. Fix the underlying security property, not just the scanner message.\n\n` +
           failing
-            .map((c) => \`- [\${c.id}]\${c.file ? \` \${c.file}\${c.line ? \`:\${c.line}\` : ""} —\` : ""} \${c.message}\`)
+            .map((c) => `- [${c.id}]${c.file ? ` ${c.file}${c.line ? `:${c.line}` : ""} —` : ""} ${c.message}`)
             .join("\n");
 
         // Supply the actual affected source files to the repair agent. The RLS
-        // warning may not carry a file path, so include the app's schema/migrations.
+        // warning may not carry a file path, so include the app schema/migrations.
         const schemaContextPaths = failing.some((c) => c.id === "rls-enabled")
           ? Object.keys(allFiles).filter((path) =>
               /(?:schema|migration|\/db\/)/i.test(path) && /\.(?:sql|ts|js)$/.test(path),
