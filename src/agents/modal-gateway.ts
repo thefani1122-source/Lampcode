@@ -14,7 +14,6 @@
  */
 
 import { noteImageRejection } from "./vision.js";
-import { ReasoningTagSplitter } from "./reasoning-tag-splitter.js";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import {
@@ -322,10 +321,6 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
 
   logger.debug({ model: modelName }, "OpenAI-compatible stream");
 
-  // One splitter per stream: it carries tag state across chunks, so an
-  // opening tag split over two deltas still routes as reasoning.
-  const splitter = new ReasoningTagSplitter();
-
   const body = {
     model: modelName,
     messages: toOpenAiMessages(req.messages),
@@ -425,16 +420,7 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     const only = whole.choices?.[0];
     const message = only?.message;
     if (message?.content) {
-      for (const piece of splitter.feed(message.content)) {
-        yield piece.kind === "reasoning"
-          ? { type: "reasoning", reasoning: piece.text }
-          : { type: "content", content: piece.text };
-      }
-      for (const piece of splitter.flush()) {
-        yield piece.kind === "reasoning"
-          ? { type: "reasoning", reasoning: piece.text }
-          : { type: "content", content: piece.text };
-      }
+      yield { type: "content", content: message.content };
     }
 
     let emitted = false;
@@ -526,17 +512,7 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
         const choice = event.choices?.[0];
         if (!choice) continue;
 
-        if (choice.delta.content) {
-          // MiniMax M2/M2.5 through an OpenAI-compatible endpoint puts its
-          // reasoning inline in `content` wrapped in think tags, leaving
-          // `reasoning_content` empty. Split the tagged regions out here;
-          // models that never emit the tags pass through untouched.
-          for (const piece of splitter.feed(choice.delta.content)) {
-            yield piece.kind === "reasoning"
-              ? { type: "reasoning", reasoning: piece.text }
-              : { type: "content", content: piece.text };
-          }
-        }
+
         if (choice.delta.reasoning_content) {
           yield { type: "reasoning", reasoning: choice.delta.reasoning_content };
         }

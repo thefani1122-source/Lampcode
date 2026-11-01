@@ -125,7 +125,7 @@ check(
 {
   const handler = readFileSync(new URL("../src/agents/stream-handler.ts", import.meta.url), "utf8");
   check("the narration path is filtered", handler.includes("pseudoFilter.push(text)"));
-  check("the reasoning path is filtered too", handler.includes("pseudoReasoning.push(chunk.reasoning)"));
+  check("the reasoning path is filtered too", handler.includes("pseudoReasoning.push(text)") && handler.includes("reasoningRouter.feed(chunk)"));
   check("held-back text is released at the end", handler.includes("pseudoFilter.flush()"));
   check(
     "fullContent is NOT filtered — the parser and the replay must see what arrived",

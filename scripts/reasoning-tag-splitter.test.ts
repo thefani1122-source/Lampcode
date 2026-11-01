@@ -5,6 +5,7 @@
  * reasoning lands in the chat content (or nowhere) instead of the thinking row.
  */
 import { ReasoningTagSplitter } from "../src/agents/reasoning-tag-splitter.js";
+const LT = String.fromCharCode(60), GT = String.fromCharCode(62), CLOSE = LT + String.fromCharCode(47);
 
 function check(name: string, got: unknown, want: unknown): void {
   const pass = JSON.stringify(got) === JSON.stringify(want);
@@ -61,6 +62,24 @@ check("several think blocks in one stream", kinds(run(["<infer>a</infer>mid<infe
   "content:mid",
   "reasoning:b",
   "content:end",
+]);
+
+check("thought tag family", kinds(run(["a" + LT + "thought" + GT + "hmm" + CLOSE + "thought" + GT + "b"])), [
+  "content:a",
+  "reasoning:hmm",
+  "content:b",
+]);
+
+check("bracket tag family", kinds(run(["x[REASONING]step[/REASONING]y"])), [
+  "content:x",
+  "reasoning:step",
+  "content:y",
+]);
+
+check("bracket tag split across chunks", kinds(run(["q[RE", "ASONING]z[/RE", "ASONING]w"])), [
+  "content:q",
+  "reasoning:z",
+  "content:w",
 ]);
 
 console.log("All reasoning-tag-splitter cases passed.");

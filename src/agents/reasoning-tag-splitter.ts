@@ -21,11 +21,13 @@
 
 export type ReasoningPiece = { kind: "content" | "reasoning"; text: string }
 
-const OPENING = ["<think", "<infer"]
-const CLOSING = ["</think", "</infer"]
+// Tag families the splitter recognises. Angle tags may carry attributes and
+// self-close (M2.5 emits `<think/>`); bracket tags are matched exactly.
+const OPENING = ["<think", "<infer", "<reasoning", "<thought", "[REASONING]", "[THINK]"]
+const CLOSING = ["</think", "</infer", "</reasoning", "</thought", "[/REASONING]", "[/THINK]"]
 
-const OPEN_RE = /<(?:think|infer)(?:\s[^>]*)?\/?>/i
-const CLOSE_RE = /<\/(?:think|infer)>/i
+const OPEN_RE = /<(?:think|infer|reasoning|thought)(?:\s[^>]*)?\/?>|\[(?:REASONING|THINK)\]/i
+const CLOSE_RE = /<\/(?:think|infer|reasoning|thought)>|\[\/(?:REASONING|THINK)\]/i
 
 /** Longest suffix of `text` that is a proper prefix of one of `literals`. */
 function trailingPartialTagLength(text: string, literals: string[]): number {

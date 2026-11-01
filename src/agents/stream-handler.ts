@@ -5,6 +5,7 @@ import type { StreamChunk } from "./model-gateway.js"
 import { parseFilesFromContent } from "./file-parser.js"
 import { narrateTool } from "./tool-narration.js"
 import { PseudoToolFilter } from "./pseudo-tools.js"
+import { ReasoningRouter } from "./reasoning-router.js"
 
 // Re-export so dispatcher.ts can still do:
 //   import { type StreamChunk as HandlerStreamChunk } from "./stream-handler.js"
@@ -22,6 +23,11 @@ export interface StreamResult {
   stopReason?: string | undefined
   toolCalls: Array<{ id: string; name: string; arguments: string }>
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>
+  /** The model's turn as it originally wrote it — reasoning tags included —
+   *  for the tool loop's conversation history. MiniMax's M-series requires the
+   *  interleaved thinking to be preserved across rounds; sending the split
+   *  content back quietly degraded every round after the first. */
+  historyText: string
   /** Tool names the model TYPED as text instead of calling. Empty is the normal
    *  case; non-empty means a round produced pseudo-tool markup, which was kept
    *  out of the user's chat and is a lost round. See pseudo-tools.ts. */
@@ -113,6 +119,10 @@ export async function handleAgentStream(
   const pseudoFilter = new PseudoToolFilter()
   const pseudoReasoning = new PseudoToolFilter()
 
+  // Every chunk passes through the router: it is the single place that
+  // decides reasoning vs content, whatever shape the provider delivered.
+  const reasoningRouter = new ReasoningRouter()
+
   // ── Kick off with an immediate progress message so the chat panel isn't blank
   narrate("build:thinking", {
     text: "Understanding your request",
@@ -120,70 +130,79 @@ export async function handleAgentStream(
     internal: true,
   })
 
+  // The content pipeline, applied to every CONTENT piece the router returns
+  // (a chunk may carry several: tagged reasoning split out of the middle).
+  const handleContentText = (text: string): void => {
+    if (!text) return
+    fullContent += text
+    contentChunkCount++
+    console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
+
+    if (!codeStarted && (/```/.test(fullContent) || /^#{1,4}\s+\S+\.\w{1,10}\s*$/m.test(fullContent))) {
+      codeStarted = true
+    }
+
+    // Keep parsing typed tool syntax for diagnostics, but do not expose
+    // model planning prose as if it were a progress report.
+    pseudoFilter.push(text)
+
+    if (codeStarted) {
+      // Detect file transitions — scan only when fence count may have changed.
+      const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
+      if (fenceMatches.length > lastFenceCount) {
+        lastFenceCount = fenceMatches.length
+        const capturedFile = fenceMatches[fenceMatches.length - 1]?.[1]?.trim()
+        if (capturedFile && capturedFile !== lastEmittedWritingFile) {
+          if (lastEmittedWritingFile) {
+            emit("build:file_done", { filename: lastEmittedWritingFile, sessionId })
+          }
+          emit("build:file_writing", { filename: capturedFile, sessionId })
+          lastEmittedWritingFile = capturedFile
+        }
+      }
+    }
+  }
+
+  // The reasoning pipeline, applied to every REASONING piece (provider field
+  // or split out of content tags — the chat cannot tell and should not).
+  const handleReasoningText = (text: string): void => {
+    if (!text) return
+    // Still feed the pseudo-tool filter so typed tool syntax is detected
+    // and kept out of the chat.
+    pseudoReasoning.push(text)
+    // Stream the model's actual reasoning to the chat, delta by delta.
+    // The client appends every chunk to the thinking row it already has
+    // open, so the user watches ONE paragraph grow live — the way Claude
+    // Code shows it. `internal: false` is what separates this from pipeline
+    // narration: the client routes internal events to its live activity
+    // line, and only `internal: false` lands in the transcript. Silent
+    // agent types (planning, audit, review, acceptance) never reach the
+    // chat — narrate() drops them, since their "thinking" is structured
+    // JSON for the system, not prose a person should watch.
+    narrate("build:thinking", { text, internal: false, sessionId })
+  }
+
+  const processPieces = (pieces: ReturnType<ReasoningRouter["feed"]>): void => {
+    for (const piece of pieces) {
+      if (piece.kind === "reasoning") handleReasoningText(piece.text)
+      else handleContentText(piece.text)
+    }
+  }
+
   // ── Stream loop ─────────────────────────────────────────────────────────────
   try {
     for await (const chunk of generator) {
       chunkCount++
 
+      if (chunk.type === "content" || chunk.type === "reasoning") {
+        // Text-like chunks go through the router first: it splits tagged
+        // reasoning out of content and records what arrived, so a blank
+        // thinking row can always be explained from the round's log.
+        processPieces(reasoningRouter.feed(chunk))
+        continue
+      }
+
       switch (chunk.type) {
-        // Reasoning / thinking tokens (DeepSeek R1, Claude extended thinking, o1, etc.)
-        case "reasoning":
-          // Still feed the pseudo-tool filter so typed tool syntax is detected
-          // and kept out of the chat.
-          if (chunk.reasoning) {
-            pseudoReasoning.push(chunk.reasoning)
-            // Stream the model's actual reasoning to the chat, delta by delta.
-            // The client appends every chunk to the thinking row it already has
-            // open, so the user watches ONE paragraph grow live — the way Claude
-            // Code shows it — instead of a stack of one-second "Thought for 1s"
-            // boxes fed by status lines. `internal: false` is what separates this
-            // from pipeline narration: the client routes internal events to its
-            // live activity line, and only `internal: false` lands in the
-            // transcript. Silent agent types (planning, audit, review,
-            // acceptance) never reach the chat — narrate() drops them, since
-            // their "thinking" is structured JSON for the system, not prose a
-            // person should watch.
-            narrate("build:thinking", { text: chunk.reasoning, internal: false, sessionId })
-          }
-          break
-
-        // Normal response tokens
-        case "content": {
-          // Accumulate unconditionally — ALWAYS first, before any branch
-          const text = chunk.content ?? ""
-          fullContent += text
-
-          if (!text) break
-
-          contentChunkCount++
-          console.log(`[stream] content chunk #${contentChunkCount}, len=${text.length}, total=${fullContent.length}`)
-
-          if (!codeStarted && (/```/.test(fullContent) || /^#{1,4}\s+\S+\.\w{1,10}\s*$/m.test(fullContent))) {
-            codeStarted = true
-          }
-
-          // Keep parsing typed tool syntax for diagnostics, but do not expose
-          // model planning prose as if it were a progress report.
-          pseudoFilter.push(text)
-
-          if (codeStarted) {
-            // Detect file transitions — scan only when fence count may have changed.
-            const fenceMatches = [...fullContent.matchAll(/```filename:([^\n]+)/g)]
-            if (fenceMatches.length > lastFenceCount) {
-              lastFenceCount = fenceMatches.length
-              const capturedFile = fenceMatches[fenceMatches.length - 1]?.[1]?.trim()
-              if (capturedFile && capturedFile !== lastEmittedWritingFile) {
-                if (lastEmittedWritingFile) {
-                  emit("build:file_done", { filename: lastEmittedWritingFile, sessionId })
-                }
-                emit("build:file_writing", { filename: capturedFile, sessionId })
-                lastEmittedWritingFile = capturedFile
-              }
-            }
-          }
-          break
-        }
-
         // Tool-call announced by the model (before execution)
         case "tool_call":
           if (chunk.toolCall) {
@@ -241,6 +260,9 @@ export async function handleAgentStream(
           break
       }
     }
+    // The splitter may still hold a partial tag or an unclosed block — flush
+    // it so the tail of the reasoning is not dropped.
+    processPieces(reasoningRouter.flush())
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     emit("build:error", { message, sessionId })
@@ -263,6 +285,18 @@ export async function handleAgentStream(
 
   console.log(`[stream] loop done: totalChunks=${chunkCount} contentChunks=${contentChunkCount} fullContentLen=${fullContent.length} stopReason=${stopReason}`)
 
+  // The round's reasoning verdict. This line is the contract that makes a
+  // blank thinking row diagnosable from logs alone: it states whether the
+  // model produced reasoning at all, which channel delivered it, how much,
+  // and how it opened. If a user reports "no thinking", this line answers
+  // everything without touching the frontend.
+  const reasoning = reasoningRouter.stats()
+  console.log(
+    `[reasoning] summary: via=${reasoning.via} chunks=${reasoning.reasoningChunks} ` +
+    `chars=${reasoning.reasoningChars} contentChars=${reasoning.contentChars}` +
+    (reasoning.firstSample ? ` first="${reasoning.firstSample.replace(/\s+/g, " ").slice(0, 120)}"` : " first=<none>"),
+  )
+
   // Close the last file that was being written
   if (lastEmittedWritingFile) {
     emit("build:file_done", { filename: lastEmittedWritingFile, sessionId })
@@ -277,9 +311,13 @@ export async function handleAgentStream(
   }
 
   // ── Write raw LLM output to disk (for audit / replay) ──────────────────────
+  const historyText = reasoningRouter.historyText()
   try {
     await mkdir(dirname(outputPath), { recursive: true })
-    await writeFile(outputPath, fullContent, "utf-8")
+    // historyText, not fullContent: the disk copy is the model's raw turn
+    // (thinking tags included) for audit / replay, and the router rebuilt it
+    // byte-faithfully from the pieces it saw.
+    await writeFile(outputPath, historyText, "utf-8")
   } catch (err) {
     console.error("[StreamHandler] Output file write failed:", err)
   }
@@ -317,5 +355,5 @@ export async function handleAgentStream(
     // Emitting here too caused a duplicate event reaching the frontend.
   }
 
-  return { content: fullContent, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, stopReason, toolCalls, mcpToolCalls, pseudoToolNames: typedToolNames }
+  return { content: fullContent, historyText, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, stopReason, toolCalls, mcpToolCalls, pseudoToolNames: typedToolNames }
 }

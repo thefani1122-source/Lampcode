@@ -696,7 +696,10 @@ export class AgentDispatcher {
         );
         messages.push({
           role: "assistant",
-          content: streamResult.content || "(no output)",
+          // historyText: the model's own turn with its thinking tags intact —
+          // MiniMax's M-series requires the interleaved reasoning to be
+          // preserved when the turn is replayed into the next round.
+          content: streamResult.historyText || streamResult.content || "(no output)",
         });
         messages.push({ role: "user", content: PSEUDO_TOOL_CORRECTION });
         continue;
@@ -733,7 +736,12 @@ export class AgentDispatcher {
       // Replay the assistant's turn (text + the tool_use block(s) it made),
       // execute each tool, then supply the results as the next user turn.
       const assistantBlocks: MessageContentBlock[] = [];
-      if (streamResult.content) assistantBlocks.push({ type: "text", text: streamResult.content });
+      // Same reasoning as the pseudo-tool replay above: the assistant turn is
+      // replayed with its thinking tags intact so the next round sees the
+      // model's complete prior output, the way it wrote it.
+      if (streamResult.historyText || streamResult.content) {
+        assistantBlocks.push({ type: "text", text: streamResult.historyText || streamResult.content });
+      }
       for (const tc of streamResult.toolCalls) {
         let input: unknown = {};
         try { input = JSON.parse(tc.arguments || "{}"); } catch { /* executeTool re-parses and reports the same error */ }
