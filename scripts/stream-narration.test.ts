@@ -78,8 +78,10 @@ for (const agentType of ["acceptance", "audit", "review", "planning"]) {
   check(`${agentType} narrates nothing to the user`, await narrationFor(agentType), 0);
 }
 
-// The build agent reports a concise, typed phase. Provider reasoning and
-// pre-code planning prose are not progress events and must stay private.
+// The build agent reports a concise, typed phase AND streams its provider
+// reasoning to the chat (2026-10-31): the thinking row shows what the model
+// is weighing, the way Claude Code does. Pre-code planning prose in `content`
+// (the criteria JSON) is still not progress and stays out of the chat.
 for (const agentType of ["frontend", "backend", "fix"]) {
   const { events, wsServer } = recorder();
   await handleAgentStream(reasoningThenText() as never, {
@@ -90,12 +92,15 @@ for (const agentType of ["frontend", "backend", "fix"]) {
     wsServer: wsServer as never,
   });
   const thinking = events.filter((event) => event.event === "build:thinking");
-  check(`${agentType} emits one structured phase`, thinking.length, 1);
-  check(`${agentType} phase is marked internal`, thinking[0]?.data?.internal, true);
-  check(`${agentType} phase names useful work`, thinking[0]?.data?.text, "Understanding your request");
+  const internalPhase = thinking.find((event) => event.data?.internal === true);
+  const reasoningDelta = thinking.find(
+    (event) => event.data?.internal === false && event.data?.text === "weighing the options",
+  );
+  check(`${agentType} still emits the structured phase`, internalPhase?.data?.text, "Understanding your request");
+  check(`${agentType} streams provider reasoning to the chat`, reasoningDelta !== undefined, true);
   check(
-    `${agentType} does not expose provider reasoning or planning prose`,
-    events.some((event) => JSON.stringify(event.data).includes("weighing the options") || JSON.stringify(event.data).includes("criteria")),
+    `${agentType} does not expose planning prose as progress`,
+    events.some((event) => JSON.stringify(event.data).includes("criteria")),
     false,
   );
 }
