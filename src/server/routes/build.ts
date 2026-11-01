@@ -2009,30 +2009,45 @@ export async function runFastBuild(
               `\n\nWire each one in: edit the appropriate existing file (commonly App.tsx or a parent page/layout) to import and render it. Return the COMPLETE corrected file for whichever file(s) you change.`,
           );
         }
-        const fixDescription =
-          \`These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation). The complete affected source files are supplied in context; inspect them before editing. Fix the underlying security property, not just the scanner message.\n\n\` +
-          failing
-            .map((c) => \`- [\${c.id}]\${c.file ? \` \${c.file}\${c.line ? \`:\${c.line}\` : ""} —\` : ""} \${c.message}\`)
-            .join("\n");
+const fixDescription = descriptionParts.join("\n\n---\n\n");
 
-        // The repair agent previously received only finding text, not the code it
-        // was expected to correct. Supply the exact affected files, and include DB
-        // schema/migration files for the RLS warning that intentionally has no path.
-        const schemaContextPaths = failing.some((c) => c.id === "rls-enabled")
-          ? Object.keys(allFiles).filter((path) =>
-              /(?:schema|migration|\/db\/)/i.test(path) && /\.(?:sql|ts|js)$/.test(path),
-            )
-          : [];
-        const securityContextPaths = [...new Set([
-          ...failing.map((c) => c.file).filter(
-            (path): path is string => typeof path === "string" && allFiles[path] !== undefined,
-          ),
-          ...schemaContextPaths,
-        ])].filter((path) => allFiles[path] !== undefined);
-        const securityContextFiles = securityContextPaths.map((path) => ({
-          path,
-          content: allFiles[path] ?? "",
-        }));
+        if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
+          logger.warn(
+            { sessionId, cumulativeCostUsd, ceiling: MAX_BUILD_COST_USD },
+            "Build cost ceiling reached before syntax/orphan fix dispatch — aborting build",
+          );
+          const reason = "Build aborted: cost ceiling reached.";
+          server?.buildFailed(sessionId, {
+            sessionId,
+            phase: "BUILD",
+            reason,
+            logs: "",
+            timestamp: new Date().toISOString(),
+          });
+          await Promise.all([
+            db.update(buildSessions)
+              .set({ status: "failed", error: reason, completedAt: new Date() })
+              .where(eq(buildSessions.id, sessionId)),
+            db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+          ]);
+          console.log(`[build] cost ceiling reached before syntax/orphan fix dispatch, build aborted: ${prompt.slice(0, 80)}`);
+          return;
+        }
+
+        const requirements: string[] = [];
+        if (brokenFiles.length > 0) {
+          requirements.push(
+            `Output the COMPLETE corrected file for each of: ${[...broken].join(", ")}.`,
+            "Return each file COMPLETE — never truncate, close every JSX tag and brace.",
+          );
+        }
+        if (orphans.length > 0) {
+          requirements.push(
+            "For the unwired components, only touch the file(s) that need to import and render them — do not rewrite unrelated files.",
+          );
+        }
+        requirements.push("Use the exact format: ```filename:<path> for each file.");
+
 
         try {
           const fixResult = await dispatcher.dispatch({
@@ -2047,7 +2062,6 @@ export async function runFastBuild(
             sessionId,
             userId,
             projectId,
-            contextFiles: securityContextFiles,
           });
           cumulativeCostUsd += fixResult.costUsd;
           const fixedParsed = parseFilesFromContent(fixResult.content);
@@ -2509,10 +2523,28 @@ export async function runFastBuild(
         }
 
         const fixDescription =
-          `These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation):\n\n` +
+          \`These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation). The complete affected source files are supplied in context; inspect them before editing. Fix the underlying security property, not just the scanner message.\n\n\` +
           failing
-            .map((c) => `- [${c.id}]${c.file ? ` ${c.file}${c.line ? `:${c.line}` : ""} —` : ""} ${c.message}`)
+            .map((c) => \`- [\${c.id}]\${c.file ? \` \${c.file}\${c.line ? \`:\${c.line}\` : ""} —\` : ""} \${c.message}\`)
             .join("\n");
+
+        // Supply the actual affected source files to the repair agent. The RLS
+        // warning may not carry a file path, so include the app's schema/migrations.
+        const schemaContextPaths = failing.some((c) => c.id === "rls-enabled")
+          ? Object.keys(allFiles).filter((path) =>
+              /(?:schema|migration|\/db\/)/i.test(path) && /\.(?:sql|ts|js)$/.test(path),
+            )
+          : [];
+        const securityContextPaths = [...new Set([
+          ...failing.map((c) => c.file).filter(
+            (path): path is string => typeof path === "string" && allFiles[path] !== undefined,
+          ),
+          ...schemaContextPaths,
+        ])].filter((path) => allFiles[path] !== undefined);
+        const securityContextFiles = securityContextPaths.map((path) => ({
+          path,
+          content: allFiles[path] ?? "",
+        }));
 
         try {
           const fixResult = await dispatcher.dispatch({
@@ -2534,6 +2566,7 @@ export async function runFastBuild(
             sessionId,
             userId,
             projectId,
+            contextFiles: securityContextFiles,
           });
           cumulativeCostUsd += fixResult.costUsd;
           const fixedParsed = parseFilesFromContent(fixResult.content);
