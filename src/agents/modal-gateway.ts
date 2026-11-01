@@ -36,6 +36,11 @@ interface OpenAiToolCallDelta {
 interface OpenAiStreamDelta {
   content?: string | null;
   reasoning_content?: string | null;
+  // Bedrock Mantle's OpenAI-compatible endpoint names the field `reasoning`,
+  // while other OpenAI-compatible providers use `reasoning_content`. Read both
+  // so reasoning from either shape is picked up (confirmed via live raw-stream
+  // capture against bedrock-mantle + MiniMax M2.5).
+  reasoning?: string | null;
   tool_calls?: OpenAiToolCallDelta[];
 }
 
@@ -64,6 +69,8 @@ interface OpenAiCompletionResponse {
   choices?: {
     message?: {
       content?: string | null;
+      reasoning_content?: string | null;
+      reasoning?: string | null;
       tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[];
     } | null;
     finish_reason?: string | null;
@@ -422,6 +429,10 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
     if (message?.content) {
       yield { type: "content", content: message.content };
     }
+    const providerReasoning = message?.reasoning_content ?? message?.reasoning;
+    if (providerReasoning) {
+      yield { type: "reasoning", reasoning: providerReasoning };
+    }
 
     let emitted = false;
     for (const tc of message?.tool_calls ?? []) {
@@ -513,8 +524,9 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
         if (!choice) continue;
 
 
-        if (choice.delta.reasoning_content) {
-          yield { type: "reasoning", reasoning: choice.delta.reasoning_content };
+        const providerReasoning = choice.delta.reasoning_content ?? choice.delta.reasoning;
+        if (providerReasoning) {
+          yield { type: "reasoning", reasoning: providerReasoning };
         }
         for (const tc of choice.delta.tool_calls ?? []) {
           const buf = toolBuffers.get(tc.index) ?? { id: "", name: "", args: "" };
