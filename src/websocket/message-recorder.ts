@@ -139,10 +139,24 @@ export function recordEvent(sessionId: string, event: string, data: Record<strin
       // and share one row here.
       case "build:thinking":
       case "build:token": {
+        // Pipeline status lines ("Building: …", "Calling AI model…") carry
+        // `internal: true`. They belong to the live activity line only —
+        // recording them here wove status text into the stored reasoning, and
+        // the replay showed it back as though the model had thought it.
+        if (data["internal"] === true) return;
         const text = str("text") || str("token");
         if (!text) return;
         const state = stateFor(sessionId);
         state.openThinking = (state.openThinking ?? "") + text;
+        return;
+      }
+
+      // A tool call ends the reasoning that led to it — the same boundary the
+      // live transcript closes its thinking row at. Without this, status text
+      // emitted while the tool ran was recorded into the same row as the
+      // reasoning that came BEFORE the call.
+      case "build:tool_call": {
+        closeThinking(sessionId);
         return;
       }
 

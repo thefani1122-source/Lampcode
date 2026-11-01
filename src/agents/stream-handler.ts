@@ -128,10 +128,23 @@ export async function handleAgentStream(
       switch (chunk.type) {
         // Reasoning / thinking tokens (DeepSeek R1, Claude extended thinking, o1, etc.)
         case "reasoning":
-          // Provider reasoning is internal model output, never user-facing progress.
-          // Still feed it through the pseudo-tool filter so typed tool syntax is
-          // detected and kept out of the chat.
-          if (chunk.reasoning) pseudoReasoning.push(chunk.reasoning)
+          // Still feed the pseudo-tool filter so typed tool syntax is detected
+          // and kept out of the chat.
+          if (chunk.reasoning) {
+            pseudoReasoning.push(chunk.reasoning)
+            // Stream the model's actual reasoning to the chat, delta by delta.
+            // The client appends every chunk to the thinking row it already has
+            // open, so the user watches ONE paragraph grow live — the way Claude
+            // Code shows it — instead of a stack of one-second "Thought for 1s"
+            // boxes fed by status lines. `internal: false` is what separates this
+            // from pipeline narration: the client routes internal events to its
+            // live activity line, and only `internal: false` lands in the
+            // transcript. Silent agent types (planning, audit, review,
+            // acceptance) never reach the chat — narrate() drops them, since
+            // their "thinking" is structured JSON for the system, not prose a
+            // person should watch.
+            narrate("build:thinking", { text: chunk.reasoning, internal: false, sessionId })
+          }
           break
 
         // Normal response tokens

@@ -1293,14 +1293,19 @@ export async function runFastBuild(
     recordUserPrompt(sessionId, prompt);
 
     // ── Tell frontend what's being built (original prompt, never expanded) ──
-    server?.thinking(sessionId, { text: `Building: ${prompt}`, sessionId });
+    // These three are pipeline status, not thoughts. `internal: true` is what
+    // tells the client to show them on its live activity line instead of
+    // opening a thinking row for each — which is how "Thought for 1s" boxes
+    // saying nothing got stacked in the transcript.
+    server?.thinking(sessionId, { text: `Building: ${prompt}`, sessionId, internal: true });
     server?.thinking(sessionId, {
       text: hasExistingCode
         ? `Editing existing project (${Object.keys(existingFiles).length} files loaded)...`
         : "Starting new build...",
       sessionId,
+      internal: true,
     });
-    server?.thinking(sessionId, { text: "Calling AI model...", sessionId });
+    server?.thinking(sessionId, { text: "Calling AI model...", sessionId, internal: true });
 
     // ── Dispatch frontend agent ─────────────────────────────────────────────
     const dispatcher = getDispatcher();

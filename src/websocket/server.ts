@@ -236,7 +236,10 @@ export class WebSocketServer {
 
   // ── Fast-build progress events (fullstack + frontend builds) ────────────────
 
-  thinking(sessionId: string, data: { text: string; sessionId: string }): void {
+  thinking(
+    sessionId: string,
+    data: { text: string; sessionId: string; internal?: boolean },
+  ): void {
     this.emitToRoom(sessionId, "build:thinking", data);
   }
 
