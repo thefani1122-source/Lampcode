@@ -41,7 +41,8 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken, getUserGitHubToken } from "./integrations.js";
+import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables, schemaRepairInstruction, undeclaredTables } from "../../verify/data-layer.js";
@@ -945,6 +946,137 @@ export async function runFastBuild(
     // Deliberately separate from smartSelectionUsed, which still (correctly)
     // controls only the output-format instructions given to the model.
     const preserveExistingFiles = hasExistingCode && Boolean(lastSuccessRow[0]?.outputDir);
+
+    // ── Check if prompt is a conversational query / service inspection ──
+    const promptIntent = await classifyPromptIntent(prompt, {
+      dispatcher: getDispatcher(),
+      sessionId,
+      userId,
+      projectId,
+      provider,
+    });
+
+    if (promptIntent.type === "query") {
+      logger.info(
+        { sessionId, projectId, category: promptIntent.queryCategory, reason: promptIntent.reason, prompt: prompt.slice(0, 80) },
+        "[build] User query/inspection detected — answering directly in chat without preview build",
+      );
+
+      server?.thinking(sessionId, {
+        sessionId,
+        text: promptIntent.queryCategory === "service_check"
+          ? "Checking connected services and tools..."
+          : promptIntent.queryCategory === "code_question"
+            ? "Inspecting project code..."
+            : promptIntent.queryCategory === "research"
+              ? "Researching information..."
+              : "Thinking...",
+      });
+
+      const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
+      const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
+      let deployCtx: { vercelToken: string; projectName: string } | undefined;
+      if (vercelDeployToken) {
+        const named = await db
+          .select({ name: projects.name })
+          .from(projects)
+          .where(eq(projects.id, projectId))
+          .limit(1)
+          .catch(() => []);
+        deployCtx = {
+          vercelToken: vercelDeployToken,
+          projectName: named[0]?.name ?? "lampcode-app",
+        };
+      }
+
+      const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+
+      const queryTaskDescription =
+        `You are a knowledgeable AI technical partner assisting the user with their project, code, or integrations.
+
+` +
+        `USER MESSAGE: ${prompt}
+
+` +
+        `AVAILABLE INSPECTION TOOLS:
+` +
+        `- github_query: Query connected GitHub account to list repositories (action: "list_repos"), inspect specific repos, branches, or commits.
+` +
+        `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
+` +
+        `- read_file: Read a specific file from the project.
+` +
+        `- list_files: List files currently in the project.
+` +
+        `- search_code: Search for terms/code across the project files.
+` +
+        `- review_code: Review code quality or check for bugs.
+` +
+        `- web_search: Search the web for documentation, library details, or technical facts.
+
+` +
+        `GUIDELINES:
+` +
+        `1. Answer the user's question directly, clearly, and concisely in markdown.
+` +
+        `2. If they ask about GitHub repositories, Vercel deployments, or branches, ALWAYS call the corresponding tool first to get real, accurate data.
+` +
+        `3. If they ask about the code, check the files with list_files / read_file before answering.
+` +
+        `4. Never invent repository names, deployments, or file paths — verify with tools.
+` +
+        `5. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
+`;
+
+      const queryDispatchResult = await getDispatcher().dispatch({
+        agentType: "frontend",
+        usageCategory: "build",
+        provider,
+        task: {
+          description: queryTaskDescription,
+          outputFormat: "markdown",
+        },
+        sessionId,
+        userId,
+        projectId,
+        enableTools: true,
+        queryMode: true,
+        agenticBuild: false,
+        userPrompt: prompt,
+        projectFiles: existingFiles,
+        gitHubToken: gitHubToken ?? undefined,
+        deploy: deployCtx,
+        mcpServers: userMcpServers,
+        costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
+      });
+
+      const replyContent = queryDispatchResult.finalContent || queryDispatchResult.content || "Done.";
+
+      server?.buildComplete(sessionId, {
+        sessionId,
+        files: {},
+        backendFiles: {},
+        backendFileCount: 0,
+        previewUrl: null,
+        totalFiles: 0,
+        summary: replyContent,
+      });
+
+      await db
+        .update(buildSessions)
+        .set({
+          status: "success",
+          completedAt: new Date(),
+        })
+        .where(eq(buildSessions.id, sessionId));
+
+      await db
+        .update(projects)
+        .set({ status: "ready" })
+        .where(eq(projects.id, projectId));
+
+      return;
+    }
 
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.

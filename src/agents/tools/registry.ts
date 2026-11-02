@@ -26,6 +26,8 @@ import { webSearchHandler } from "./web-search.js";
 import { lookAtPageHandler } from "./look-at-page.js";
 import { shellHandler } from "./shell.js";
 import { browserInteractHandler } from "./browser-interact.js";
+import { githubQueryHandler } from "./github-query.js";
+import { vercelQueryHandler } from "./vercel-query.js";
 
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -69,5 +71,6 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["look_at_page", lookAtPageHandler],
   ["shell", shellHandler],
   ["browser_interact", browserInteractHandler],
+  ["github_query", githubQueryHandler],
+  ["vercel_query", vercelQueryHandler],
 ]);
-

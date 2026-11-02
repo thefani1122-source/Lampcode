@@ -534,6 +534,42 @@ export async function getUserSupabasePreviewCreds(
  * server wants OAuth. Two different credentials for two different endpoints —
  * conflating them is what broke this.
  */
+export async function getUserGitHubToken(userId: string): Promise<string | null> {
+  const read = (row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): string | null => {
+    try {
+      const creds = JSON.parse(decrypt({
+        encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      const inner = unwrapCreds(creds);
+      for (const key of ["github_token", "token", "accessToken", "oauth_access_token", "pat"]) {
+        const value = inner[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+      }
+    } catch {
+      logger.warn({ userId, stage: "github_token_decrypt" }, "Stored GitHub credential could not be read");
+    }
+    return null;
+  };
+
+  const rows = await db.select().from(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, "github"),
+  )).limit(1);
+  const row = rows[0];
+  if (row) {
+    const token = read(row);
+    if (token) return token;
+  }
+
+  const legacy = await db.select().from(userIntegrations).where(and(
+    eq(userIntegrations.userId, userId), eq(userIntegrations.provider, "github"),
+  )).limit(1);
+  const cfg = legacy[0]?.config;
+  if (cfg?.encryptedCreds && cfg.encryptedCredsIv && cfg.encryptedCredsTag) {
+    return read({ encryptedCreds: cfg.encryptedCreds, encryptedCredsIv: cfg.encryptedCredsIv, encryptedCredsTag: cfg.encryptedCredsTag });
+  }
+  return null;
+}
+
 export async function getUserVercelDeployToken(userId: string): Promise<string | null> {
   const read = (row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): string | null => {
     try {

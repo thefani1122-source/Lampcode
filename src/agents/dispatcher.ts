@@ -141,6 +141,11 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   deploy?:
     | { vercelToken: string; teamId?: string | undefined; projectName: string }
     | undefined;
+  /** Query mode: question, research, code review, or service inspection.
+   *  Provides read-only inspection tools without any code-writing tools. */
+  queryMode?: boolean | undefined;
+  /** Personal Access Token for GitHub, passed to ToolExecutionContext. */
+  gitHubToken?: string | undefined;
 };
 
 export interface DispatchResult {
@@ -586,7 +591,25 @@ export class AgentDispatcher {
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
-          ? [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
+          ? options.queryMode
+            ? [
+                ...TOOL_DEFINITIONS.filter((t) => t.name === "read_project_file"),
+                ...AGENTIC_BUILD_TOOLS.filter((t) =>
+                  [
+                    "list_files",
+                    "read_file",
+                    "search_code",
+                    "code_intel",
+                    "impact_analysis",
+                    "review_code",
+                    "web_search",
+                    "github_query",
+                    "vercel_query",
+                  ].includes(t.name),
+                ),
+                ...readToolDefs,
+              ]
+            : [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
           : undefined,
       };
       // What the model was ACTUALLY offered this round. Three different models
@@ -770,7 +793,7 @@ export class AgentDispatcher {
           readMcpRegistry,
           writeDenied,
           toolCallId: tc.id,
-          ...(agenticBuild
+          ...(agenticBuild || options.queryMode
             ? {
                 projectId,
                 generatedFiles,
@@ -786,13 +809,10 @@ export class AgentDispatcher {
                 churn,
                 deadCode,
                 review,
-                // review_code runs a model of its own, so it needs the
-                // dispatcher and the identity to bill against. Not a recursion
-                // risk: the review dispatch offers NO tools, so it cannot reach
-                // review_code again.
                 dispatcher: this,
                 userId: options.userId,
                 provider: effectiveProvider,
+                gitHubToken: options.gitHubToken,
                 ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),

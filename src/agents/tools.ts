@@ -577,6 +577,50 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       "when something is wrong and you don't yet know why.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "github_query",
+    description:
+      "Query the user's connected GitHub account to inspect repositories, commits, or branches. " +
+      "Use this when the user asks about their GitHub repos, what repositories exist, or asks to " +
+      "inspect branches or recent commits. Returns real data directly from the GitHub API.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_repos", "get_repo", "list_commits", "list_branches"],
+          description: "Action to perform: 'list_repos' (default), 'get_repo', 'list_commits', or 'list_branches'.",
+        },
+        repo: {
+          type: "string",
+          description: "Repository name (or 'owner/repo') when querying a specific repository.",
+        },
+        owner: {
+          type: "string",
+          description: "Optional repository owner.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "vercel_query",
+    description:
+      "Query the user's connected Vercel account to inspect deployments or projects. " +
+      "Use this when the user asks to check their Vercel deployments, check if their deployment is live, " +
+      "or list Vercel projects.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_deployments", "list_projects"],
+          description: "Action to perform: 'list_deployments' (default) or 'list_projects'.",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 export type GateOutcome = "pass" | "fail" | "unavailable";
@@ -716,6 +760,7 @@ export interface ToolExecutionContext {
         projectName: string;
       }
     | undefined;
+  gitHubToken?: string | undefined;
 }
 
 export async function executeTool(
