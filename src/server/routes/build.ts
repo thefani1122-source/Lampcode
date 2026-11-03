@@ -1072,7 +1072,7 @@ export async function runFastBuild(
 
       await db
         .update(projects)
-        .set({ status: "ready" })
+        .set({ status: "live" })
         .where(eq(projects.id, projectId));
 
       return;
