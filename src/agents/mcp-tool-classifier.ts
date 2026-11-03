@@ -3,6 +3,7 @@ import { connectMcpClient } from "../mcp/client.js";
 import { logger } from "../server/logger.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import { mapTool, type Capability } from "../mcp/capabilities.js";
+import type { ToolExecutionContext } from "./tools.js";
 import { describeTier, destructiveByName, needsApproval, strongestTier, tierFor, type Tier } from "../mcp/tiers.js";
 import type { ToolDefinition } from "./model-gateway.js";
 import { safeMcpFailureCategory } from "../mcp/health.js";
@@ -83,6 +84,10 @@ export interface WriteMcpMeta {
   /** The capability the map recognised, or null when it has never heard of this
    *  tool. Null does NOT remove the tool and does not weaken its tier. */
   capability: Capability | null;
+  /** Local execution for REST-backed write tools (rest-writes.ts). When set,
+   *  executeTool runs this after the user approves instead of calling an MCP
+   *  server — the approval gate itself is identical. */
+  localExecute?: ((args: Record<string, unknown>, ctx: ToolExecutionContext) => Promise<string>) | undefined;
 }
 
 /** Maps proxy tool name (e.g. "github__create_issue") → execution metadata. */

@@ -9,24 +9,24 @@ import type { ToolExecutionContext } from "../tools.js";
  * services stay behind request_write_action by design.
  */
 
-type Creds = Record<string, string>;
+export type Creds = Record<string, string>;
 
 export type ServiceCredentials = Record<string, Creds | undefined>;
 
-function credsFor(ctx: ToolExecutionContext, slug: string): Creds | null {
+export function credsFor(ctx: ToolExecutionContext, slug: string): Creds | null {
   const creds = ctx.serviceCredentials?.[slug];
   if (!creds || Object.keys(creds).length === 0) return null;
   return creds;
 }
 
-function notConnected(name: string, how: string): string {
+export function notConnected(name: string, how: string): string {
   return (
     `${name} is not connected or has no usable credentials stored. ` +
     `Please tell the user to connect ${name} in the Integrations store ${how}.`
   );
 }
 
-function missing(name: string, key: string, how: string): string {
+export function missing(name: string, key: string, how: string): string {
   return (
     `The connected ${name} integration is missing its ${key}, so this lookup cannot run. ` +
     `Please tell the user to reconnect ${name} ${how}.`
@@ -55,11 +55,11 @@ export function mailchimpDc(apiKey: string): string | null {
   return /^[a-z]{2,4}\d+$/.test(dc) ? dc : null;
 }
 
-function basic(user: string, pass: string): string {
+export function basic(user: string, pass: string): string {
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 }
 
-function truncate(value: unknown, max = 120): string {
+export function truncate(value: unknown, max = 120): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   if (text.length <= max) return text;
   return text.slice(0, max - 1) + "…";

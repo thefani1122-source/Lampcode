@@ -14,6 +14,7 @@ import {
 import { diffFile, type FileDiff } from "./file-diff.js";
 import { modalStream } from "./modal-gateway.js";
 import { narrateTool, formatLineDelta } from "./tool-narration.js";
+import { buildRestWriteRegistry, REST_WRITE_DEFS } from "./tools/rest-writes.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
@@ -451,6 +452,14 @@ export class AgentDispatcher {
         "MCP tool classification for this dispatch",
       );
     }
+    // REST-backed write tools (Shopify, WordPress, Twilio, SendGrid, Mailchimp)
+    // ride the SAME approval gate as MCP write proxies: they join the write
+    // registry whenever the user has stored credentials for that provider, and
+    // their definitions are offered next to the MCP write proxies. No stored
+    // credentials means the tool is not offered at all, same fail-closed rule.
+    const restWriteRegistry = buildRestWriteRegistry(options.serviceCredentials);
+    for (const [name, meta] of restWriteRegistry) writeProxyRegistry.set(name, meta);
+    writeProxyDefs = [...writeProxyDefs, ...REST_WRITE_DEFS.filter((d) => restWriteRegistry.has(d.name))];
 
     logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
 

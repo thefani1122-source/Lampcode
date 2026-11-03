@@ -980,6 +980,8 @@ if (ctx.writeMcpRegistry?.has(name)) {
       return "Action denied: the write action was not approved by the user.";
     }
 
+    // REST-backed writes execute locally after approval; MCP writes go to their server.
+    if (meta.localExecute) return meta.localExecute(args, ctx);
     // Shared post-gate execution point is covered by local MCP integration tests.
     return callApprovedMcpTool(meta, args, true);
   }

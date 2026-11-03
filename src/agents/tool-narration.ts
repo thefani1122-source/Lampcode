@@ -50,6 +50,13 @@ const PHRASES: Record<string, Phrase> = {
   twilio_query: { past: "Checked Twilio", present: "Checking Twilio" },
   sendgrid_query: { past: "Checked SendGrid", present: "Checking SendGrid" },
   mailchimp_query: { past: "Checked Mailchimp", present: "Checking Mailchimp" },
+  // REST-backed writes — the approval card already names exactly what will
+  // happen, so narration stays provider-level.
+  shopify_write: { past: "Updated Shopify", present: "Updating Shopify" },
+  wordpress_write: { past: "Updated WordPress", present: "Updating WordPress" },
+  twilio_write: { past: "Sent the message", present: "Sending the message" },
+  sendgrid_write: { past: "Updated SendGrid", present: "Updating SendGrid" },
+  mailchimp_write: { past: "Updated Mailchimp", present: "Updating Mailchimp" },
   code_intel: { past: "Looked up", present: "Looking up", arg: "symbol" },
   impact_analysis: { past: "Checked what this affects", present: "Checking what this affects" },
 
