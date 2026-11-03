@@ -29,6 +29,16 @@ check("Vercel connection uses bearer access token", resolveMcpAuth(MCP_REGISTRY.
   { Authorization: "Bearer v_token" });
 check("Vercel's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.vercel!.credentialFields, []);
 
+check("Railway hosted MCP uses OAuth", MCP_REGISTRY.railway!.authType, "oauth");
+check("Railway's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.railway!.credentialFields, []);
+check("Railway rows connected with an API token keep working on the hosted MCP", resolveMcpAuth(MCP_REGISTRY.railway!, { api_token: "rw_test" })?.headers,
+  { Authorization: "Bearer rw_test" });
+check("Resend hosted MCP uses OAuth", MCP_REGISTRY.resend!.authType, "oauth");
+check("Resend rows connected with an API key keep working on the hosted MCP", resolveMcpAuth(MCP_REGISTRY.resend!, { api_key: "re_test" })?.headers,
+  { Authorization: "Bearer re_test" });
+check("MongoDB hosted MCP uses OAuth", MCP_REGISTRY.mongodb!.authType, "oauth");
+check("MongoDB's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.mongodb!.credentialFields, []);
+
 for (const slug of ["notion", "figma", "sentry"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
   check(`${slug} hosted MCP has no incompatible static credential form`, MCP_REGISTRY[slug]!.credentialFields, []);

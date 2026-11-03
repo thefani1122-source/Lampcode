@@ -86,7 +86,10 @@ function staticMcpOAuthClient(slug: string): StaticOAuthClient | undefined {
  * publicly at /mcp/oauth/client-metadata.json below.
  */
 function cimdClientMetadataUrl(slug: string): string | undefined {
-  if (slug !== "vercel") return undefined;
+  // Vercel and MongoDB advertise client_id_metadata_document_supported and
+  // offer no dynamic registration, so the hosted metadata document is the
+  // OAuth client_id for both.
+  if (slug !== "vercel" && slug !== "mongodb") return undefined;
   return config.MCP_CLIENT_METADATA_URL;
 }
 

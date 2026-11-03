@@ -355,19 +355,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Resend",
     category: "communication",
     icon: "📨",
-    description: "Transactional email sending via the Resend API",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "api_key",
-        label: "Resend API Key",
-        type: "password",
-        placeholder: "re_...",
-        help: "Create an API key at resend.com/api-keys",
-      },
-    ],
-    supportsRealMCP: false,
+    description: "Send email, manage contacts, broadcasts, and webhooks via the Resend MCP server",
+    mcpServerUrl: "https://mcp.resend.com/mcp",
+    // MEASURED 2026-11-03. mcp.resend.com/mcp is Resend's hosted MCP server
+    // with OAuth (DCR and CIMD both advertised). Rows connected earlier with
+    // an API key keep working: the hosted server also accepts a Resend API
+    // key as a bearer token, which resolveMcpAuth maps from the stored
+    // api_key credential.
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
     restApiHint: "Resend API: POST https://api.resend.com/emails\nHeader: Authorization: Bearer {api_key}\nBody: { from, to, subject, html }",
   },
 
@@ -433,19 +430,17 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "MongoDB Atlas",
     category: "database",
     icon: "🍃",
-    description: "MongoDB Atlas database for generated apps — connect via connection string",
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "connection_string",
-        label: "MongoDB Atlas Connection String",
-        type: "password",
-        placeholder: "mongodb+srv://user:pass@cluster.mongodb.net/dbname",
-        help: "Get from cloud.mongodb.com → Database → Connect → Drivers",
-      },
-    ],
-    supportsRealMCP: false,
+    description: "Query and manage MongoDB Atlas clusters via MongoDB's hosted MCP server",
+    mcpServerUrl: "https://mcp.mongodb.com",
+    // MEASURED 2026-11-03. MongoDB's Atlas Managed MCP server (GA Aug 2026)
+    // advertises client_id_metadata_document_supported (CIMD, like Vercel)
+    // and no dynamic registration, so the hosted client-metadata document is
+    // the OAuth client_id. Atlas org owners must enable AI clients before
+    // the consent screen accepts connections. The REST hint below keeps rows
+    // holding a connection string readable as prompt-only guidance.
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
     restApiHint: "MongoDB Atlas: use MONGODB_URI={connection_string} with Mongoose in the Node backend",
   },
 
@@ -454,19 +449,16 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Railway",
     category: "devtools",
     icon: "🚂",
-    description: "Deploy to Railway from generated apps",
-    mcpServerUrl: null,
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "api_token",
-        label: "Railway API Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create at railway.app/account/tokens",
-      },
-    ],
-    supportsRealMCP: false,
+    description: "Manage Railway projects, services, variables, and deployments via the Railway MCP server",
+    mcpServerUrl: "https://mcp.railway.com",
+    // MEASURED 2026-11-03. Railway's hosted MCP server (mcp.railway.com)
+    // authorizes with OAuth (DCR advertised on backboard.railway.com); a
+    // stored API token could not run its tools. 1-click OAuth here. The REST
+    // hint below keeps rows connected before the flip readable as prompt-only
+    // guidance until their owner reconnects.
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
     restApiHint: "Railway GraphQL API: POST https://backboard.railway.app/graphql/v2\nHeader: Authorization: Bearer {api_token}",
   },
 };
