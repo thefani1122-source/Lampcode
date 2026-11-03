@@ -2,6 +2,18 @@ import { createHash, randomBytes } from "node:crypto";
 import type { OAuthClientMetadata, OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 
+/**
+ * A pre-registered OAuth client for servers without dynamic client
+ * registration (GitHub). The id and secret come from server env, never from
+ * the user, and the auth method travels with the client so both the token
+ * exchange and refresh use it.
+ */
+export interface StaticOAuthClient {
+  clientId: string;
+  clientSecret: string;
+  tokenEndpointAuthMethod: "client_secret_post" | "client_secret_basic";
+}
+
 export interface McpOAuthSession {
   clientInformation?: OAuthClientInformationMixed;
   tokens?: OAuthTokens;
@@ -19,6 +31,8 @@ export function createMcpOAuthProvider(options: {
   session: McpOAuthSession;
   persist: (session: McpOAuthSession) => Promise<void>;
   saveStateHash: (hash: string) => Promise<void>;
+  /** Present for no-DCR servers: the SDK then skips dynamic registration. */
+  staticClient?: StaticOAuthClient | undefined;
 }) {
   let authorizationUrl: URL | undefined;
   const session = options.session;
@@ -27,8 +41,15 @@ export function createMcpOAuthProvider(options: {
     redirect_uris: [options.redirectUrl],
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
-    token_endpoint_auth_method: "none",
+    token_endpoint_auth_method: options.staticClient?.tokenEndpointAuthMethod ?? "none",
   };
+  if (options.staticClient && !session.clientInformation) {
+    session.clientInformation = {
+      client_id: options.staticClient.clientId,
+      client_secret: options.staticClient.clientSecret,
+      token_endpoint_auth_method: options.staticClient.tokenEndpointAuthMethod,
+    } as OAuthClientInformationMixed;
+  }
   const provider: OAuthClientProvider = {
     get redirectUrl() { return options.redirectUrl; },
     get clientMetadata() { return clientMetadata; },

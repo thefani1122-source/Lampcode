@@ -52,7 +52,9 @@ export function resolveMcpAuth(
   if (provider.authType === "mcp_url") return { url: url.toString(), headers };
   if (provider.authType === "none") return { url: url.toString(), headers };
   if (provider.authType === "oauth") {
-    const token = creds["oauth_access_token"] ?? creds["access_token"] ?? creds["vercel_token"] ?? creds["token"];
+    // github_token: rows connected before GitHub moved to OAuth still hold a
+    // PAT, and api.githubcopilot.com accepts it as a plain bearer token.
+    const token = creds["oauth_access_token"] ?? creds["access_token"] ?? creds["github_token"] ?? creds["vercel_token"] ?? creds["token"];
     if (token) headers.Authorization = `Bearer ${token}`;
     return { url: url.toString(), headers };
   }

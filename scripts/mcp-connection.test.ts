@@ -8,14 +8,20 @@ function check(name: string, got: unknown, want: unknown): void {
 }
 function ok(name: string, value: boolean): void { check(name, value, true); }
 
-check("GitHub uses its documented bearer credential", resolveMcpAuth(MCP_REGISTRY.github!, { github_token: "ghp_test" })?.headers,
+check("GitHub's hosted MCP uses OAuth", MCP_REGISTRY.github!.authType, "oauth");
+check("GitHub's hosted MCP has no static credential form", MCP_REGISTRY.github!.credentialFields, []);
+check("GitHub OAuth session connects as bearer", resolveMcpAuth(MCP_REGISTRY.github!, { oauth_access_token: "gho_test" })?.headers,
+  { Authorization: "Bearer gho_test" });
+check("GitHub rows connected before the OAuth flip keep their PAT working", resolveMcpAuth(MCP_REGISTRY.github!, { github_token: "ghp_test" })?.headers,
   { Authorization: "Bearer ghp_test" });
+check("an OAuth session wins over a leftover PAT in the same row", resolveMcpAuth(MCP_REGISTRY.github!, { oauth_access_token: "gho_new", github_token: "ghp_old" })?.headers,
+  { Authorization: "Bearer gho_new" });
 check("Stitch does not invent a static API-key header for its OAuth flow", resolveMcpAuth(MCP_REGISTRY["google-stitch"]!, {})?.headers, {});
 check("embedded-token endpoint does not duplicate URL auth", resolveMcpAuth(MCP_REGISTRY.make!, { make_mcp_url: "https://eu2.make.com/mcp/stateless" })?.headers, {});
 check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNAL_MCP_PROVIDERS.exa!, {})?.headers, {});
 check("Vercel connection uses bearer access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { vercel_token: "v_token" })?.headers,
   { Authorization: "Bearer v_token" });
-check("Vercel advertises a static token field", MCP_REGISTRY.vercel!.credentialFields.length, 1);
+check("Vercel's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.vercel!.credentialFields, []);
 
 for (const slug of ["notion", "figma", "sentry"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");

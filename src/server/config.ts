@@ -75,6 +75,12 @@ const envSchema = z.object({
   REDIS_PUBLIC_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),
   MCP_OAUTH_REDIRECT_URL: z.string().url().optional(),
+  // GitHub MCP OAuth: api.githubcopilot.com does not support dynamic client
+  // registration, so these come from a pre-registered GitHub OAuth App
+  // (Settings → Developer settings → OAuth Apps) whose callback URL is
+  // MCP_OAUTH_REDIRECT_URL.
+  GITHUB_MCP_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_MCP_CLIENT_SECRET: z.string().min(1).optional(),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),

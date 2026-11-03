@@ -29,6 +29,31 @@ catch { crossOriginRejected = true; }
 ok("cross-origin OAuth resource is rejected", crossOriginRejected);
 ok("authorization redirect URL is not fabricated before SDK challenge", oauth.authorizationUrl() === undefined);
 
+// No-DCR servers (GitHub) seed a pre-registered client: the SDK must skip
+// dynamic registration and carry the auth method into the token exchange.
+const staticSession: McpOAuthSession = {};
+const staticOauth = createMcpOAuthProvider({
+  serverUrl: "https://api.githubcopilot.com/mcp/",
+  redirectUrl: "https://lampcode.example/api/integrations/mcp/oauth/callback",
+  session: staticSession,
+  persist: async () => undefined,
+  saveStateHash: async () => undefined,
+  staticClient: { clientId: "Iv1.static", clientSecret: "static-secret", tokenEndpointAuthMethod: "client_secret_post" },
+});
+const seeded = staticSession.clientInformation as { client_id?: string; client_secret?: string; token_endpoint_auth_method?: string } | undefined;
+ok("static client is seeded so the SDK skips dynamic registration", seeded?.client_id === "Iv1.static" && seeded?.client_secret === "static-secret");
+ok("the seeded client carries its token endpoint auth method", seeded?.token_endpoint_auth_method === "client_secret_post");
+const reused: McpOAuthSession = { clientInformation: { client_id: "Iv1.existing" } as never };
+createMcpOAuthProvider({
+  serverUrl: "https://api.githubcopilot.com/mcp/",
+  redirectUrl: "https://lampcode.example/api/integrations/mcp/oauth/callback",
+  session: reused,
+  persist: async () => undefined,
+  saveStateHash: async () => undefined,
+  staticClient: { clientId: "Iv1.static", clientSecret: "s", tokenEndpointAuthMethod: "client_secret_post" },
+});
+ok("an existing client registration is never overwritten", (reused.clientInformation as { client_id?: string }).client_id === "Iv1.existing");
+
 if (failures) process.exit(1);
 console.log("All MCP OAuth provider cases passed.");
 

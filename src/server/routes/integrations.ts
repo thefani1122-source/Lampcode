@@ -15,7 +15,7 @@ import { getProvider } from "../../mcp/providers/index.js";
 import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
 import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
 import { secureMcpFetch } from "../../mcp/secure-fetch.js";
-import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession } from "../../mcp/oauth-client.js";
+import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession, type StaticOAuthClient } from "../../mcp/oauth-client.js";
 import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
 import { config } from "../config.js";
 
@@ -44,6 +44,20 @@ function oauthCallbackUrl(): string {
     throw new AppError(503, "MCP OAuth callback URL must be the configured HTTPS callback endpoint", "OAUTH_UNAVAILABLE");
   }
   return url.toString();
+}
+
+/**
+ * GitHub's MCP server authorizes with OAuth but offers no dynamic client
+ * registration, so the flow needs a pre-registered GitHub OAuth App whose
+ * client id and secret live in env. Every other OAuth provider in the
+ * registry registers itself dynamically and needs nothing here.
+ */
+function staticMcpOAuthClient(slug: string): StaticOAuthClient | undefined {
+  if (slug !== "github") return undefined;
+  const clientId = config.GITHUB_MCP_CLIENT_ID;
+  const clientSecret = config.GITHUB_MCP_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return undefined;
+  return { clientId, clientSecret, tokenEndpointAuthMethod: "client_secret_post" };
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -752,6 +766,14 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
   const provider = getMcpProvider(slug);
   if (!provider || !provider.supportsRealMCP) throw new AppError(404, "Unknown MCP provider", "UNKNOWN_PROVIDER");
   if (provider.authType !== "oauth") throw new AppError(400, "This provider does not use OAuth", "AUTH_METHOD_MISMATCH");
+  const staticClient = staticMcpOAuthClient(slug);
+  if (provider.slug === "github" && !staticClient) {
+    throw new AppError(
+      422,
+      "GitHub MCP OAuth needs a pre-registered GitHub OAuth App — set GITHUB_MCP_CLIENT_ID and GITHUB_MCP_CLIENT_SECRET on the server (callback URL: MCP_OAUTH_REDIRECT_URL)",
+      "OAUTH_CLIENT_NOT_CONFIGURED",
+    );
+  }
   const redirectUrl = oauthCallbackUrl();
   const serverUrl = resolveServerUrl(provider, {});
   if (!serverUrl) throw new AppError(422, "Provider MCP URL is not configured", "INVALID_MCP_URL");
@@ -784,6 +806,7 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     redirectUrl,
     session,
     persist: saveSession,
+    staticClient,
     saveStateHash: async (stateHash) => {
       await db.update(mcpOAuthTransactions).set({ stateHash }).where(eq(mcpOAuthTransactions.id, transactionId));
     },
@@ -841,6 +864,10 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
   if (c.req.query("error") || !code) return c.redirect(mcpOAuthReturnUrl("error", undefined, "cancelled"), 302);
   const provider = getMcpProvider(pending.providerSlug);
   if (!provider || provider.authType !== "oauth") return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "provider_unavailable"), 302);
+  const staticClient = staticMcpOAuthClient(pending.providerSlug);
+  if (provider.slug === "github" && !staticClient) {
+    return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "oauth_client_not_configured"), 302);
+  }
   const session = decryptOAuthSession(pending);
   const redirectUrl = oauthCallbackUrl();
   const oauth = createMcpOAuthProvider({
@@ -848,6 +875,7 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
     redirectUrl,
     session,
     persist: async () => undefined,
+    staticClient,
     saveStateHash: async () => undefined,
   });
   const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });
@@ -1078,13 +1106,23 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
         logger.warn({ userId, slug: row.providerSlug }, "[mcp] could not resolve a server URL — skipped");
         continue;
       }
-      const isOAuth = provider.authType === "oauth";
+      // GitHub rows connected before the OAuth flip hold a PAT, not an OAuth
+      // session. They keep running as bearer connections until reconnect, so
+      // the registry change never breaks a working connection.
+      const legacyGithubPat = provider.slug === "github"
+        && typeof creds["github_token"] === "string"
+        && Boolean(creds["github_token"].trim());
+      const isOAuth = provider.authType === "oauth" && !legacyGithubPat;
       servers.push({
         slug: row.providerSlug,
         name: provider.name,
         url: resolved.url,
         authToken: null,
-        authHeaders: isOAuth ? {} : resolved.headers,
+        authHeaders: isOAuth
+          ? {}
+          : legacyGithubPat
+            ? { Authorization: `Bearer ${(creds["github_token"] as string).trim()}` }
+            : resolved.headers,
         ...(isOAuth ? {
           oauthSession: creds as McpOAuthSession,
           oauthRedirectUrl: config.MCP_OAUTH_REDIRECT_URL,

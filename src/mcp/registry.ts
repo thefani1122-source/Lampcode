@@ -53,16 +53,14 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🐙",
     description: "Create repos, manage issues, open pull requests, and more via the GitHub MCP server",
     mcpServerUrl: "https://api.githubcopilot.com/mcp/",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "github_token",
-        label: "Personal Access Token",
-        type: "password",
-        placeholder: "ghp_...",
-        help: "Create at github.com/settings/tokens — needs repo and workflow scopes",
-      },
-    ],
+    // api.githubcopilot.com authorizes with OAuth, but unlike Linear/Vercel it
+    // offers no dynamic client registration: the flow needs a pre-registered
+    // GitHub OAuth App whose client id and secret come from
+    // GITHUB_MCP_CLIENT_ID / GITHUB_MCP_CLIENT_SECRET. Rows connected earlier
+    // with a PAT keep working through the bearer fallback in resolveMcpAuth
+    // until their owner reconnects.
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
