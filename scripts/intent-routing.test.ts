@@ -68,3 +68,24 @@ if (failures) {
   process.exit(1);
 }
 console.log("\nAll model-first intent routing and query-mode isolation tests passed.");
+
+
+// ── End-to-End Route Lifecycle Guarantees for Query vs Build ───────────────
+const buildSrc = readFileSync("src/server/routes/build.ts", "utf-8");
+
+// Locate the query handler inside runFastBuild
+const queryMatch = buildSrc.match(/if\s*\(promptIntent\.type === "query"\)\s*\{([\s\S]*?)return;\s*\}/);
+check("build route has an explicit query execution branch that returns early", Boolean(queryMatch), true);
+
+const queryBody = queryMatch?.[1] ?? "";
+
+check("query branch does NOT call createPreviewSandbox", queryBody.includes("createPreviewSandbox("), false);
+check("query branch does NOT call writeFilesToSandbox", queryBody.includes("writeFilesToSandbox("), false);
+check("query branch does NOT invoke repair or fix loops", queryBody.includes("fixPreviewErrors(") || queryBody.includes("findDeadCodeHandler("), false);
+check("query branch does NOT invoke E2B runtime backend verification", queryBody.includes("e2bCanRunNonNodeBackend"), false);
+
+check("query branch completes with previewUrl set to null", queryBody.includes("previewUrl: null"), true);
+check("query branch completes with files set to empty object", queryBody.includes("files: {}"), true);
+check("query branch completes with totalFiles 0", queryBody.includes("totalFiles: 0"), true);
+check("query branch updates session status to success", queryBody.includes('status: "success"'), true);
+check("query branch resets project status to live", queryBody.includes('status: "live"'), true);
