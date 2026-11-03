@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, inArray } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db } from "../../db/client.js";
@@ -441,6 +441,13 @@ integrationsRouter.delete("/:id", async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * Providers that fit user_integrations' fixed Postgres enum. Anything else a
+ * user connects through /provider/:id is stored in user_mcp_connections
+ * instead — see the insert below.
+ */
+const LEGACY_ENUM_PROVIDERS = ["supabase", "vercel", "github", "railway", "wordpress", "shopify", "make", "n8n", "zapier"];
+
 // ── POST /api/integrations/provider/:id ──────────────────────────────────────
 // Generic connect for registry providers (wordpress, shopify, make, n8n,
 // zapier). Validates with the provider's Zod schema, runs testConnection, then
@@ -491,6 +498,28 @@ integrationsRouter.post("/provider/:id", async (c) => {
     encryptedCredsTag: enc.tag,
     meta,
   };
+
+  // user_integrations.provider is a fixed Postgres enum that predates the
+  // registry: it has no rows for twilio, sendgrid, mailchimp, or framer, so an
+  // insert there would fail on the enum check at runtime, not at compile time.
+  // Registry providers outside that enum go to user_mcp_connections (text
+  // slug) instead — the same table every hosted-MCP connection uses.
+  if (!LEGACY_ENUM_PROVIDERS.includes(providerId)) {
+    await db
+      .insert(userMcpConnections)
+      .values({
+        id, userId,
+        providerSlug: providerId,
+        encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+        meta,
+      })
+      .onConflictDoUpdate({
+        target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+        set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta, connectedAt: now },
+      });
+    logger.info({ userId, provider: providerId, table: "user_mcp_connections" }, "Provider integration connected");
+    return c.json({ provider: providerId, status: "connected", meta }, 201);
+  }
 
   await db
     .insert(userIntegrations)
@@ -615,6 +644,55 @@ export async function getUserGitHubToken(userId: string): Promise<string | null>
     return read({ encryptedCreds: cfg.encryptedCreds, encryptedCredsIv: cfg.encryptedCredsIv, encryptedCredsTag: cfg.encryptedCredsTag });
   }
   return null;
+}
+
+/**
+ * Decrypted credentials for the REST-only providers (shopify, wordpress,
+ * twilio, sendgrid, mailchimp), keyed by provider slug. Their agent-side
+ * `*_query` tools read from this map; a provider the user has not connected
+ * is simply absent. Reads the MCP connections table first and falls back to
+ * the legacy user_integrations store, the same order getUserGitHubToken
+ * uses.
+ */
+export async function getRestProviderCredentials(userId: string): Promise<Record<string, Record<string, string>>> {
+  const REST_SLUGS = ["shopify", "wordpress", "twilio", "sendgrid", "mailchimp"] as const;
+  const out: Record<string, Record<string, string>> = {};
+
+  const readRow = (slug: string, row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): boolean => {
+    try {
+      const creds = JSON.parse(decrypt({
+        encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      const inner = unwrapCreds(creds);
+      const flat: Record<string, string> = {};
+      for (const [key, value] of Object.entries(inner)) {
+        if (typeof value === "string" && value.trim()) flat[key] = value.trim();
+      }
+      if (Object.keys(flat).length > 0) {
+        out[slug] = flat;
+        return true;
+      }
+    } catch {
+      logger.warn({ userId, slug, stage: "rest_credential_decrypt" }, "Stored REST credential could not be read");
+    }
+    return false;
+  };
+
+  const rows = await db.select().from(userMcpConnections).where(and(
+    eq(userMcpConnections.userId, userId), inArray(userMcpConnections.providerSlug, [...REST_SLUGS]),
+  ));
+  for (const row of rows) readRow(row.providerSlug, row);
+
+  const resolvedSlugs = new Set(Object.keys(out));
+  const legacyRows = await db.select().from(userIntegrations).where(eq(userIntegrations.userId, userId));
+  for (const row of legacyRows) {
+    if (row.status !== "connected" || !(REST_SLUGS as readonly string[]).includes(row.provider) || resolvedSlugs.has(row.provider)) continue;
+    const cfg = row.config;
+    if (cfg?.encryptedCreds && cfg.encryptedCredsIv && cfg.encryptedCredsTag) {
+      readRow(row.provider, { encryptedCreds: cfg.encryptedCreds, encryptedCredsIv: cfg.encryptedCredsIv, encryptedCredsTag: cfg.encryptedCredsTag });
+    }
+  }
+  return out;
 }
 
 export async function getUserVercelDeployToken(userId: string): Promise<string | null> {

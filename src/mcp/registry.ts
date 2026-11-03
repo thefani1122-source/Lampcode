@@ -326,7 +326,10 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
       },
     ],
     supportsRealMCP: false,
-    restApiHint: "Framer REST API: https://api.framer.com/store/v1\nHeader: Authorization: Bearer {framer_api_token}",
+    // MEASURED 2026-11-03. Framer's real developer surface is the Server API
+    // npm package (project-bound keys), not a plain REST endpoint — the old
+    // api.framer.com/store/v1 hint no longer matches anything documented.
+    restApiHint: "Framer Server API: npm i framer-api — connect(projectUrl, {framer_api_token}) to read/update the CMS and publish",
   },
 
   mailchimp: {

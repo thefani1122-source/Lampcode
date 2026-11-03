@@ -41,7 +41,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken, getUserGitHubToken } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -974,6 +974,7 @@ export async function runFastBuild(
       });
 
       const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
+      const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
       const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
       let deployCtx: { vercelToken: string; projectName: string } | undefined;
       if (vercelDeployToken) {
@@ -1003,6 +1004,8 @@ export async function runFastBuild(
         `- github_query: Query connected GitHub account to list repositories (action: "list_repos"), inspect specific repos, branches, or commits.
 ` +
         `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
+` +
+        `- shopify_query / wordpress_query / twilio_query / sendgrid_query / mailchimp_query: Inspect the user's connected Shopify store, WordPress site, Twilio account, SendGrid account, or Mailchimp account (each takes an "action" like list_products, list_posts, list_messages, list_templates, list_campaigns).
 ` +
         `- read_file: Read a specific file from the project.
 ` +
@@ -1045,6 +1048,7 @@ export async function runFastBuild(
         userPrompt: prompt,
         projectFiles: existingFiles,
         gitHubToken: gitHubToken ?? undefined,
+        serviceCredentials: restCreds,
         deploy: deployCtx,
         mcpServers: userMcpServers,
         costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
@@ -1615,6 +1619,10 @@ export async function runFastBuild(
     // `deploy_app` could never receive a token again, while still being offered
     // to the model. The REST deploy needs an account token, which is a
     // different credential from the MCP one, so it is read as its own thing.
+    // REST-only providers carry their credentials the same way: resolved here
+    // and passed down so the *_query tools can answer with real data.
+    const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
+
     const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
     const vercelDeployToken = vercelMcp
       ? await getUserVercelDeployToken(userId).catch(() => null)
@@ -1695,6 +1703,7 @@ export async function runFastBuild(
       onSandboxLog: (line: string) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
+      serviceCredentials: restCreds,
       ...(deployCtx === undefined ? {} : { deploy: deployCtx }),
     });
 

@@ -621,6 +621,105 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       required: [],
     },
   },
+  {
+    name: "shopify_query",
+    description:
+      "Query the user's connected Shopify store to inspect products and orders. " +
+      "Use this when the user asks about their Shopify products, pricing, or recent orders.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_products", "get_product", "list_orders"],
+          description: "Action to perform: 'list_products' (default), 'get_product', or 'list_orders'.",
+        },
+        id: {
+          type: "string",
+          description: "Product id when action is 'get_product'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "wordpress_query",
+    description:
+      "Query the user's connected WordPress site to inspect posts and pages. " +
+      "Use this when the user asks about their WordPress content.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_posts", "list_pages", "get_post"],
+          description: "Action to perform: 'list_posts' (default), 'list_pages', or 'get_post'.",
+        },
+        id: {
+          type: "string",
+          description: "Post/page id when action is 'get_post'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "twilio_query",
+    description:
+      "Query the user's connected Twilio account to inspect message and call history. " +
+      "Use this when the user asks about SMS messages or calls on their Twilio account.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_messages", "list_calls", "get_message"],
+          description: "Action to perform: 'list_messages' (default), 'list_calls', or 'get_message'.",
+        },
+        id: {
+          type: "string",
+          description: "Message SID when action is 'get_message'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "sendgrid_query",
+    description:
+      "Query the user's connected SendGrid account to inspect email templates, marketing contacts, and contact lists.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_templates", "list_contacts", "list_lists"],
+          description: "Action to perform: 'list_templates' (default), 'list_contacts', or 'list_lists'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "mailchimp_query",
+    description:
+      "Query the user's connected Mailchimp account to inspect campaigns, audiences, and subscribers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_campaigns", "get_lists", "list_members"],
+          description: "Action to perform: 'list_campaigns' (default), 'get_lists', or 'list_members'.",
+        },
+        list_id: {
+          type: "string",
+          description: "Audience list id when action is 'list_members'.",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 export type GateOutcome = "pass" | "fail" | "unavailable";
@@ -761,6 +860,11 @@ export interface ToolExecutionContext {
       }
     | undefined;
   gitHubToken?: string | undefined;
+  /** Decrypted credentials for REST-only providers, keyed by provider slug
+   *  (shopify, wordpress, twilio, sendgrid, mailchimp). Populated by build.ts
+   *  from the connected-integrations store; a provider the user has not
+   *  connected is simply absent, and its query tool says so in one sentence. */
+  serviceCredentials?: Record<string, Record<string, string> | undefined> | undefined;
 }
 
 export async function executeTool(

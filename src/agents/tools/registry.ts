@@ -28,6 +28,7 @@ import { shellHandler } from "./shell.js";
 import { browserInteractHandler } from "./browser-interact.js";
 import { githubQueryHandler } from "./github-query.js";
 import { vercelQueryHandler } from "./vercel-query.js";
+import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler } from "./rest-queries.js";
 
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -73,4 +74,9 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["browser_interact", browserInteractHandler],
   ["github_query", githubQueryHandler],
   ["vercel_query", vercelQueryHandler],
+  ["shopify_query", shopifyQueryHandler],
+  ["wordpress_query", wordpressQueryHandler],
+  ["twilio_query", twilioQueryHandler],
+  ["sendgrid_query", sendgridQueryHandler],
+  ["mailchimp_query", mailchimpQueryHandler],
 ]);

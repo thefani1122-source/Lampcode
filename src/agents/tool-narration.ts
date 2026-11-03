@@ -45,6 +45,11 @@ const PHRASES: Record<string, Phrase> = {
   search_code: { past: "Searched the code for", present: "Searching the code for", arg: "query" },
   github_query: { past: "Checked GitHub", present: "Checking GitHub" },
   vercel_query: { past: "Checked Vercel", present: "Checking Vercel" },
+  shopify_query: { past: "Checked Shopify", present: "Checking Shopify" },
+  wordpress_query: { past: "Checked WordPress", present: "Checking WordPress" },
+  twilio_query: { past: "Checked Twilio", present: "Checking Twilio" },
+  sendgrid_query: { past: "Checked SendGrid", present: "Checking SendGrid" },
+  mailchimp_query: { past: "Checked Mailchimp", present: "Checking Mailchimp" },
   code_intel: { past: "Looked up", present: "Looking up", arg: "symbol" },
   impact_analysis: { past: "Checked what this affects", present: "Checking what this affects" },
 

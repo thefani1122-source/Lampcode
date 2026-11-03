@@ -146,6 +146,9 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   queryMode?: boolean | undefined;
   /** Personal Access Token for GitHub, passed to ToolExecutionContext. */
   gitHubToken?: string | undefined;
+  /** Decrypted REST-provider credentials, keyed by provider slug, passed to
+   *  ToolExecutionContext for the *_query tools. */
+  serviceCredentials?: Record<string, Record<string, string> | undefined> | undefined;
 };
 
 export interface DispatchResult {
@@ -605,6 +608,11 @@ export class AgentDispatcher {
                     "web_search",
                     "github_query",
                     "vercel_query",
+                    "shopify_query",
+                    "wordpress_query",
+                    "twilio_query",
+                    "sendgrid_query",
+                    "mailchimp_query",
                   ].includes(t.name),
                 ),
                 ...readToolDefs,
@@ -813,6 +821,7 @@ export class AgentDispatcher {
                 userId: options.userId,
                 provider: effectiveProvider,
                 gitHubToken: options.gitHubToken,
+                serviceCredentials: options.serviceCredentials,
                 ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),
