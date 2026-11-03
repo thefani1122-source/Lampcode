@@ -81,6 +81,11 @@ const envSchema = z.object({
   // MCP_OAUTH_REDIRECT_URL.
   GITHUB_MCP_CLIENT_ID: z.string().min(1).optional(),
   GITHUB_MCP_CLIENT_SECRET: z.string().min(1).optional(),
+  // SEP-991 Client ID Metadata Document (CIMD): the public HTTPS URL where
+  // Lampcode serves its OAuth client metadata, used as the client_id for
+  // CIMD-capable servers such as Vercel. Must point at
+  // /api/integrations/mcp/oauth/client-metadata.json, served below.
+  MCP_CLIENT_METADATA_URL: z.string().url().optional(),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
   STRIPE_SECRET_KEY: z.string().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),

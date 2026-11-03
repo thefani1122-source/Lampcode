@@ -28,6 +28,25 @@ integrationsRouter.use("/*", requireAuth);
 export const mcpOAuthCallbackRouter = new Hono();
 const OAUTH_PENDING_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * SEP-991 Client ID Metadata Document, served publicly: CIMD authorization
+ * servers (Vercel) fetch this URL and read the client metadata from it. The
+ * URL configured in MCP_CLIENT_METADATA_URL must be this exact endpoint.
+ */
+mcpOAuthCallbackRouter.get("/mcp/oauth/client-metadata.json", (c) => {
+  const clientIdUrl = config.MCP_CLIENT_METADATA_URL;
+  if (!clientIdUrl) return c.json({ error: "MCP_CLIENT_METADATA_URL is not configured" }, 404);
+  return c.json({
+    client_id: clientIdUrl,
+    client_name: "Lampcode",
+    redirect_uris: [oauthCallbackUrl()],
+    response_types: ["code"],
+    grant_types: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_method: "none",
+    client_uri: config.FRONTEND_URL ?? undefined,
+  });
+});
+
 function encryptOAuthSession(session: McpOAuthSession) {
   return encrypt(JSON.stringify(session));
 }
@@ -58,6 +77,17 @@ function staticMcpOAuthClient(slug: string): StaticOAuthClient | undefined {
   const clientSecret = config.GITHUB_MCP_CLIENT_SECRET;
   if (!clientId || !clientSecret) return undefined;
   return { clientId, clientSecret, tokenEndpointAuthMethod: "client_secret_post" };
+}
+
+/**
+ * SEP-991 Client ID Metadata Document: servers such as Vercel advertise
+ * `client_id_metadata_document_supported` and use an HTTPS URL we host as the
+ * OAuth client_id instead of dynamic registration. The document is served
+ * publicly at /mcp/oauth/client-metadata.json below.
+ */
+function cimdClientMetadataUrl(slug: string): string | undefined {
+  if (slug !== "vercel") return undefined;
+  return config.MCP_CLIENT_METADATA_URL;
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -807,6 +837,7 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     session,
     persist: saveSession,
     staticClient,
+    clientMetadataUrl: cimdClientMetadataUrl(slug),
     saveStateHash: async (stateHash) => {
       await db.update(mcpOAuthTransactions).set({ stateHash }).where(eq(mcpOAuthTransactions.id, transactionId));
     },
@@ -835,6 +866,14 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     const authorizationUrl = oauth.authorizationUrl();
     if (authorizationUrl) return c.json({ slug, status: "authorization_required", authorizationUrl: authorizationUrl.toString() }, 200);
     await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
+    if (slug === "figma") {
+      logger.warn({ provider: slug, category: "oauth_start_failed" }, "Figma rejected the client (catalog-only MCP server)");
+      throw new AppError(
+        422,
+        "Figma only connects MCP clients listed in its MCP catalog, and Lampcode is not approved yet. Figma's docs list a client waitlist for new clients.",
+        "OAUTH_CLIENT_NOT_ALLOWED",
+      );
+    }
     logger.warn({ provider: slug, category: "oauth_start_failed" }, "MCP OAuth start failed");
     throw new AppError(422, "The provider could not start MCP authorization", "OAUTH_START_FAILED");
   } finally {
@@ -876,6 +915,7 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
     session,
     persist: async () => undefined,
     staticClient,
+    clientMetadataUrl: cimdClientMetadataUrl(pending.providerSlug),
     saveStateHash: async () => undefined,
   });
   const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });

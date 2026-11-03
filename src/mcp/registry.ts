@@ -235,8 +235,18 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🧵",
     description: "Generate UI designs from prompts and extract production-ready code",
     mcpServerUrl: "https://stitch.googleapis.com/mcp",
-    authType: "oauth",
-    credentialFields: [],
+    // Stitch's MCP server authenticates with a Stitch API key (Google Cloud),
+    // not a browser OAuth flow — see stitch.withgoogle.com/docs/mcp/setup.
+    authType: "bearer_token",
+    credentialFields: [
+      {
+        key: "api_key",
+        label: "Stitch API Key",
+        type: "password",
+        placeholder: "AIza...",
+        help: "Create a Stitch API key in Google Cloud (stitch.withgoogle.com/docs/mcp/setup)",
+      },
+    ],
     supportsRealMCP: true,
   },
 

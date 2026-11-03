@@ -33,6 +33,13 @@ export function createMcpOAuthProvider(options: {
   saveStateHash: (hash: string) => Promise<void>;
   /** Present for no-DCR servers: the SDK then skips dynamic registration. */
   staticClient?: StaticOAuthClient | undefined;
+  /**
+   * SEP-991 Client ID Metadata Document: an HTTPS URL where Lampcode hosts its
+   * client metadata. When the server advertises
+   * `client_id_metadata_document_supported`, the MCP SDK uses this URL as the
+   * OAuth client_id instead of dynamic registration (e.g. Vercel).
+   */
+  clientMetadataUrl?: string | undefined;
 }) {
   let authorizationUrl: URL | undefined;
   const session = options.session;
@@ -52,6 +59,7 @@ export function createMcpOAuthProvider(options: {
   }
   const provider: OAuthClientProvider = {
     get redirectUrl() { return options.redirectUrl; },
+    ...(options.clientMetadataUrl ? { clientMetadataUrl: options.clientMetadataUrl } : {}),
     get clientMetadata() { return clientMetadata; },
     async state() {
       const state = randomBytes(32).toString("base64url");

@@ -16,7 +16,13 @@ check("GitHub rows connected before the OAuth flip keep their PAT working", reso
   { Authorization: "Bearer ghp_test" });
 check("an OAuth session wins over a leftover PAT in the same row", resolveMcpAuth(MCP_REGISTRY.github!, { oauth_access_token: "gho_new", github_token: "ghp_old" })?.headers,
   { Authorization: "Bearer gho_new" });
-check("Stitch does not invent a static API-key header for its OAuth flow", resolveMcpAuth(MCP_REGISTRY["google-stitch"]!, {})?.headers, {});
+check("Stitch is a bearer-token provider, not OAuth", MCP_REGISTRY["google-stitch"]!.authType, "bearer_token");
+check("Stitch asks for exactly one credential: the Stitch API key",
+  MCP_REGISTRY["google-stitch"]!.credentialFields.map((f) => f.key), ["api_key"]);
+check("Stitch connection uses the API key as a bearer token",
+  resolveMcpAuth(MCP_REGISTRY["google-stitch"]!, { api_key: "st_key" })?.headers,
+  { Authorization: "Bearer st_key" });
+check("Stitch invents no header without a key", resolveMcpAuth(MCP_REGISTRY["google-stitch"]!, {}), null);
 check("embedded-token endpoint does not duplicate URL auth", resolveMcpAuth(MCP_REGISTRY.make!, { make_mcp_url: "https://eu2.make.com/mcp/stateless" })?.headers, {});
 check("Exa public MCP does not require a fabricated key", resolveMcpAuth(INTERNAL_MCP_PROVIDERS.exa!, {})?.headers, {});
 check("Vercel connection uses bearer access token", resolveMcpAuth(MCP_REGISTRY.vercel!, { vercel_token: "v_token" })?.headers,

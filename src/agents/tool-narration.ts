@@ -43,6 +43,8 @@ const PHRASES: Record<string, Phrase> = {
   delete_file: { past: "Deleted", present: "Deleting", arg: "path" },
   list_files: { past: "Listed the files", present: "Listing the files" },
   search_code: { past: "Searched the code for", present: "Searching the code for", arg: "query" },
+  github_query: { past: "Checked GitHub", present: "Checking GitHub" },
+  vercel_query: { past: "Checked Vercel", present: "Checking Vercel" },
   code_intel: { past: "Looked up", present: "Looking up", arg: "symbol" },
   impact_analysis: { past: "Checked what this affects", present: "Checking what this affects" },
 
