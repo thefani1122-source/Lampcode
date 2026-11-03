@@ -577,7 +577,11 @@ export async function getUserVercelDeployToken(userId: string): Promise<string |
         encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
       })) as Record<string, unknown>;
       const inner = unwrapCreds(creds);
-      for (const key of ["vercel_token", "token", "accessToken", "oauth_access_token"]) {
+      // NOTE: no "oauth_access_token" here, deliberately. The Vercel MCP
+      // OAuth session's access token is scoped to mcp.vercel.com; handing it
+      // to the REST deploy endpoint would just fail there. REST deploys read
+      // an account token from token-based connections only.
+      for (const key of ["vercel_token", "token", "accessToken"]) {
         const value = inner[key];
         if (typeof value === "string" && value.trim()) return value.trim();
       }

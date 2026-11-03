@@ -73,16 +73,11 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "💳",
     description: "Manage payments, customers, subscriptions, and products via the Stripe MCP server",
     mcpServerUrl: "https://mcp.stripe.com",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "stripe_key",
-        label: "Stripe API Key",
-        type: "password",
-        placeholder: "rk_test_... or rk_live_...",
-        help: "Use a restricted key from dashboard.stripe.com/apikeys with only the permissions this agent needs",
-      },
-    ],
+    // mcp.stripe.com supports OAuth (its consent page grants per-account,
+    // per-environment access). Agent API keys remain valid for headless
+    // deployments, but the store connects with one-click OAuth.
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -93,16 +88,10 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "📋",
     description: "Create and manage issues, projects, and cycles via the Linear MCP server",
     mcpServerUrl: "https://mcp.linear.app/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "linear_key",
-        label: "Linear API Key",
-        type: "password",
-        placeholder: "lin_api_...",
-        help: "Create at linear.app/settings/api under Personal API Keys",
-      },
-    ],
+    // Linear's hosted server uses OAuth 2.1 with dynamic client registration,
+    // so no pre-registered app or personal API key is needed — one click.
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -113,16 +102,13 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "▲",
     description: "Deploy projects, manage domains, and view deployments via the Vercel MCP server",
     mcpServerUrl: "https://mcp.vercel.com",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "vercel_token",
-        label: "Vercel Access Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create a Personal Access Token at vercel.com/account/tokens",
-      },
-    ],
+    // The Vercel MCP server is OAuth-only — a static account token is NOT
+    // accepted on mcp.vercel.com, which is why a stored PAT could connect in
+    // the store and then contribute zero working tools. 1-click OAuth here.
+    // The REST deploy path keeps reading an account token of its own
+    // (getUserVercelDeployToken deliberately ignores this OAuth session).
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 
@@ -133,16 +119,10 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "🌥️",
     description: "Manage Workers, KV, R2, and DNS records via the Cloudflare MCP server",
     mcpServerUrl: "https://mcp.cloudflare.com/mcp",
-    authType: "bearer_token",
-    credentialFields: [
-      {
-        key: "cf_token",
-        label: "Cloudflare API Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create at dash.cloudflare.com/profile/api-tokens",
-      },
-    ],
+    // Cloudflare's hosted MCP server authorizes with OAuth; a stored API
+    // token could not run its tools. 1-click OAuth here.
+    authType: "oauth",
+    credentialFields: [],
     supportsRealMCP: true,
   },
 

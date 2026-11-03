@@ -11,9 +11,10 @@ export const deployAppHandler: ToolHandler = async (args: Record<string, unknown
       if (!ctx.deploy) {
         // Not an error. The remedy is the user's and this is how they learn it.
         return (
-          "This app is ready to deploy, but no Vercel account is connected yet. The user needs " +
-          "to connect Vercel in their integrations settings (it takes a Vercel account token). " +
-          "Tell them that and stop — do not try again."
+          "This app is ready to deploy, but no Vercel account token for the REST deploy path is " +
+          "connected yet. The user can connect Vercel in their integrations settings, or — if " +
+          "their Vercel connection is the MCP (OAuth) one — use the Vercel MCP deploy tools " +
+          "instead. Tell them which applies and stop — do not try again."
         );
       }
 
