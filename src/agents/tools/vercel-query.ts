@@ -25,6 +25,18 @@ export const vercelQueryHandler: ToolHandler = async (
     "Content-Type": "application/json",
   };
 
+  // A rejected credential is a sentence, not a stack: 401 means the stored
+  // token is expired or MCP-scoped, and the fix is a reconnect (or an account
+  // Access Token) in the Integrations store.
+  const guard = async (res: Response): Promise<string | null> => {
+    if (res.status !== 401 && res.status !== 403) return null;
+    return (
+      "Vercel rejected the stored credential (HTTP " + res.status + "). " +
+      "The Vercel connection needs to be reconnected in Integrations settings — " +
+      "reconnect it, or add a Vercel Access Token to the Vercel integration, then ask again."
+    );
+  };
+
   const str = (key: string): string => (typeof args[key] === "string" ? (args[key] as string).trim() : "");
   const action = (typeof args["action"] === "string" ? args["action"].trim().toLowerCase() : "") || "list_deployments";
 
@@ -33,6 +45,8 @@ export const vercelQueryHandler: ToolHandler = async (
       const project = str("project");
       const query = joinQ("limit=10" + (project ? `&project=${encodeURIComponent(project)}` : ""));
       const res = await fetch(`https://api.vercel.com/v6/deployments?${query}`, { headers });
+      const rejected = await guard(res);
+      if (rejected) return rejected;
       if (!res.ok) return `Vercel API error (${res.status}): ${await res.text()}`;
       const data = (await res.json()) as { deployments?: Array<Record<string, unknown>> };
       const deps = data.deployments ?? [];
@@ -50,6 +64,8 @@ export const vercelQueryHandler: ToolHandler = async (
 
     if (action === "list_projects") {
       const res = await fetch(`https://api.vercel.com/v9/projects?${joinQ("limit=10")}`, { headers });
+      const rejected = await guard(res);
+      if (rejected) return rejected;
       if (!res.ok) return `Vercel API error (${res.status}): ${await res.text()}`;
       const data = (await res.json()) as { projects?: Array<Record<string, unknown>> };
       const projs = data.projects ?? [];
@@ -68,6 +84,8 @@ export const vercelQueryHandler: ToolHandler = async (
       const id = str("deployment");
       if (!id) return "Error: a `deployment` id or URL is required (list_deployments prints ids).";
       const res = await fetch(`https://api.vercel.com/v13/deployments/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`, { headers });
+      const rejected = await guard(res);
+      if (rejected) return rejected;
       if (!res.ok) return `Vercel API error (${res.status}): ${await res.text()}`;
       const d = (await res.json()) as Record<string, unknown>;
       const meta = (d["meta"] ?? {}) as Record<string, unknown>;
@@ -93,6 +111,8 @@ export const vercelQueryHandler: ToolHandler = async (
         `https://api.vercel.com/v3/deployments/${encodeURIComponent(id)}/events?${joinQ("limit=120&builds=1&direction=backward")}`,
         { headers },
       );
+      const rejected = await guard(res);
+      if (rejected) return rejected;
       if (!res.ok) return `Vercel API error (${res.status}): ${await res.text()}`;
       const raw = await res.text();
       const messages: string[] = [];
@@ -136,6 +156,8 @@ export const vercelQueryHandler: ToolHandler = async (
         `https://api.vercel.com/v1/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(id)}/runtime-logs${qs ? `?${qs}` : ""}`,
         { headers },
       );
+      const rejected = await guard(res);
+      if (rejected) return rejected;
       if (!res.ok) return `Vercel API error (${res.status}): ${await res.text()}`;
       const raw = await res.text();
       const lines: string[] = [];

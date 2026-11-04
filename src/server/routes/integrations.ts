@@ -702,13 +702,21 @@ export async function getUserVercelDeployToken(userId: string): Promise<string |
         encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
       })) as Record<string, unknown>;
       const inner = unwrapCreds(creds);
-      // NOTE: no "oauth_access_token" here, deliberately. The Vercel MCP
-      // OAuth session's access token is scoped to mcp.vercel.com; handing it
-      // to the REST deploy endpoint would just fail there. REST deploys read
-      // an account token from token-based connections only.
-      for (const key of ["vercel_token", "token", "accessToken"]) {
+      // Vercel's OAuth access tokens are ordinary Bearer credentials for
+      // api.vercel.com — Vercel's own docs have the integration flow exchange
+      // a code for exactly such a token and then call the REST API with it.
+      // The MCP session stores it as oauth_access_token / tokens.access_token,
+      // so it is read as a fallback AFTER explicit account tokens. If a token
+      // turns out to be MCP-scoped anyway, the query tool surfaces the 401 and
+      // asks the user to reconnect — the caller never crashes on it.
+      for (const key of ["vercel_token", "token", "accessToken", "oauth_access_token"]) {
         const value = inner[key];
         if (typeof value === "string" && value.trim()) return value.trim();
+      }
+      const nested = creds["tokens"];
+      if (nested !== null && typeof nested === "object") {
+        const access = (nested as Record<string, unknown>)["access_token"];
+        if (typeof access === "string" && access.trim()) return access.trim();
       }
     } catch {
       logger.warn({ userId, stage: "vercel_token_decrypt" }, "Stored Vercel credential could not be read");

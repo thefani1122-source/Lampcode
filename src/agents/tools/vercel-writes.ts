@@ -66,6 +66,9 @@ export const vercelWriteHandler = async (args: Record<string, unknown>, ctx: Too
       "POST",
       token,
     );
+    if (status === 401 || status === 403) {
+      return `Vercel rejected the stored credential (HTTP ${status}). The Vercel connection needs to be reconnected in Integrations settings — reconnect it, or add a Vercel Access Token, then ask again. No change was made.`;
+    }
     if (status !== 201 && status !== 200) return `Vercel API error (${status}): ${String(JSON.stringify(body ?? ""))}`;
     const rolled = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
     const target = String(rolled["url"] ?? rolled["targetUrl"] ?? deployment);
