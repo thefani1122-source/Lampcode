@@ -51,6 +51,12 @@ async function* reasoningThenText() {
   yield { type: "done", inputTokens: 1, outputTokens: 1 };
 }
 
+async function* proseThenText() {
+  yield { type: "reasoning", reasoning: "tracing the failure" };
+  yield { type: "content", content: "Found the bug in the router.\n\nFixing the guard now, then I will write the tests." };
+  yield { type: "done", inputTokens: 1, outputTokens: 1 };
+}
+
 async function narrationFor(agentType: string): Promise<number> {
   const { events, wsServer } = recorder();
   await handleAgentStream(reasoningThenText() as never, {
@@ -103,6 +109,43 @@ for (const agentType of ["frontend", "backend", "fix"]) {
     events.some((event) => JSON.stringify(event.data).includes("criteria")),
     false,
   );
+}
+
+// build:message (2026-11): the builder's own sentences between tool rounds
+// stream to the chat the way Lovable narrates — prose outside the code
+// fences only, closed with a done event, and a structured plan object in
+// `content` still never reaches it. The emission is buffered to sentences and
+// guarded by `looksStructured`; these cases pin both halves of that contract.
+{
+  const { events, wsServer } = recorder();
+  await handleAgentStream(proseThenText() as never, {
+    sessionId: "s1",
+    agentType: "frontend",
+    taskId: "t1",
+    outputPath: join(dir, "prose-build.txt"),
+    wsServer: wsServer as never,
+  });
+  const messages = events.filter((e) => e.event === "build:message");
+  const text = messages.map((m) => (m.data?.text as string) ?? "").join("");
+  check("builder prose streams to the user as build:message", text.includes("Found the bug in the router."), true);
+  check("the streamed prose carries no code fences", text.includes("```"), false);
+  check("the streamed prose message closes with done", messages.some((m) => m.data?.done === true), true);
+}
+{
+  const { events, wsServer } = recorder();
+  await handleAgentStream(reasoningThenText() as never, {
+    sessionId: "s1",
+    agentType: "frontend",
+    taskId: "t1",
+    outputPath: join(dir, "structured-build.txt"),
+    wsServer: wsServer as never,
+  });
+  const leaked = events
+    .filter((e) => e.event === "build:message")
+    .map((m) => (m.data?.text as string) ?? "")
+    .join("")
+    .includes("criteria");
+  check("a structured plan object never reaches build:message", leaked, false);
 }
 
 // The guard that would have caught this: a pass told to answer in JSON must
