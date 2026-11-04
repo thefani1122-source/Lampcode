@@ -1026,9 +1026,9 @@ export async function runFastBuild(
 ` +
         `3. NEVER use web_search, Firecrawl, or Exa to answer a question about the user's own repositories, issues, deployments, or accounts. Web tools only see the public internet and cannot see the user's connected services; answering a GitHub question from a web search is always wrong. Web tools are for public documentation, library details, and general technical facts only.
 ` +
-        `5. Never invent repository names, deployments, or file paths — verify with tools.
+        `4. Never invent repository names, deployments, or file paths — verify with tools.
 ` +
-        `6. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
+        `5. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
 `;
 
       const queryDispatchResult = await getDispatcher().dispatch({
