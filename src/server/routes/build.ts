@@ -990,7 +990,14 @@ export async function runFastBuild(
         };
       }
 
-      const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+      // No MCP servers in the query path, deliberately. The local *_query
+      // tools listed above already cover every connected service, and an
+      // attached web-scraper (Firecrawl/Exa) only hands the model a tool that
+      // CANNOT answer a question about the user's private account data.
+      // Measured 2026-11-04: with scrapers offered, a model that missed the
+      // routing rule burned rounds on Firecrawl calls that each failed auth,
+      // then failed src/App.tsx generation. Tools that are absent cannot be
+      // misused; nothing here needs to be unattached because nothing is attached.
 
       const queryTaskDescription =
         `You are a knowledgeable AI technical partner assisting the user with their project, code, or integrations.
@@ -1050,7 +1057,7 @@ export async function runFastBuild(
         gitHubToken: gitHubToken ?? undefined,
         serviceCredentials: restCreds,
         deploy: deployCtx,
-        mcpServers: userMcpServers,
+        mcpServers: [],
         costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
       });
 
@@ -1577,11 +1584,17 @@ export async function runFastBuild(
     // single call ("Could not resolve authentication method"), so offering it
     // keyless only teaches the model to burn rounds on a tool that can never
     // work.
+    // They attach only when the prompt actually contains a URL to scrape.
+    // A build with no reference URL never sees them: the local web_search tool
+    // already covers documentation lookups, and offering the scrapers on every
+    // build is exactly what let the model reach for them on connected-data
+    // prompts the intent router mis-sent to the build path (2026-11-04).
+    const promptHasUrl = /https?:\/\/\S+/.test(prompt);
     const internalMcpServers = [
-      ...(config.FIRECRAWL_API_KEY
+      ...(promptHasUrl && config.FIRECRAWL_API_KEY
         ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev/v2/mcp", authToken: config.FIRECRAWL_API_KEY }]
         : []),
-      ...(config.EXA_API_KEY
+      ...(promptHasUrl && config.EXA_API_KEY
         ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
         : []),
     ];

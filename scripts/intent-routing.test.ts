@@ -63,6 +63,41 @@ check("app creation follows model build decision", build.type, "build");
 const empty = await classifyPromptIntent("   ");
 check("empty prompt has safe query classification", empty.type, "query");
 
+// The deterministic backstop only fires when the classifier is unavailable.
+const backstopListing = await classifyPromptIntent(
+  "thefani1122-source/Lampcode ke open issues list karo",
+  {} as Parameters<typeof classifyPromptIntent>[1],
+);
+check("classifier-unavailable listing prompt falls back to query", backstopListing.type, "query");
+
+const backstopBuild = await classifyPromptIntent(
+  "build me a calorie tracker",
+  {} as Parameters<typeof classifyPromptIntent>[1],
+);
+check("classifier-unavailable build prompt stays build", backstopBuild.type, "build");
+
+const serviceWordBuild = await classifyPromptIntent(
+  "add github issues integration to my app",
+  {} as Parameters<typeof classifyPromptIntent>[1],
+);
+check("code-change prompt mentioning a service stays build", serviceWordBuild.type, "build");
+
+const throwingDispatcher = {
+  dispatch: async () => {
+    throw new Error("classifier down");
+  },
+} as unknown as AgentDispatcher;
+const afterFailure = await classifyPromptIntent("meri vercel deployments dikhao", {
+  ...ctx,
+  dispatcher: throwingDispatcher,
+});
+check("failed classification sends listing prompts to query", afterFailure.type, "query");
+const afterFailureBuild = await classifyPromptIntent("fix the login form validation error", {
+  ...ctx,
+  dispatcher: throwingDispatcher,
+});
+check("failed classification keeps real builds on the build path", afterFailureBuild.type, "build");
+
 if (failures) {
   console.error(`\n${failures} test(s) failed.`);
   process.exit(1);

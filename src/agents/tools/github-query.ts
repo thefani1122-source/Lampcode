@@ -52,8 +52,8 @@ export const githubQueryHandler: ToolHandler = async (
   const token = ctx.gitHubToken;
   if (!token) {
     return (
-      "GitHub is not connected or no Personal Access Token was found. " +
-      "Please tell the user to connect GitHub in Integrations settings with their Personal Access Token (PAT)."
+      "GitHub is not connected for this account. " +
+      "Tell the user to connect GitHub in the Integrations panel — one-click OAuth connect, or paste a Personal Access Token — then ask again."
     );
   }
 
