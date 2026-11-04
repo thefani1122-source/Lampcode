@@ -2267,7 +2267,8 @@ export class PromptBuilder {
         "- After fixing something, say in one line what was wrong and what you changed.\n" +
         "- After a check fails, say in one line what failed, before you start fixing it.\n" +
         "Rules for these updates: plain prose only — no JSON, no headings, no bullet " +
-        "lists, no code fences, no file listings; a file path inside a sentence is fine. " +
+        "lists, no code fences, no markdown tables, no file listings; a file path " +
+        "inside a sentence is fine. " +
         "Never narrate a step INSTEAD of doing it. Do not write an update more than once " +
         "per step, and stay silent while several tools run in a row without new findings " +
         "— speak when you have something real to say. Your final reply at the end is " +

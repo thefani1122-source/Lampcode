@@ -16,6 +16,7 @@ import { modalStream } from "./modal-gateway.js";
 import { narrateTool, formatLineDelta } from "./tool-narration.js";
 import { buildRestWriteRegistry, REST_WRITE_DEFS } from "./tools/rest-writes.js";
 import { buildGithubWriteRegistry, GITHUB_WRITE_DEFS } from "./tools/github-writes.js";
+import { buildVercelWriteRegistry, VERCEL_WRITE_DEFS } from "./tools/vercel-writes.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
@@ -472,6 +473,14 @@ export class AgentDispatcher {
       if (!writeProxyRegistry.has(name)) writeProxyRegistry.set(name, meta);
     }
     writeProxyDefs = [...writeProxyDefs, ...GITHUB_WRITE_DEFS.filter((d) => githubWriteRegistry.has(d.name) && !writeProxyDefs.some((t) => t.name === d.name))];
+    // Vercel writes (rollback, cancel) ride the same gate. The stored account
+    // token that deploy_app uses is the credential here too; no token means
+    // nothing is offered, same fail-closed rule as GitHub.
+    const vercelWriteRegistry = buildVercelWriteRegistry(options.deploy?.vercelToken);
+    for (const [name, meta] of vercelWriteRegistry) {
+      if (!writeProxyRegistry.has(name)) writeProxyRegistry.set(name, meta);
+    }
+    writeProxyDefs = [...writeProxyDefs, ...VERCEL_WRITE_DEFS.filter((d) => vercelWriteRegistry.has(d.name) && !writeProxyDefs.some((t) => t.name === d.name))];
 
     logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
 
@@ -634,6 +643,7 @@ export class AgentDispatcher {
                     "web_search",
                     "github_query",
                     "vercel_query",
+                    "vercel_write",
                     "shopify_query",
                     "wordpress_query",
                     "twilio_query",

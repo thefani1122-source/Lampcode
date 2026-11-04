@@ -655,14 +655,23 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     description:
       "Query the user's connected Vercel account to inspect deployments or projects. " +
       "Use this when the user asks to check their Vercel deployments, check if their deployment is live, " +
-      "or list Vercel projects.",
+      "list Vercel projects, read a deployment's build or runtime logs, or inspect why a deployment failed. " +
+      "Rolling back or cancelling a deployment is NOT this tool — that is vercel_write, which asks the user first.",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list_deployments", "list_projects"],
-          description: "Action to perform: 'list_deployments' (default) or 'list_projects'.",
+          enum: ["list_deployments", "list_projects", "get_deployment", "get_deployment_logs", "get_runtime_logs"],
+          description: "Action to perform: 'list_deployments' (default), 'list_projects', 'get_deployment' (details of one deployment), 'get_deployment_logs' (build logs), or 'get_runtime_logs' (runtime logs).",
+        },
+        deployment: {
+          type: "string",
+          description: "Deployment id or URL for 'get_deployment', 'get_deployment_logs' and 'get_runtime_logs'.",
+        },
+        project: {
+          type: "string",
+          description: "Optional project name to filter 'list_deployments', or required project for 'get_runtime_logs'.",
         },
       },
       required: [],

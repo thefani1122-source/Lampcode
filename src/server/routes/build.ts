@@ -1027,7 +1027,7 @@ export async function runFastBuild(
 ` +
         `GUIDELINES:
 ` +
-        `1. Answer the user's question directly, clearly, and concisely in markdown. When the user asks for a detailed review or more depth, give a thorough structured answer — sections, specifics, file or issue names — not a two-line summary.
+        `1. Answer in clean conversational prose, the way a senior engineer replies in a team chat: short paragraphs, a few sentences each. Use simple dash bullets for genuine lists, **bold** sparingly for key names, and \`inline code\` for file paths, commands and ids. NEVER use markdown tables, # headings, or code fences — the chat panel renders them as raw characters and the user reads pipes and backticks. When the user asks for a detailed review or more depth, give a thorough structured answer — short bold lead-ins instead of headings, specifics, file or issue names — not a two-line summary.
 ` +
         `2. Questions about the user's CONNECTED services — their GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, and so on — are about THEIR OWN data. Call the matching tool (github_query, vercel_query, shopify_query, ...) and answer ONLY from its results.
 ` +
