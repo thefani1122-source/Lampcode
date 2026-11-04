@@ -1572,11 +1572,18 @@ export async function runFastBuild(
     //
     // Internal providers use the same locally executed MCP tool path as
     // user-connected servers, independent of the model gateway.
+    // Exa is gated behind EXA_API_KEY exactly like Firecrawl: an MCP server
+    // attached with no authToken fails the client's auth resolution on every
+    // single call ("Could not resolve authentication method"), so offering it
+    // keyless only teaches the model to burn rounds on a tool that can never
+    // work.
     const internalMcpServers = [
       ...(config.FIRECRAWL_API_KEY
         ? [{ slug: "firecrawl", name: "Firecrawl", url: "https://mcp.firecrawl.dev/v2/mcp", authToken: config.FIRECRAWL_API_KEY }]
         : []),
-      { slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: null },
+      ...(config.EXA_API_KEY
+        ? [{ slug: "exa", name: "Exa", url: "https://mcp.exa.ai/mcp", authToken: config.EXA_API_KEY }]
+        : []),
     ];
     // User-connected servers now reach Modal builds too. The old guard emptied
     // this for Modal because MCP forced the dispatch onto Anthropic, so a user
@@ -1664,6 +1671,18 @@ export async function runFastBuild(
       console.log(`[build] threats in-prompt session=${sessionId} count=${threatsForBuild.length}`);
     }
 
+    // The intent classifier routes informational asks to the query path, but
+    // when one slips through as a build (misclassification or classifier
+    // failure → build fallback) the model used to grab a web tool (Firecrawl/
+    // Exa) for the user's own repos and then fail src/App.tsx generation. This
+    // block gives the generation model the same routing rule the query prompt
+    // has.
+    const connectedDataRule =
+      `\n\nCONNECTED-SERVICES ROUTING:\n` +
+      `If the user's request only asks to list, show, check or inspect data from their OWN connected accounts — GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, WordPress, Twilio, SendGrid, Mailchimp — do NOT generate or modify any app files for it.\n` +
+      `Call the matching read-only tool (github_query, vercel_query, shopify_query, wordpress_query, twilio_query, sendgrid_query, mailchimp_query) and answer from its results in your final message.\n` +
+      `NEVER use web_search, Firecrawl or Exa for the user's private account data — web tools only see the public internet. If a tool reports the service is not connected, say so and tell the user to connect it in the Integrations panel.\n`;
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       usageCategory: "build",
@@ -1671,6 +1690,7 @@ export async function runFastBuild(
       task: {
         description:
           (buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription) +
+          connectedDataRule +
           (threatBlock ? `\n\n${threatBlock}` : ""),
         requirements: effectiveRequirements,
         outputFormat: "code",

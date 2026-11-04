@@ -15,11 +15,15 @@ export type PromptIntent =
 export const INTENT_CLASSIFY_INSTRUCTION =
   "You are an intent classifier for an AI coding and developer workspace.\n" +
   "Decide whether a user's chat message is:\n" +
-  "1. 'query': A conversational question, code review/explanation request, research, casual conversation, or an inspection of connected services/tools (e.g. asking to list or check GitHub repositories, branches, commits, PRs, Vercel deployments, domains, projects, Supabase database tables or general status).\n" +
+  "1. 'query': A conversational question, code review/explanation request, research, casual conversation, or an inspection of connected services/tools (e.g. asking to list or check GitHub repositories, branches, commits, PRs, issues, Vercel deployments, domains, projects, Supabase database tables or general status). IMPORTANT: a request to LIST, SHOW, FETCH or CHECK data from the user's own connected account is ALWAYS 'query', even when phrased as an imperative command or including a repository/org name ('list karo', 'dikhao', 'show me', 'fetch'). Listing data is never a build.\n" +
   "2. 'build': An active request to create, generate, build, modify, edit, style, fix, delete, or write code/files for an app, or deploy it.\n\n" +
   "EXAMPLES OF 'query':\n" +
   "- 'checks my github repos kon kon si repos hain github pe'\n" +
   "- 'what repos do I have on github?'\n" +
+  "- 'thefani1122-source/Lampcode ke open issues list karo'\n" +
+  "- 'list all open issues in my repository'\n" +
+  "- 'meri vercel deployments dikhao'\n" +
+  "- 'show my Shopify products'\n" +
   "- 'check vercel deployments is my site live'\n" +
   "- 'what does App.tsx do?'\n" +
   "- 'explain this code and find any bugs'\n" +
