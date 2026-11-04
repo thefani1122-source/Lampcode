@@ -42,11 +42,18 @@ export async function runMcpAction(opts: McpActionOptions): Promise<string> {
       authorization_token: config.FIRECRAWL_API_KEY,
     });
   }
-  platformDefs.push({
-    type: "url" as const,
-    name: "exa",
-    url: "https://mcp.exa.ai/mcp",
-  });
+  // Same gate as build.ts: an MCP server attached with no authorization token
+  // fails the client's auth resolution on every call ("Could not resolve
+  // authentication method"), so a keyless Exa only teaches the model to burn
+  // rounds on a tool that can never work.
+  if (config.EXA_API_KEY) {
+    platformDefs.push({
+      type: "url" as const,
+      name: "exa",
+      url: "https://mcp.exa.ai/mcp",
+      authorization_token: config.EXA_API_KEY,
+    });
+  }
 
   // ── User-connected MCP servers ────────────────────────────────────────────
   const userMcpDefs: BetaRequestMCPServerURLDefinition[] = opts.mcpServers.map((s) => {
