@@ -1022,13 +1022,13 @@ export async function runFastBuild(
 ` +
         `1. Answer the user's question directly, clearly, and concisely in markdown.
 ` +
-        `2. If they ask about GitHub repositories, Vercel deployments, or branches, ALWAYS call the corresponding tool first to get real, accurate data.
+        `2. Questions about the user's CONNECTED services — their GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, and so on — are about THEIR OWN data. Call the matching tool (github_query, vercel_query, shopify_query, ...) and answer ONLY from its results.
 ` +
-        `3. If they ask about the code, check the files with list_files / read_file before answering.
+        `3. NEVER use web_search, Firecrawl, or Exa to answer a question about the user's own repositories, issues, deployments, or accounts. Web tools only see the public internet and cannot see the user's connected services; answering a GitHub question from a web search is always wrong. Web tools are for public documentation, library details, and general technical facts only.
 ` +
-        `4. Never invent repository names, deployments, or file paths — verify with tools.
+        `5. Never invent repository names, deployments, or file paths — verify with tools.
 ` +
-        `5. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
+        `6. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
 `;
 
       const queryDispatchResult = await getDispatcher().dispatch({
@@ -5591,3 +5591,4 @@ buildRouter.post("/:projectId/memory", async (c) => {
   logger.info({ projectId, rule: parsed.data.rule, totalRules }, "Memory rule saved");
   return c.json({ ok: true, totalRules });
 });
+
