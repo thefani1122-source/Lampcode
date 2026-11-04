@@ -13,7 +13,7 @@ import { logger } from "../logger.js";
 import { listSupabaseMcpTools, fetchSupabaseProjectCreds } from "../../mcp/supabase-mcp.js";
 import { getProvider } from "../../mcp/providers/index.js";
 import { getMcpProvider, resolveServerUrl } from "../../mcp/registry.js";
-import { resolveCustomMcpAuth, resolveMcpAuth } from "../../mcp/connection.js";
+import { resolveCustomMcpAuth, resolveMcpAuth, safeRemoteUrl } from "../../mcp/connection.js";
 import { secureMcpFetch } from "../../mcp/secure-fetch.js";
 import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession, type StaticOAuthClient } from "../../mcp/oauth-client.js";
 import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
@@ -794,11 +794,12 @@ export async function getConnectedServicesSummary(userId: string): Promise<Conne
     .where(eq(userMcpConnections.userId, userId));
   for (const row of rows) {
     const provider = getMcpProvider(row.providerSlug);
+    const customName = row.isCustom && row.meta && typeof row.meta["name"] === "string" ? row.meta["name"] : undefined;
     out.push({
       slug: row.providerSlug,
-      name: provider?.name ?? row.providerSlug,
+      name: row.isCustom ? (customName ?? row.providerSlug) : (provider?.name ?? row.providerSlug),
       source: "mcp",
-      authType: provider?.authType ?? "unknown",
+      authType: row.isCustom ? "custom" : (provider?.authType ?? "unknown"),
       connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
     });
   }
@@ -841,11 +842,12 @@ export async function getUserSupabaseMcpAuth(
         iv: mcpRow.encryptedCredsIv,
         tag: mcpRow.encryptedCredsTag,
       })) as Record<string, unknown>;
-      if (typeof creds["accessToken"] === "string") {
-        return {
-          accessToken: creds["accessToken"],
-          ...(typeof creds["projectRef"] === "string" ? { projectRef: creds["projectRef"] } : {}),
-        };
+      const pat = typeof creds["accessToken"] === "string" ? creds["accessToken"].trim() : "";
+      const oauthToken = typeof creds["oauth_access_token"] === "string" ? creds["oauth_access_token"].trim() : "";
+      const token = pat || oauthToken || undefined;
+      if (token) {
+        const projectRef = typeof creds["projectRef"] === "string" ? creds["projectRef"].trim() : "";
+        return { accessToken: token, ...(projectRef ? { projectRef } : {}) };
       }
     } catch {
       logger.warn({ userId, provider: "supabase", stage: "credential_decrypt" }, "Supabase MCP credential could not be read");
@@ -881,6 +883,13 @@ const customConnectSchema = z.object({
   authType: z.enum(["bearer_token", "api_key", "none"]),
   authHeader: z.string().min(1).max(100).optional(),
   creds: z.object({ token: z.string().optional() }).default({}),
+});
+
+const customOAuthStartSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  slug: z.string().min(1),
+  description: z.string().default(""),
+  mcpServerUrl: z.string().min(1).refine(u => u.startsWith("https://"), "URL must start with https://"),
 });
 
 // POST /api/integrations/mcp/custom/connect
@@ -948,6 +957,61 @@ integrationsRouter.get("/mcp/custom", async (c) => {
   return c.json({ custom: rows.map(r => ({ slug: r.providerSlug, meta: r.meta ?? {}, connectedAt: r.connectedAt })) });
 });
 
+// POST /api/integrations/mcp/custom/oauth/start
+// Lovable-style "Add custom MCP" with browser OAuth: the user supplies the
+// server URL, the flow runs dynamic client registration against that server
+// and opens its authorization page. The callback stores the finished row in
+// the custom connections bucket.
+integrationsRouter.post("/mcp/custom/oauth/start", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const raw = await c.req.json().catch(() => { throw new AppError(400, "Invalid JSON", "VALIDATION_ERROR"); });
+  const parsed = customOAuthStartSchema.safeParse(raw);
+  if (!parsed.success) throw new AppError(400, parsed.error.issues[0]?.message ?? "Validation failed", "VALIDATION_ERROR");
+  const { name, slug, description, mcpServerUrl } = parsed.data;
+
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(slug)) throw new AppError(400, "Custom MCP name is invalid", "VALIDATION_ERROR");
+  if (getMcpProvider(slug)) {
+    throw new AppError(400, "This slug is reserved by a built-in provider — pick a different name", "VALIDATION_ERROR");
+  }
+  const safe = safeRemoteUrl(mcpServerUrl);
+  if (!safe) throw new AppError(400, "Custom MCP URL is invalid (public HTTPS URL required)", "VALIDATION_ERROR");
+
+  const result = await runMcpOAuthHandshake({
+    userId,
+    providerSlug: `custom:${slug}`,
+    serverUrl: safe.toString(),
+    initialSession: { customName: name.trim(), customDescription: description.trim() },
+  });
+  if (result.outcome === "authorization_required" && result.authorizationUrl) {
+    return c.json({ slug, status: "authorization_required", authorizationUrl: result.authorizationUrl }, 200);
+  }
+  if (result.outcome !== "connected" || !result.session) {
+    throw new AppError(422, "The MCP server could not start OAuth authorization. It must support OAuth 2.1 with dynamic client registration — for token-based servers use the Bearer/API key options.", "OAUTH_START_FAILED");
+  }
+  const enc = encrypt(JSON.stringify({
+    ...result.session,
+    oauth_access_token: result.session.tokens?.access_token,
+    mcpServerUrl: safe.toString(),
+    authType: "oauth",
+    name: name.trim(),
+    description: description.trim(),
+  }));
+  let urlHost = "";
+  try { urlHost = new URL(mcpServerUrl).host; } catch { urlHost = mcpServerUrl; }
+  await db.insert(userMcpConnections).values({
+    id: randomUUID(), userId, providerSlug: slug,
+    encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+    meta: { name: name.trim(), auth: "OAuth", url: urlHost }, isCustom: true, connectedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: {
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: { name: name.trim(), auth: "OAuth", url: urlHost }, isCustom: true, connectedAt: new Date(),
+    },
+  });
+  return c.json({ slug, status: "connected", toolCount: result.toolCount }, 201);
+});
+
 // DELETE /api/integrations/mcp/custom/:slug
 integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -959,6 +1023,133 @@ integrationsRouter.delete("/mcp/custom/:slug", async (c) => {
 });
 
 // ── MCP Provider routes ────────────────────────────────────────────────────────
+
+interface McpOAuthHandshakeOutcome {
+  outcome: "connected" | "authorization_required" | "failed";
+  authorizationUrl?: string;
+  toolCount?: number;
+  session?: McpOAuthSession;
+}
+
+/**
+ * Shared MCP OAuth handshake used by registry providers (Linear, Vercel, …)
+ * and by user-added custom OAuth MCP servers. Creates the encrypted pending
+ * transaction, runs discovery + dynamic client registration + PKCE through
+ * the MCP SDK, and reports whether the flow completed without a browser
+ * round-trip or needs the user at the authorization URL.
+ */
+async function runMcpOAuthHandshake(opts: {
+  userId: string;
+  providerSlug: string;
+  serverUrl: string;
+  staticClient?: StaticOAuthClient | undefined;
+  cimdUrl?: string | undefined;
+  initialSession?: McpOAuthSession | undefined;
+}): Promise<McpOAuthHandshakeOutcome> {
+  const redirectUrl = oauthCallbackUrl();
+  const transactionId = randomUUID();
+  const initial = encryptOAuthSession(opts.initialSession ?? {});
+  await db.insert(mcpOAuthTransactions).values({
+    id: transactionId,
+    userId: opts.userId,
+    providerSlug: opts.providerSlug,
+    serverUrl: opts.serverUrl,
+    stateHash: hashOAuthState(randomUUID()),
+    encryptedData: initial.encrypted,
+    encryptedDataIv: initial.iv,
+    encryptedDataTag: initial.tag,
+    expiresAt: new Date(Date.now() + OAUTH_PENDING_TTL_MS),
+  });
+
+  const session: McpOAuthSession = { ...(opts.initialSession ?? {}) };
+  const saveSession = async (value: McpOAuthSession) => {
+    const enc = encryptOAuthSession(value);
+    await db.update(mcpOAuthTransactions).set({
+      encryptedData: enc.encrypted,
+      encryptedDataIv: enc.iv,
+      encryptedDataTag: enc.tag,
+    }).where(eq(mcpOAuthTransactions.id, transactionId));
+  };
+  const oauth = createMcpOAuthProvider({
+    serverUrl: opts.serverUrl,
+    redirectUrl,
+    session,
+    persist: saveSession,
+    staticClient: opts.staticClient,
+    clientMetadataUrl: opts.cimdUrl,
+    saveStateHash: async (stateHash) => {
+      await db.update(mcpOAuthTransactions).set({ stateHash }).where(eq(mcpOAuthTransactions.id, transactionId));
+    },
+  });
+  const client = new Client({ name: "lampcode-oauth-connect", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(opts.serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
+  try {
+    // The MCP SDK performs protected-resource discovery, client registration,
+    // state and PKCE generation. Redirect interception returns control to the UI.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await client.connect(transport as any);
+    const { tools } = await client.listTools();
+    if (tools.length === 0) throw new Error("empty_tool_list");
+    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
+    return { outcome: "connected", toolCount: tools.length, session };
+  } catch {
+    const authorizationUrl = oauth.authorizationUrl();
+    if (authorizationUrl) return { outcome: "authorization_required", authorizationUrl: authorizationUrl.toString(), session };
+    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
+    logger.warn({ provider: opts.providerSlug, category: "oauth_start_failed" }, "MCP OAuth start failed");
+    return { outcome: "failed" };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+interface McpOAuthCallbackOutcome {
+  ok: boolean;
+  toolCount?: number;
+  session?: McpOAuthSession;
+}
+
+/**
+ * Second half of the shared handshake: exchange the authorization code,
+ * reconnect, and list tools. Persists nothing — the caller writes the row in
+ * the shape its connection type needs (registry vs custom).
+ */
+async function completeMcpOAuthCallback(opts: {
+  providerSlug: string;
+  serverUrl: string;
+  session: McpOAuthSession;
+  staticClient?: StaticOAuthClient | undefined;
+  cimdUrl?: string | undefined;
+  code: string;
+}): Promise<McpOAuthCallbackOutcome> {
+  const redirectUrl = oauthCallbackUrl();
+  const oauth = createMcpOAuthProvider({
+    serverUrl: opts.serverUrl,
+    redirectUrl,
+    session: opts.session,
+    persist: async () => undefined,
+    staticClient: opts.staticClient,
+    clientMetadataUrl: opts.cimdUrl,
+    saveStateHash: async () => undefined,
+  });
+  const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(opts.serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
+  try {
+    await transport.finishAuth(opts.code);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await client.connect(transport as any);
+    const { tools } = await client.listTools();
+    if (tools.length === 0 || !opts.session.tokens?.access_token) {
+      return { ok: false };
+    }
+    return { ok: true, toolCount: tools.length, session: opts.session };
+  } catch {
+    logger.warn({ provider: opts.providerSlug, category: "oauth_callback_failed" }, "MCP OAuth callback failed");
+    return { ok: false };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
 
 integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
   const { id: userId } = c.get("authUser");
@@ -974,73 +1165,32 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
       "OAUTH_CLIENT_NOT_CONFIGURED",
     );
   }
-  const redirectUrl = oauthCallbackUrl();
   const serverUrl = resolveServerUrl(provider, {});
   if (!serverUrl) throw new AppError(422, "Provider MCP URL is not configured", "INVALID_MCP_URL");
 
-  const transactionId = randomUUID();
-  const initial = encryptOAuthSession({});
-  await db.insert(mcpOAuthTransactions).values({
-    id: transactionId,
+  const result = await runMcpOAuthHandshake({
     userId,
     providerSlug: slug,
     serverUrl,
-    stateHash: hashOAuthState(randomUUID()),
-    encryptedData: initial.encrypted,
-    encryptedDataIv: initial.iv,
-    encryptedDataTag: initial.tag,
-    expiresAt: new Date(Date.now() + OAUTH_PENDING_TTL_MS),
-  });
-
-  const session: McpOAuthSession = {};
-  const saveSession = async (value: McpOAuthSession) => {
-    const enc = encryptOAuthSession(value);
-    await db.update(mcpOAuthTransactions).set({
-      encryptedData: enc.encrypted,
-      encryptedDataIv: enc.iv,
-      encryptedDataTag: enc.tag,
-    }).where(eq(mcpOAuthTransactions.id, transactionId));
-  };
-  const oauth = createMcpOAuthProvider({
-    serverUrl,
-    redirectUrl,
-    session,
-    persist: saveSession,
     staticClient,
-    clientMetadataUrl: cimdClientMetadataUrl(slug),
-    saveStateHash: async (stateHash) => {
-      await db.update(mcpOAuthTransactions).set({ stateHash }).where(eq(mcpOAuthTransactions.id, transactionId));
-    },
+    cimdUrl: cimdClientMetadataUrl(slug),
   });
-  const client = new Client({ name: "lampcode-oauth-connect", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
-  try {
-    // The MCP SDK performs protected-resource discovery, client registration,
-    // state and PKCE generation. Redirect interception returns control to the UI.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await client.connect(transport as any);
-    const { tools } = await client.listTools();
-    if (tools.length === 0) throw new Error("empty_tool_list");
-    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens?.access_token }));
-    await db.insert(userMcpConnections).values({
-      id: randomUUID(), userId, providerSlug: slug,
-      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
-      meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date(),
-    }).onConflictDoUpdate({
-      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
-      set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date() },
-    });
-    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
-    return c.json({ slug, status: "connected", toolCount: tools.length }, 201);
-  } catch {
-    const authorizationUrl = oauth.authorizationUrl();
-    if (authorizationUrl) return c.json({ slug, status: "authorization_required", authorizationUrl: authorizationUrl.toString() }, 200);
-    await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
-    logger.warn({ provider: slug, category: "oauth_start_failed" }, "MCP OAuth start failed");
-    throw new AppError(422, "The provider could not start MCP authorization", "OAUTH_START_FAILED");
-  } finally {
-    await client.close().catch(() => undefined);
+  if (result.outcome === "authorization_required" && result.authorizationUrl) {
+    return c.json({ slug, status: "authorization_required", authorizationUrl: result.authorizationUrl }, 200);
   }
+  if (result.outcome !== "connected" || !result.session) {
+    throw new AppError(422, "The provider could not start MCP authorization", "OAUTH_START_FAILED");
+  }
+  const enc = encrypt(JSON.stringify({ ...result.session, oauth_access_token: result.session.tokens?.access_token }));
+  await db.insert(userMcpConnections).values({
+    id: randomUUID(), userId, providerSlug: slug,
+    encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+    meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(serverUrl).host }, connectedAt: new Date() },
+  });
+  return c.json({ slug, status: "connected", toolCount: result.toolCount }, 201);
 });
 
 function mcpOAuthReturnUrl(status: "connected" | "error", provider?: string, reason?: string): string {
@@ -1063,49 +1213,75 @@ mcpOAuthCallbackRouter.get("/mcp/oauth/callback", async (c) => {
   const pending = rows[0];
   if (!pending) return c.redirect(mcpOAuthReturnUrl("error", undefined, "invalid_state"), 302);
   if (c.req.query("error") || !code) return c.redirect(mcpOAuthReturnUrl("error", undefined, "cancelled"), 302);
+  const session = decryptOAuthSession(pending);
+
+  // Custom MCP servers ride the same transaction table under a
+  // "custom:<slug>" provider key — their provider is built from the stored
+  // server URL, and the finished row lands in the custom connections bucket.
+  if (pending.providerSlug.startsWith("custom:")) {
+    const slug = pending.providerSlug.slice("custom:".length);
+    if (!session.tokens) return c.redirect(mcpOAuthReturnUrl("error", undefined, "authorization_failed"), 302);
+    const result = await completeMcpOAuthCallback({
+      providerSlug: pending.providerSlug,
+      serverUrl: pending.serverUrl,
+      session,
+      code,
+    });
+    if (!result.ok || !result.session) {
+      return c.redirect(mcpOAuthReturnUrl("error", undefined, "authorization_failed"), 302);
+    }
+    const name = result.session.customName ?? slug;
+    const enc = encrypt(JSON.stringify({
+      ...result.session,
+      oauth_access_token: result.session.tokens?.access_token,
+      mcpServerUrl: pending.serverUrl,
+      authType: "oauth",
+      name,
+      description: result.session.customDescription ?? "",
+    }));
+    let urlHost = "";
+    try { urlHost = new URL(pending.serverUrl).host; } catch { urlHost = pending.serverUrl; }
+    await db.insert(userMcpConnections).values({
+      id: randomUUID(), userId: pending.userId, providerSlug: slug,
+      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+      meta: { name, auth: "OAuth", url: urlHost }, isCustom: true, connectedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+      set: {
+        encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+        meta: { name, auth: "OAuth", url: urlHost }, isCustom: true, connectedAt: new Date(),
+      },
+    });
+    return c.redirect(mcpOAuthReturnUrl("connected", "custom"), 302);
+  }
+
   const provider = getMcpProvider(pending.providerSlug);
   if (!provider || provider.authType !== "oauth") return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "provider_unavailable"), 302);
   const staticClient = staticMcpOAuthClient(pending.providerSlug);
   if (provider.slug === "github" && !staticClient) {
     return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "oauth_client_not_configured"), 302);
   }
-  const session = decryptOAuthSession(pending);
-  const redirectUrl = oauthCallbackUrl();
-  const oauth = createMcpOAuthProvider({
+  const result = await completeMcpOAuthCallback({
+    providerSlug: pending.providerSlug,
     serverUrl: pending.serverUrl,
-    redirectUrl,
     session,
-    persist: async () => undefined,
     staticClient,
-    clientMetadataUrl: cimdClientMetadataUrl(pending.providerSlug),
-    saveStateHash: async () => undefined,
+    cimdUrl: cimdClientMetadataUrl(pending.providerSlug),
+    code,
   });
-  const client = new Client({ name: "lampcode-oauth-callback", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(pending.serverUrl), { authProvider: oauth.provider, fetch: secureMcpFetch, redirectPolicy: "same-origin" });
-  try {
-    await transport.finishAuth(code);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await client.connect(transport as any);
-    const { tools } = await client.listTools();
-    if (tools.length === 0 || !session.tokens?.access_token) {
-      return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "no_tools"), 302);
-    }
-    const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens.access_token }));
-    await db.insert(userMcpConnections).values({
-      id: randomUUID(), userId: pending.userId, providerSlug: pending.providerSlug,
-      encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
-      meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date(),
-    }).onConflictDoUpdate({
-      target: [userMcpConnections.userId, userMcpConnections.providerSlug],
-      set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date() },
-    });
-    return c.redirect(mcpOAuthReturnUrl("connected", pending.providerSlug), 302);
-  } catch {
-    logger.warn({ provider: pending.providerSlug, category: "oauth_callback_failed" }, "MCP OAuth callback failed");
-    return c.redirect(mcpOAuthReturnUrl("error", undefined, "authorization_failed"), 302);
-  } finally {
-    await client.close().catch(() => undefined);
+  if (!result.ok || !result.session) {
+    return c.redirect(mcpOAuthReturnUrl("error", pending.providerSlug, "no_tools"), 302);
   }
+  const enc = encrypt(JSON.stringify({ ...result.session, oauth_access_token: result.session.tokens!.access_token }));
+  await db.insert(userMcpConnections).values({
+    id: randomUUID(), userId: pending.userId, providerSlug: pending.providerSlug,
+    encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag,
+    meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [userMcpConnections.userId, userMcpConnections.providerSlug],
+    set: { encryptedCreds: enc.encrypted, encryptedCredsIv: enc.iv, encryptedCredsTag: enc.tag, meta: { auth: "OAuth", url: new URL(pending.serverUrl).host }, connectedAt: new Date() },
+  });
+  return c.redirect(mcpOAuthReturnUrl("connected", pending.providerSlug), 302);
 });
 
 // POST /api/integrations/mcp/:slug/connect
@@ -1276,6 +1452,32 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       if (row.isCustom) {
         const url = creds["mcpServerUrl"];
         if (!url) continue;
+        // Custom OAuth rows carry a full OAuth session (tokens, client
+        // registration, PKCE verifier) saved by the /mcp/custom/oauth flow.
+        // They refresh through the same oauthSession path as registry
+        // providers; token-based custom rows fall through to static headers.
+        if (creds["authType"] === "oauth" && typeof creds["oauth_access_token"] === "string" && creds["oauth_access_token"]) {
+          const safe = safeRemoteUrl(url);
+          if (!safe) continue;
+          servers.push({
+            slug: row.providerSlug,
+            name: creds["name"] ?? row.providerSlug,
+            url: safe.toString(),
+            authToken: null,
+            authHeaders: {},
+            oauthSession: creds as unknown as McpOAuthSession,
+            oauthRedirectUrl: config.MCP_OAUTH_REDIRECT_URL,
+            persistOAuthSession: async (session: McpOAuthSession) => {
+              const enc = encrypt(JSON.stringify({ ...session, oauth_access_token: session.tokens?.access_token }));
+              await db.update(userMcpConnections).set({
+                encryptedCreds: enc.encrypted,
+                encryptedCredsIv: enc.iv,
+                encryptedCredsTag: enc.tag,
+              }).where(eq(userMcpConnections.id, row.id));
+            },
+          });
+          continue;
+        }
         const resolved = resolveCustomMcpAuth({
           url,
           authType: creds["authType"],
@@ -1314,7 +1516,14 @@ export async function getConnectedMcpServers(userId: string): Promise<ActiveMcpS
       const legacyGithubPat = provider.slug === "github"
         && typeof creds["github_token"] === "string"
         && Boolean(creds["github_token"].trim());
-      const isOAuth = provider.authType === "oauth" && !legacyGithubPat;
+      // Supabase rows from the dedicated PAT route hold { accessToken } and no
+      // OAuth session; mcp.supabase.com accepts the PAT as a bearer header, so
+      // they run as static-bearer connections until their owner reconnects.
+      const legacySupabasePat = provider.slug === "supabase"
+        && typeof creds["accessToken"] === "string"
+        && Boolean(creds["accessToken"].trim())
+        && !creds["oauth_access_token"];
+      const isOAuth = provider.authType === "oauth" && !legacyGithubPat && !legacySupabasePat;
       servers.push({
         slug: row.providerSlug,
         name: provider.name,

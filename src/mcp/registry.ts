@@ -263,15 +263,17 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Netlify",
     category: "devtools",
     icon: "🌐",
-    description: "Inspect Netlify sites, deploys, and logs via the Netlify REST API",
+    description: "Manage Netlify sites, deploys, and team settings via Netlify's hosted MCP server",
     // MEASURED 2026-11-04. Netlify's remote MCP (netlify-mcp.netlify.app/mcp)
-    // speaks OAuth 2.1 with dynamic client registration, but the store ships
-    // the REST path first because a personal access token is verifiable
-    // before storage and the REST API covers the read surface (sites, files,
-    // deploys, logs). The MCP entry stays REST-only until the OAuth flow is
-    // verified end to end.
-    mcpServerUrl: null,
-    authType: "api_key",
+    // advertises OAuth 2.1 with dynamic client registration (registration_endpoint
+    // in its authorization-server metadata, PKCE S256 required) — verified live
+    // on 2026-11-04, so the generic 1-click OAuth flow connects it. Rows
+    // connected earlier with a personal access token keep working: the OAuth
+    // branch of resolveMcpAuth maps the stored api_token to a bearer header.
+    // The REST query tool (netlify_query) also accepts the OAuth access token
+    // as a fallback, so both connection styles feed reads.
+    mcpServerUrl: "https://netlify-mcp.netlify.app/mcp",
+    authType: "oauth",
     credentialFields: [
       {
         key: "api_token",
@@ -281,7 +283,8 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
         help: "Netlify → User settings → Applications → Personal access tokens",
       },
     ],
-    supportsRealMCP: false,
+    allowsApiKeyFallback: true,
+    supportsRealMCP: true,
     restApiHint: "Netlify REST API: https://api.netlify.com/api/v1\nHeader: Authorization: Bearer {api_token}\nGET /sites, /sites/:site_id/deploys, /deploys/:deploy_id, /sites/:site_id/files",
   },
 
@@ -359,6 +362,27 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     credentialFields: [],
     supportsRealMCP: true,
     restApiHint: "Framer Server API: npm i framer-api — connect(projectUrl, {framer_api_token}) to read/update the CMS and publish",
+  },
+
+  supabase: {
+    slug: "supabase",
+    name: "Supabase",
+    category: "database",
+    icon: "⚡",
+    description: "Manage tables, run SQL, read logs, and deploy edge functions via Supabase's hosted MCP server",
+    // MEASURED 2026-11-04. Supabase's hosted MCP server (mcp.supabase.com/mcp)
+    // authorizes through api.supabase.com with open dynamic client
+    // registration (RFC 7591 POST verified live: 201) and PKCE, so the generic
+    // 1-click OAuth flow connects it. Two legacy paths keep working:
+    // - The dedicated PAT connect route stores { accessToken } rows; the OAuth
+    //   branch of resolveMcpAuth maps that key to a bearer header, and
+    //   mcp.supabase.com accepts a PAT as a bearer token.
+    // - supabase_query (rest-queries) reads either accessToken or the OAuth
+    //   access token for its read-only lookups.
+    mcpServerUrl: "https://mcp.supabase.com/mcp",
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
   },
 
   mailchimp: {

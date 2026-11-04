@@ -19,6 +19,14 @@ export interface McpOAuthSession {
   tokens?: OAuthTokens;
   codeVerifier?: string;
   discoveryState?: OAuthDiscoveryState;
+  /**
+   * Custom MCP OAuth flows ride the same transaction table: the display name
+   * and description the user typed are stashed in the encrypted session so
+   * the callback can build the final custom connection row without a schema
+   * change.
+   */
+  customName?: string;
+  customDescription?: string;
 }
 
 export function hashOAuthState(state: string): string {

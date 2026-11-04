@@ -19,7 +19,7 @@ function isPrivateHost(hostname: string): boolean {
     host === "metadata" || host === "metadata.google.internal" || host === "metadata.azure.internal") return true;
   return isIP(host) ? !isPublicMcpAddress(host) : false;
 }
-function safeRemoteUrl(rawUrl: string): URL | null {
+export function safeRemoteUrl(rawUrl: string): URL | null {
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== "https:" || url.username || url.password || url.hash || isPrivateHost(url.hostname) ||
@@ -55,6 +55,9 @@ export function resolveMcpAuth(
     // github_token: rows connected before GitHub moved to OAuth still hold a
     // PAT, and api.githubcopilot.com accepts it as a plain bearer token.
     const token = creds["oauth_access_token"] ?? creds["access_token"] ?? creds["github_token"] ?? creds["vercel_token"]
+      // Supabase rows connected through the dedicated PAT route hold their
+      // token as accessToken, and mcp.supabase.com accepts a PAT bearer.
+      ?? creds["accessToken"]
       // Resend's hosted MCP explicitly accepts an API key as a bearer token,
       // so rows connected before the OAuth flip keep working through theirs.
       // Railway's hosted MCP gets the same courtesy for its api_token rows.

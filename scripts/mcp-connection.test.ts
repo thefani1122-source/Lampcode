@@ -39,6 +39,17 @@ check("Resend rows connected with an API key keep working on the hosted MCP", re
 check("MongoDB hosted MCP uses OAuth", MCP_REGISTRY.mongodb!.authType, "oauth");
 check("MongoDB's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.mongodb!.credentialFields, []);
 
+check("Supabase hosted MCP uses OAuth", MCP_REGISTRY.supabase!.authType, "oauth");
+check("Supabase hosted MCP points at mcp.supabase.com", MCP_REGISTRY.supabase!.mcpServerUrl, "https://mcp.supabase.com/mcp");
+check("Supabase rows from the dedicated PAT route keep working as bearer", resolveMcpAuth(MCP_REGISTRY.supabase!, { accessToken: "sbp_test" })?.headers,
+  { Authorization: "Bearer sbp_test" });
+check("Netlify hosted MCP uses OAuth", MCP_REGISTRY.netlify!.authType, "oauth");
+check("Netlify hosted MCP points at Netlify's remote server", MCP_REGISTRY.netlify!.mcpServerUrl, "https://netlify-mcp.netlify.app/mcp");
+check("Netlify PAT rows keep working on the hosted MCP", resolveMcpAuth(MCP_REGISTRY.netlify!, { api_token: "nfp_test" })?.headers,
+  { Authorization: "Bearer nfp_test" });
+check("OAuth session wins over a stored Netlify PAT", resolveMcpAuth(MCP_REGISTRY.netlify!, { oauth_access_token: "nfo_test", api_token: "nfp_old" })?.headers,
+  { Authorization: "Bearer nfo_test" });
+
 for (const slug of ["notion", "sentry", "framer"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
   check(`${slug} hosted MCP has no incompatible static credential form`, MCP_REGISTRY[slug]!.credentialFields, []);

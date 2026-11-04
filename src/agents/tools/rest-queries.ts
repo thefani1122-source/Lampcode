@@ -295,7 +295,9 @@ export const mailchimpQueryHandler: ToolHandler = async (args, ctx) => {
 export const netlifyQueryHandler: ToolHandler = async (args, ctx) => {
   const creds = credsFor(ctx, "netlify");
   if (!creds) return notConnected("Netlify", "(a Netlify Personal Access Token).");
-  const token = creds["api_token"]?.trim() ?? creds["netlify_auth_token"]?.trim();
+  // OAuth-connected rows store their access token from the Netlify hosted MCP
+  // flow; it is a valid bearer on api.netlify.com too.
+  const token = creds["api_token"]?.trim() ?? creds["netlify_auth_token"]?.trim() ?? creds["oauth_access_token"]?.trim();
   if (!token) return missing("Netlify", "personal access token", "and add the token");
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
 

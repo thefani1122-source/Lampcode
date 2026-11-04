@@ -13,7 +13,7 @@ import { callSupabaseMcpTool, listSupabaseMcpTools, type SupabaseMcpAuth } from 
 
 function authFrom(ctx: ToolExecutionContext): SupabaseMcpAuth | null {
   const creds = credsFor(ctx, "supabase");
-  const token = creds?.["accessToken"]?.trim() ?? creds?.["access_token"]?.trim() ?? creds?.["supabase_pat"]?.trim();
+  const token = creds?.["accessToken"]?.trim() ?? creds?.["access_token"]?.trim() ?? creds?.["supabase_pat"]?.trim() ?? creds?.["oauth_access_token"]?.trim();
   if (!token) return null;
   return { accessToken: token, projectRef: creds?.["projectRef"]?.trim() || undefined };
 }
@@ -25,7 +25,7 @@ export const supabaseQueryHandler: ToolHandler = async (args, ctx) => {
   if (!auth) {
     return notConnected(
       "Supabase",
-      "(a Supabase Personal Access Token — connect it in the Integrations store).",
+      "(a Supabase Personal Access Token, or connect Supabase with one-click OAuth — both live in the Integrations store).",
     );
   }
 
