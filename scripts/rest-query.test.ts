@@ -1,4 +1,4 @@
-import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler, figmaQueryHandler, netlifyQueryHandler, normalizeBaseUrl, mailchimpDc } from "../src/agents/tools/rest-queries.js";
+import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler, netlifyQueryHandler, normalizeBaseUrl, mailchimpDc } from "../src/agents/tools/rest-queries.js";
 import { supabaseQueryHandler } from "../src/agents/tools/supabase-query.js";
 import { AGENTIC_BUILD_TOOLS as TOOL_LIST } from "../src/agents/tools.js";
 import { REGISTRY } from "../src/agents/tools/registry.js";
@@ -11,7 +11,7 @@ function ok(name: string, value: boolean): void {
 }
 
 // Every new tool is defined, registered, and narrated.
-for (const name of ["shopify_query", "wordpress_query", "twilio_query", "sendgrid_query", "mailchimp_query", "figma_query", "netlify_query", "supabase_query"]) {
+for (const name of ["shopify_query", "wordpress_query", "twilio_query", "sendgrid_query", "mailchimp_query", "netlify_query", "supabase_query"]) {
   ok(`${name} is defined in TOOL_DEFINITIONS`, TOOL_LIST.some((t) => t.name === name));
   ok(`${name} has a registered handler`, REGISTRY.has(name));
   ok(`${name} is narrated`, narrateTool(name).label.length > 0);
@@ -48,14 +48,8 @@ const credsCtx = { serviceCredentials: { shopify: { shopDomain: "my-store.myshop
 const unknown = await shopifyQueryHandler({ action: "delete_store" }, credsCtx);
 ok("unknown actions are refused", unknown.includes("Unknown action") && unknown.includes("list_products"));
 
-// Figma / Netlify / Supabase speak for themselves when not connected or
+// Netlify / Supabase speak for themselves when not connected or
 // missing a credential, and refuse unknown actions.
-const noFigma = await figmaQueryHandler({}, emptyCtx);
-ok("figma without a connection says how to connect", noFigma.includes("not connected") && noFigma.includes("Integrations"));
-const figmaUnknown = await figmaQueryHandler({ action: "export_file" }, { serviceCredentials: { figma: { figma_pat: "figd_x" } } } as never);
-ok("figma refuses unknown actions", figmaUnknown.includes("Unknown action") && figmaUnknown.includes("get_image_urls"));
-const figmaNoKey = await figmaQueryHandler({ action: "get_file" }, { serviceCredentials: { figma: { figma_pat: "figd_x" } } } as never);
-ok("figma get_file demands a file_key and explains where to find it", figmaNoKey.includes("file_key") && figmaNoKey.includes("/design/"));
 
 const noNetlify = await netlifyQueryHandler({}, emptyCtx);
 ok("netlify without a connection says how to connect", noNetlify.includes("not connected") && noNetlify.includes("Integrations"));

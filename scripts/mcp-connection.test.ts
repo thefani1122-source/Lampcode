@@ -39,7 +39,7 @@ check("Resend rows connected with an API key keep working on the hosted MCP", re
 check("MongoDB hosted MCP uses OAuth", MCP_REGISTRY.mongodb!.authType, "oauth");
 check("MongoDB's hosted MCP has no static credential form after the OAuth flip", MCP_REGISTRY.mongodb!.credentialFields, []);
 
-for (const slug of ["notion", "figma", "sentry"] as const) {
+for (const slug of ["notion", "sentry", "framer"] as const) {
   check(`${slug} hosted MCP uses OAuth`, MCP_REGISTRY[slug]!.authType, "oauth");
   check(`${slug} hosted MCP has no incompatible static credential form`, MCP_REGISTRY[slug]!.credentialFields, []);
 }

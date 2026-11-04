@@ -655,7 +655,7 @@ export async function getUserGitHubToken(userId: string): Promise<string | null>
  * uses.
  */
 export async function getRestProviderCredentials(userId: string): Promise<Record<string, Record<string, string>>> {
-  const REST_SLUGS = ["shopify", "wordpress", "twilio", "sendgrid", "mailchimp", "figma", "netlify", "supabase"] as const;
+  const REST_SLUGS = ["shopify", "wordpress", "twilio", "sendgrid", "mailchimp", "netlify", "supabase"] as const;
   const out: Record<string, Record<string, string>> = {};
 
   const readRow = (slug: string, row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): boolean => {
@@ -1036,14 +1036,6 @@ integrationsRouter.post("/mcp/:slug/oauth/start", async (c) => {
     const authorizationUrl = oauth.authorizationUrl();
     if (authorizationUrl) return c.json({ slug, status: "authorization_required", authorizationUrl: authorizationUrl.toString() }, 200);
     await db.delete(mcpOAuthTransactions).where(eq(mcpOAuthTransactions.id, transactionId));
-    if (slug === "figma") {
-      logger.warn({ provider: slug, category: "oauth_start_failed" }, "Figma rejected the client (catalog-only MCP server)");
-      throw new AppError(
-        422,
-        "Figma only connects MCP clients listed in its MCP catalog, and Lampcode is not approved yet. Figma's docs list a client waitlist for new clients.",
-        "OAUTH_CLIENT_NOT_ALLOWED",
-      );
-    }
     logger.warn({ provider: slug, category: "oauth_start_failed" }, "MCP OAuth start failed");
     throw new AppError(422, "The provider could not start MCP authorization", "OAUTH_START_FAILED");
   } finally {

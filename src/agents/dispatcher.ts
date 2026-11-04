@@ -653,7 +653,6 @@ export class AgentDispatcher {
                     "twilio_query",
                     "sendgrid_query",
                     "mailchimp_query",
-                    "figma_query",
                     "netlify_query",
                     "supabase_query",
                   ].includes(t.name),

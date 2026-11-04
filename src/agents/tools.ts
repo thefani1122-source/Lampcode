@@ -791,36 +791,6 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: "figma_query",
-    description:
-      "Query the user's connected Figma account via the Figma REST API: account check, team projects, " +
-      "file structure, published components, and rendered node images. Use when the user shares a " +
-      "Figma link or asks to pull design details into code.",
-    input_schema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["get_file", "list_team_projects", "list_file_components", "get_image_urls", "get_me"],
-          description: "Action to perform: 'get_file' (default), 'list_team_projects', 'list_file_components', 'get_image_urls', or 'get_me'.",
-        },
-        file_key: {
-          type: "string",
-          description: "Figma file key (the part of the URL after /design/ or /file/) for file actions.",
-        },
-        team_id: {
-          type: "string",
-          description: "Figma team id for 'list_team_projects'.",
-        },
-        node_ids: {
-          type: "string",
-          description: "Comma-separated node ids for 'get_image_urls'.",
-        },
-      },
-      required: [],
-    },
-  },
-  {
     name: "netlify_query",
     description:
       "Query the user's connected Netlify account: list sites, list a site's recent deploys, and get " +

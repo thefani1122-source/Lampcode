@@ -236,33 +236,6 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     supportsRealMCP: true,
   },
 
-  figma: {
-    slug: "figma",
-    name: "Figma",
-    category: "design",
-    icon: "🎨",
-    description: "Read Figma files, components, and design tokens via the Figma REST API",
-    // MEASURED 2026-11-03. mcp.figma.com only authorizes MCP clients listed
-    // in Figma's MCP catalog, and Lampcode is not approved yet — the OAuth
-    // flow can never start here. The real, working path is the documented
-    // REST API with a personal access token (X-Figma-Token), which the store
-    // verifies before storing. Flip back to hosted MCP only if Figma
-    // approves the client.
-    mcpServerUrl: null,
-    authType: "api_key",
-    credentialFields: [
-      {
-        key: "figma_pat",
-        label: "Figma Personal Access Token",
-        type: "password",
-        placeholder: "figd_...",
-        help: "Figma → Settings → Account → Personal access tokens (needs File content read)",
-      },
-    ],
-    supportsRealMCP: false,
-    restApiHint: "Figma REST API: https://api.figma.com/v1\nHeader: X-Figma-Token: {figma_pat}\nGET /me, /files/:key, /teams/:team_id/projects, /files/:key/components, /images/:key?ids=...",
-  },
-
   "google-stitch": {
     slug: "google-stitch",
     name: "Google Stitch",
@@ -374,23 +347,17 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     slug: "framer",
     name: "Framer",
     category: "design",
-    icon: "🖼️",
-    description: "Import animated components and layouts via the Framer API",
-    mcpServerUrl: null,
-    authType: "rest_api",
-    credentialFields: [
-      {
-        key: "framer_api_token",
-        label: "Framer API Token",
-        type: "password",
-        placeholder: "...",
-        help: "Create at framer.com/developers → API Tokens",
-      },
-    ],
-    supportsRealMCP: false,
-    // MEASURED 2026-11-03. Framer's real developer surface is the Server API
-    // npm package (project-bound keys), not a plain REST endpoint — the old
-    // api.framer.com/store/v1 hint no longer matches anything documented.
+    icon: "🧩",
+    description: "Design, build, and update Framer sites, pages, and CMS via Framer's hosted MCP server",
+    mcpServerUrl: "https://mcp.framer.com/mcp",
+    // MEASURED 2026-11-04. Framer launched its official hosted MCP server
+    // (framer.com/mcp, announced Oct 2026) at mcp.framer.com/mcp. It signs in
+    // with OAuth using the connected Framer account's permissions, and
+    // Framer's own docs tell unlisted agents to connect to this URL. The
+    // Server API hint below stays only for rows connected before the flip.
+    authType: "oauth",
+    credentialFields: [],
+    supportsRealMCP: true,
     restApiHint: "Framer Server API: npm i framer-api — connect(projectUrl, {framer_api_token}) to read/update the CMS and publish",
   },
 

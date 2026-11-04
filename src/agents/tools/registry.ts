@@ -28,7 +28,7 @@ import { shellHandler } from "./shell.js";
 import { browserInteractHandler } from "./browser-interact.js";
 import { githubQueryHandler } from "./github-query.js";
 import { vercelQueryHandler } from "./vercel-query.js";
-import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler, figmaQueryHandler, netlifyQueryHandler } from "./rest-queries.js";
+import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler, netlifyQueryHandler } from "./rest-queries.js";
 import { supabaseQueryHandler } from "./supabase-query.js";
 import { integrationsStatusHandler } from "./integrations-status.js";
 
@@ -82,7 +82,6 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["twilio_query", twilioQueryHandler],
   ["sendgrid_query", sendgridQueryHandler],
   ["mailchimp_query", mailchimpQueryHandler],
-  ["figma_query", figmaQueryHandler],
   ["netlify_query", netlifyQueryHandler],
   ["supabase_query", supabaseQueryHandler],
 ]);

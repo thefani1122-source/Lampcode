@@ -60,7 +60,7 @@ export const INTENT_CLASSIFY_INSTRUCTION =
  * itself is in the disqualifying list.
  */
 const CONNECTED_SERVICE_PATTERN =
-  /\b(github|repo\b|repos\b|repositor|issues?\b|pull requests?\b|prs?\b|commits?\b|branches?\b|workflows?\b|vercel|deployments?\b|shopify|wordpress|twilio|sendgrid|mailchimp|supabase|figma|netlify)\b/i;
+  /\b(github|repo\b|repos\b|repositor|issues?\b|pull requests?\b|prs?\b|commits?\b|branches?\b|workflows?\b|vercel|deployments?\b|shopify|wordpress|twilio|sendgrid|mailchimp|supabase|netlify)\b/i;
 const LISTING_VERB_PATTERN =
   /\b(list|show|check|fetch|open|my|mer[ie]|kons?[ei]|kon|kaun|dikhao|dikha|batao|batay?|kitn[ei]|status|how many|all)\b/i;
 const CODE_CHANGE_VERB_PATTERN =
