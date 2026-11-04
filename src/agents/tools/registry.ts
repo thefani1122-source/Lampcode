@@ -29,6 +29,7 @@ import { browserInteractHandler } from "./browser-interact.js";
 import { githubQueryHandler } from "./github-query.js";
 import { vercelQueryHandler } from "./vercel-query.js";
 import { shopifyQueryHandler, wordpressQueryHandler, twilioQueryHandler, sendgridQueryHandler, mailchimpQueryHandler } from "./rest-queries.js";
+import { integrationsStatusHandler } from "./integrations-status.js";
 
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -72,6 +73,7 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["look_at_page", lookAtPageHandler],
   ["shell", shellHandler],
   ["browser_interact", browserInteractHandler],
+  ["integrations_status", integrationsStatusHandler],
   ["github_query", githubQueryHandler],
   ["vercel_query", vercelQueryHandler],
   ["shopify_query", shopifyQueryHandler],

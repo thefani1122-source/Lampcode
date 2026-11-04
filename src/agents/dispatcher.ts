@@ -44,6 +44,7 @@ import { deductUsage } from "../build/credits.js";
 import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
+import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
 import type { RenderReport } from "../verify/render.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 
@@ -106,6 +107,8 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
    *  classified). Explicitly-annotated write/destructive tools become local
    *  proxy tools with a user-approval gate. Ambiguous tools stay fully blocked. */
   mcpServers?: ActiveMcpServer[] | undefined;
+  /** Per-service connection summary for the integrations_status tool. */
+  connectedServices?: ConnectedServiceSummary[] | undefined;
   /** Billing/analytics tag for this dispatch — separate from agentType, see
    *  the usageCategory column comment in db/schema.ts. Defaults to "build"
    *  when omitted so every dispatch still lands in a real category rather
@@ -641,6 +644,7 @@ export class AgentDispatcher {
                     "impact_analysis",
                     "review_code",
                     "web_search",
+                    "integrations_status",
                     "github_query",
                     "vercel_query",
                     "vercel_write",
@@ -877,6 +881,7 @@ export class AgentDispatcher {
                 provider: effectiveProvider,
                 gitHubToken: options.gitHubToken,
                 serviceCredentials: options.serviceCredentials,
+                connectedServices: options.connectedServices,
                 ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),

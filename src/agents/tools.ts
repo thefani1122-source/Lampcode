@@ -11,6 +11,7 @@ import { DEFERRED_STATIC_HANDLERS, REGISTRY } from "./tools/registry.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
 import type { AgentDispatcher } from "./dispatcher.js";
+import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
 
 const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page", "shell", "browser_interact"]);
 
@@ -578,6 +579,19 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "integrations_status",
+    description:
+      "Report which services and tools are ACTUALLY connected to the user's account right now: " +
+      "each connected provider with its auth type, which local query tool inspects it, and which " +
+      "catalogue providers are NOT connected. Call this whenever the user asks what is connected, " +
+      "which tools or integrations exist, or which services are available. Answer ONLY from this " +
+      "tool's result — never invent connection statuses from your prompt or tool list.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "github_query",
     description:
       "READ-ONLY lookups on the user's connected GitHub account. Inspect repositories, branches, " +
@@ -921,6 +935,12 @@ export interface ToolExecutionContext {
    *  from the connected-integrations store; a provider the user has not
    *  connected is simply absent, and its query tool says so in one sentence. */
   serviceCredentials?: Record<string, Record<string, string> | undefined> | undefined;
+  /** One row per connected service, resolved by build.ts from both connection
+   *  stores (auth type, Vercel REST-token availability). Consumed by the
+   *  integrations_status tool so "what's connected" answers from stored truth.
+   *  Absent means the caller did not resolve it — the tool reports that rather
+   *  than inventing statuses. */
+  connectedServices?: ConnectedServiceSummary[] | undefined;
 }
 
 export async function executeTool(

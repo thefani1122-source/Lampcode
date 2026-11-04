@@ -759,6 +759,74 @@ export async function getUserVercelDeployToken(userId: string): Promise<string |
   return null;
 }
 
+/**
+ * One row per connected service, resolved for the AGENT rather than for the
+ * browser: which providers have a connection stored, how each authenticates,
+ * and (Vercel only) whether a REST account token could be resolved. Feeds the
+ * `integrations_status` tool so "what's connected" answers from the database
+ * instead of model guesswork — the failure that produced fabricated status
+ * tables listing only GitHub while Vercel, Linear, Notion and the rest sat
+ * connected in user_mcp_connections.
+ *
+ * Deliberately decrypt-free except the Vercel token check: the auth type comes
+ * from the provider registry, not from the stored credential, so this costs one
+ * read per table and no per-row decryption. A row whose credential cannot
+ * decrypt still reports as connected here — the "connection exists but is
+ * broken" signal comes from getConnectedMcpServers' warning, and the tool says
+ * so rather than hiding the row.
+ */
+export interface ConnectedServiceSummary {
+  slug: string;
+  name: string;
+  source: "mcp" | "legacy";
+  authType: string;
+  connectedAt: string | null;
+  /** Vercel only: an account token the query/deploy paths could resolve. */
+  restToken?: boolean;
+}
+
+export async function getConnectedServicesSummary(userId: string): Promise<ConnectedServiceSummary[]> {
+  const out: ConnectedServiceSummary[] = [];
+
+  const rows = await db
+    .select()
+    .from(userMcpConnections)
+    .where(eq(userMcpConnections.userId, userId));
+  for (const row of rows) {
+    const provider = getMcpProvider(row.providerSlug);
+    out.push({
+      slug: row.providerSlug,
+      name: provider?.name ?? row.providerSlug,
+      source: "mcp",
+      authType: provider?.authType ?? "unknown",
+      connectedAt: row.connectedAt ? row.connectedAt.toISOString() : null,
+    });
+  }
+
+  const vercelToken = await getUserVercelDeployToken(userId).catch(() => null);
+  const vercel = out.find((s) => s.slug === "vercel");
+  if (vercel) vercel.restToken = Boolean(vercelToken);
+
+  // Connections made before the MCP table existed still count as connected —
+  // the same rule getConnectedMcpServers applies.
+  const seen = new Set(out.map((s) => s.slug));
+  const legacyRows = await db.select().from(userIntegrations).where(eq(userIntegrations.userId, userId));
+  for (const row of legacyRows) {
+    if (row.status !== "connected") continue;
+    if (seen.has(row.provider)) continue;
+    const provider = getProvider(row.provider);
+    out.push({
+      slug: row.provider,
+      name: provider?.name ?? row.provider,
+      source: "legacy",
+      authType: "unknown",
+      connectedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+    });
+  }
+
+  return out;
+}
+
 export async function getUserSupabaseMcpAuth(
   userId: string,
 ): Promise<{ accessToken: string; projectRef?: string } | null> {
