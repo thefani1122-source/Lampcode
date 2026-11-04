@@ -41,7 +41,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getUserVercelDeployToken, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -976,6 +976,17 @@ export async function runFastBuild(
       const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
       const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
       const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
+      // Connected services reach the query chat too. Without these the model
+      // answered "which tools are connected" from its prompt alone and invented
+      // the list (2026-11-04: GitHub connected, everything else "not
+      // connected"), and OAuth-only providers (Linear, Notion, Railway,
+      // Cloudflare, Sentry, Vercel) had no read tools in chat at all.
+      const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+      const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
+      // Relevant only — a generic "what's connected" prompt matches no
+      // category, which is fine: integrations_status is the authoritative
+      // answer there and needs no servers.
+      const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
       let deployCtx: { vercelToken: string; projectName: string } | undefined;
       if (vercelDeployToken) {
         const named = await db
@@ -990,14 +1001,14 @@ export async function runFastBuild(
         };
       }
 
-      // No MCP servers in the query path, deliberately. The local *_query
-      // tools listed above already cover every connected service, and an
-      // attached web-scraper (Firecrawl/Exa) only hands the model a tool that
-      // CANNOT answer a question about the user's private account data.
-      // Measured 2026-11-04: with scrapers offered, a model that missed the
-      // routing rule burned rounds on Firecrawl calls that each failed auth,
-      // then failed src/App.tsx generation. Tools that are absent cannot be
-      // misused; nothing here needs to be unattached because nothing is attached.
+      // User-connected MCP servers ARE attached here now (filtered by
+      // relevance, internal scrapers excluded). The original rule stands for
+      // the scrapers: Firecrawl/Exa cannot answer a question about the user's
+      // private account data, and 2026-11-04 measured a model that missed the
+      // routing rule burning rounds on Firecrawl calls that each failed auth.
+      // What changed: the local *_query tools alone left OAuth-only providers
+      // (Linear, Notion, Railway, Cloudflare, Sentry) with no read tools in
+      // chat at all, so their connected data was unreachable from queries.
 
       const queryTaskDescription =
         `You are a knowledgeable AI technical partner assisting the user with their project, code, or integrations.
@@ -1011,6 +1022,8 @@ export async function runFastBuild(
         `- github_query: READ-ONLY GitHub lookups: repositories (list_repos, get_repo), branches (list_branches), commits (list_commits), issues (list_issues, get_issue, search_issues), pull requests (list_pull_requests, get_pull_request, get_pull_request_files, get_pull_request_status - CI status), code search (search_code), file contents (get_file_contents), CI runs (list_workflow_runs, get_workflow_run_jobs, get_job_logs). GitHub writes are separate tools (github_write, github_merge) that ask the user first.
 ` +
         `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
+` +
+        `- integrations_status: Report which services are ACTUALLY connected right now. Call this whenever the user asks what is connected, which tools exist, or which services are available — answer ONLY from its result, never from this prompt.
 ` +
         `- shopify_query / wordpress_query / twilio_query / sendgrid_query / mailchimp_query: Inspect the user's connected Shopify store, WordPress site, Twilio account, SendGrid account, or Mailchimp account (each takes an "action" like list_products, list_posts, list_messages, list_templates, list_campaigns).
 ` +
@@ -1057,7 +1070,8 @@ export async function runFastBuild(
         gitHubToken: gitHubToken ?? undefined,
         serviceCredentials: restCreds,
         deploy: deployCtx,
-        mcpServers: [],
+        mcpServers: queryMcpServers,
+        connectedServices,
         costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
       });
 
@@ -1649,6 +1663,11 @@ export async function runFastBuild(
     // and passed down so the *_query tools can answer with real data.
     const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
 
+    // The build-path model gets the same authoritative connection summary the
+    // query chat gets, so "what's connected" answered inside a build reports
+    // the database's truth instead of the prompt's provider list.
+    const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
+
     const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
     const vercelDeployToken = vercelMcp
       ? await getUserVercelDeployToken(userId).catch(() => null)
@@ -1744,6 +1763,7 @@ export async function runFastBuild(
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,
       serviceCredentials: restCreds,
+      connectedServices,
       ...(deployCtx === undefined ? {} : { deploy: deployCtx }),
     });
 
