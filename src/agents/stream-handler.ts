@@ -34,6 +34,15 @@ export interface StreamResult {
   pseudoToolNames: string[]
 }
 
+/** True for prose that is really structured data for the system: an object or
+ *  array opening the piece, or a JSON object literal embedded in it. The
+ *  caller of build:message is a person; a machine-shaped plan is not speech. */
+function looksStructured(s: string): boolean {
+  const trimmed = s.trimStart()
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return true
+  return /\{"|\[\{/.test(s)
+}
+
 export async function handleAgentStream(
   generator: AsyncGenerator<StreamChunk>,
   opts: {
@@ -113,6 +122,29 @@ export async function handleAgentStream(
   let lastEmittedWritingFile = ""
   let lastFenceCount = 0
 
+  // Lovable-style interleaving: prose the model writes OUTSIDE its code fences
+  // is speech for the user, not file content. It streams to the chat as
+  // build:message deltas, in between the tool rows — the channel that used to
+  // carry only the closing summary. Fence parity over the round decides the
+  // mode (odd total = inside a fence, even = prose), recomputed from
+  // fullContent on every chunk so a fence split across chunk boundaries still
+  // lands in the right mode. Three characters are held back on every prose
+  // chunk: a fence boundary can straddle chunks, and the held tail is dropped
+  // the moment code mode begins, so fence syntax never leaks into the chat as
+  // a message.
+  //
+  // Prose is NOT streamed word-by-word. It is buffered to the nearest sentence
+  // or line and checked before it goes out, because `content` has a second
+  // face: pre-code planning prose that is really structured data for the
+  // system (seen in production 2026-10-14 — `{ "criteria": [...]` in the
+  // thoughts panel). A prose piece that opens with `{` / `[` or contains a
+  // JSON object start is suppressed, and the rest of that prose run goes
+  // quiet with it: the user reads sentences, never a half-parsed plan.
+  let proseHeld: string | null = null
+  let proseBuf = ""
+  let proseEmitting = false
+  let proseSuppressed = false
+
   // Tool-call syntax the model types instead of calling. Filtered on the way
   // to the chat, never on the way into fullContent: the raw output is still
   // written to disk for replay, and the parser must see exactly what arrived.
@@ -161,9 +193,91 @@ export async function handleAgentStream(
         }
       }
     }
+
+    // Prose-vs-code interleaving (see the state vars above). Runs on every
+    // content chunk: outside a fence the text is the model talking to the
+    // user and streams as build:message; inside a fence it is file content
+    // and stays silent here — build:file_writing already names it.
+    const fenceTotal = (fullContent.match(/```/g) ?? []).length
+    const inCodeNow = fenceTotal % 2 === 1
+    if (!inCodeNow) {
+      let prose = text
+      if (proseHeld !== null) {
+        prose = proseHeld + prose
+        proseHeld = null
+      }
+      if (prose.length > 3) {
+        proseHeld = prose.slice(-3)
+        prose = prose.slice(0, -3)
+      }
+      proseBuf += prose
+      // A prose run that already proved structured stays silent — the JSON
+      // usually continues over the next lines too.
+      while (!proseSuppressed) {
+        const m = proseBuf.match(/[\s\S]*?(?:[.!?](?:\s|$)|\n)/)
+        if (!m || !m[0]) break
+        const piece = m[0]
+        if (looksStructured(piece)) {
+          proseSuppressed = true
+          proseBuf = ""
+          break
+        }
+        proseBuf = proseBuf.slice(piece.length)
+        proseEmitting = true
+        narrate("build:message", { text: piece, sessionId })
+      }
+      // The remainder after the last boundary can be structured on its own —
+      // a plan object with no sentence punctuation in it. Check it here too,
+      // or it would sit unemitted in the buffer only to leak at the flush.
+      if (!proseSuppressed && looksStructured(proseBuf)) {
+        proseSuppressed = true
+        proseBuf = ""
+      }
+      if (proseSuppressed) proseBuf = ""
+    } else {
+      // Entering a fence: the buffer holds the sentence that led into the
+      // file block ("Writing the schema now:") — still speech, so it goes
+      // out before the fence opens, unless this run was suppressed. The
+      // held fence tail, on the other hand, is fence syntax and dies here.
+      proseHeld = null
+      if (!proseSuppressed && proseBuf.trim()) {
+        proseEmitting = true
+        narrate("build:message", { text: proseBuf, sessionId })
+      }
+      proseBuf = ""
+      if (proseEmitting) {
+        proseEmitting = false
+        proseSuppressed = false
+        narrate("build:message", { text: "", done: true, sessionId })
+      }
+    }
   }
 
-  // The reasoning pipeline, applied to every REASONING piece (provider field
+  /** Drains whatever prose is still buffered: the tail after the last
+   *  sentence boundary, or the held fence fragment at the very end. */
+  const flushProse = (): void => {
+    if (proseSuppressed) {
+      proseBuf = ""
+      proseHeld = null
+      return
+    }
+    if (proseBuf.trim() && !looksStructured(proseBuf)) {
+      proseEmitting = true
+      narrate("build:message", { text: proseBuf, sessionId })
+    }
+    proseBuf = ""
+    if (proseHeld) {
+      narrate("build:message", { text: proseHeld, sessionId })
+      proseHeld = null
+    }
+    if (proseEmitting) {
+      proseEmitting = false
+      narrate("build:message", { text: "", done: true, sessionId })
+    }
+  }
+
+  // The reasoning pipeline, applied to every REASONING piece
+  // (provider field
   // or split out of content tags — the chat cannot tell and should not).
   const handleReasoningText = (text: string): void => {
     if (!text) return
@@ -263,6 +377,11 @@ export async function handleAgentStream(
     // The splitter may still hold a partial tag or an unclosed block — flush
     // it so the tail of the reasoning is not dropped.
     processPieces(reasoningRouter.flush())
+
+    // Whatever prose is still buffered — the tail after the last sentence
+    // boundary, or the held fence fragment — goes out now, then the message
+    // closes the way a paragraph ends.
+    flushProse()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     emit("build:error", { message, sessionId })
