@@ -22,6 +22,9 @@ const QUERY_TOOL_BY_SLUG: Record<string, string> = {
   twilio: "twilio_query",
   sendgrid: "sendgrid_query",
   mailchimp: "mailchimp_query",
+  figma: "figma_query",
+  netlify: "netlify_query",
+  supabase: "supabase_query",
 };
 
 export const integrationsStatusHandler: ToolHandler = async (

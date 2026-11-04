@@ -25,6 +25,12 @@ export interface McpProvider {
   authType: "bearer_token" | "api_key" | "mcp_url" | "oauth" | "none" | "webhook_url" | "rest_api" | "admin_api" | "basic_auth";
   /** Custom HTTP header name when the server doesn't use Authorization: Bearer. */
   authHeader?: string;
+  /**
+   * OAuth servers that ALSO accept a credential as a bearer token (e.g. the
+   * Stripe MCP server takes an Agent API key). Lets /mcp/:slug/connect store
+   * a credential row for an otherwise-OAuth provider.
+   */
+  allowsApiKeyFallback?: boolean;
   credentialFields: Array<{
     key: string;
     label: string;
@@ -71,11 +77,25 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     icon: "💳",
     description: "Manage payments, customers, subscriptions, and products via the Stripe MCP server",
     mcpServerUrl: "https://mcp.stripe.com",
-    // mcp.stripe.com supports OAuth (its consent page grants per-account,
-    // per-environment access). Agent API keys remain valid for headless
-    // deployments, but the store connects with one-click OAuth.
+    // mcp.stripe.com supports OAuth, but its consent flow keeps an allowlist
+    // of vetted client redirect URIs for new clients (measured 2026-11: the
+    // hosted server rejects clients outside it), so the store connects with
+    // an Agent API key instead. MEASURED 2026-11. mcp.stripe.com accepts an
+    // Agent API key (Dashboard → Developer → API keys, "Agent" tag) as a
+    // plain bearer token — the server's own docs list it as the credential
+    // for autonomous agents. Full-access secret keys are NOT accepted here
+    // and Stripe removes them from the MCP server after Nov 30 2026.
     authType: "oauth",
-    credentialFields: [],
+    credentialFields: [
+      {
+        key: "api_key",
+        label: "Stripe Agent API Key",
+        type: "password",
+        placeholder: "sk_...",
+        help: "Stripe Dashboard → Developer → API keys → create an Agent key (not a secret key)",
+      },
+    ],
+    allowsApiKeyFallback: true,
     supportsRealMCP: true,
   },
 
@@ -221,11 +241,26 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     name: "Figma",
     category: "design",
     icon: "🎨",
-    description: "Read Figma files, components, and design tokens via the Figma MCP server",
-    mcpServerUrl: "https://mcp.figma.com/mcp",
-    authType: "oauth",
-    credentialFields: [],
-    supportsRealMCP: true,
+    description: "Read Figma files, components, and design tokens via the Figma REST API",
+    // MEASURED 2026-11-03. mcp.figma.com only authorizes MCP clients listed
+    // in Figma's MCP catalog, and Lampcode is not approved yet — the OAuth
+    // flow can never start here. The real, working path is the documented
+    // REST API with a personal access token (X-Figma-Token), which the store
+    // verifies before storing. Flip back to hosted MCP only if Figma
+    // approves the client.
+    mcpServerUrl: null,
+    authType: "api_key",
+    credentialFields: [
+      {
+        key: "figma_pat",
+        label: "Figma Personal Access Token",
+        type: "password",
+        placeholder: "figd_...",
+        help: "Figma → Settings → Account → Personal access tokens (needs File content read)",
+      },
+    ],
+    supportsRealMCP: false,
+    restApiHint: "Figma REST API: https://api.figma.com/v1\nHeader: X-Figma-Token: {figma_pat}\nGET /me, /files/:key, /teams/:team_id/projects, /files/:key/components, /images/:key?ids=...",
   },
 
   "google-stitch": {
@@ -250,7 +285,34 @@ export const MCP_REGISTRY: Record<string, McpProvider> = {
     supportsRealMCP: true,
   },
 
-  // ── REST / credential-only providers (supportsRealMCP: false) ─────────────
+    netlify: {
+    slug: "netlify",
+    name: "Netlify",
+    category: "devtools",
+    icon: "🌐",
+    description: "Inspect Netlify sites, deploys, and logs via the Netlify REST API",
+    // MEASURED 2026-11-04. Netlify's remote MCP (netlify-mcp.netlify.app/mcp)
+    // speaks OAuth 2.1 with dynamic client registration, but the store ships
+    // the REST path first because a personal access token is verifiable
+    // before storage and the REST API covers the read surface (sites, files,
+    // deploys, logs). The MCP entry stays REST-only until the OAuth flow is
+    // verified end to end.
+    mcpServerUrl: null,
+    authType: "api_key",
+    credentialFields: [
+      {
+        key: "api_token",
+        label: "Netlify Personal Access Token",
+        type: "password",
+        placeholder: "nfp_...",
+        help: "Netlify → User settings → Applications → Personal access tokens",
+      },
+    ],
+    supportsRealMCP: false,
+    restApiHint: "Netlify REST API: https://api.netlify.com/api/v1\nHeader: Authorization: Bearer {api_token}\nGET /sites, /sites/:site_id/deploys, /deploys/:deploy_id, /sites/:site_id/files",
+  },
+
+// ── REST / credential-only providers (supportsRealMCP: false) ─────────────
 
   shopify: {
     slug: "shopify",

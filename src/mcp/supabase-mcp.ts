@@ -85,6 +85,24 @@ export async function listSupabaseMcpTools(
 }
 
 /**
+ * Calls one Supabase MCP tool and returns its text/data payload. Read-side
+ * helper for the supabase_query agent tool: the server enforces the scope,
+ * the URL carries read_only, and the PAT only travels as a request header.
+ */
+export async function callSupabaseMcpTool(
+  auth: SupabaseMcpAuth,
+  toolName: string,
+  args: Record<string, unknown> = {},
+  readOnly = true,
+): Promise<{ text: string; data: unknown }> {
+  return withSupabaseMcp(auth, readOnly, async (client) => {
+    const r = await client.callTool({ name: toolName, arguments: args });
+    assertNotError(r, toolName);
+    return payloadOf(r);
+  });
+}
+
+/**
  * Fetches the project's public API URL + anon (publishable) key via MCP, so the
  * preview can point a generated app at the USER'S own Supabase project. The anon
  * key is public/RLS-safe; the service key and PAT never leave the backend.

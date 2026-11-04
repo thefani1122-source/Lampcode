@@ -790,6 +790,101 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       required: [],
     },
   },
+  {
+    name: "figma_query",
+    description:
+      "Query the user's connected Figma account via the Figma REST API: account check, team projects, " +
+      "file structure, published components, and rendered node images. Use when the user shares a " +
+      "Figma link or asks to pull design details into code.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["get_file", "list_team_projects", "list_file_components", "get_image_urls", "get_me"],
+          description: "Action to perform: 'get_file' (default), 'list_team_projects', 'list_file_components', 'get_image_urls', or 'get_me'.",
+        },
+        file_key: {
+          type: "string",
+          description: "Figma file key (the part of the URL after /design/ or /file/) for file actions.",
+        },
+        team_id: {
+          type: "string",
+          description: "Figma team id for 'list_team_projects'.",
+        },
+        node_ids: {
+          type: "string",
+          description: "Comma-separated node ids for 'get_image_urls'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "netlify_query",
+    description:
+      "Query the user's connected Netlify account: list sites, list a site's recent deploys, and get " +
+      "deploy details. Use when the user asks about their Netlify sites or deployments.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_sites", "list_deploys", "get_deploy"],
+          description: "Action to perform: 'list_sites' (default), 'list_deploys', or 'get_deploy'.",
+        },
+        site_id: {
+          type: "string",
+          description: "Netlify site id when action is 'list_deploys' (use list_sites to find it).",
+        },
+        deploy_id: {
+          type: "string",
+          description: "Deploy id when action is 'get_deploy'.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "supabase_query",
+    description:
+      "Query the user's own connected Supabase project through the hosted Supabase MCP server " +
+      "(read-only): list tables, run read-only SQL (SELECT), read API/db/auth logs, and check " +
+      "security/performance advisors. Use when the user asks about their database, logs, or schema.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list_tables", "run_sql", "get_logs", "get_advisors", "list_edge_functions"],
+          description: "Action to perform: 'list_tables' (default), 'run_sql', 'get_logs', 'get_advisors', or 'list_edge_functions'.",
+        },
+        query: {
+          type: "string",
+          description: "Read-only SQL (SELECT/WITH/EXPLAIN) when action is 'run_sql'.",
+        },
+        schema: {
+          type: "string",
+          description: "Optional Postgres schema for 'list_tables' (default: public).",
+        },
+        service: {
+          type: "string",
+          enum: ["api", "db", "auth", "storage", "edge", "realtime"],
+          description: "Log service for 'get_logs' (default: api).",
+        },
+        minutes: {
+          type: "number",
+          description: "Lookback window in minutes for 'get_logs' (default 60).",
+        },
+        advisors_type: {
+          type: "string",
+          enum: ["security", "performance"],
+          description: "Advisor type for 'get_advisors' (default: security).",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 export type GateOutcome = "pass" | "fail" | "unavailable";

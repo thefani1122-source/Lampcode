@@ -291,3 +291,133 @@ export const mailchimpQueryHandler: ToolHandler = async (args, ctx) => {
   }
   return `Unknown action "${action}". Supported actions: list_campaigns, get_lists, list_members.`;
 };
+
+// ── Figma ────────────────────────────────────────────────────────────────────
+// mcp.figma.com only authorizes catalog-approved clients, so reads go through
+// the documented REST API with the stored personal access token.
+
+export const figmaQueryHandler: ToolHandler = async (args, ctx) => {
+  const creds = credsFor(ctx, "figma");
+  if (!creds) return notConnected("Figma", "(a Figma Personal Access Token).");
+  const token = creds["figma_pat"]?.trim() ?? creds["figma_access_token"]?.trim();
+  if (!token) return missing("Figma", "personal access token", "and add the token");
+  const headers = { "X-Figma-Token": token, Accept: "application/json" };
+
+  const action = typeof args["action"] === "string" ? args["action"].trim().toLowerCase() : "get_file";
+
+  if (action === "get_me") {
+    const { status, body } = await getJson("https://api.figma.com/v1/me", headers);
+    if (status !== 200) return `Figma API error (${status}): ${truncate(body)}`;
+    const me = body as { handle?: string; email?: string };
+    return `Figma account: **${me.handle ?? "?"}** (${me.email ?? "no email"}) — token works.`;
+  }
+  if (action === "list_team_projects") {
+    const teamId = String(args["team_id"] ?? "").trim();
+    if (!teamId) return "Error: a `team_id` is required (from a team URL: figma.com/files/team/<team_id>/...).";
+    const { status, body } = await getJson(`https://api.figma.com/v1/teams/${encodeURIComponent(teamId)}/projects`, headers);
+    if (status !== 200) return `Figma API error (${status}): ${truncate(body)}`;
+    const projects = (body as { projects?: Array<{ id?: string; name?: string }> }).projects ?? [];
+    if (projects.length === 0) return "No projects found for this Figma team.";
+    const lines = projects.map((p) => `- **${p.name ?? "?"}** (id: ${p.id ?? "?"})`);
+    return `Figma projects in this team:\n${lines.join("\n")}`;
+  }
+  if (action === "get_file" || action === "list_file_components") {
+    const fileKey = String(args["file_key"] ?? "").trim();
+    if (!fileKey) {
+      return (
+        "Error: a `file_key` is required — it is the part of a Figma URL after /design/ or /file/ " +
+        "(e.g. figma.com/design/AbCdEf123/Name → AbCdEf123). Ask the user for the Figma link if needed."
+      );
+    }
+    if (action === "list_file_components") {
+      const { status, body } = await getJson(`https://api.figma.com/v1/files/${encodeURIComponent(fileKey)}/components`, headers);
+      if (status !== 200) return `Figma API error (${status}): ${truncate(body)}`;
+      const comps = (body as { meta?: { components?: Array<{ node_id?: string; name?: string; description?: string }> } }).meta?.components ?? [];
+      if (comps.length === 0) return "No published components in this Figma file.";
+      const lines = comps.slice(0, 30).map((c) => `- **${c.name ?? "?"}** (node: ${c.node_id ?? "?"})${c.description ? ` — ${truncate(c.description, 80)}` : ""}`);
+      return `Components in this Figma file:\n${lines.join("\n")}`;
+    }
+    const { status, body } = await getJson(`https://api.figma.com/v1/files/${encodeURIComponent(fileKey)}?depth=2`, headers);
+    if (status !== 200) return `Figma API error (${status}): ${truncate(body)}`;
+    const file = body as { name?: string; lastModified?: string; document?: { children?: Array<{ name?: string }> }, components?: Record<string, unknown> };
+    const pages = file.document?.children?.map((c) => c.name ?? "?") ?? [];
+    return (
+      `Figma file **${file.name ?? fileKey}**\n` +
+      `- Last modified: ${file.lastModified ?? "?"}\n` +
+      `- Pages: ${pages.join(", ") || "none"}\n` +
+      `- Published components: ${Object.keys(file.components ?? {}).length}\n` +
+      `Use list_file_components for component details or get_image_urls to export specific nodes.`
+    );
+  }
+  if (action === "get_image_urls") {
+    const fileKey = String(args["file_key"] ?? "").trim();
+    const nodeIds = String(args["node_ids"] ?? "").trim();
+    if (!fileKey || !nodeIds) return "Error: `file_key` and `node_ids` (comma-separated) are required.";
+    const { status, body } = await getJson(
+      `https://api.figma.com/v1/images/${encodeURIComponent(fileKey)}?ids=${encodeURIComponent(nodeIds)}`,
+      headers,
+    );
+    if (status !== 200) return `Figma API error (${status}): ${truncate(body)}`;
+    const images = (body as { images?: Record<string, string | null> }).images ?? {};
+    const entries = Object.entries(images);
+    if (entries.length === 0) return "Figma returned no rendered images for these nodes.";
+    const lines = entries.map(([id, url]) => `- ${id}: ${url ?? "not rendered yet (retry in a few seconds)"}`);
+    return `Rendered images:\n${lines.join("\n")}`;
+  }
+  return `Unknown action "${action}". Supported actions: get_me, list_team_projects, get_file, list_file_components, get_image_urls.`;
+};
+
+// ── Netlify ──────────────────────────────────────────────────────────────────
+// Netlify's remote MCP speaks OAuth 2.1; the store ships the REST path with a
+// personal access token because it is verifiable before storage. Reads only —
+// creating or publishing deploys stays behind the write gate.
+
+export const netlifyQueryHandler: ToolHandler = async (args, ctx) => {
+  const creds = credsFor(ctx, "netlify");
+  if (!creds) return notConnected("Netlify", "(a Netlify Personal Access Token).");
+  const token = creds["api_token"]?.trim() ?? creds["netlify_auth_token"]?.trim();
+  if (!token) return missing("Netlify", "personal access token", "and add the token");
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+
+  const action = typeof args["action"] === "string" ? args["action"].trim().toLowerCase() : "list_sites";
+
+  if (action === "list_sites" || !action) {
+    const { status, body } = await getJson("https://api.netlify.com/api/v1/sites?per_page=20", headers);
+    if (status !== 200) return `Netlify API error (${status}): ${truncate(body)}`;
+    const sites = Array.isArray(body) ? (body as Array<Record<string, unknown>>) : [];
+    if (sites.length === 0) return "No sites found in this Netlify account.";
+    const lines = sites.map((s) => {
+      const ssl = typeof s["ssl_url"] === "string" ? s["ssl_url"] : typeof s["url"] === "string" ? s["url"] : "";
+      const updated = typeof s["updated_at"] === "string" ? s["updated_at"].slice(0, 10) : "";
+      return `- **${s["name"]}** (${ssl}) — id: ${s["id"]}${updated ? `, updated ${updated}` : ""}`;
+    });
+    return `Netlify sites:\n${lines.join("\n")}`;
+  }
+  if (action === "list_deploys") {
+    const siteId = String(args["site_id"] ?? "").trim();
+    if (!siteId) return "Error: a `site_id` is required (use list_sites first).";
+    const { status, body } = await getJson(`https://api.netlify.com/api/v1/sites/${encodeURIComponent(siteId)}/deploys?per_page=10`, headers);
+    if (status !== 200) return `Netlify API error (${status}): ${truncate(body)}`;
+    const deploys = Array.isArray(body) ? (body as Array<Record<string, unknown>>) : [];
+    if (deploys.length === 0) return "No deploys found for this Netlify site.";
+    const lines = deploys.map((d) =>
+      `- ${d["state"] ?? "?"} — ${d["created_at"] ?? "?"} (id: ${d["id"]}${d["title"] ? `, ${d["title"]}` : ""})`,
+    );
+    return `Recent deploys for this site:\n${lines.join("\n")}`;
+  }
+  if (action === "get_deploy") {
+    const deployId = String(args["deploy_id"] ?? "").trim();
+    if (!deployId) return "Error: a `deploy_id` is required (use list_deploys first).";
+    const { status, body } = await getJson(`https://api.netlify.com/api/v1/deploys/${encodeURIComponent(deployId)}`, headers);
+    if (status !== 200) return `Netlify API error (${status}): ${truncate(body)}`;
+    const d = body as Record<string, unknown>;
+    return (
+      `Deploy **${d["id"]}**\n` +
+      `- State: ${d["state"]}, created: ${d["created_at"] ?? "?"}\n` +
+      `- URL: ${d["ssl_url"] ?? d["url"] ?? "?"}\n` +
+      `- Commit: ${d["commit_ref"] ?? "n/a"}${d["title"] ? ` (${d["title"]})` : ""}\n` +
+      `- Publishable when state is "ready"; failed deploys report ${truncate(d["error_message"] ?? "no error message", 200)}`
+    );
+  }
+  return `Unknown action "${action}". Supported actions: list_sites, list_deploys, get_deploy.`;
+};

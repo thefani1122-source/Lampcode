@@ -8,6 +8,8 @@ import { shopify } from "./shopify.js";
 import { make } from "./make.js";
 import { n8n } from "./n8n.js";
 import { zapier } from "./zapier.js";
+import { figma } from "./figma.js";
+import { netlify } from "./netlify.js";
 
 export type { ProviderDef, ProviderField } from "./_shared.js";
 
@@ -17,6 +19,8 @@ export const PROVIDERS: Record<string, ProviderDef> = {
   [make.id]: make,
   [n8n.id]: n8n,
   [zapier.id]: zapier,
+  [figma.id]: figma,
+  [netlify.id]: netlify,
 };
 
 export const PROVIDER_LIST: ProviderDef[] = Object.values(PROVIDERS);

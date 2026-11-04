@@ -655,7 +655,7 @@ export async function getUserGitHubToken(userId: string): Promise<string | null>
  * uses.
  */
 export async function getRestProviderCredentials(userId: string): Promise<Record<string, Record<string, string>>> {
-  const REST_SLUGS = ["shopify", "wordpress", "twilio", "sendgrid", "mailchimp"] as const;
+  const REST_SLUGS = ["shopify", "wordpress", "twilio", "sendgrid", "mailchimp", "figma", "netlify", "supabase"] as const;
   const out: Record<string, Record<string, string>> = {};
 
   const readRow = (slug: string, row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): boolean => {
@@ -1131,7 +1131,7 @@ integrationsRouter.post("/mcp/:slug/connect", async (c) => {
   // the owner's GitHub connection invisible to every build.
   const creds = unwrapCreds(body);
 
-  if (provider.authType === "oauth") {
+  if (provider.authType === "oauth" && !provider.allowsApiKeyFallback) {
     throw new AppError(400, "Start the provider's OAuth flow instead", "OAUTH_REQUIRED");
   }
 
