@@ -2252,6 +2252,28 @@ export class PromptBuilder {
         "above can see a requirement you simply did not implement."
       : "";
 
+    // The user watches the build live: reasoning streams as thinking rows,
+    // tools as status rows, and now the model's own short updates between
+    // tool rounds stream as chat messages (build:message). Without this
+    // instruction the build went silent between rounds — tool rows moved but
+    // nothing said what was FOUND or FIXED until the final summary, which is
+    // the gap Lovable-style narration closes.
+    const narrationInstruction = task.agenticBuild === true || task.toolsEnabled === true
+      ? "\n\n=== KEEPING THE USER INFORMED ===\n" +
+        "The user watches you work in real time. Between your tool calls, write SHORT " +
+        "plain-sentence updates in your reply — one sentence each, in ordinary words, " +
+        "the way a good engineer narrates while pair-programming:\n" +
+        "- After gathering information, say in one line what you found and what you will do about it.\n" +
+        "- After fixing something, say in one line what was wrong and what you changed.\n" +
+        "- After a check fails, say in one line what failed, before you start fixing it.\n" +
+        "Rules for these updates: plain prose only — no JSON, no headings, no bullet " +
+        "lists, no code fences, no file listings; a file path inside a sentence is fine. " +
+        "Never narrate a step INSTEAD of doing it. Do not write an update more than once " +
+        "per step, and stay silent while several tools run in a row without new findings " +
+        "— speak when you have something real to say. Your final reply at the end is " +
+        "still a separate, slightly fuller summary of what you built or changed."
+      : "";
+
     const manifestBlock = task.projectManifest
       ? `\n## Current File Structure\n${task.projectManifest}\n`
       : "";
@@ -2277,7 +2299,7 @@ export class PromptBuilder {
     const securityContract = SECURITY_AWARE_CODE_AGENTS.has(agentType)
       ? `${SECURE_GENERATION_CONTRACT}\n\n`
       : "";
-    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + skillIndex + agenticInstruction;
+    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + skillIndex + agenticInstruction;
   }
 
   private async buildContextBlock(
