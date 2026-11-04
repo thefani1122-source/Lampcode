@@ -602,6 +602,11 @@ export class AgentDispatcher {
     // been shown to accept images.
     const pendingImages = { value: [] as Array<{ mediaType: string; dataBase64: string; label: string }> };
     let pseudoCorrected = false;
+    // One failure-only retry: a round that ran tools and then stopped without
+    // writing ANY content leaves the caller an empty reply — the chat showed a
+    // bare "Done." instead of the repos list the model had just gathered
+    // (production, 2026-11-04). Nudge once, never loop on it.
+    let nudgedForEmptyAnswer = false;
     // Guarded: an event sink must never be able to fail a build.
     const emitEvent = (event: BuildEvent): void => {
       if (!options.onEvent) return;
@@ -757,7 +762,26 @@ export class AgentDispatcher {
         continue;
       }
 
-      if (!wantsTools) break; // model is done — this round's content is final
+      if (!wantsTools) {
+        // Model is done — this round's content is final. Unless the round
+        // produced NOTHING (no text, no files): reasoning-only turns happen
+        // when a model announces its plan and then stops. Ask it once to write
+        // the answer it just gathered instead of ending on an empty turn.
+        if (!streamResult.content && round < maxRounds && !nudgedForEmptyAnswer && enableTools) {
+          nudgedForEmptyAnswer = true;
+          logger.warn(
+            { sessionId, agentType, round },
+            "Tool loop: round ended with no content — nudging once for a written answer",
+          );
+          messages.push({
+            role: "user",
+            content:
+              "Your last turn ended without any written output. Write your answer to the user now: report what you found or did, in plain markdown. Do not call more tools unless something is genuinely still missing.",
+          });
+          continue;
+        }
+        break; // model is done — this round's content is final
+      }
 
       if (round === maxRounds) {
         // Used the last allowed round and still wants more — stop instead of

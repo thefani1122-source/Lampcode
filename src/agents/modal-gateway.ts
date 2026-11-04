@@ -528,6 +528,16 @@ export async function* modalStream(req: GatewayRequest, overrideTimeoutMs?: numb
         if (providerReasoning) {
           yield { type: "reasoning", reasoning: providerReasoning };
         }
+        // The answer itself: content deltas are the model's actual reply — the
+        // prose outside reasoning and the file text inside fences. This yield
+        // went missing when reasoning support landed on this path (found in
+        // production 2026-11-04: queries streamed their thinking and their tool
+        // calls, but every written answer was dropped, so the chat fell back to
+        // a bare "Done."). Reasoning-only here is how that reads in logs:
+        // reasoningChunks > 0, contentChunks = 0, stopReason fine.
+        if (choice.delta?.content) {
+          yield { type: "content", content: choice.delta.content };
+        }
         for (const tc of choice.delta.tool_calls ?? []) {
           const buf = toolBuffers.get(tc.index) ?? { id: "", name: "", args: "" };
           if (tc.id) buf.id = tc.id;

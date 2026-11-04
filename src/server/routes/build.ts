@@ -1027,7 +1027,7 @@ export async function runFastBuild(
 ` +
         `GUIDELINES:
 ` +
-        `1. Answer the user's question directly, clearly, and concisely in markdown.
+        `1. Answer the user's question directly, clearly, and concisely in markdown. When the user asks for a detailed review or more depth, give a thorough structured answer — sections, specifics, file or issue names — not a two-line summary.
 ` +
         `2. Questions about the user's CONNECTED services — their GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, and so on — are about THEIR OWN data. Call the matching tool (github_query, vercel_query, shopify_query, ...) and answer ONLY from its results.
 ` +
@@ -1061,7 +1061,13 @@ export async function runFastBuild(
         costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
       });
 
-      const replyContent = queryDispatchResult.finalContent || queryDispatchResult.content || "Done.";
+      // Never a bare "Done." — that implied a success the user could not see.
+      // With an empty reply the honest answer is that the checks ran but the
+      // written answer did not come out.
+      const replyContent =
+        queryDispatchResult.finalContent ||
+        queryDispatchResult.content ||
+        "I finished the checks but couldn't write the answer out. Ask me again and I'll reply in full.";
 
       server?.buildComplete(sessionId, {
         sessionId,
