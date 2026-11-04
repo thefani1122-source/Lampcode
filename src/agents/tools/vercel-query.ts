@@ -14,6 +14,18 @@ export const vercelQueryHandler: ToolHandler = async (
 ): Promise<string> => {
   const token = ctx.deploy?.vercelToken;
   if (!token) {
+    // "Not connected" and "connected but tokenless" are different truths. The
+    // 2026-11-04 failure had the OAuth connection stored while no REST token
+    // could be resolved from it — reporting plain "not connected" told the
+    // user to connect something that was already connected.
+    const vercelRow = ctx.connectedServices?.find((s) => s.slug === "vercel");
+    if (vercelRow) {
+      return (
+        "Vercel IS connected (OAuth), but no account token could be resolved from the stored " +
+        "connection, so queries and deployments cannot run. Reconnect Vercel in Integrations " +
+        "settings to refresh its token, then ask again."
+      );
+    }
     return "Vercel is not connected. Please connect Vercel in Integrations settings with your Vercel Access Token.";
   }
 
