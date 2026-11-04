@@ -16,7 +16,15 @@ ok("action agent has no REST credential interpolation", !actionAgent.includes("r
 ok("build does not load REST provider secrets for model context", !build.includes("getConnectedRestProviders") && !build.includes("restProviders"));
 ok("legacy REST secrets have no model-facing loader", !integrations.includes("getConnectedRestProviders") && !integrations.includes("ConnectedRestProvider"));
 ok("Firecrawl uses its documented v2 MCP endpoint", build.includes("https://mcp.firecrawl.dev/v2/mcp") && actionAgent.includes("https://mcp.firecrawl.dev/v2/mcp"));
-ok("Exa is treated as public and receives no fabricated API key", INTERNAL_MCP_PROVIDERS.exa?.authType === "none" && build.includes('url: "https://mcp.exa.ai/mcp", authToken: null'));
+ok(
+  "Exa is treated as public and receives no fabricated API key",
+  INTERNAL_MCP_PROVIDERS.exa?.authType === "none" &&
+    // Since the 2026-11-04 URL gate, the Exa MCP server joins the build only
+    // when the workspace actually configured EXA_API_KEY, and its token comes
+    // straight from that config — there is no hardcoded or invented key.
+    build.includes("promptHasUrl && config.EXA_API_KEY") &&
+    build.includes('authToken: config.EXA_API_KEY }'),
+);
 
 if (failures) process.exit(1);
 console.log("All MCP credential-boundary cases passed.");
