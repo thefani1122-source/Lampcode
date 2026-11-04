@@ -731,6 +731,19 @@ export async function getUserVercelDeployToken(userId: string): Promise<string |
   if (row) {
     const token = read(row);
     if (token) return token;
+    // Diagnostic only — key NAMES, never values, so a support round-trip can
+    // tell a stored-but-unreadable credential apart from a missing row.
+    try {
+      const creds = JSON.parse(decrypt({
+        encrypted: row.encryptedCreds, iv: row.encryptedCredsIv, tag: row.encryptedCredsTag,
+      })) as Record<string, unknown>;
+      logger.warn(
+        { userId, stage: "vercel_token_keys", keys: Object.keys(creds), nested: creds["tokens"] ? Object.keys(creds["tokens"] as object) : [] },
+        "Vercel connection row exists but no usable REST token was found",
+      );
+    } catch { /* decrypt already warned in read() */ }
+  } else {
+    logger.warn({ userId, stage: "vercel_token_row" }, "No Vercel connection row exists for this user");
   }
 
   // Older releases stored it in user_integrations. Same reason the MCP server
