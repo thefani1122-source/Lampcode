@@ -57,6 +57,9 @@ const PHRASES: Record<string, Phrase> = {
   twilio_write: { past: "Sent the message", present: "Sending the message" },
   sendgrid_write: { past: "Updated SendGrid", present: "Updating SendGrid" },
   mailchimp_write: { past: "Updated Mailchimp", present: "Updating Mailchimp" },
+  // GitHub PAT writes — same provider-level narration as the REST writes.
+  github_write: { past: "Updated GitHub", present: "Updating GitHub" },
+  github_merge: { past: "Merged the pull request", present: "Merging the pull request" },
   code_intel: { past: "Looked up", present: "Looking up", arg: "symbol" },
   impact_analysis: { past: "Checked what this affects", present: "Checking what this affects" },
 

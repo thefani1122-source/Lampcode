@@ -580,16 +580,26 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
   {
     name: "github_query",
     description:
-      "Query the user's connected GitHub account to inspect repositories, commits, or branches. " +
-      "Use this when the user asks about their GitHub repos, what repositories exist, or asks to " +
-      "inspect branches or recent commits. Returns real data directly from the GitHub API.",
+      "READ-ONLY lookups on the user's connected GitHub account. Inspect repositories, branches, " +
+      "and commits; read a file's contents (get_file_contents); search code (search_code); work " +
+      "with issues (list_issues, get_issue, search_issues); work with pull requests " +
+      "(list_pull_requests, get_pull_request, get_pull_request_files, get_pull_request_status - " +
+      "the last shows CI status); and inspect CI (list_workflow_runs, get_workflow_run_jobs, " +
+      "get_job_logs). Returns real data directly from the GitHub API. Creating or changing anything " +
+      "on GitHub is NOT this tool - that is github_write / github_merge, which ask the user first.",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list_repos", "get_repo", "list_commits", "list_branches"],
-          description: "Action to perform: 'list_repos' (default), 'get_repo', 'list_commits', or 'list_branches'.",
+          enum: [
+            "list_repos", "get_repo", "list_commits", "list_branches",
+            "list_issues", "get_issue", "search_issues",
+            "list_pull_requests", "get_pull_request", "get_pull_request_files", "get_pull_request_status",
+            "search_code", "get_file_contents",
+            "list_workflow_runs", "get_workflow_run_jobs", "get_job_logs",
+          ],
+          description: "Which lookup to perform. Default 'list_repos'.",
         },
         repo: {
           type: "string",
@@ -598,6 +608,43 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
         owner: {
           type: "string",
           description: "Optional repository owner.",
+        },
+        state: {
+          type: "string",
+          enum: ["open", "closed", "all"],
+          description: "For list_issues / list_pull_requests. Defaults to 'open'.",
+        },
+        query: {
+          type: "string",
+          description: "Search text for search_code or search_issues.",
+        },
+        path: {
+          type: "string",
+          description: "File path for get_file_contents, e.g. 'src/index.ts'.",
+        },
+        ref: {
+          type: "string",
+          description: "Optional branch, tag, or SHA (get_file_contents, list_commits, list_workflow_runs).",
+        },
+        issue_number: {
+          type: "string",
+          description: "Issue number for get_issue, comment target lookups.",
+        },
+        pull_number: {
+          type: "string",
+          description: "Pull request number for get_pull_request, get_pull_request_files, get_pull_request_status.",
+        },
+        run_id: {
+          type: "string",
+          description: "Workflow run id for get_workflow_run_jobs (from list_workflow_runs).",
+        },
+        job_id: {
+          type: "string",
+          description: "Job id for get_job_logs (from get_workflow_run_jobs).",
+        },
+        limit: {
+          type: "number",
+          description: "How many items to return, 1-30. Defaults to 10.",
         },
       },
       required: [],

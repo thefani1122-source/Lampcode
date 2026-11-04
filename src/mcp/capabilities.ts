@@ -21,6 +21,11 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, Readonly<Record<string, 
   github: {
     create_issue: "issue.write",
     get_file_contents: "repo.read",
+    create_or_update_file: "repo.write",
+    push_files: "repo.write",
+    create_branch: "repo.write",
+    create_pull_request: "repo.write",
+    merge_pull_request: "repo.write",
   },
   vercel: {
     create_deployment: "deploy.create",

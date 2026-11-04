@@ -1001,7 +1001,7 @@ export async function runFastBuild(
 ` +
         `AVAILABLE INSPECTION TOOLS:
 ` +
-        `- github_query: Query connected GitHub account to list repositories (action: "list_repos"), inspect specific repos, branches, or commits.
+        `- github_query: READ-ONLY GitHub lookups: repositories (list_repos, get_repo), branches (list_branches), commits (list_commits), issues (list_issues, get_issue, search_issues), pull requests (list_pull_requests, get_pull_request, get_pull_request_files, get_pull_request_status - CI status), code search (search_code), file contents (get_file_contents), CI runs (list_workflow_runs, get_workflow_run_jobs, get_job_logs). GitHub writes are separate tools (github_write, github_merge) that ask the user first.
 ` +
         `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
 ` +

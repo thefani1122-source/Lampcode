@@ -15,6 +15,7 @@ import { diffFile, type FileDiff } from "./file-diff.js";
 import { modalStream } from "./modal-gateway.js";
 import { narrateTool, formatLineDelta } from "./tool-narration.js";
 import { buildRestWriteRegistry, REST_WRITE_DEFS } from "./tools/rest-writes.js";
+import { buildGithubWriteRegistry, GITHUB_WRITE_DEFS } from "./tools/github-writes.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
@@ -460,6 +461,17 @@ export class AgentDispatcher {
     const restWriteRegistry = buildRestWriteRegistry(options.serviceCredentials);
     for (const [name, meta] of restWriteRegistry) writeProxyRegistry.set(name, meta);
     writeProxyDefs = [...writeProxyDefs, ...REST_WRITE_DEFS.filter((d) => restWriteRegistry.has(d.name))];
+    // GitHub writes over the stored PAT ride the same gate. The hosted GitHub
+    // MCP server offers its own write proxies when connected; a PAT-only user
+    // still gets issues, PRs, branches and merges through these, and merging
+    // stays strong-approval either way. No token means nothing is offered.
+    const githubWriteRegistry = buildGithubWriteRegistry(options.gitHubToken);
+    for (const [name, meta] of githubWriteRegistry) {
+      // A connected GitHub MCP already provides its own write proxies; only
+      // names that are not taken yet are filled in here.
+      if (!writeProxyRegistry.has(name)) writeProxyRegistry.set(name, meta);
+    }
+    writeProxyDefs = [...writeProxyDefs, ...GITHUB_WRITE_DEFS.filter((d) => githubWriteRegistry.has(d.name) && !writeProxyDefs.some((t) => t.name === d.name))];
 
     logger.info({ agentType, model, tier, sessionId, enableTools, mcpServerCount: mcpServers?.length ?? 0 }, "Dispatching agent");
 
