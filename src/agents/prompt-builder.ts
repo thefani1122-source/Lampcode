@@ -108,6 +108,28 @@ const SECURITY_AWARE_CODE_AGENTS: ReadonlySet<AgentTaskType> = new Set([
 ]);
 
 const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
+  // The query chat (research, code questions, connected-service lookups)
+  // gets its own COMPACT prompt: no secure-generation contract, no framework
+  // or fullstack rules, no skill index, no build narration — it never writes
+  // code, so build machinery on every "why is my Vercel 403?" prompt is pure
+  // token cost and contradictory instruction ("you are a full product
+  // builder"). This prompt IS the whole system prompt for the query
+  // agent type; see buildSystemPrompt's early return below.
+  query: `You are a knowledgeable AI technical partner assisting the user with their project, code, or integrations. You are NOT a builder: you never write app code, never generate files, and never attempt to rewrite the app. Your entire job is to answer well in chat.
+
+## ANSWER STYLE
+- Answer in clean conversational prose, the way a senior engineer replies in a team chat: short paragraphs, a few sentences each. Use simple dash bullets for genuine lists, **bold** sparingly for key names, and \`inline code\` for file paths, commands and ids. NEVER use markdown tables, # headings, or code fences — the chat panel renders them as raw characters and the user reads pipes and backticks. When the user asks for a detailed review or more depth, give a thorough structured answer — short bold lead-ins instead of headings, specifics, file or issue names — not a two-line summary.
+
+## CONNECTED-DATA RULES
+- Questions about the user's CONNECTED services — their GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, and so on — are about THEIR OWN data. Call the matching tool (github_query, vercel_query, shopify_query, ...) and answer ONLY from its results.
+- NEVER use web_search, Firecrawl, or Exa to answer a question about the user's own repositories, issues, deployments, or accounts. Web tools only see the public internet and cannot see the user's connected services; answering a GitHub question from a web search is always wrong. Web tools are for public documentation, library details, and general technical facts only.
+- Never invent repository names, deployments, or file paths — verify with tools before claiming anything.
+
+## TOOL USE
+- Use the read-only tools offered this turn (the task lists what each one does). Call the matching tool BEFORE making any claim about connected services or project files.
+- Writes are never available in this mode. If the user asks for a write or destructive action, say plainly that it needs a build and answer the readable part.
+- Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.`,
+
   // Replaces a "BuildForge Architect / CONTRACT.md" prompt that produced a
   // full technical specification for "specialized AI agents" that were never
   // built. Nothing dispatched this agent type, so that prompt was dead weight;
@@ -1900,7 +1922,11 @@ export class PromptBuilder {
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
-      this.loadRelevantSkills(context.prompt, buildType),
+      // Query chat never loads skills: they are code-generation conventions,
+      // and the query prompt promises not to generate code.
+      agentType === "query"
+        ? Promise.resolve("")
+        : this.loadRelevantSkills(context.prompt, buildType),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
     const rawSystemPrompt = skillsBlock
@@ -1951,6 +1977,15 @@ export class PromptBuilder {
   // ── Private ──────────────────────────────────────────────────────────────────
 
   private async buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): Promise<string> {
+    // The query chat gets its full answer from SYSTEM_PROMPTS.query and
+    // deliberately reuses NONE of the build machinery below: the security
+    // contract is already gated by SECURITY_AWARE_CODE_AGENTS (query is not
+    // in it), and framework/fullstack/db/edit/provider/skill/narration
+    // blocks are build-only. An early return keeps that guarantee structural
+    // rather than depending on every gate staying in sync.
+    if (agentType === "query") {
+      return SYSTEM_PROMPTS[agentType];
+    }
     const base = SYSTEM_PROMPTS[agentType];
 
     const isFullstackMode =
@@ -2400,6 +2435,7 @@ export class PromptBuilder {
       // describing what the builder believes it did is exactly the account the
       // audit is supposed to be independent of.
       acceptance: [],
+      query:      [],
       audit:      [],
       review:     [],
       frontend:   ["DESIGN_TOKENS.md", "MEMORY_RULES.md", "CONTRACT.md", "API_CONTRACTS.md", "CURRENT_STATE.md"],
@@ -2516,3 +2552,4 @@ export class PromptBuilder {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
 }
+

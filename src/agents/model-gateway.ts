@@ -19,6 +19,10 @@ export const MODEL_TIERS = {
   // its input is deliberately small — see src/verify/code-review.ts.
   review:     ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   frontend:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
+  // Query chat (research / code questions / connected-service lookups).
+  // It writes no code, but multi-tool questions still need a capable model —
+  // same pair as frontend so chat behavior is unchanged.
+  query:      ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   backend:    ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   db:         ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   security:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,

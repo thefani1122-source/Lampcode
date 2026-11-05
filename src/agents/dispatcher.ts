@@ -572,7 +572,7 @@ export class AgentDispatcher {
     const isEditMode = task.description.startsWith("EXISTING PROJECT FILES:");
     const thinkingBudget =
       isEditMode                                               ? 1_500  // targeted edit
-      : (isFullstackBuild || agentType === "frontend")        ? 8_000  // full new-build
+      : (isFullstackBuild || agentType === "frontend" || agentType === "query") ? 8_000  // full new-build; tool-heavy research questions need the same planning room
       : agentType === "fix" || agentType === "backend"        ? 6_000  // crash/API analysis
       : agentType === "db"                                    ? 5_000  // schema design
       : 4_000;                                                         // security, planning, others

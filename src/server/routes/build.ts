@@ -1017,10 +1017,10 @@ export async function runFastBuild(
       // (Linear, Notion, Railway, Cloudflare, Sentry) with no read tools in
       // chat at all, so their connected data was unreachable from queries.
 
+      // The query system prompt (SYSTEM_PROMPTS.query in prompt-builder.ts)
+      // carries the persona and answer rules now, so this user message only
+      // carries the per-turn pieces: the user's message and the tool list.
       const queryTaskDescription =
-        `You are a knowledgeable AI technical partner assisting the user with their project, code, or integrations.
-
-` +
         `USER MESSAGE: ${prompt}
 
 ` +
@@ -1045,21 +1045,10 @@ export async function runFastBuild(
         `- web_search: Search the web for documentation, library details, or technical facts.
 
 ` +
-        `GUIDELINES:
-` +
-        `1. Answer in clean conversational prose, the way a senior engineer replies in a team chat: short paragraphs, a few sentences each. Use simple dash bullets for genuine lists, **bold** sparingly for key names, and \`inline code\` for file paths, commands and ids. NEVER use markdown tables, # headings, or code fences — the chat panel renders them as raw characters and the user reads pipes and backticks. When the user asks for a detailed review or more depth, give a thorough structured answer — short bold lead-ins instead of headings, specifics, file or issue names — not a two-line summary.
-` +
-        `2. Questions about the user's CONNECTED services — their GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, and so on — are about THEIR OWN data. Call the matching tool (github_query, vercel_query, shopify_query, ...) and answer ONLY from its results.
-` +
-        `3. NEVER use web_search, Firecrawl, or Exa to answer a question about the user's own repositories, issues, deployments, or accounts. Web tools only see the public internet and cannot see the user's connected services; answering a GitHub question from a web search is always wrong. Web tools are for public documentation, library details, and general technical facts only.
-` +
-        `4. Never invent repository names, deployments, or file paths — verify with tools.
-` +
-        `5. Do NOT output code fences for whole project generation. Do NOT attempt to rewrite the app.
-`;
+        `Answer the user's message now. Call the matching tool BEFORE making any claim about connected services, deployments or project files, and answer ONLY from real tool results.`;
 
       const queryDispatchResult = await getDispatcher().dispatch({
-        agentType: "frontend",
+        agentType: "query",
         usageCategory: "build",
         provider,
         task: {
