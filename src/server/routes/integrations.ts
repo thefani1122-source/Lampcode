@@ -696,6 +696,32 @@ export async function getRestProviderCredentials(userId: string): Promise<Record
   return out;
 }
 
+/**
+ * Vercel OAuth tokens are team-scoped: the REST API answers 403 to any
+ * request that omits `teamId` when the token belongs to a team — the exact
+ * signature of the 2026-11-05 "authorized but still not connected" report.
+ * The token itself was valid; the calls just never named a team. This reads
+ * the token's first team so every Vercel call can carry it. A personal-only
+ * token gets no teams and returns undefined, which keeps the old behavior.
+ */
+export async function getUserVercelTeamId(token: string): Promise<string | undefined> {
+  try {
+    const res = await fetch("https://api.vercel.com/v2/teams?limit=1", {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      logger.warn({ stage: "vercel_team_lookup", status: res.status }, "Vercel teams lookup failed");
+      return undefined;
+    }
+    const data = (await res.json()) as { teams?: Array<{ id?: string }> };
+    const id = data.teams?.[0]?.id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch (error) {
+    logger.warn({ stage: "vercel_team_lookup", error: String(error) }, "Vercel teams lookup threw");
+    return undefined;
+  }
+}
+
 export async function getUserVercelDeployToken(userId: string): Promise<string | null> {
   const read = (row: { encryptedCreds: string; encryptedCredsIv: string; encryptedCredsTag: string }): string | null => {
     try {

@@ -41,7 +41,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
+import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -976,6 +976,12 @@ export async function runFastBuild(
       const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
       const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
       const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
+      // The token alone is not enough: team-scoped Vercel OAuth tokens 403
+      // every call that omits teamId. Resolve it once here so the query tool
+      // never has to guess.
+      const vercelTeamId = vercelDeployToken
+        ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
+        : undefined;
       // Connected services reach the query chat too. Without these the model
       // answered "which tools are connected" from its prompt alone and invented
       // the list (2026-11-04: GitHub connected, everything else "not
@@ -987,7 +993,7 @@ export async function runFastBuild(
       // category, which is fine: integrations_status is the authoritative
       // answer there and needs no servers.
       const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
-      let deployCtx: { vercelToken: string; projectName: string } | undefined;
+      let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
       if (vercelDeployToken) {
         const named = await db
           .select({ name: projects.name })
@@ -997,6 +1003,7 @@ export async function runFastBuild(
           .catch(() => []);
         deployCtx = {
           vercelToken: vercelDeployToken,
+          ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
           projectName: named[0]?.name ?? "lampcode-app",
         };
       }
@@ -1672,7 +1679,10 @@ export async function runFastBuild(
     const vercelDeployToken = vercelMcp
       ? await getUserVercelDeployToken(userId).catch(() => null)
       : null;
-    let deployCtx: { vercelToken: string; projectName: string } | undefined;
+    const vercelTeamId = vercelDeployToken
+      ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
+      : undefined;
+    let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
     if (vercelDeployToken) {
       const named = await db
         .select({ name: projects.name })
@@ -1682,6 +1692,7 @@ export async function runFastBuild(
         .catch(() => []);
       deployCtx = {
         vercelToken: vercelDeployToken,
+        ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
         projectName: named[0]?.name ?? "lampcode-app",
       };
     }
