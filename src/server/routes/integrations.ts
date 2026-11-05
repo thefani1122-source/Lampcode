@@ -17,6 +17,7 @@ import { resolveCustomMcpAuth, resolveMcpAuth, safeRemoteUrl } from "../../mcp/c
 import { secureMcpFetch } from "../../mcp/secure-fetch.js";
 import { createMcpOAuthProvider, hashOAuthState, type McpOAuthSession, type StaticOAuthClient } from "../../mcp/oauth-client.js";
 import { checkMcpServer, safeMcpFailureCategory } from "../../mcp/health.js";
+import { classifyMcpServers } from "../../agents/mcp-tool-classifier.js";
 import { config } from "../config.js";
 
 export const integrationsRouter = new Hono();
@@ -1366,6 +1367,51 @@ integrationsRouter.delete("/mcp/:slug", async (c) => {
     .delete(userMcpConnections)
     .where(and(eq(userMcpConnections.userId, userId), eq(userMcpConnections.providerSlug, slug)));
   return c.json({ success: true });
+});
+
+// GET /api/integrations/mcp/diagnose — the runtime truth behind "agent ko tools
+// kyun nahi mil rahay". Read-only: stored connection rows, each resolved server
+// with its discovery result (what the model would receive on a prompt that
+// names the service), discovery failures, and the summary integrations_status
+// reports. No secrets — only key-shape facts (hasOAuthSession, header count).
+// A user-facing answer comes from this one URL instead of a log-archaeology
+// session: an empty storedRows list means connects never persisted; a row with
+// toolsDiscovered=0 plus a failures entry means discovery/auth is failing; a
+// healthy list means the model is receiving the tools and the problem is
+// elsewhere (routing or prompt).
+integrationsRouter.get("/mcp/diagnose", async (c) => {
+  const { id: userId } = c.get("authUser");
+  const rows = await db
+    .select()
+    .from(userMcpConnections)
+    .where(eq(userMcpConnections.userId, userId));
+  const servers = await getConnectedMcpServers(userId);
+  const { report, failures } = await classifyMcpServers(servers);
+  const resolvedServers = servers.map((s) => {
+    const tools = report.filter((r) => r.serverSlug === s.slug);
+    return {
+      slug: s.slug,
+      url: s.url,
+      hasOAuthSession: Boolean(s.oauthSession),
+      authHeaderCount: Object.keys(s.authHeaders ?? {}).length,
+      toolsDiscovered: tools.length,
+      readOffered: tools.filter((t) => t.allowed).length,
+      writeGated: tools.filter((t) => !t.allowed).length,
+      readToolNames: tools.filter((t) => t.allowed).map((t) => t.toolName).slice(0, 20),
+    };
+  });
+  const summary = await getConnectedServicesSummary(userId).catch(() => []);
+  return c.json({
+    storedRows: rows.map((r) => ({
+      slug: r.providerSlug,
+      isCustom: r.isCustom,
+      meta: r.meta ?? null,
+      connectedAt: r.connectedAt ? r.connectedAt.toISOString() : null,
+    })),
+    resolvedServers,
+    discoveryFailures: failures,
+    connectedServicesSummary: summary,
+  });
 });
 
 // GET /api/integrations/mcp — list connected providers

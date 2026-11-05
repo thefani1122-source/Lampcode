@@ -30,6 +30,26 @@ import { integrationsRouter, mcpOAuthCallbackRouter } from "./routes/integration
 import { adminRouter } from "./routes/admin.js";
 import { createWebSocketServer } from "../websocket/server.js";
 import { killAllSandboxes } from "../preview/e2b-service.js";
+import { execFileSync } from "node:child_process";
+
+// ── Version stamp ─────────────────────────────────────────────────────────────
+// /health reports the commit this running process was started from. EC2 deploys
+// kept succeeding while an orphaned process on :3000 kept serving an old binary,
+// so "did the fix reach production?" was unanswerable without guessing. Reading
+// the commit at startup (PM2's cwd is the repo) turns that into a one-line
+// check: `curl -s localhost:3000/health` must show the same short SHA as
+// `git rev-parse --short HEAD`.
+const STARTED_AT = Date.now();
+const GIT_COMMIT = (() => {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 // ── Startup diagnostics ───────────────────────────────────────────────────────
 // Log enough detail to diagnose connection issues without exposing credentials.
@@ -76,9 +96,18 @@ app.use("*", honoLogger((message, ...rest) => logger.info({ msg: message }, ...r
 // Rate limiting
 app.use("*", rateLimitMiddleware);
 
-// Health check (public)
+// Health check (public). The commit/pid/uptime fields exist so a stale-binary
+// deploy (old process still holding the port) is provable from one curl instead
+// of a log archaeology session.
 app.get("/health", (c) =>
-  c.json({ status: "ok", timestamp: new Date().toISOString() }),
+  c.json({
+    status: "ok",
+    commit: GIT_COMMIT,
+    pid: process.pid,
+    uptimeSeconds: Math.round((Date.now() - STARTED_AT) / 1000),
+    node: process.version,
+    timestamp: new Date().toISOString(),
+  }),
 );
 
 // API routes

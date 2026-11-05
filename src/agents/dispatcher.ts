@@ -456,6 +456,28 @@ export class AgentDispatcher {
         },
         "MCP tool classification for this dispatch",
       );
+      // One grep-able line per dispatch: what each connected server actually
+      // contributed. `vercel=0 (discovery failed: ...)` answers "model ko
+      // tools kyun nahi milay" from the PM2 log without reading 100 lines of
+      // per-tool classification.
+      const perServerSummary = new Map<string, { discovered: number; read: number; blocked: number }>();
+      for (const r of report) {
+        const entry = perServerSummary.get(r.serverSlug) ?? { discovered: 0, read: 0, blocked: 0 };
+        entry.discovered += 1;
+        if (r.allowed) entry.read += 1; else entry.blocked += 1;
+        perServerSummary.set(r.serverSlug, entry);
+      }
+      for (const f of failures) perServerSummary.set(f.serverSlug, { discovered: 0, read: 0, blocked: 0 });
+      logger.info(
+        {
+          sessionId,
+          perServer: [...perServerSummary].map(
+            ([slug, c]) => `${slug}: discovered=${c.discovered} read=${c.read} blocked=${c.blocked}`,
+          ),
+          failures: failures.map((f) => `${f.serverSlug}: ${f.message}`),
+        },
+        "MCP discovery per-server summary",
+      );
     }
     // REST-backed write tools (Shopify, WordPress, Twilio, SendGrid, Mailchimp)
     // ride the SAME approval gate as MCP write proxies: they join the write
@@ -879,6 +901,15 @@ export class AgentDispatcher {
                 deadCode,
                 review,
                 dispatcher: this,
+              }
+            : {}),
+          ...(enableTools
+            ? {
+                // Connected-service context used to ride only the query/agentic
+                // branch, so integrations_status returned "no summary attached"
+                // on plain builds and vercel_query had no token. These fields are
+                // harmless on every tools-enabled dispatch, so they ride all of
+                // them now.
                 userId: options.userId,
                 provider: effectiveProvider,
                 gitHubToken: options.gitHubToken,
