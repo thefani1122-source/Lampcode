@@ -42,8 +42,15 @@ export const vercelQueryHandler: ToolHandler = async (
   // Access Token) in the Integrations store.
   const guard = async (res: Response): Promise<string | null> => {
     if (res.status !== 401 && res.status !== 403) return null;
+    // Vercel's own error body distinguishes the two 401/403 shapes that look
+    // identical from the outside: an invalid/expired token, and a valid token
+    // whose scope does not cover the called resource. Carrying a snippet of it
+    // in the answer turns the next "still broken" report into a one-line
+    // diagnosis instead of another reconnect guess.
+    const body = (await res.text().catch(() => "")).slice(0, 240);
     return (
-      "Vercel rejected the stored credential (HTTP " + res.status + "). " +
+      "Vercel rejected the stored credential (HTTP " + res.status +
+      (body ? `): ${body}` : ").") + " " +
       "The Vercel connection needs to be reconnected in Integrations settings — " +
       "reconnect it, or add a Vercel Access Token to the Vercel integration, then ask again."
     );
