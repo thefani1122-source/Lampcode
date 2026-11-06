@@ -46,7 +46,7 @@ const CATEGORY_HINTS: Record<string, RegExp> = {
   repo: /\b(github|repo|repos|repository|git|push|commit|commits|branch|pull\s*request|prs?)\b/i,
   automation: /\b(n8n|zapier|make\.com|automation|automate|workflow|webhook|cron)\b/i,
   cms: /\b(wordpress|shopify|cms|storefront|e-?commerce)\b/i,
-  design: /\b(stitch|google\s*stitch|framer|design|design\s*file|mockup|wireframe|ui\s*kit|prototype)\b/i,
+  design: /\b(stitch|stich|google\s*stitch|google\s*stich|framer|design|design\s*file|mockup|wireframe|ui\s*kit|prototype)\b/i,
   tracker: /\b(linear|jira|sentry|issue\s*tracker|bug\s*report)\b/i,
   payment: /\b(stripe|payment|payments|pay|checkout|billing|invoice|subscription|subscriptions|pricing|charge)\b/i,
   content: /\b(notion|wiki|doc|docs|documentation|note|notes|knowledge)\b/i,
@@ -70,6 +70,9 @@ const SERVER_CATEGORY: Record<string, keyof typeof CATEGORY_HINTS> = {
   stitch: "design",
   "google-stitch": "design",
   googlestitch: "design",
+  stich: "design",
+  "google-stich": "design",
+  googlestich: "design",
   linear: "tracker",
   sentry: "tracker",
   jira: "tracker",
@@ -110,7 +113,10 @@ export function serversForPrompt(
     const slug = s.slug.toLowerCase();
     // Named outright — always keep, whatever the category rules say. Someone
     // who types "vercel" means Vercel even in a sentence about nothing else.
-    const named = new RegExp(`\\b${slug.replace(/[^a-z0-9]/g, "\\$&")}\\b`, "i").test(prompt);
+    const isStitch = slug === "google-stitch" || slug === "stitch" || slug === "googlestitch";
+    const named = isStitch
+      ? /\b(stitch|stich|google\s*stitch|google\s*stich)\b/i.test(prompt)
+      : new RegExp(`\\b${slug.replace(/[^a-z0-9]/g, "\\$&")}\\b`, "i").test(prompt);
     const category = SERVER_CATEGORY[slug];
     const byCategory = category ? CATEGORY_HINTS[category]!.test(prompt) : false;
     if (named || byCategory) kept.push(s);

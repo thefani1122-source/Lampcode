@@ -1720,6 +1720,8 @@ export async function runFastBuild(
       `If the user's request only asks to list, show, check or inspect data from their OWN connected accounts — GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, WordPress, Twilio, SendGrid, Mailchimp — do NOT generate or modify any app files for it.\n` +
       `Call the matching read-only tool (github_query, vercel_query, shopify_query, wordpress_query, twilio_query, sendgrid_query, mailchimp_query) and answer from its results in your final message.\n` +
       `If the user asks which services or tools are connected, call integrations_status and answer from its result — never invent a connection status list.\n` +
+      `If Google Stitch MCP tools are available (e.g. google-stitch__create_project, google-stitch__generate_screen_from_text, google-stitch__get_screen, google-stitch__list_projects) and the user requests UI design with Stitch or asks to use Stitch:\n` +
+      `Call the Stitch tools first to generate design screens, extract the layout and components, and build the React app reflecting that design.\n` +
       `NEVER use web_search, Firecrawl or Exa for the user's private account data — web tools only see the public internet. If a tool reports the service is not connected, say so and tell the user to connect it in the Integrations panel.\n`;
 
     const result = await dispatcher.dispatch({

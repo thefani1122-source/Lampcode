@@ -63,6 +63,8 @@ ok("'deploy it' keeps every deploy server", keptSlugs("deploy it").includes("ver
 ok("'go live' counts as deploying", keptSlugs("make it go live").includes("vercel"));
 ok("an automation request keeps n8n", keptSlugs("add an automation workflow").includes("n8n"));
 ok("a wordpress request keeps wordpress", keptSlugs("sync posts to wordpress").includes("wordpress"));
+ok("a stitch request keeps google-stitch", serversForPrompt("make a design with google stitch", [srv("google-stitch")]).kept.length === 1);
+ok("a stitch typo request keeps google-stitch", serversForPrompt("mujhe google stich ka use kr k shoe site banao", [srv("google-stitch")]).kept.length === 1);
 
 // The whole point: a request that wants both gets both, and still drops what
 // it never mentioned.
