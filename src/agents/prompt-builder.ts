@@ -471,17 +471,12 @@ Type scale and whitespace still do most of the work — a confident palette is
 not an excuse for a loud layout.
 
 ━━ CODE RULES — NON-NEGOTIABLE ━━
-- ZERO DEAD UI / BUTTONS: Every button, tab, link, or filter MUST have a working handler. If sidebar has tabs (Dashboard, Analytics, Reports, Settings, Users), switching tabs MUST render that view's specific interactive cards and controls, never an empty screen or no-op.
-- COMPLETE WORKING DOMAIN LOGIC: If building a tracker (e.g. calories, expenses), provide working calculation, input form, and instant state update (backed by localStorage or backend API). Never build visual-only cards without functioning CRUD/inputs.
+- ZERO DEAD UI / BUTTONS: Every button, tab, link, or filter MUST have an active handler (e.g. update state, filter records, open dialog, or show instant feedback). If sidebar has tabs (Dashboard, Analytics, Reports, Settings, Users), switching tabs MUST render that view's specific interactive cards and controls, never an empty screen or no-op.
+- WORKING DOMAIN LOGIC: Provide functioning state updates, calculations, and input forms (backed by React state / localStorage or backend API). Keep components clean, self-contained, and focused on the core workflow so code stays robust and never truncates.
 - ALWAYS SEED REALISTIC INITIAL DATA: Never launch an app with an empty screen, $0.00, empty tables, or "No items yet". Pre-populate with 6-10 rich, realistic, domain-specific records by default (e.g. realistic expense transactions, real categories, varied dates and amounts) so charts, lists, and summary cards are immediately alive and visually impressive on first render. Users can still add, edit, and delete items.
 - HUMAN-READABLE METRICS: Never output raw unformatted floating point numbers (e.g. 5.26315789%). Always format percentages and currencies cleanly (e.g. +5.3%, $124.2k) using Math.round() or .toFixed(1).
 - ALL navigation links must show different content — no repeated views
-- ROUTING: any app with more than one view gets REAL URL routing, not a useState
-  switch. Declare react-router-dom in package.json dependencies (it installs before
-  the dev server starts) and give every view its own path. A useState "currentView"
-  has no URL, so the browser back button does nothing, a refresh throws the user
-  back to the start, and no view can be linked or bookmarked. Keep useState for
-  genuine UI state — an open modal, a selected tab inside one view.
+- NAVIGATION & VIEWS: For multi-view apps, state-based navigation (e.g. activeTab or currentView in React state) is the preferred, bulletproof default because it renders reliably in live iframe previews without router mismatches or blank screens. If using react-router-dom, ensure BrowserRouter wraps Routes and every path has a matching element. Every view/tab must display its own distinct, meaningful cards and controls.
 - NO placeholder "coming soon" sections or unhandled clicks
 - Complete, realistic domain data with realistic labels and values — not "Item 1", "Item 2"
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
@@ -583,14 +578,12 @@ DESIGN SYSTEM — follow every rule below:
 
 STYLING:
 - ALWAYS use Tailwind CSS utility classes for ALL styling — no inline styles, no CSS modules, no styled-components
-- Use shadcn/ui components for buttons, forms, dialogs, dropdowns, tabs, cards, badges, avatars, toasts, tooltips — import from "@/components/ui/X"
-- Always use cn() from "@/lib/utils" for conditional classes
+- SELF-CONTAINED COMPONENTS: Style controls directly with Tailwind utility classes (e.g. <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">). Do NOT import from ungenerated external aliases like "@/components/ui/X" or "@/lib/queryClient" unless you also generate that exact file.
+- Always use cn() from "@/lib/utils" or inline template strings for conditional classes
 - Color system: use CSS variables via Tailwind (bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border, etc.)
 - Dark mode: use dark: prefix — system is pre-configured
 - Icons: ALWAYS use lucide-react — import only what you need: import { X, Plus, Settings } from "lucide-react"
-- Data fetching: use TanStack Query (useQuery, useMutation) — never raw useState+useEffect for async data
-  import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-  Wrap the root (or App.tsx) with <QueryClientProvider client={queryClient}> — import queryClient from "@/lib/queryClient"
+- State & Data fetching: Use clean React state (useState, useMemo) or TanStack Query. Keep components self-contained so the app mounts cleanly without missing provider wrappers.
 - Typography: text-sm, text-base, text-lg, text-xl, text-2xl, text-3xl, font-medium, font-semibold, font-bold
 - Spacing: p-4, p-6, gap-4, gap-6, space-y-4 — consistent 4px grid
 - Rounded: rounded-md (default), rounded-lg (cards), rounded-full (avatars/pills)
