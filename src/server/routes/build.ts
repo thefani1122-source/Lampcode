@@ -3640,6 +3640,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // fix src/server, write the fix back (which restarts the backend), and
     // re-verify. Bounded so it can't loop forever. Then hand back the URL.
     const finishPreview = async (url: string): Promise<void> => {
+      // Emit preview URL immediately so client renders iframe without waiting for post-checks
+      server?.emitPreviewUrl(sessionId, { sessionId, url });
+      try {
+        await db.update(buildSessions).set({ previewUrl: url }).where(eq(buildSessions.id, sessionId));
+      } catch (err) {
+        logger.warn({ sessionId, projectId, err }, "Could not persist preview URL early");
+      }
+
       // Everything in here runs AFTER the build session has been recorded
       // "success", after its files were persisted and after usageUsd was
       // computed — the calls below are reached only from non-awaited `.then()`

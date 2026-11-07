@@ -334,6 +334,34 @@ function patchViteConfig(files: Record<string, string>, log: PreviewLogCallback)
   }
 }
 
+/**
+ * Guarantee generated Node backend servers have WebSocket polyfill available.
+ * Node.js < 22 (the E2B runtime) does not have native WebSocket support enabled
+ * by default, which causes @supabase/supabase-js RealtimeClient to throw:
+ * "Node.js 20 detected without native WebSocket support."
+ */
+function patchServerWebSocket(files: Record<string, string>, log: PreviewLogCallback): void {
+  const serverIndex = files["src/server/index.ts"];
+  if (!serverIndex) return;
+  if (serverIndex.includes("globalThis.WebSocket") || serverIndex.includes("global.WebSocket")) return;
+
+  const polyfillHeader = [
+    "// Polyfill WebSocket for Node.js 20 runtime (required by @supabase/supabase-js RealtimeClient)",
+    "if (typeof (globalThis as any).WebSocket === 'undefined') {",
+    "  try {",
+    "    const _wsModule = await import('ws');",
+    "    (globalThis as any).WebSocket = (_wsModule as any).default || _wsModule;",
+    "  } catch {",
+    "    (globalThis as any).WebSocket = class WebSocket {};",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  files["src/server/index.ts"] = polyfillHeader + serverIndex;
+  log("Injected WebSocket runtime polyfill into src/server/index.ts");
+}
+
 // The preview template already ships known-good versions of these files (with
 // the right Vite host/allowedHosts/HMR config and pre-installed node_modules).
 // Overwriting them with LLM-generated copies is what broke the preview: a bad
@@ -746,7 +774,7 @@ async function installExtraDependencies(
       // matches how the template installed its own deps (React 19 vs peers).
       // `--` ends option parsing, so everything after it is an operand even if
       // a name somehow got past NPM_NAME_RE.
-      `npm install --no-save --legacy-peer-deps -- ${toInstall.join(" ")}`,
+      `npm install --no-save --legacy-peer-deps --prefer-offline --no-audit --no-fund --progress=false --loglevel=error -- ${toInstall.join(" ")}`,
       { cwd: PROJECT_DIR, timeoutMs: 180_000 },
     );
     log(`Installed: ${toInstall.join(", ")}`);
@@ -1356,6 +1384,11 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
     if (m && m[1] && m[2] !== undefined) envs[m[1]] = m[2];
   }
+  if (runtime === "node") {
+    envs.NODE_OPTIONS = envs.NODE_OPTIONS
+      ? `${envs.NODE_OPTIONS} --experimental-websocket`
+      : "--experimental-websocket";
+  }
 
   await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
   log(`Starting ${runtime} backend server on :3001...`);
@@ -1372,7 +1405,7 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   const cmd =
     runtime === "python"
       ? "cd src/server && python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
-      : "tsx src/server/index.ts";
+      : "NODE_OPTIONS='--experimental-websocket' tsx src/server/index.ts";
   try {
     await sandbox.commands.run(cmd, {
       cwd: PROJECT_DIR,
@@ -2029,6 +2062,7 @@ export async function writeFilesToSandbox(
   const framework = sandboxFrameworks.get(projectId) ?? "react";
   patchViteConfig(files, log);
   patchEntryStylesheet(files, log);
+  patchServerWebSocket(files, log);
   // Heartbeat: every follow-up write extends the sandbox lifetime so an
   // actively-used session never hits the timeout set at create/resume.
   await sandbox.setTimeout(SANDBOX_TIMEOUT_MS).catch(() => {});
@@ -2198,6 +2232,7 @@ export async function createPreviewSandbox(
 
   patchViteConfig(files, log);
   patchEntryStylesheet(files, log);
+  patchServerWebSocket(files, log);
 
   let sandbox: Sandbox | undefined;
   try {

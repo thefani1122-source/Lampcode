@@ -477,6 +477,7 @@ not an excuse for a loud layout.
 - HUMAN-READABLE METRICS: Never output raw unformatted floating point numbers (e.g. 5.26315789%). Always format percentages and currencies cleanly (e.g. +5.3%, $124.2k) using Math.round() or .toFixed(1).
 - ALL navigation links must show different content — no repeated views
 - NAVIGATION & VIEWS: For multi-view apps, state-based navigation (e.g. activeTab or currentView in React state) is the preferred, bulletproof default because it renders reliably in live iframe previews without router mismatches or blank screens. If using react-router-dom, ensure BrowserRouter wraps Routes and every path has a matching element. Every view/tab must display its own distinct, meaningful cards and controls.
+- NEVER BLOCK PREVIEW BEHIND LOGIN/REGISTER: The default root view ("/" or initial load) MUST render the primary interactive app experience (dashboard, data tables, metrics, cards) immediately with realistic sample/guest data. NEVER redirect "/" to "/login" or "/register", and NEVER replace the entire screen with an authentication wall on first render. Visitors must experience the working product right away. Auth (login/register) must ONLY be opened on explicit user action (e.g. clicking "Sign In" in the header or attempting a persistent cloud save action) via a modal dialog, NEVER as a full-page lockout.
 - NO placeholder "coming soon" sections or unhandled clicks
 - Complete, realistic domain data with realistic labels and values — not "Item 1", "Item 2"
 - DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
@@ -1164,6 +1165,7 @@ APP.TSX — integrate auth WITHOUT a hard login wall:
 - DO NOT block the whole app behind login. The app's MAIN UI must render first
   (logged-out state visible). Only when the user opens login do you show the
   <Login /> modal. This way the preview shows the actual app, not a login wall.
+- ABSOLUTELY NO REDIRECT TO /login OR /register: If using react-router-dom, the root route "/" MUST render the main app/dashboard with realistic seed data. NEVER write <Navigate to="/login" /> or <Navigate to="/register" /> for logged-out users.
 - EXACTLY ONE visible "Sign In" button — in the HEADER. Do NOT add extra Sign In
   buttons, "Sign in to…" banners, or sample-data notices anywhere else. The
   logged-out state just shows the real UI with sample/empty data; that's enough.
