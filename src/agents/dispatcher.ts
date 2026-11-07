@@ -76,6 +76,7 @@ export const dispatchOptionsSchema = z.object({
     outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
     targetFiles: z.array(z.string()).optional(),
     hasReferenceImage: z.boolean().optional(),
+    imageAttachments: z.array(z.string()).optional(),
     isAgentBuild: z.boolean().optional(),
     hasAnimationContext: z.boolean().optional(),
     projectMemory: z.string().nullable().optional(),
@@ -538,9 +539,24 @@ export class AgentDispatcher {
         return randomUUID();
       });
 
+    let userContent: string | MessageContentBlock[] = userMessage;
+    if (task.imageAttachments && task.imageAttachments.length > 0 && visionSupported()) {
+      const blocks: MessageContentBlock[] = [{ type: "text", text: userMessage }];
+      for (const att of task.imageAttachments) {
+        const match = att.match(/^data:(image\/[^;]+);base64,(.+)$/);
+        if (match && match[1] && match[2]) {
+          blocks.push({
+            type: "image",
+            source: { type: "base64", media_type: match[1], data: match[2] },
+          });
+        }
+      }
+      userContent = blocks;
+    }
+
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
+      { role: "user", content: userContent },
     ];
 
     // Frontend and fast agents generate full apps — give them 5 minutes and more output tokens.

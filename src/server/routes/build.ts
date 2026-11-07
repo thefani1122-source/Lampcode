@@ -806,6 +806,7 @@ export async function runFastBuild(
   animationFlag: boolean = false,
   projectMemory: string | null = null,
   projectManifest: string | null = null,
+  attachments?: string[],
 ): Promise<void> {
   const server = ws();
   // Registered before anything can throw and cleared in the finally at the very
@@ -1736,6 +1737,7 @@ export async function runFastBuild(
         requirements: effectiveRequirements,
         outputFormat: "code",
         hasReferenceImage,
+        imageAttachments: attachments?.filter((a) => typeof a === "string" && /^data:image\//i.test(a)),
         isAgentBuild: agentBuildFlag,
         hasAnimationContext: animationFlag,
         projectMemory,
@@ -5419,7 +5421,7 @@ buildRouter.post("/fast", async (c) => {
         // a connected service, or both. See runFastBuild()'s post-dispatch
         // "zero files produced" branch for how a pure-action response is
         // handled without running the sandbox/fix-loop machinery.
-        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag, manifestFlag).catch((err) => {
+        return runFastBuild(sessionId, projectId, prompt, userId, refImgFlag, agentFlag, animationFlag, memoryFlag, manifestFlag, attachments).catch((err) => {
           console.error(err);
           // Nothing to refund — whatever dispatches actually ran before this
           // failure already deducted their real usage via dispatcher.ts's

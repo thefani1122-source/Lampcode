@@ -46,6 +46,7 @@ export const taskInputSchema = z.object({
   outputFormat: z.enum(["prose", "json", "code", "markdown"]).default("prose"),
   targetFiles: z.array(z.string()).optional(),
   hasReferenceImage: z.boolean().optional(),
+  imageAttachments: z.array(z.string()).optional(),
   isAgentBuild: z.boolean().optional(),
   hasAnimationContext: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
@@ -1504,7 +1505,16 @@ Use realistic task names relevant to the app's domain — generate fresh names e
 
 // ── Screenshot / design-reference instruction ────────────────────────────────
 
-const SCREENSHOT_DESIGN_INSTRUCTION = "";
+const SCREENSHOT_DESIGN_INSTRUCTION = `
+━━ VISUAL REFERENCE / SCREENSHOT INSTRUCTION ━━
+The user has provided a visual reference screenshot or design image.
+Carefully inspect and match its visual design:
+- Layout and structure (header, navigation, hero, cards, sidebars, grids, footer)
+- Color scheme and palette (backgrounds, accents, borders, gradients, contrasts)
+- Typography hierarchy (font sizes, weights, line heights, text alignment)
+- Component styling (border radiuses, shadows, padding, margins, badges, buttons)
+- Recreate the look and feel faithfully while making all interactive elements functional and responsive.
+`;
 
 const AGENT_BUILD_INSTRUCTION = "";
 
