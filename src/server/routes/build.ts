@@ -2730,17 +2730,43 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           return;
         }
 
+        const hasRlsIssue = failing.some((c) => c.id === "rls-enabled") || failing.some((c) => c.id === "rls-scoping");
+        const hasCallerIdentityIssue = failing.some((c) => c.id === "caller-identity" || c.id === "service-role-key");
+
+        const fixGuidance: string[] = [];
+        if (hasRlsIssue) {
+          fixGuidance.push(
+            "- FOR RLS ISSUES IN SQL: In the schema/migration file, explicitly add `ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;` and `CREATE POLICY ... ON <table_name> ...` for each table. For owner-scoped data, use `USING (auth.uid() = user_id)` (or matching owner column). For public catalogue data, use `FOR SELECT USING (true)`. A write policy must NEVER be `USING (true)`.",
+          );
+        }
+        if (hasCallerIdentityIssue) {
+          fixGuidance.push(
+            "- FOR BACKEND IDENTITY ISSUES: In backend routes, do NOT use a service-role key or an unauthenticated module-level client. Create the Supabase client inside each route handler with the forwarded Authorization header: `function dbFor(c) { return createClient(URL, ANON_KEY, { global: { headers: { Authorization: c.req.header('Authorization') ?? '' } } }) }` and call `dbFor(c)` in every handler.",
+          );
+        }
+
         const fixDescription =
           `These generated files have security issues that must be fixed before deploy. Return the COMPLETE corrected file for EACH file you touch (no diffs, no truncation). The complete affected source files are supplied in context; inspect them before editing. Fix the underlying security property, not just the scanner message.\n\n` +
           failing
             .map((c) => `- [${c.id}]${c.file ? ` ${c.file}${c.line ? `:${c.line}` : ""} —` : ""} ${c.message}`)
-            .join("\n");
+            .join("\n") +
+          (fixGuidance.length > 0 ? `\n\nSpecific remediation requirements:\n${fixGuidance.join("\n")}` : "") +
+          `\n\nCRITICAL RESPONSE FORMAT: Return ONLY fenced code blocks with the exact project file path:\n` +
+          `\`\`\`filename:path/to/file.ext\n` +
+          `...complete file content...\n` +
+          `\`\`\`\n` +
+          `Do NOT write explanations, prose, lists or markdown headings outside the code blocks.`;
 
         // Supply the actual affected source files to the repair agent. The RLS
         // warning may not carry a file path, so include the app schema/migrations.
-        const schemaContextPaths = failing.some((c) => c.id === "rls-enabled")
+        const schemaContextPaths = (failing.some((c) => c.id === "rls-enabled") || failing.some((c) => c.id === "rls-scoping"))
           ? Object.keys(allFiles).filter((path) =>
               /(?:schema|migration|\/db\/)/i.test(path) && /\.(?:sql|ts|js)$/.test(path),
+            )
+          : [];
+        const backendContextPaths = failing.some((c) => c.id === "caller-identity" || c.id === "service-role-key")
+          ? Object.keys(allFiles).filter((path) =>
+              /(?:server\/routes|\/api\/|src\/server\/index)/i.test(path) && /\.(?:ts|js)$/.test(path),
             )
           : [];
         const securityContextPaths = [...new Set([
@@ -2748,6 +2774,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             (path): path is string => typeof path === "string" && allFiles[path] !== undefined,
           ),
           ...schemaContextPaths,
+          ...backendContextPaths,
         ])].filter((path) => allFiles[path] !== undefined);
         const securityContextFiles = securityContextPaths.map((path) => ({
           path,
@@ -2778,9 +2805,20 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           });
           cumulativeCostUsd += fixResult.costUsd;
           const fixedParsed = parseFilesFromContent(fixResult.content);
-          const knownPaths = new Set(Object.keys(allFiles));
+          const resolvePath = (p: string): string | undefined => {
+            if (allFiles[p] !== undefined) return p;
+            const clean = p.replace(/^\.\//, "").replace(/^\//, "");
+            if (allFiles[clean] !== undefined) return clean;
+            for (const k of Object.keys(allFiles)) {
+              if (k === clean || k.endsWith("/" + clean)) return k;
+            }
+            return undefined;
+          };
           for (const f of fixedParsed) {
-            if (knownPaths.has(f.path)) allFiles[f.path] = f.code;
+            const targetPath = resolvePath(f.path);
+            if (targetPath && f.code.trim().length > 0) {
+              allFiles[targetPath] = f.code;
+            }
           }
         } catch (fixErr) {
           logger.error({ sessionId, fixErr }, "Security fix dispatch failed");
@@ -2821,13 +2859,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       return;
     }
     const unresolvedSecurity = blockingSecurityFindings(finalSecurityScan.report.checks);
-    if (unresolvedSecurity.length > 0) {
+    const unresolvedHardBlockers = unresolvedSecurity.filter(isHardBlockSecurityCheck);
+    if (unresolvedHardBlockers.length > 0) {
       const reason =
-        "Build blocked by unresolved high/critical security verification: " +
-        unresolvedSecurity.map((c) => c.message).join("; ");
+        "Build blocked by unresolved security findings: " +
+        unresolvedHardBlockers.map((c) => c.message).join("; ");
       logger.warn(
-        { sessionId, projectId, unresolvedSecurity },
-        "Unresolved high/critical security findings — blocking build",
+        { sessionId, projectId, unresolvedHardBlockers },
+        "Unresolved hard-block security findings — blocking build",
       );
       server?.buildFailed(sessionId, {
         sessionId,
@@ -2843,6 +2882,19 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
       ]);
       return;
+    }
+
+    const nonCriticalSecurityWarnings = unresolvedSecurity.filter((c) => !isHardBlockSecurityCheck(c));
+    if (nonCriticalSecurityWarnings.length > 0) {
+      logger.warn(
+        { sessionId, projectId, nonCriticalSecurityWarnings },
+        "Unresolved non-critical security warnings after auto-fix — emitting advisory and continuing build",
+      );
+      server?.emitToRoom(sessionId, "build:warning", {
+        sessionId,
+        message: `Security advisory: ${nonCriticalSecurityWarnings.map((c) => c.message).join("; ")}. Preview is ready; review these before deploying to production.`,
+        validationErrors: nonCriticalSecurityWarnings.map((c) => `${c.file ?? "project"}: ${c.message}`),
+      });
     }
 
     // ── Take the fake out before anyone sees it ─────────────────────────────

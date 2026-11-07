@@ -522,6 +522,52 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
   );
 }
 
+// ── Schema-qualified SQL and warning handling regressions ───────────────
+{
+  const res = checkRLS(tree({
+    "src/db/schema.sql": `
+      CREATE TABLE public.restaurants (id uuid primary key, name text);
+      CREATE TABLE "public"."menu_items" (id uuid primary key, restaurant_id uuid);
+    `,
+  }));
+  check(
+    "RLS reports actual table names, not 'public', for schema-qualified tables",
+    res.status === "fail" && res.message.includes("restaurants, menu_items") && !res.message.includes("public"),
+    true,
+  );
+}
+{
+  const res = checkRLS(tree({
+    "src/db/schema.sql": `
+      CREATE TABLE public.restaurants (id uuid primary key, name text);
+      ALTER TABLE public.restaurants ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY "Allow public read on restaurants" ON public.restaurants FOR SELECT USING (true);
+      CREATE TABLE "public"."menu_items" (id uuid primary key, name text);
+      ALTER TABLE ONLY "public"."menu_items" ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY "Allow public read on menu items" ON "public"."menu_items" FOR SELECT USING (true);
+    `,
+  }));
+  check(
+    "RLS passes for schema-qualified tables with quotes and multi-word policies",
+    res.status === "pass",
+    true,
+  );
+}
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok(
+    "hard-block security findings (secrets, undeclared packages) still fail the build",
+    build.includes("const unresolvedHardBlockers = unresolvedSecurity.filter(isHardBlockSecurityCheck)") &&
+      build.includes("Unresolved hard-block security findings — blocking build"),
+  );
+  ok(
+    "non-critical security warnings emit build:warning advisory and do not abort build",
+    build.includes("const nonCriticalSecurityWarnings = unresolvedSecurity.filter((c) => !isHardBlockSecurityCheck(c))") &&
+      build.includes('server?.emitToRoom(sessionId, "build:warning"') &&
+      build.includes("Preview is ready; review these before deploying to production"),
+  );
+}
+
 if (failures > 0) {
   console.error("\n" + failures + " security case(s) FAILED");
   process.exit(1);

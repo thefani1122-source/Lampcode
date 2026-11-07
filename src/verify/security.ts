@@ -135,13 +135,30 @@ const OWNER_COLUMN_RE = /\b(user_id|owner_id|author_id|created_by|profile_id|acc
 const ALWAYS_TRUE_RE = /\b(?:using|with\s+check)\s*\(\s*(?:true|1\s*=\s*1)\s*\)/i;
 const WRITE_ACTION_RE = /\bfor\s+(insert|update|delete|all)\b/i;
 
+/**
+ * Extract canonical lowercased table names from SQL matching a given regex.
+ * Handles schema prefixes (public.table, "public"."table", "table", table)
+ * and optional quotes on schema and table identifiers.
+ */
+function extractSqlTableNames(re: RegExp, sql: string): string[] {
+  const out: string[] = [];
+  re.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    const table = m[2] ? m[2] : m[1];
+    if (table) out.push(table.toLowerCase());
+  }
+  return out;
+}
+
 /** Each CREATE POLICY statement, with the table it is on and its body. */
 function policyStatements(sql: string): Array<{ table: string; body: string }> {
   const out: Array<{ table: string; body: string }> = [];
-  const re = /CREATE\s+POLICY\s+[^\s]+\s+ON\s+["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?([\s\S]*?);/gi;
+  const re = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?([\s\S]*?);/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.push({ table: m[1].toLowerCase(), body: m[2] ?? "" });
+    const table = m[2] ? m[2] : m[1];
+    if (table) out.push({ table: table.toLowerCase(), body: m[3] ?? "" });
   }
   return out;
 }
@@ -149,10 +166,11 @@ function policyStatements(sql: string): Array<{ table: string; body: string }> {
 /** The body of each CREATE TABLE, so a table's columns can be inspected. */
 function tableBodies(sql: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(?:\w+\s*\.\s*)?["'`]?(\w+)["'`]?\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?\s*\(([\s\S]*?)\)\s*;/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    if (m[1]) out.set(m[1].toLowerCase(), m[2] ?? "");
+    const table = m[2] ? m[2] : m[1];
+    if (table) out.set(table.toLowerCase(), m[3] ?? "");
   }
   return out;
 }
@@ -272,20 +290,13 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const allSql = sqlFiles.map(([, c]) => c).join("\n");
 
-  const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?/gi;
-  const rlsRe   = /ALTER\s+TABLE\s+["'`]?(\w+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
-  const polRe   = /CREATE\s+POLICY\s+\S+\s+ON\s+["'`]?(\w+)["'`]?/gi;
+  const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
+  const rlsRe   = /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
+  const polRe   = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
 
-  const extractNames = (re: RegExp): string[] => {
-    const out: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(allSql)) !== null) { if (m[1]) out.push(m[1].toLowerCase()); }
-    return out;
-  };
-
-  const tables  = extractNames(tableRe);
-  const rlsOn   = extractNames(rlsRe);
-  const polOn   = extractNames(polRe);
+  const tables = [...new Set(extractSqlTableNames(tableRe, allSql))];
+  const rlsOn  = [...new Set(extractSqlTableNames(rlsRe, allSql))];
+  const polOn  = [...new Set(extractSqlTableNames(polRe, allSql))];
 
   const noRls = tables.filter((t) => !rlsOn.includes(t));
   if (noRls.length > 0) {

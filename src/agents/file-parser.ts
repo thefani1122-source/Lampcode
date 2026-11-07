@@ -252,10 +252,10 @@ export function parseFilesFromContent(content: string): ParsedFile[] {
       if (filePath === null) {
         const firstCodeLine = codeLines[0] ?? "";
         const commentMatch =
-          // Priority: explicit src/ prefix (catches trailing description text)
-          firstCodeLine.match(/^(?:\/\/|\/\*)\s*(src\/[\w./\-]+\.\w+)/) ??
-          // General single-line comment — allow trailing content after path
-          firstCodeLine.match(/^\/\/\s*([^\s]+\.[a-zA-Z0-9]{1,10})(?:\s|$)/) ??
+          // Priority: explicit src/ prefix (catches trailing description text, including SQL -- comments)
+          firstCodeLine.match(/^(?:\/\/|\/\*|--)\s*(src\/[\w./\-]+\.\w+)/) ??
+          // General single-line comment — allow trailing content after path (JS/TS // or SQL --)
+          firstCodeLine.match(/^(?:\/\/|--)\s*([^\s]+\.[a-zA-Z0-9]{1,10})(?:\s|$)/) ??
           // Shell / Python comment style
           firstCodeLine.match(/^#\s*([^\s]+\.[a-zA-Z0-9]{1,10})(?:\s|$)/);
         if (commentMatch?.[1]) {
