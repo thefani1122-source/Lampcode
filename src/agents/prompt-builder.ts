@@ -596,7 +596,7 @@ COMPONENT PATTERNS:
 - Primary button: <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">
 - Input: use shadcn Input component or <input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
 - Loading state: <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
-- Empty state: <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items yet</p></div>
+- Empty state (ONLY shown when user deletes all items or filter returns 0 results — NEVER on initial launch): <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items found</p><p className="text-sm">Try adjusting your filters or add a new one above</p></div>
 
 MOBILE-FIRST RESPONSIVE — NON-NEGOTIABLE:
 Every app must work perfectly on mobile (375px) and desktop (1280px+).
@@ -1394,6 +1394,51 @@ const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
 // builds the COMPLETE version rather than a skeleton. Runs before the main build.
 const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
   {
+    match: /\bhabit|habbit|streak|routine|daily tracker\b/i,
+    expansion: `Build a COMPLETE, highly visual Habit & Routine Tracker with:
+- Pre-load 5–6 rich, realistic sample habits (e.g. "Drink 2.5L Water", "Morning Workout 30m", "Read 20 pages", "Mindfulness Meditation", "No Screen 1h Before Sleep") with active streaks (e.g. 14 days, 7 days, 21 days), category tags (Health, Fitness, Mindset, Productivity), and today's completion status (some checked, some unchecked).
+- DEFAULT STATE MUST USE THIS SEED LIST: On first launch, the habit list must NEVER be empty. Default state / localStorage to this seed list so the app immediately displays habit cards, fire icons with streak counters, and today's completion progress bar (e.g. "3 of 5 completed • 60%").
+- Interactive habit cards: checkbox to toggle today's completion (instantly updates streak and progress bar), fire icon with streak count, frequency badge (Daily/Weekly), category badge, and delete button.
+- Add habit form: input for habit name, category selector, frequency selector, and "+ Add Habit" button.
+- Filter tabs: All / Active / Completed / Categories with count badges.
+- Progress overview: Visual circular or bar progress for today's habits with completion percentage.
+- Empty state: ONLY render "No habits match filter" when a search/filter has zero matches or if the user manually deletes every single habit — NEVER on initial app launch.`,
+  },
+  {
+    match: /\brestaurant|cafe|food ordering|menu|pos|bistro|diner|kitchen\b/i,
+    expansion: `Build a COMPLETE Restaurant Management / Ordering app with:
+- Pre-load 8–10 realistic, appetizing menu items across categories (Starters, Mains, Desserts, Beverages) with realistic prices, descriptions, calorie counts, badges (Chef's Special, Vegetarian), and category filters.
+- Pre-load 3–4 active table orders in different statuses (Preparing, Ready, Served, Paid) with order timestamps, items, table numbers, and totals.
+- Include summary KPI metrics (Today's Revenue e.g. $1,420, Active Orders: 4, Occupied Tables: 6/12).
+- NEVER launch with an empty menu or empty order list. State must default to the pre-loaded items so the dashboard is vibrant and functional immediately on first render.`,
+  },
+  {
+    match: /\bfinance|expense|budget|accounting|money tracker|spending\b/i,
+    expansion: `Build a COMPLETE Personal Finance & Expense Tracker with:
+- Pre-load 8–12 realistic, varied transactions across diverse categories (Groceries, Housing, Dining, Utilities, Entertainment, Salary) with dates over the past 30 days, positive/negative amounts, and payment methods.
+- Summary KPI cards: Total Balance (e.g. $4,850.00), Monthly Income ($5,200), Monthly Expenses ($2,350), Savings Rate (54%).
+- Category breakdown with visual progress bars or SVG chart showing spending per category.
+- Add transaction form, category filters, and search bar.
+- NEVER launch with $0.00 or an empty transaction table. Default state to the pre-loaded transactions so all charts and metrics are alive on first render.`,
+  },
+  {
+    match: /\bfitness|workout|gym|exercise|training\b/i,
+    expansion: `Build a COMPLETE Workout & Fitness Tracker with:
+- Pre-load 4–5 realistic workout routines (e.g. Upper Body Strength, Leg Day Blast, Core & Cardio) with exercises, sets, reps, and weights.
+- Pre-load recent workout history log showing dates, duration (45 mins), and calories burned.
+- Weekly workout activity chart or streak indicator.
+- Log workout form and exercise library filter.
+- NEVER launch with an empty workout log or 0 calories.`,
+  },
+  {
+    match: /\bcrm|lead|client|customer pipeline|contacts\b/i,
+    expansion: `Build a COMPLETE CRM & Lead Management app with:
+- Pre-load 6–8 realistic leads across pipeline stages (New Lead, Contacted, In Negotiation, Won, Lost) with company names, deal values ($2,500 to $28,000), contact person, email, and last contact date.
+- Pipeline value summary card, deal conversion rate, and stage filter tabs.
+- Add lead form and stage move actions.
+- NEVER launch with an empty pipeline or $0 deal value.`,
+  },
+  {
     match: /\btodo|task list|task manager\b/i,
     expansion: `Build a COMPLETE task management app with ALL these features:
 - Add tasks with title, priority (High/Medium/Low badge), and due date
@@ -1614,10 +1659,19 @@ a dark flat page is what this bug looks like.
 export function expandUserPrompt(prompt: string): string {
   const trimmed = prompt.trim();
   const matched = APP_TYPE_EXPANSIONS.filter((e) => e.match.test(trimmed));
-  if (matched.length === 0) return trimmed;
+  const universalSeedRule =
+    "━━ UNIVERSAL SEED DATA MANDATE (NEVER LAUNCH EMPTY) ━━\n" +
+    "- On initial load, the app MUST NEVER open with an empty state, 0 items, $0.00, empty tables, or 'No items yet'.\n" +
+    "- ALWAYS initialize component state or localStorage with 5–8 rich, realistic domain-specific sample records (e.g. `const [items, setItems] = useState(() => loadSaved() ?? INITIAL_SAMPLE_DATA)`).\n" +
+    "- Summary counters, KPI metrics, progress bars, charts, and lists must be immediately populated, alive, and visually engaging on first load.\n" +
+    "- Empty states should ONLY show if the user explicitly deletes every single item or a search/filter returns 0 matches.";
+
+  if (matched.length === 0) {
+    return `${trimmed}\n\nBuild the complete, fully-functional version:\n${universalSeedRule}`;
+  }
 
   const additions = matched.map((e) => `- ${e.expansion}`).join("\n");
-  return `${trimmed}\n\nBuild the complete, fully-functional version:\n${additions}`;
+  return `${trimmed}\n\nBuild the complete, fully-functional version:\n${universalSeedRule}\n\nSpecific category requirements:\n${additions}`;
 }
 
 /** Returns the base frontend agent system prompt for use in external streaming handlers. */
@@ -2136,9 +2190,8 @@ export class PromptBuilder {
         // FOLLOW-UP builds, where it was never sent. It lives here now because
         // this block is always present, and this is the one failure where being
         // slightly wordy twice is cheaper than being right once.
-        "- NEVER fake a feature to make it look fixed. No demo mode, no mock data, no " +
-        "in-memory or localStorage stand-in because a call is failing. That ships something " +
-        "that LOOKS like it works and saves nothing, which is worse than leaving it broken.\n" +
+        "- PRE-POPULATE REALISTIC INITIAL SEED DATA (MANDATORY): A brand-new app MUST NEVER launch with an empty state, 0 items, $0.00, or 'No items yet'. Pre-load 5–8 rich, realistic domain records as default initial state/localStorage. All cards, metrics, and progress bars must render immediately with active data on first load. The empty state should ONLY appear if the user manually deletes every item.\n" +
+        "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route. (This does NOT forbid initial seed data for client-side state apps, which MUST always have rich pre-populated items).\n" +
         "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
         "the backend's own output and check_page shows the browser's. The preview always runs " +
         "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
