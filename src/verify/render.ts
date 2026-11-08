@@ -157,6 +157,7 @@ export const RENDER_SCRIPT = String.raw`import { chromium } from "playwright"
 const base = process.argv[2] || "http://localhost:5173"
 const routes = JSON.parse(process.argv[3] || '["/"]')
 const MAX_TEXT = ${MAX_TEXT_CHARS}
+const REQUIRE_INITIAL_CONTENT = process.argv[4] !== "false"
 const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_RE.source)}, "i")
 
 const out = { routes: [], unreachable: [] }
@@ -209,7 +210,9 @@ try {
       const pageContent = await page.evaluate((cap, emptyStatePattern) => {
         const body = document.body
         const fullText = (body?.innerText || "").replace(/\s+/g, " ").trim()
-        const emptyState = fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
+        const emptyState = REQUIRE_INITIAL_CONTENT
+          ? fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
+          : null
         return { text: fullText.slice(0, cap), emptyState }
       }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source)
 
