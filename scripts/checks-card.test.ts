@@ -49,6 +49,14 @@ eq("a frontend-only build gets no database row", row(base, "data"), undefined);
 eq("tests that ran get a row",
   row({ ...base, checkTests: "pass" }, "tests")?.status, "pass");
 
+eq("an exhausted agent gets an explicit incomplete-work warning",
+  row({ ...base, turnsExhausted: true }, "completion")?.status, "warn");
+eq("the warning explains why the build is partial",
+  row({ ...base, turnsExhausted: true }, "completion")?.detail,
+  "the agent reached its work-turn limit before it could finish");
+eq("a build that did not exhaust its turns gets no extra warning",
+  row(base, "completion"), undefined);
+
 // ── the database row ────────────────────────────────────────────────────────
 
 eq("a created schema reads as saved data",
