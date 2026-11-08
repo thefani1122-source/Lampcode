@@ -43,6 +43,10 @@ export interface ChecksInput {
   checkPage: Gate;
   checkTypes: Gate;
   checkTests: Gate;
+  /** The agent stopped at its work-turn ceiling while it still wanted to continue. */
+  turnsExhausted?: boolean;
+  /** The spend ceiling stopped the agent while it still requested more work. */
+  budgetExhausted?: boolean;
   wiring?: {
     deadHandlers: number;
     bareButtons: number;
@@ -67,7 +71,13 @@ function gateRow(id: string, label: string, gate: Gate, passDetail: string, fail
 
 export function buildChecksCard(input: ChecksInput): ChecksCard {
   const rows: CheckRow[] = [
-    gateRow("opens", "The app opens", input.checkPage, "no errors when it loads", "it errors when it loads"),
+    gateRow(
+      "opens",
+      "The app opens and shows its main content",
+      input.checkPage,
+      "no page errors or initial empty-state placeholders",
+      "the page is blank, missing expected first-run content, or reports a browser error",
+    ),
     gateRow("compiles", "The code compiles", input.checkTypes, "no type errors", "there are type errors"),
   ];
 
@@ -77,6 +87,17 @@ export function buildChecksCard(input: ChecksInput): ChecksCard {
     rows.push(
       gateRow("tests", "The tests pass", input.checkTests, "all green", "some tests fail"),
     );
+  }
+
+  if (input.turnsExhausted || input.budgetExhausted) {
+    rows.push({
+      id: "completion",
+      label: "The build finished all requested work",
+      status: "warn",
+      detail: input.turnsExhausted
+        ? "the agent reached its work-turn limit before it could finish"
+        : "the build budget was reached while the agent still had work to do",
+    });
   }
 
   // The five kinds that mean a control renders but does nothing. The other two

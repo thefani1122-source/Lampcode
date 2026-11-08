@@ -926,7 +926,10 @@ export async function runFastBuild(
   // ── Emit agent_start ──────────────────────────────────────────────────────
   // Use the actual tier-1 frontend model rather than a hardcoded name so the
   // displayed model stays in sync with MODEL_TIERS.
-  const frontendModel = tierModel("frontend", 1);
+  const frontendModel =
+    provider === "modal"
+      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
+      : tierModel("frontend", 1);
   server?.agentStart(sessionId, {
     taskId: sessionId,
     sessionId,
@@ -1835,6 +1838,7 @@ export async function runFastBuild(
     outcomeDraft = {
       rounds: result.rounds,
       turnsExhausted: result.turnsExhausted,
+      budgetExhausted: result.budgetExhausted,
       filesWritten: Object.keys(result.generatedFiles).length,
       toolCalls: countToolCalls(result.toolCalls),
       // "never" and "unavailable" are different failures and both matter: the
@@ -3633,21 +3637,27 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // ("Backend is up on :3001 now. Retrying the page check:") as if that were
     // the summary. The files are real and the app runs, but nothing after the
     // cut was verified — so say so rather than letting it read as complete.
-    if (result.turnsExhausted) {
+    if (result.turnsExhausted || result.budgetExhausted) {
+      const reason = result.turnsExhausted ? "work-turn limit" : "build budget";
       logger.warn(
-        { sessionId, projectId, files: writtenPaths.length },
-        "Agentic loop hit the turn cap while still working — build delivered unverified",
+        {
+          sessionId,
+          projectId,
+          files: writtenPaths.length,
+          turnsExhausted: result.turnsExhausted,
+          budgetExhausted: result.budgetExhausted,
+        },
+        "Agentic loop stopped while the model still had work to do — build delivered incomplete",
       );
       server?.emitToRoom(sessionId, "build:warning", {
         sessionId,
         message:
-          "This build used up its allowed steps before the AI finished checking its work. " +
-          "What it wrote is here and should run, but the last changes weren't verified — " +
-          "send a follow-up message if something looks wrong.",
+          `This build reached its ${reason} while the AI was still working. ` +
+          "What it wrote is here, but the remaining work was not completed or verified.",
       });
       buildSummary =
         (buildSummary ? buildSummary + "\n\n" : "") +
-        "Note: I ran out of steps before I could finish verifying this — tell me if anything is off.";
+        `Note: I reached the ${reason} before I could finish the remaining work and verification.`;
     }
 
     // The summary-bearing build:complete used to fire HERE, which is before the
@@ -4995,10 +5005,18 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (extractBuildStatus), so the person still gets their preview. What
     // changes is that the record stops claiming the work is good.
     const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
-    if (gatesFailed) {
+    // Never call a build successful when a mandatory verification gate did
+    // not run or could not run. A preview is still delivered as "completed",
+    // but the record must not claim the app was verified.
+    const pageUnverified = outcome.checkPage === "never" || outcome.checkPage === "unavailable";
+    const typesUnverified = outcome.checkTypes === "never" || outcome.checkTypes === "unavailable";
+    const buildIncomplete =
+      gatesFailed || pageUnverified || typesUnverified ||
+      result.turnsExhausted || result.budgetExhausted;
+    if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
-        `page=${outcome.checkPage} types=${outcome.checkTypes}`,
+        `page=${outcome.checkPage} types=${outcome.checkTypes} turnsExhausted=${result.turnsExhausted} budgetExhausted=${result.budgetExhausted}`,
       );
     }
 
@@ -5016,7 +5034,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     await db
       .update(buildSessions)
       .set({
-        status: gatesFailed ? "completed" : "success",
+        status: buildIncomplete ? "completed" : "success",
         phase: 2,
         outputDir,
         creditsUsed,
@@ -5062,12 +5080,15 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // they are would make every build that could not run a gate look broken.
     const pageFailed = outcome.checkPage === "fail";
     const typesFailed = outcome.checkTypes === "fail";
-    if (pageFailed || typesFailed) {
+    if (
+      pageFailed || typesFailed || pageUnverified || typesUnverified ||
+      result.turnsExhausted || result.budgetExhausted
+    ) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
         closingLines.push(
-          "• The app does not open. The page throws an error when it loads, so whatever the " +
-            "preview is showing is not this app working.",
+          "• The preview did not pass its page-quality check. It may be blank, still showing " +
+            "an initial empty state instead of populated content, or reporting a browser error.",
         );
       }
       if (typesFailed) {
@@ -5076,7 +5097,27 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             "something, this will not build for production in its current state.",
         );
       }
-      closingLines.push("Send me a follow-up message and I will fix this before anything else.");
+      if (pageUnverified) {
+        closingLines.push(
+          "• The full page-content check did not complete, so I cannot confirm that every declared screen or the first-run experience is correct.",
+        );
+      }
+      if (typesUnverified) {
+        closingLines.push(
+          "• The TypeScript check did not complete, so production compile status is unverified.",
+        );
+      }
+      if (result.turnsExhausted) {
+        closingLines.push(
+          "• The agent reached its work-turn limit while it still had work to do. This is a partial build, not a finished application; continue the build before treating it as ready.",
+        );
+      }
+      if (result.budgetExhausted) {
+        closingLines.push(
+          "• The build budget was reached while the agent still had work to do. The app may be partially built; continue with a follow-up build before treating it as ready.",
+        );
+      }
+      closingLines.push("Continue the build to finish the remaining work before publishing.");
     }
 
     if (fullstackEvidence) {
@@ -5188,6 +5229,8 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           checkPage: outcome.checkPage,
           checkTypes: outcome.checkTypes,
           checkTests: outcome.checkTests,
+          turnsExhausted: outcome.turnsExhausted,
+          budgetExhausted: outcome.budgetExhausted === true,
           wiring: wiringTally,
           wiringRepaired,
           schemaApply,
@@ -5212,7 +5255,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     server?.progress(sessionId, {
       sessionId,
       percent: 100,
-      message: "Build complete",
+      message: buildIncomplete ? "Partial build — verification or completion is still needed" : "Build complete",
       timestamp: new Date().toISOString(),
     });
 

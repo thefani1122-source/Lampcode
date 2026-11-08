@@ -222,6 +222,10 @@ check("out-of-scope items are told not to be built", /Do not build these/.test(b
 // The planner saw only the prompt; the builder can see the running app. A plan
 // presented as binding would make the model follow it past learning better.
 check("the plan is presented as a starting point, not a contract", /not a contract/.test(block), true);
+check("the builder is told to implement every planned screen", /every named screen/.test(block), true);
+check("the primary journeys are treated as a required deliverable", /primary journeys work end to end/.test(block), true);
+check("the first screen must have meaningful content", /first screen meaningful content/.test(block), true);
+check("loading, errors and empty data are kept distinct", /loading, error and truly-empty states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });

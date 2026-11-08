@@ -178,6 +178,8 @@ export interface DispatchResult {
    *  after the cut and there is no closing summary, so the caller must not
    *  present the build as finished. */
   turnsExhausted: boolean;
+  /** True when the spend ceiling stopped a turn that still requested tool work. */
+  budgetExhausted: boolean;
   /** Just the LAST round's text. `content` is every round concatenated, which
    *  is what the fence-parsing fallback needs but is wrong for anything shown
    *  to the user: in an agentic build the early rounds are the model talking to
@@ -590,6 +592,18 @@ export class AgentDispatcher {
     const isFullstackBuild =
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
+      /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
+    );
+    const originalUserRequest = options.userPrompt ?? task.description;
+    const explicitlyRequestsEmptyFirstRun =
+      /\bno sample data\b|\b(?:first|initial|default|start|begin|launch|open)\b.{0,45}\b(?:empty|blank)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default|start|begin|launch)\b/i.test(
+        originalUserRequest,
+      );
+    const requireInitialContent = agentType === "frontend" &&
+      !isFullstackBuild &&
+      !existingProjectHasBackend &&
+      !explicitlyRequestsEmptyFirstRun;
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -613,6 +627,7 @@ export class AgentDispatcher {
     let fullContent = "";
     let lastRoundContent = "";
     let turnsExhausted = false;
+    let budgetExhausted = false;
     let totalInputTokens = 0;
     let totalCachedInputTokens = 0;
     let totalCacheWriteTokens = 0;
@@ -767,9 +782,40 @@ export class AgentDispatcher {
           streamResult.cacheWriteTokens,
         ).costUsd;
         if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
+          // Reaching the ceiling is only an incomplete build when the model
+          // still asked for tools. A normal final text response that happens
+          // to consume the last available budget is still a completed turn.
+          budgetExhausted =
+            streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
+          if (budgetExhausted) {
+            // The stream already announced these tool calls to the UI, but
+            // they are deliberately not executed after the budget is reached.
+            // Close their pending indicators rather than leaving a spinner
+            // attached to a build that has already stopped.
+            for (const tc of streamResult.toolCalls) {
+              try {
+                getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+                  id: tc.id,
+                  tool: tc.name,
+                  result: "error",
+                  sessionId,
+                });
+              } catch {
+                // The build's incomplete status is recorded independently.
+              }
+            }
+          }
           logger.warn(
-            { sessionId, agentType, round, loopCostUsd, cumulativeUsd: costGuard.cumulativeUsd, maxUsd: costGuard.maxUsd },
-            "Tool loop: cost ceiling reached mid-loop — stopping, proceeding with whatever context was gathered",
+            {
+              sessionId,
+              agentType,
+              round,
+              loopCostUsd,
+              cumulativeUsd: costGuard.cumulativeUsd,
+              maxUsd: costGuard.maxUsd,
+              budgetExhausted,
+            },
+            "Tool loop: cost ceiling reached mid-loop — stopping",
           );
           break;
         }
@@ -912,6 +958,7 @@ export class AgentDispatcher {
           ...(agenticBuild || options.queryMode
             ? {
                 projectId,
+                requireInitialContent,
                 generatedFiles,
                 deletedFiles,
                 checkpoints,
@@ -1109,6 +1156,7 @@ export class AgentDispatcher {
       content: fullContent,
       finalContent: lastRoundContent,
       turnsExhausted,
+      budgetExhausted,
       rounds: roundsUsed,
       pseudoToolCalls,
       gateResults,

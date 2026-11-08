@@ -13,6 +13,7 @@ import {
   formatRenderForAgent,
   MAX_TEXT_CHARS,
   RENDER_SCRIPT,
+  INITIAL_EMPTY_STATE_RE,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -45,6 +46,27 @@ check(
 check("parameterised routes are skipped, not guessed", routesToVisit(["/shift/:id"]), ["/"]);
 check("wildcards are skipped", routesToVisit(["/docs/*"]), ["/"]);
 check("non-absolute paths are ignored", routesToVisit(["shifts", "../x"]), ["/"]);
+
+// ── first-run empty-state vocabulary ─────────────────────────────────────────
+
+for (const phrase of [
+  "No habits yet",
+  "No tasks yet",
+  "No items yet",
+  "Create your first habit",
+  "Add your first task",
+  "Nothing to show yet",
+]) {
+  ok(`detects first-run empty-state copy: ${phrase}`, INITIAL_EMPTY_STATE_RE.test(phrase));
+}
+ok(
+  "does not classify a populated screen as empty",
+  !INITIAL_EMPTY_STATE_RE.test("Good morning. You completed 3 of 5 habits today."),
+);
+ok(
+  "does not confuse a real collection heading with an empty state",
+  !INITIAL_EMPTY_STATE_RE.test("Habit Tracker • 5 active habits"),
+);
 
 // ── parsing ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +165,25 @@ const blank = parseRenderReport(line({ routes: [{ route: "/x", blank: true, erro
 ok("a blank page is not ok", blank?.routes[0]?.ok === false);
 ok("allRoutesOk is false when one route is blank", allRoutesOk(blank!) === false);
 
+const emptyFirstRun = parseRenderReport(line({
+  routes: [{
+    route: "/",
+    blank: false,
+    errors: [],
+    text: "Habit Tracker Add Habit No habits yet Create your first habit",
+    emptyState: "No habits yet",
+  }],
+  unreachable: [],
+}));
+ok("a visible first-run empty state is not a page pass", emptyFirstRun?.routes[0]?.ok === false);
+ok("the empty-state copy survives parsing", emptyFirstRun?.routes[0]?.emptyState === "No habits yet");
+ok("allRoutesOk rejects the empty first-run screen", allRoutesOk(emptyFirstRun!) === false);
+ok(
+  "the model is told to populate the empty first-run screen",
+  formatRenderForAgent(emptyFirstRun!).includes("initial empty state") &&
+    formatRenderForAgent(emptyFirstRun!).includes("No habits yet"),
+);
+
 const overlay = parseRenderReport(
   line({ routes: [{ route: "/", blank: false, errors: [], text: "", overlay: "Failed to resolve import ./Foo" }], unreachable: [] }),
 );
@@ -240,6 +281,9 @@ ok("a removed route is reported", formatRenderForAgent(twoGood, added).includes(
 ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.launch\(/g) ?? []).length === 1);
 ok("the script resets errors per route", RENDER_SCRIPT.includes("errors = []"));
 ok("the script prints the marker", RENDER_SCRIPT.includes("LAMPCODE_RENDER:"));
+ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.includes("INITIAL_EMPTY_STATE_RE"));
+ok("the browser sweep receives the app's first-run content policy", RENDER_SCRIPT.includes('process.argv[4] !== "false"'));
+ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
 
 

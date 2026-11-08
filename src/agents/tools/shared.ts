@@ -51,7 +51,7 @@ export async function runPageSweep(
   }
   const routes = routesToVisit([...declared]);
 
-  const { report, ran } = await checkRender(projectId, routes);
+  const { report, ran } = await checkRender(projectId, routes, ctx.requireInitialContent ?? true);
   if (!ran || !report) return null;
 
   if (ctx.gateResults) {

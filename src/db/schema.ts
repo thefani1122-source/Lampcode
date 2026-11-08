@@ -192,6 +192,8 @@ export type BuildOutcome = {
   rounds: number;
   /** True if the loop stopped at AGENTIC_MAX_TURNS rather than the model finishing. */
   turnsExhausted: boolean;
+  /** True if the spend ceiling stopped a round that still requested more tool work. */
+  budgetExhausted?: boolean;
   filesWritten: number;
   /** How many times each tool was called, e.g. { write_files: 2, check_page: 3 }. */
   toolCalls: Record<string, number>;

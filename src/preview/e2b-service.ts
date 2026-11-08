@@ -936,13 +936,14 @@ export async function fetchReferenceDesign(
 export async function checkRender(
   projectId: string,
   routes: string[],
+  requireInitialContent = true,
 ): Promise<{ report: RenderReport | null; ran: boolean }> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { report: null, ran: false };
   try {
     await sandbox.files.write(`${TOOLS_DIR}/lampcode-render.mjs`, RENDER_SCRIPT);
     const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-render.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))}`,
+      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-render.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))} ${requireInitialContent ? "true" : "false"}`,
       { timeoutMs: 90_000 },
     );
     const report = parseRenderReport(r.stdout);

@@ -59,7 +59,7 @@ const audit = at("── Completion audit, pass 2 of 2");
 const architecture = at("const architectureFindings = findArchitectureGaps(allFiles);");
 // The status is now decided by the gates, so this anchors on the write itself
 // rather than on the literal it used to contain.
-const dbSuccess = at('        status: gatesFailed ? "completed" : "success",');
+const dbSuccess = at('        status: buildIncomplete ? "completed" : "success",');
 const terminalEvent = at('      type: "build/end",');
 
 check("the repair chain is awaited before the completion audit", awaitChain < audit);
@@ -217,7 +217,7 @@ check(
 check(
   "a failing page check is said out loud",
   build.includes('const pageFailed = outcome.checkPage === "fail"') &&
-    build.includes("The app does not open"),
+    build.includes("The preview did not pass its page-quality check"),
 );
 check(
   "a failing type check is said out loud",
@@ -237,7 +237,7 @@ check(
 );
 check(
   "and it offers the next step rather than just the bad news",
-  build.includes("Send me a follow-up message and I will fix this"),
+  build.includes("Continue the build to finish the remaining work before publishing"),
 );
 
 // Measured 2026-10-23 (session c777a195): schemaApply {ran:true, ok:true} —
@@ -254,10 +254,20 @@ check(
 // The row has to agree with the gates, not with the model's summary.
 check(
   "a failing gate is not recorded as success",
-  build.includes('status: gatesFailed ? "completed" : "success"'),
+  /const buildIncomplete =\s*gatesFailed \|\| pageUnverified \|\| typesUnverified/.test(build) &&
+    build.includes('status: buildIncomplete ? "completed" : "success"'),
 );
 check(
-  "only page and types decide it",
+  "missing or unavailable mandatory page/type gates are not success",
+  build.includes('outcome.checkPage === "never" || outcome.checkPage === "unavailable"') &&
+    build.includes('outcome.checkTypes === "never" || outcome.checkTypes === "unavailable"'),
+);
+check(
+  "turn and budget exhaustion also make the build incomplete",
+  build.includes("result.turnsExhausted || result.budgetExhausted"),
+);
+check(
+  "the original hard-failure condition remains explicit",
   build.includes('const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail"'),
 );
 // "completed", not "failed": the build did produce an app, and the frontend

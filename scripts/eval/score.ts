@@ -12,6 +12,7 @@ import type { EvalTask } from "./tasks.js";
 export type BuildOutcome = {
   rounds: number;
   turnsExhausted: boolean;
+  budgetExhausted?: boolean;
   filesWritten: number;
   toolCalls: Record<string, number>;
   checkPage: "pass" | "fail" | "unavailable" | "never";
@@ -102,6 +103,7 @@ export function scoreChecks(task: EvalTask, files: FileEntry[], outcome: BuildOu
     if (outcome.checkTests === "fail") failed.push("the agent's own run_tests ended on a failure");
     if (outcome.checkTests === "unavailable") failed.push("run_tests could not run (vitest in the sandbox)");
     if (outcome.turnsExhausted) failed.push("ran out of turns while still working");
+    if (outcome.budgetExhausted) failed.push("reached the build budget while still requesting tool work");
     // Reported as its own finding rather than folded into the gate failures
     // above: those say a check ran and complained, this says NOTHING in the
     // build covers something the user asked for. Collapsing the two would lose

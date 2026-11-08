@@ -56,6 +56,8 @@ export type RouteRender = {
   failedRequests: { url: string; status: number }[];
   /** What the page actually says, trimmed and capped. */
   text: string;
+  /** Visible first-run empty-state copy that should have been populated with sample data. */
+  emptyState?: string;
 };
 
 export type RenderReport = {
@@ -111,6 +113,14 @@ const COSMETIC_ASSET = /\/(favicon\.\w+|apple-touch-icon[^/]*\.png|site\.webmani
 export const MAX_TEXT_CHARS = 400;
 
 /**
+ * First-run empty-state copy that indicates a new frontend/mock app failed to
+ * initialise its requested sample content. Kept outside the browser script so
+ * the exact detector can be regression-tested without launching Chromium.
+ */
+export const INITIAL_EMPTY_STATE_RE =
+  /\b(?:no (?:habits?|tasks?|items?|entries|records?|data|events?|orders?|customers?|projects?|notes?|shifts?|transactions?|messages?)\s+yet|nothing (?:here|to show|to display) yet|create your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message)|add your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message))\b/i;
+
+/**
  * Routes to visit, from the project's own files.
  *
  * `/` is always included and always first: it is the one route every app has,
@@ -147,6 +157,8 @@ export const RENDER_SCRIPT = String.raw`import { chromium } from "playwright"
 const base = process.argv[2] || "http://localhost:5173"
 const routes = JSON.parse(process.argv[3] || '["/"]')
 const MAX_TEXT = ${MAX_TEXT_CHARS}
+const REQUIRE_INITIAL_CONTENT = process.argv[4] !== "false"
+const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_RE.source)}, "i")
 
 const out = { routes: [], unreachable: [] }
 let browser
@@ -195,13 +207,24 @@ try {
         return text.replace(/\s+/g, " ").trim().slice(0, 500)
       })
 
-      const text = await page.evaluate((cap) => {
+      const pageContent = await page.evaluate((cap, emptyStatePattern, requireInitialContent) => {
         const body = document.body
-        if (!body) return ""
-        return (body.innerText || "").replace(/\s+/g, " ").trim().slice(0, cap)
-      }, MAX_TEXT)
+        const fullText = (body?.innerText || "").replace(/\s+/g, " ").trim()
+        const emptyState = requireInitialContent
+          ? fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
+          : null
+        return { text: fullText.slice(0, cap), emptyState }
+      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source, REQUIRE_INITIAL_CONTENT)
 
-      out.routes.push({ route, blank, overlay: overlay || undefined, errors, failedRequests, text })
+      out.routes.push({
+        route,
+        blank,
+        overlay: overlay || undefined,
+        errors,
+        failedRequests,
+        text: pageContent.text,
+        emptyState: pageContent.emptyState || undefined,
+      })
     } catch (err) {
       out.unreachable.push(route)
     }
@@ -258,6 +281,9 @@ export function parseRenderReport(stdout: string): RenderReport | null {
       .map((x) => x.trim())
       .filter((x) => x.length > 0 && !isHmrNoise(x));
     const text = typeof e["text"] === "string" ? e["text"].slice(0, MAX_TEXT_CHARS) : "";
+    const emptyState = typeof e["emptyState"] === "string" && e["emptyState"].trim()
+      ? e["emptyState"].trim().slice(0, 120)
+      : undefined;
 
     const failedRequests = (Array.isArray(e["failedRequests"]) ? e["failedRequests"] : [])
       .flatMap((x) => {
@@ -271,9 +297,10 @@ export function parseRenderReport(stdout: string): RenderReport | null {
 
     routes.push({
       route,
-      ok: !blank && !overlay && errors.length === 0 && failedRequests.length === 0,
+      ok: !blank && !overlay && !emptyState && errors.length === 0 && failedRequests.length === 0,
       blank,
       errors,
+      ...(emptyState ? { emptyState } : {}),
       ...(overlay ? { overlay } : {}),
       failedRequests,
       text,
@@ -379,6 +406,9 @@ function describeRequests(r: RouteRender): string {
 }
 
 function describeProblem(r: RouteRender): string {
+  if (r.emptyState) {
+    return `shows the initial empty state "${r.emptyState}" instead of populated sample content`;
+  }
   if (r.blank) {
     return r.errors.length > 0
       ? `renders NOTHING (#root is empty) — ${r.errors[0]}`

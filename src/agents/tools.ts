@@ -892,6 +892,8 @@ export interface ToolExecutionContext {
   pendingImages?: { value: Array<{ mediaType: string; dataBase64: string; label: string }> } | undefined;
   /** Anthropic tool_use block ID — used as the pending-approval correlation key. */
   toolCallId?: string | undefined;
+  /** Whether this frontend build is expected to show first-run sample content. Real backend apps may legitimately begin with no rows. */
+  requireInitialContent?: boolean | undefined;
   /** Required by the agentic build tools — identifies the live sandbox. */
   projectId?: string | undefined;
   /** The project's existing files on a follow-up edit, as build.ts already
