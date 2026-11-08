@@ -245,7 +245,7 @@ export async function planBuild(opts: {
     "- Screens and navigation: name every view/route, its purpose, and the major visible sections/components on it.",
     "- User journeys: describe the main end-to-end flows step by step (create, read, update, delete, search, filter, review, submit, approve, etc. as applicable).",
     "- Data model: identify entities, relationships, derived metrics, validation rules, and the single source of truth for each piece of state.",
-    "- Data state: decide which data is real backend data versus local/mock preview data; define first-run, loading, error and genuinely-empty states. New frontend/mock apps should have realistic first-run sample records; never fake a real backend.",
+    "- Data state: decide which data is real backend data versus local/mock preview data; define first-run, loading, error and genuinely-empty states. For collection/dashboard products, seed realistic frontend/mock preview records when appropriate; do not invent record lists for auth-only, landing, calculator, form-only or creative-canvas products, and never fake a real backend.",
     "- Visual direction: choose a product-appropriate visual identity, palette, typography, spacing scale, page shell, navigation, card/table/chart hierarchy and reusable component patterns. Avoid a generic unstyled shell.",
     "- Responsive behavior: state how navigation, grids, tables, forms and sidebars adapt to mobile and desktop.",
     "- Verification: list the observable result for each main journey and screen so the finished preview can be checked against the user's request.",
