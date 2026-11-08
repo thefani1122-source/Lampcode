@@ -198,12 +198,12 @@ try {
         return text.replace(/\s+/g, " ").trim().slice(0, 500)
       })
 
-      const pageContent = await page.evaluate((cap) => {
+      const pageContent = await page.evaluate((cap, emptyStatePattern) => {
         const body = document.body
         const fullText = (body?.innerText || "").replace(/\s+/g, " ").trim()
-        const emptyState = fullText.match(INITIAL_EMPTY_STATE_RE)?.[0] || null
+        const emptyState = fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
         return { text: fullText.slice(0, cap), emptyState }
-      }, MAX_TEXT)
+      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source)
 
       out.routes.push({
         route,
