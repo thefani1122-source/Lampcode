@@ -56,6 +56,13 @@ eq("the warning explains why the build is partial",
   "the agent reached its work-turn limit before it could finish");
 eq("a build that did not exhaust its turns gets no extra warning",
   row(base, "completion"), undefined);
+eq("a build stopped by its spend ceiling gets an incomplete-work warning",
+  row({ ...base, budgetExhausted: true }, "completion")?.status, "warn");
+eq("the budget warning explains that work remains",
+  row({ ...base, budgetExhausted: true }, "completion")?.detail,
+  "the build budget was reached while the agent still had work to do");
+eq("a completed response is not flagged just because it used the remaining budget",
+  row({ ...base, budgetExhausted: false }, "completion"), undefined);
 
 // ── the database row ────────────────────────────────────────────────────────
 
