@@ -926,7 +926,10 @@ export async function runFastBuild(
   // ── Emit agent_start ──────────────────────────────────────────────────────
   // Use the actual tier-1 frontend model rather than a hardcoded name so the
   // displayed model stays in sync with MODEL_TIERS.
-  const frontendModel = tierModel("frontend", 1);
+  const frontendModel =
+    provider === "modal"
+      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
+      : tierModel("frontend", 1);
   server?.agentStart(sessionId, {
     taskId: sessionId,
     sessionId,
