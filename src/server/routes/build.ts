@@ -4995,10 +4995,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (extractBuildStatus), so the person still gets their preview. What
     // changes is that the record stops claiming the work is good.
     const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
-    if (gatesFailed) {
+    const buildIncomplete = gatesFailed || result.turnsExhausted;
+    if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
-        `page=${outcome.checkPage} types=${outcome.checkTypes}`,
+        `page=${outcome.checkPage} types=${outcome.checkTypes} turnsExhausted=${result.turnsExhausted}`,
       );
     }
 
@@ -5016,7 +5017,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     await db
       .update(buildSessions)
       .set({
-        status: gatesFailed ? "completed" : "success",
+        status: buildIncomplete ? "completed" : "success",
         phase: 2,
         outputDir,
         creditsUsed,
@@ -5062,12 +5063,12 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // they are would make every build that could not run a gate look broken.
     const pageFailed = outcome.checkPage === "fail";
     const typesFailed = outcome.checkTypes === "fail";
-    if (pageFailed || typesFailed) {
+    if (pageFailed || typesFailed || result.turnsExhausted) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
         closingLines.push(
-          "• The app does not open. The page throws an error when it loads, so whatever the " +
-            "preview is showing is not this app working.",
+          "• The preview did not pass its page-quality check. It may be blank, still showing " +
+            "an initial empty state instead of populated content, or reporting a browser error.",
         );
       }
       if (typesFailed) {
@@ -5076,7 +5077,12 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             "something, this will not build for production in its current state.",
         );
       }
-      closingLines.push("Send me a follow-up message and I will fix this before anything else.");
+      if (result.turnsExhausted) {
+        closingLines.push(
+          "• The agent reached its work-turn limit while it still had work to do. This is a partial build, not a finished application; continue the build before treating it as ready.",
+        );
+      }
+      closingLines.push("Continue the build to finish the remaining work before publishing.");
     }
 
     if (fullstackEvidence) {
@@ -5188,6 +5194,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           checkPage: outcome.checkPage,
           checkTypes: outcome.checkTypes,
           checkTests: outcome.checkTests,
+          turnsExhausted: outcome.turnsExhausted,
           wiring: wiringTally,
           wiringRepaired,
           schemaApply,
@@ -5212,7 +5219,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     server?.progress(sessionId, {
       sessionId,
       percent: 100,
-      message: "Build complete",
+      message: buildIncomplete ? "Partial build — verification or completion is still needed" : "Build complete",
       timestamp: new Date().toISOString(),
     });
 
