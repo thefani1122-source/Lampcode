@@ -928,6 +928,7 @@ export class AgentDispatcher {
           ...(agenticBuild || options.queryMode
             ? {
                 projectId,
+                requireInitialContent: agentType === "frontend" && !isFullstackBuild,
                 generatedFiles,
                 deletedFiles,
                 checkpoints,
