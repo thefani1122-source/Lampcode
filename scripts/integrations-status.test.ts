@@ -59,3 +59,5 @@ const missingFromCatalogue = Object.values(MCP_REGISTRY)
 ok(`every catalogue provider is accounted for${missingFromCatalogue.length ? ` (missing: ${missingFromCatalogue.join(", ")})` : ""}`, missingFromCatalogue.length === 0);
 
 if (failures) process.exit(1);
+
+process.exit(0); // local assertions are complete; do not wait for optional Redis retries

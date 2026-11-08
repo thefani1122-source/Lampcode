@@ -68,3 +68,4 @@ ok("supabase unknown action names what the server offers", supaUnknown.includes(
 
 if (failures) process.exit(1);
 console.log("\nAll REST query tool checks passed.");
+process.exit(0);

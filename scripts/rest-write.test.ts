@@ -61,3 +61,5 @@ ok("unknown write actions are refused", unknownAction.includes("Unknown action")
 
 if (failures) process.exit(1);
 console.log("\nAll REST write tool checks passed.");
+
+process.exit(0); // local assertions are complete; do not wait for optional Redis retries

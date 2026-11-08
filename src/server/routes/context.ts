@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { join } from "path";
+import { and, eq } from "drizzle-orm";
+import { db } from "../../db/client.js";
+import { projects } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getContextManager } from "../../context/manager.js";
@@ -28,6 +31,13 @@ contextRouter.post("/select", async (c) => {
     throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
   }
   const { projectId, prompt, maxTokens } = parsed.data;
+  const authUser = c.get("authUser");
+  const ownedProject = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
+    .limit(1);
+  if (ownedProject.length === 0) throw new AppError(404, "Project not found", "NOT_FOUND");
 
   const ctx = await getContextManager().select({
     projectId,

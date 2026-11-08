@@ -18,6 +18,7 @@ const projectSettingsPatchSchema = z.object({
   outputDir:     z.string().max(200).optional(),
   nodeVersion:   z.string().max(20).optional(),
   envVars:       z.record(z.string(), z.string()).optional(),
+  memoryRules:   z.string().max(20_000).optional(),
 }).strict();
 
 const projectBrandingPatchSchema = z.object({

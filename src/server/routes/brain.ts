@@ -10,14 +10,14 @@ import { getBrainManager } from "../../brain/manager.js";
 // ── Validation ────────────────────────────────────────────────────────────────
 
 const BRAIN_FILE_TYPES = [
-  "contract", "db_schema", "api_contracts", "current_state",
-  "deploy_checklist", "security_checklist", "connection_checklist", "provenance_log",
+  "CONTRACT", "DB_SCHEMA", "API_CONTRACTS", "CURRENT_STATE",
+  "DEPLOY_CHECKLIST", "SECURITY_CHECKLIST", "CONNECTION_CHECKLIST", "PROVENANCE_LOG",
 ] as const;
 
-const fileTypeSchema = z.enum(BRAIN_FILE_TYPES);
+export const brainFileTypeSchema = z.string().transform((raw) => raw.trim().toUpperCase()).pipe(z.enum(BRAIN_FILE_TYPES));
 
 const createVersionBodySchema = z.object({
-  fileType: fileTypeSchema,
+  fileType: brainFileTypeSchema,
   content: z.string().min(1).max(500_000),
   agentType: z.string().optional(),
   modelUsed: z.string().optional(),
@@ -41,7 +41,7 @@ async function requireProjectAccess(projectId: string, userId: string) {
 }
 
 function parseFileType(raw: string): BrainFileType {
-  const result = fileTypeSchema.safeParse(raw.toUpperCase());
+  const result = brainFileTypeSchema.safeParse(raw.trim().toUpperCase());
   if (!result.success) {
     throw new AppError(
       400,

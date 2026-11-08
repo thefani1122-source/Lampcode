@@ -79,3 +79,5 @@ ok("github merge_pull_request maps to repo.write", TOOL_CAPABILITIES["github"]?.
 
 if (failures) process.exit(1);
 console.log("\nAll GitHub write/read tool checks passed.");
+
+process.exit(0); // local assertions are complete; do not wait for optional Redis retries

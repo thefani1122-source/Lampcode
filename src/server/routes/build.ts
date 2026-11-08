@@ -13,6 +13,8 @@ import {
   type BuildOutcome,
   type BuildPlan,
   type CompletionAudit,
+  type BusinessContext,
+  sharedBrainFiles,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -794,6 +796,43 @@ function countToolCalls(calls: Array<{ name: string }>): Record<string, number> 
  */
 class SkipReconciliation extends Error {}
 
+// ── Project intelligence context ─────────────────────────────────────────────
+
+const BRAIN_CONTEXT_PATHS: Record<string, string> = {
+  CONTRACT: "CONTRACT.md",
+  DB_SCHEMA: "DB_SCHEMA.md",
+  API_CONTRACTS: "API_CONTRACTS.md",
+  CURRENT_STATE: "CURRENT_STATE.md",
+  DEPLOY_CHECKLIST: "DEPLOY_CHECKLIST.md",
+  SECURITY_CHECKLIST: "SECURITY_CHECKLIST.md",
+  CONNECTION_CHECKLIST: "CONNECTION_CHECKLIST.md",
+  PROVENANCE_LOG: "PROVENANCE_LOG.md",
+};
+
+async function loadLatestBrainFiles(projectId: string): Promise<Array<{ path: string; content: string }>> {
+  // Distinct-on avoids scanning and transferring every historical version when
+  // only the current record of each type belongs in a build prompt.
+  const rows = await db.selectDistinctOn([sharedBrainFiles.fileType], {
+    fileType: sharedBrainFiles.fileType,
+    content: sharedBrainFiles.content,
+    version: sharedBrainFiles.version,
+  })
+    .from(sharedBrainFiles)
+    .where(eq(sharedBrainFiles.projectId, projectId))
+    .orderBy(sharedBrainFiles.fileType, desc(sharedBrainFiles.version), desc(sharedBrainFiles.createdAt));
+  const latest: Array<{ path: string; content: string }> = [];
+  let remainingChars = 30_000;
+  for (const row of rows) {
+    const path = BRAIN_CONTEXT_PATHS[row.fileType];
+    if (!path || remainingChars <= 0) continue;
+    const content = row.content.slice(0, Math.min(6_000, remainingChars));
+    latest.push({ path, content: content.length < row.content.length ? `${content}\n[Brain context truncated]` : content });
+    remainingChars -= content.length;
+    if (latest.length >= 8) break;
+  }
+  return latest;
+}
+
 // ── Background build runner ───────────────────────────────────────────────────
 
 export async function runFastBuild(
@@ -816,6 +855,25 @@ export async function runFastBuild(
   // startedAt would be close, but startedAt is written a few awaits later and
   // both are DB round-trips.
   const buildStartedMs = Date.now();
+
+  let businessContext: BusinessContext = {};
+  let memoryRules: string | undefined;
+  let brainFiles: Array<{ path: string; content: string }> = [];
+  try {
+    const rows = await db.select({ businessContext: projects.businessContext, settings: projects.settings })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
+      .limit(1);
+    businessContext = rows[0]?.businessContext ?? {};
+    memoryRules = rows[0]?.settings?.memoryRules;
+    if (!memoryRules) {
+      try { memoryRules = await readFile(join(WORKSPACE_BASE, projectId, "MEMORY_RULES.md"), "utf8"); } catch { /* no legacy rules */ }
+    }
+  } catch (err) {
+    logger.warn({ projectId, err }, "Could not load project business context; continuing without it");
+  }
+  try { brainFiles = await loadLatestBrainFiles(projectId); }
+  catch (err) { logger.warn({ projectId, err }, "Could not load shared Brain context for this build"); }
 
   // Outcome evidence, captured as soon as the generation dispatch returns and
   // refined at the end. Declared out here so the catch can write it too: a
@@ -1742,6 +1800,9 @@ export async function runFastBuild(
         hasAnimationContext: animationFlag,
         projectMemory,
         projectManifest,
+        businessContext,
+        ...(memoryRules ? { memoryRules } : {}),
+        ...(brainFiles.length ? { brainFiles } : {}),
       },
       sessionId,
       userId,
@@ -3620,37 +3681,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       })();
     });
 
-    // ── Async project memory + manifest update — never blocks the build ────
-    setImmediate(() => {
-      void (async () => {
-        try {
-          // Both derived from the files, neither a model call. generateProjectMemory
-          // used to dispatch Haiku and log "Could not resolve authentication
-          // method" on every build, because ANTHROPIC_API_KEY is not set here.
-          const newMemory = generateProjectMemory({
-            files: allFiles,
-            prompt,
-            existingMemory: projectMemory,
-          })
-          const newManifest = generateFileManifest(allFiles)
-          try {
-            await db.update(projects)
-              .set({ projectMemory: newMemory, projectManifest: newManifest })
-              .where(eq(projects.id, projectId))
-            console.log(`[memory] saved memory+manifest for project ${projectId}`)
-          } catch {
-            // project_manifest column missing — save memory only until migration runs
-            await db.update(projects)
-              .set({ projectMemory: newMemory })
-              .where(eq(projects.id, projectId))
-            console.warn("[memory] saved memory only (project_manifest column missing — run migration 0007)")
-          }
-        } catch (err) {
-          console.error("[memory] update failed:", err)
-        }
-      })()
-    })
-
     // ── The post-generation phase is AWAITED now ────────────────────────────
     // It used to be fire-and-forget. `finishPreview` says so in its own first
     // comment: "Everything in here runs AFTER the build session has been
@@ -4972,6 +5002,17 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       );
     }
 
+    // Save memory from the final file set after preview/audit repairs.
+    try {
+      const newMemory = generateProjectMemory({ files: allFiles, prompt, existingMemory: projectMemory });
+      const newManifest = generateFileManifest(allFiles);
+      await db.update(projects).set({ projectMemory: newMemory, projectManifest: newManifest })
+        .where(eq(projects.id, projectId));
+      logger.info({ projectId, sessionId }, "Saved verified project memory and manifest");
+    } catch (err) {
+      logger.error({ projectId, sessionId, err }, "Could not save final project memory");
+    }
+
     await db
       .update(buildSessions)
       .set({
@@ -5677,8 +5718,7 @@ buildRouter.get("/:sessionId/files", async (c) => {
   });
 });
 
-// POST /api/build/:projectId/memory — persist a rule into MEMORY_RULES.md
-// Injected on every future build via PromptBuilder reading workspace/{projectId}/MEMORY_RULES.md
+// POST /api/build/:projectId/memory — persist a project rule in the database.
 buildRouter.post("/:projectId/memory", async (c) => {
   const authUser = c.get("authUser");
   const { projectId } = c.req.param();
@@ -5690,29 +5730,34 @@ buildRouter.post("/:projectId/memory", async (c) => {
   const parsed = ruleSchema.safeParse(body);
   if (!parsed.success) throw new AppError(400, "rule must be a non-empty string (max 1000 chars)", "VALIDATION_ERROR");
 
-  // Verify project ownership
-  const projectRows = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
-    .limit(1);
-  if (!projectRows[0]) throw new AppError(404, "Project not found", "NOT_FOUND");
+  const totalRules = await db.transaction(async (tx) => {
+    // Lock the project row so concurrent rule writes cannot overwrite one
+    // another. Fold any rules written by the older file-backed endpoint into
+    // the durable settings field before appending the new rule.
+    const [project] = await tx.select({ settings: projects.settings })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)))
+      .for("update")
+      .limit(1);
+    if (!project) throw new AppError(404, "Project not found", "NOT_FOUND");
 
-  const rulesPath = join(WORKSPACE_BASE, projectId, "MEMORY_RULES.md");
-  let existing = "";
-  try { existing = await readFile(rulesPath, "utf8"); } catch { /* first rule */ }
-
-  const newContent = existing.trim()
-    ? `${existing.trim()}\n- ${parsed.data.rule}\n`
-    : `# Project Memory Rules\n\n- ${parsed.data.rule}\n`;
-
-  await mkdir(join(WORKSPACE_BASE, projectId), { recursive: true });
-  await writeFile(rulesPath, newContent, "utf8");
-
-  const totalRules = (newContent.match(/^- /gm) ?? []).length;
-  // Isolation audit: log exact path so it's easy to verify per-project isolation
-  console.log(`[build] memory-rule project=${projectId} totalRules=${totalRules} path=${rulesPath}`);
-  logger.info({ projectId, rule: parsed.data.rule, totalRules }, "Memory rule saved");
+    let existing = project.settings.memoryRules?.trim() ?? "";
+    if (!existing) {
+      try { existing = (await readFile(join(WORKSPACE_BASE, projectId, "MEMORY_RULES.md"), "utf8")).trim(); }
+      catch { /* no legacy rules */ }
+    }
+    const newContent = existing
+      ? `${existing}\n- ${parsed.data.rule}\n`
+      : `# Project Memory Rules\n\n- ${parsed.data.rule}\n`;
+    if (newContent.length > 20_000) {
+      throw new AppError(400, "Project memory rules are full (20,000 character limit)", "VALIDATION_ERROR");
+    }
+    await tx.update(projects)
+      .set({ settings: { ...project.settings, memoryRules: newContent }, updatedAt: new Date() })
+      .where(and(eq(projects.id, projectId), eq(projects.userId, authUser.id)));
+    return (newContent.match(/^- /gm) ?? []).length;
+  });
+  logger.info({ projectId, totalRules }, "Persistent project memory rule saved");
   return c.json({ ok: true, totalRules });
 });
 

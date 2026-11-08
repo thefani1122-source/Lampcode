@@ -443,6 +443,7 @@ export type ProjectSettings = {
   outputDir?: string | undefined;
   nodeVersion?: string | undefined;
   envVars?: Record<string, string> | undefined;
+  memoryRules?: string | undefined;
 };
 
 export type ProjectBranding = {
@@ -742,14 +743,14 @@ export const integrations = pgTable("integrations", {
 // ── Shared Brain ─────────────────────────────────────────────────────────────
 
 export const brainFileTypeEnum = pgEnum("brain_file_type", [
-  "contract",
-  "db_schema",
-  "api_contracts",
-  "current_state",
-  "deploy_checklist",
-  "security_checklist",
-  "connection_checklist",
-  "provenance_log",
+  "CONTRACT",
+  "DB_SCHEMA",
+  "API_CONTRACTS",
+  "CURRENT_STATE",
+  "DEPLOY_CHECKLIST",
+  "SECURITY_CHECKLIST",
+  "CONNECTION_CHECKLIST",
+  "PROVENANCE_LOG",
 ]);
 
 export const sharedBrainFiles = pgTable("shared_brain_files", {
