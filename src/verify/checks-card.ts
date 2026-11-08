@@ -45,6 +45,8 @@ export interface ChecksInput {
   checkTests: Gate;
   /** The agent stopped at its work-turn ceiling while it still wanted to continue. */
   turnsExhausted?: boolean;
+  /** The spend ceiling stopped the agent while it still requested more work. */
+  budgetExhausted?: boolean;
   wiring?: {
     deadHandlers: number;
     bareButtons: number;
@@ -81,12 +83,14 @@ export function buildChecksCard(input: ChecksInput): ChecksCard {
     );
   }
 
-  if (input.turnsExhausted) {
+  if (input.turnsExhausted || input.budgetExhausted) {
     rows.push({
       id: "completion",
       label: "The build finished all requested work",
       status: "warn",
-      detail: "the agent reached its work-turn limit before it could finish",
+      detail: input.turnsExhausted
+        ? "the agent reached its work-turn limit before it could finish"
+        : "the build budget was reached while the agent still had work to do",
     });
   }
 
