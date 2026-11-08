@@ -282,6 +282,8 @@ ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.la
 ok("the script resets errors per route", RENDER_SCRIPT.includes("errors = []"));
 ok("the script prints the marker", RENDER_SCRIPT.includes("LAMPCODE_RENDER:"));
 ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.includes("INITIAL_EMPTY_STATE_RE"));
+ok("the browser sweep receives the app's first-run content policy", RENDER_SCRIPT.includes('process.argv[4] !== "false"'));
+ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
 
 
