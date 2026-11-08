@@ -5005,7 +5005,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (extractBuildStatus), so the person still gets their preview. What
     // changes is that the record stops claiming the work is good.
     const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
-    const buildIncomplete = gatesFailed || result.turnsExhausted || result.budgetExhausted;
+    // Never call a build successful when a mandatory verification gate did
+    // not run or could not run. A preview is still delivered as "completed",
+    // but the record must not claim the app was verified.
+    const pageUnverified = outcome.checkPage === "never" || outcome.checkPage === "unavailable";
+    const typesUnverified = outcome.checkTypes === "never" || outcome.checkTypes === "unavailable";
+    const buildIncomplete =
+      gatesFailed || pageUnverified || typesUnverified ||
+      result.turnsExhausted || result.budgetExhausted;
     if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
@@ -5073,7 +5080,10 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // they are would make every build that could not run a gate look broken.
     const pageFailed = outcome.checkPage === "fail";
     const typesFailed = outcome.checkTypes === "fail";
-    if (pageFailed || typesFailed || result.turnsExhausted || result.budgetExhausted) {
+    if (
+      pageFailed || typesFailed || pageUnverified || typesUnverified ||
+      result.turnsExhausted || result.budgetExhausted
+    ) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
         closingLines.push(
@@ -5085,6 +5095,16 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         closingLines.push(
           "• The code does not compile — there are type errors. Even if the preview shows " +
             "something, this will not build for production in its current state.",
+        );
+      }
+      if (pageUnverified) {
+        closingLines.push(
+          "• The full page-content check did not complete, so I cannot confirm that every declared screen or the first-run experience is correct.",
+        );
+      }
+      if (typesUnverified) {
+        closingLines.push(
+          "• The TypeScript check did not complete, so production compile status is unverified.",
         );
       }
       if (result.turnsExhausted) {
