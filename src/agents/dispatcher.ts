@@ -595,9 +595,14 @@ export class AgentDispatcher {
     const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
       /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
     );
+    const explicitlyRequestsEmptyFirstRun =
+      /\b(?:first|initial|default)\b.{0,45}\b(?:empty|blank|no sample data)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default)\b/i.test(
+        task.description,
+      );
     const requireInitialContent = agentType === "frontend" &&
       !isFullstackBuild &&
-      !existingProjectHasBackend;
+      !existingProjectHasBackend &&
+      !explicitlyRequestsEmptyFirstRun;
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -781,6 +786,24 @@ export class AgentDispatcher {
           // to consume the last available budget is still a completed turn.
           budgetExhausted =
             streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
+          if (budgetExhausted) {
+            // The stream already announced these tool calls to the UI, but
+            // they are deliberately not executed after the budget is reached.
+            // Close their pending indicators rather than leaving a spinner
+            // attached to a build that has already stopped.
+            for (const tc of streamResult.toolCalls) {
+              try {
+                getWebSocketServer().emitToRoom(sessionId, "build:tool_result", {
+                  id: tc.id,
+                  tool: tc.name,
+                  result: "error",
+                  sessionId,
+                });
+              } catch {
+                // The build's incomplete status is recorded independently.
+              }
+            }
+          }
           logger.warn(
             {
               sessionId,
