@@ -593,7 +593,7 @@ export class AgentDispatcher {
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
     const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
-      /(^|\\/)(?:server|backend|api|db|database)(?:\\/|\\.|$)/i.test(path),
+      /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
     );
     const requireInitialContent = agentType === "frontend" &&
       !isFullstackBuild &&
