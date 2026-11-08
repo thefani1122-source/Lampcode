@@ -595,9 +595,10 @@ export class AgentDispatcher {
     const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
       /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
     );
+    const originalUserRequest = options.userPrompt ?? task.description;
     const explicitlyRequestsEmptyFirstRun =
-      /\b(?:first|initial|default)\b.{0,45}\b(?:empty|blank|no sample data)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default)\b/i.test(
-        task.description,
+      /\bno sample data\b|\b(?:first|initial|default|start|begin|launch|open)\b.{0,45}\b(?:empty|blank)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default|start|begin|launch)\b/i.test(
+        originalUserRequest,
       );
     const requireInitialContent = agentType === "frontend" &&
       !isFullstackBuild &&
