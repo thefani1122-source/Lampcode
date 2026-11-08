@@ -1400,7 +1400,7 @@ const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
     match: /\bhabit|habbit|streak|routine|daily tracker\b/i,
     expansion: `Build a COMPLETE, highly visual Habit & Routine Tracker with:
 - Pre-load 5–6 rich, realistic sample habits (e.g. "Drink 2.5L Water", "Morning Workout 30m", "Read 20 pages", "Mindfulness Meditation", "No Screen 1h Before Sleep") with active streaks (e.g. 14 days, 7 days, 21 days), category tags (Health, Fitness, Mindset, Productivity), and today's completion status (some checked, some unchecked).
-- DEFAULT STATE MUST USE THIS SEED LIST: On first launch, the habit list must NEVER be empty. Default state / localStorage to this seed list so the app immediately displays habit cards, fire icons with streak counters, and today's completion progress bar (e.g. "3 of 5 completed • 60%").
+- FIRST-RUN SEED INITIALISATION: On first launch, initialise the habit list with this seed set so habit cards, fire-icon streak counters and today's completion progress appear immediately. For localStorage, use a seed-version marker: when the marker is absent, keep any non-empty saved habits; otherwise write the seed set, then mark initialization complete. Once marked, preserve a user's deliberate empty list after they delete all habits—never re-seed on every reload.
 - Interactive habit cards: checkbox to toggle today's completion (instantly updates streak and progress bar), fire icon with streak count, frequency badge (Daily/Weekly), category badge, and delete button.
 - Add habit form: input for habit name, category selector, frequency selector, and "+ Add Habit" button.
 - Filter tabs: All / Active / Completed / Categories with count badges.
