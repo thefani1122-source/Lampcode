@@ -1838,6 +1838,7 @@ export async function runFastBuild(
     outcomeDraft = {
       rounds: result.rounds,
       turnsExhausted: result.turnsExhausted,
+      budgetExhausted: result.budgetExhausted,
       filesWritten: Object.keys(result.generatedFiles).length,
       toolCalls: countToolCalls(result.toolCalls),
       // "never" and "unavailable" are different failures and both matter: the
@@ -3636,21 +3637,27 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // ("Backend is up on :3001 now. Retrying the page check:") as if that were
     // the summary. The files are real and the app runs, but nothing after the
     // cut was verified — so say so rather than letting it read as complete.
-    if (result.turnsExhausted) {
+    if (result.turnsExhausted || result.budgetExhausted) {
+      const reason = result.turnsExhausted ? "work-turn limit" : "build budget";
       logger.warn(
-        { sessionId, projectId, files: writtenPaths.length },
-        "Agentic loop hit the turn cap while still working — build delivered unverified",
+        {
+          sessionId,
+          projectId,
+          files: writtenPaths.length,
+          turnsExhausted: result.turnsExhausted,
+          budgetExhausted: result.budgetExhausted,
+        },
+        "Agentic loop stopped while the model still had work to do — build delivered incomplete",
       );
       server?.emitToRoom(sessionId, "build:warning", {
         sessionId,
         message:
-          "This build used up its allowed steps before the AI finished checking its work. " +
-          "What it wrote is here and should run, but the last changes weren't verified — " +
-          "send a follow-up message if something looks wrong.",
+          `This build reached its ${reason} while the AI was still working. ` +
+          "What it wrote is here, but the remaining work was not completed or verified.",
       });
       buildSummary =
         (buildSummary ? buildSummary + "\n\n" : "") +
-        "Note: I ran out of steps before I could finish verifying this — tell me if anything is off.";
+        `Note: I reached the ${reason} before I could finish the remaining work and verification.`;
     }
 
     // The summary-bearing build:complete used to fire HERE, which is before the
@@ -4998,11 +5005,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (extractBuildStatus), so the person still gets their preview. What
     // changes is that the record stops claiming the work is good.
     const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
-    const buildIncomplete = gatesFailed || result.turnsExhausted;
+    const buildIncomplete = gatesFailed || result.turnsExhausted || result.budgetExhausted;
     if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
-        `page=${outcome.checkPage} types=${outcome.checkTypes} turnsExhausted=${result.turnsExhausted}`,
+        `page=${outcome.checkPage} types=${outcome.checkTypes} turnsExhausted=${result.turnsExhausted} budgetExhausted=${result.budgetExhausted}`,
       );
     }
 
@@ -5066,7 +5073,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // they are would make every build that could not run a gate look broken.
     const pageFailed = outcome.checkPage === "fail";
     const typesFailed = outcome.checkTypes === "fail";
-    if (pageFailed || typesFailed || result.turnsExhausted) {
+    if (pageFailed || typesFailed || result.turnsExhausted || result.budgetExhausted) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
         closingLines.push(
@@ -5083,6 +5090,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       if (result.turnsExhausted) {
         closingLines.push(
           "• The agent reached its work-turn limit while it still had work to do. This is a partial build, not a finished application; continue the build before treating it as ready.",
+        );
+      }
+      if (result.budgetExhausted) {
+        closingLines.push(
+          "• The build budget was reached while the agent still had work to do. The app may be partially built; continue with a follow-up build before treating it as ready.",
         );
       }
       closingLines.push("Continue the build to finish the remaining work before publishing.");
@@ -5198,6 +5210,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           checkTypes: outcome.checkTypes,
           checkTests: outcome.checkTests,
           turnsExhausted: outcome.turnsExhausted,
+          budgetExhausted: outcome.budgetExhausted,
           wiring: wiringTally,
           wiringRepaired,
           schemaApply,
