@@ -178,6 +178,8 @@ export interface DispatchResult {
    *  after the cut and there is no closing summary, so the caller must not
    *  present the build as finished. */
   turnsExhausted: boolean;
+  /** True when the spend ceiling stopped a turn that still requested tool work. */
+  budgetExhausted: boolean;
   /** Just the LAST round's text. `content` is every round concatenated, which
    *  is what the fence-parsing fallback needs but is wrong for anything shown
    *  to the user: in an agentic build the early rounds are the model talking to
@@ -613,6 +615,7 @@ export class AgentDispatcher {
     let fullContent = "";
     let lastRoundContent = "";
     let turnsExhausted = false;
+    let budgetExhausted = false;
     let totalInputTokens = 0;
     let totalCachedInputTokens = 0;
     let totalCacheWriteTokens = 0;
@@ -767,9 +770,22 @@ export class AgentDispatcher {
           streamResult.cacheWriteTokens,
         ).costUsd;
         if (costGuard.cumulativeUsd + loopCostUsd >= costGuard.maxUsd) {
+          // Reaching the ceiling is only an incomplete build when the model
+          // still asked for tools. A normal final text response that happens
+          // to consume the last available budget is still a completed turn.
+          budgetExhausted =
+            streamResult.stopReason === "tool_use" && streamResult.toolCalls.length > 0;
           logger.warn(
-            { sessionId, agentType, round, loopCostUsd, cumulativeUsd: costGuard.cumulativeUsd, maxUsd: costGuard.maxUsd },
-            "Tool loop: cost ceiling reached mid-loop — stopping, proceeding with whatever context was gathered",
+            {
+              sessionId,
+              agentType,
+              round,
+              loopCostUsd,
+              cumulativeUsd: costGuard.cumulativeUsd,
+              maxUsd: costGuard.maxUsd,
+              budgetExhausted,
+            },
+            "Tool loop: cost ceiling reached mid-loop — stopping",
           );
           break;
         }
@@ -1109,6 +1125,7 @@ export class AgentDispatcher {
       content: fullContent,
       finalContent: lastRoundContent,
       turnsExhausted,
+      budgetExhausted,
       rounds: roundsUsed,
       pseudoToolCalls,
       gateResults,
