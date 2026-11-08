@@ -207,14 +207,14 @@ try {
         return text.replace(/\s+/g, " ").trim().slice(0, 500)
       })
 
-      const pageContent = await page.evaluate((cap, emptyStatePattern) => {
+      const pageContent = await page.evaluate((cap, emptyStatePattern, requireInitialContent) => {
         const body = document.body
         const fullText = (body?.innerText || "").replace(/\s+/g, " ").trim()
-        const emptyState = REQUIRE_INITIAL_CONTENT
+        const emptyState = requireInitialContent
           ? fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
           : null
         return { text: fullText.slice(0, cap), emptyState }
-      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source)
+      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source, REQUIRE_INITIAL_CONTENT)
 
       out.routes.push({
         route,
