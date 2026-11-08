@@ -113,6 +113,14 @@ const COSMETIC_ASSET = /\/(favicon\.\w+|apple-touch-icon[^/]*\.png|site\.webmani
 export const MAX_TEXT_CHARS = 400;
 
 /**
+ * First-run empty-state copy that indicates a new frontend/mock app failed to
+ * initialise its requested sample content. Kept outside the browser script so
+ * the exact detector can be regression-tested without launching Chromium.
+ */
+export const INITIAL_EMPTY_STATE_RE =
+  /\b(?:no (?:habits?|tasks?|items?|entries|records?|data|events?|orders?|customers?|projects?|notes?|shifts?|transactions?|messages?)\s+yet|nothing (?:here|to show|to display) yet|create your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message)|add your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message))\b/i;
+
+/**
  * Routes to visit, from the project's own files.
  *
  * `/` is always included and always first: it is the one route every app has,
@@ -149,7 +157,7 @@ export const RENDER_SCRIPT = String.raw`import { chromium } from "playwright"
 const base = process.argv[2] || "http://localhost:5173"
 const routes = JSON.parse(process.argv[3] || '["/"]')
 const MAX_TEXT = ${MAX_TEXT_CHARS}
-const INITIAL_EMPTY_STATE_RE = /\b(?:no (?:habits?|tasks?|items?|entries|records?|data|events?|orders?|customers?|projects?|notes?|shifts?|transactions?|messages?)\s+yet|nothing (?:here|to show|to display) yet|create your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message)|add your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message))\b/i
+const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_RE.source)}, "i")
 
 const out = { routes: [], unreachable: [] }
 let browser
