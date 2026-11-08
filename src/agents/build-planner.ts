@@ -196,9 +196,8 @@ export function formatPlanForPrompt(plan: BuildPlan): string {
   }
   lines.push(
     "",
-    "This is a starting point, not a contract. You can see the running app and the " +
-    "planner could not, so if the layout turns out to be wrong, change it and say so in " +
-    "your final reply. What you must not do is collapse it back into one large file.",
+    "Before coding, use the approach above as the product contract: implement every named screen, make the primary journeys work end to end, use one consistent design system, and give the first screen meaningful content. Keep loading, error and truly-empty states distinct from a failed or never-initialised data source.",
+    "This is a starting point, not a contract on implementation details. You can see the running app and the planner could not, so if live evidence requires a better layout, change it and say so in your final reply. What you must not do is collapse it back into one large file.",
   );
   return lines.join("\n");
 }
@@ -239,6 +238,19 @@ export async function planBuild(opts: {
   // it to decide what a change requires.
   const existing = opts.existingFiles ?? {};
   const parts = [opts.prompt];
+
+  parts.push(
+    "",
+    "COMPLETE PRODUCT BLUEPRINT — decide these before listing files:",
+    "- Screens and navigation: name every view/route, its purpose, and the major visible sections/components on it.",
+    "- User journeys: describe the main end-to-end flows step by step (create, read, update, delete, search, filter, review, submit, approve, etc. as applicable).",
+    "- Data model: identify entities, relationships, derived metrics, validation rules, and the single source of truth for each piece of state.",
+    "- Data state: decide which data is real backend data versus local/mock preview data; define first-run, loading, error and genuinely-empty states. New frontend/mock apps should have realistic first-run sample records; never fake a real backend.",
+    "- Visual direction: choose a product-appropriate visual identity, palette, typography, spacing scale, page shell, navigation, card/table/chart hierarchy and reusable component patterns. Avoid a generic unstyled shell.",
+    "- Responsive behavior: state how navigation, grids, tables, forms and sidebars adapt to mobile and desktop.",
+    "- Verification: list the observable result for each main journey and screen so the finished preview can be checked against the user's request.",
+    "Put concise decisions in the approach array. A file list by itself is not a complete plan.",
+  );
 
   if (opts.shape) {
     parts.push(
