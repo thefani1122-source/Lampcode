@@ -43,6 +43,8 @@ export interface ChecksInput {
   checkPage: Gate;
   checkTypes: Gate;
   checkTests: Gate;
+  /** The agent stopped at its work-turn ceiling while it still wanted to continue. */
+  turnsExhausted?: boolean;
   wiring?: {
     deadHandlers: number;
     bareButtons: number;
@@ -77,6 +79,15 @@ export function buildChecksCard(input: ChecksInput): ChecksCard {
     rows.push(
       gateRow("tests", "The tests pass", input.checkTests, "all green", "some tests fail"),
     );
+  }
+
+  if (input.turnsExhausted) {
+    rows.push({
+      id: "completion",
+      label: "The build finished all requested work",
+      status: "warn",
+      detail: "the agent reached its work-turn limit before it could finish",
+    });
   }
 
   // The five kinds that mean a control renders but does nothing. The other two
