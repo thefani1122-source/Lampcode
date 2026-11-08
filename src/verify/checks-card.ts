@@ -71,7 +71,13 @@ function gateRow(id: string, label: string, gate: Gate, passDetail: string, fail
 
 export function buildChecksCard(input: ChecksInput): ChecksCard {
   const rows: CheckRow[] = [
-    gateRow("opens", "The app opens", input.checkPage, "no errors when it loads", "it errors when it loads"),
+    gateRow(
+      "opens",
+      "The app opens and shows its main content",
+      input.checkPage,
+      "no page errors or initial empty-state placeholders",
+      "the page is blank, missing expected first-run content, or reports a browser error",
+    ),
     gateRow("compiles", "The code compiles", input.checkTypes, "no type errors", "there are type errors"),
   ];
 
