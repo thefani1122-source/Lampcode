@@ -592,6 +592,12 @@ export class AgentDispatcher {
     const isFullstackBuild =
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
+      /(^|\\/)(?:server|backend|api|db|database)(?:\\/|\\.|$)/i.test(path),
+    );
+    const requireInitialContent = agentType === "frontend" &&
+      !isFullstackBuild &&
+      !existingProjectHasBackend;
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -928,7 +934,7 @@ export class AgentDispatcher {
           ...(agenticBuild || options.queryMode
             ? {
                 projectId,
-                requireInitialContent: agentType === "frontend" && !isFullstackBuild,
+                requireInitialContent,
                 generatedFiles,
                 deletedFiles,
                 checkpoints,
