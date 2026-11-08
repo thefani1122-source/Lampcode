@@ -13,6 +13,7 @@ import {
   formatRenderForAgent,
   MAX_TEXT_CHARS,
   RENDER_SCRIPT,
+  INITIAL_EMPTY_STATE_RE,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -45,6 +46,27 @@ check(
 check("parameterised routes are skipped, not guessed", routesToVisit(["/shift/:id"]), ["/"]);
 check("wildcards are skipped", routesToVisit(["/docs/*"]), ["/"]);
 check("non-absolute paths are ignored", routesToVisit(["shifts", "../x"]), ["/"]);
+
+// ── first-run empty-state vocabulary ─────────────────────────────────────────
+
+for (const phrase of [
+  "No habits yet",
+  "No tasks yet",
+  "No items yet",
+  "Create your first habit",
+  "Add your first task",
+  "Nothing to show yet",
+]) {
+  ok(`detects first-run empty-state copy: ${phrase}`, INITIAL_EMPTY_STATE_RE.test(phrase));
+}
+ok(
+  "does not classify a populated screen as empty",
+  !INITIAL_EMPTY_STATE_RE.test("Good morning. You completed 3 of 5 habits today."),
+);
+ok(
+  "does not confuse a real collection heading with an empty state",
+  !INITIAL_EMPTY_STATE_RE.test("Habit Tracker • 5 active habits"),
+);
 
 // ── parsing ──────────────────────────────────────────────────────────────────
 
