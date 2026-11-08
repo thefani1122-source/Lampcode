@@ -254,8 +254,8 @@ check(
 // The row has to agree with the gates, not with the model's summary.
 check(
   "a failing gate is not recorded as success",
-  build.includes("const buildIncomplete = gatesFailed || pageUnverified || typesUnverified") &&
-    build.includes("status: buildIncomplete ? \"completed\" : \"success\""),
+  /const buildIncomplete =\s*gatesFailed \|\| pageUnverified \|\| typesUnverified/.test(build) &&
+    build.includes('status: buildIncomplete ? "completed" : "success"'),
 );
 check(
   "missing or unavailable mandatory page/type gates are not success",
