@@ -1679,11 +1679,12 @@ export function expandUserPrompt(prompt: string): string {
   const trimmed = prompt.trim();
   const matched = APP_TYPE_EXPANSIONS.filter((e) => e.match.test(trimmed));
   const universalSeedRule =
-    "━━ UNIVERSAL SEED DATA MANDATE (NEVER LAUNCH EMPTY) ━━\n" +
-    "- On initial load, the app MUST NEVER open with an empty state, 0 items, $0.00, empty tables, or 'No items yet'.\n" +
-    "- ALWAYS initialize component state or localStorage with 5–8 rich, realistic domain-specific sample records (e.g. `const [items, setItems] = useState(() => loadSaved() ?? INITIAL_SAMPLE_DATA)`).\n" +
-    "- Summary counters, KPI metrics, progress bars, charts, and lists must be immediately populated, alive, and visually engaging on first load.\n" +
-    "- Empty states should ONLY show if the user explicitly deletes every single item or a search/filter returns 0 matches.";
+    "━━ UNIVERSAL FIRST-RUN CONTENT CONTRACT ━━\n" +
+    "- Unless the user explicitly asks for a blank/empty first launch, a new frontend or mock-data app must open with 5–8 realistic, domain-specific records, populated metrics and a meaningful primary screen. Never ship 'No items yet' as the default first-run experience.\n" +
+    "- For localStorage-backed data, distinguish NEVER INITIALISED from INTENTIONALLY EMPTY. Do not use `JSON.parse(localStorage.getItem(KEY) || '[]')` or `saved ?? INITIAL_SAMPLE_DATA` as the only initializer: an already-saved empty array suppresses the seed forever. Use a per-app seed-version marker. If the marker is absent, preserve non-empty saved data but replace missing/empty initial data with INITIAL_SAMPLE_DATA, persist it, then set the marker. Once the marker exists, preserve a user's deliberate empty array after they delete every record; never reseed on each reload.\n" +
+    "- Keep seed records realistic and internally consistent; calculate KPIs/charts from the same records rather than hardcoded unrelated numbers. Add, edit, delete, filter and summary counts must all operate on the same source of truth.\n" +
+    "- For a real backend/database app, do not write fake rows into the user's database or pretend mock data is live data. Use the real API as the source of truth; show a truthful loading/error/empty state when the real service has no records or is unavailable.\n" +
+    "- Empty states are for a user-deleted collection, a genuinely empty connected backend, or an explicit user request—not the default state of a new mock/client-side app.";
 
   if (matched.length === 0) {
     return `${trimmed}\n\nBuild the complete, fully-functional version:\n${universalSeedRule}`;
@@ -2210,8 +2211,9 @@ export class PromptBuilder {
         // FOLLOW-UP builds, where it was never sent. It lives here now because
         // this block is always present, and this is the one failure where being
         // slightly wordy twice is cheaper than being right once.
-        "- PRE-POPULATE REALISTIC INITIAL SEED DATA (MANDATORY): A brand-new app MUST NEVER launch with an empty state, 0 items, $0.00, or 'No items yet'. Pre-load 5–8 rich, realistic domain records as default initial state/localStorage. All cards, metrics, and progress bars must render immediately with active data on first load. The empty state should ONLY appear if the user manually deletes every item.\n" +
-        "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route. (This does NOT forbid initial seed data for client-side state apps, which MUST always have rich pre-populated items).\n" +
+        "- FIRST-RUN CONTENT CONTRACT: Unless the user explicitly requests an empty first launch, a new frontend/mock-data app must render with 5–8 realistic records and meaningful populated metrics. For localStorage, use a versioned first-run marker: if the marker is absent, seed when the saved collection is missing OR empty, persist the records, then set the marker; once marked, preserve a user's deliberately empty [] after they delete everything. Never reseed on every reload. Do not rely only on saved ?? SAMPLE because [] is not null.\n" +
+        "- REAL BACKEND DATA IS DIFFERENT: never insert fake sample rows into the user's real database or silently replace a failing API with localStorage/demo mode. Use the real API as source of truth; report a real empty/error state honestly when the backend has no records or is unavailable.\n" +
+        "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route.\n" +
         "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
         "the backend's own output and check_page shows the browser's. The preview always runs " +
         "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
@@ -2229,8 +2231,12 @@ export class PromptBuilder {
         "touching. old_string must match exactly and appear exactly once.\n" +
         "- list_files(): what the project actually contains right now.\n" +
         "- read_file(path): one file's real current contents.\n" +
-        "- check_page(): opens the running app in a real browser and tells you what it " +
-        "actually rendered, including console errors.\n" +
+        "- check_page(): opens every declared app route in a real browser and tells you what it " +
+        "actually rendered, including console errors, failed API requests, and obvious empty " +
+        "first-run placeholders such as 'No habits yet' where sample data should appear.\n" +
+        "- look_at_page(): captures the current home-screen screenshot and attaches it to your " +
+        "next model turn when this model supports image input. Use it for visual review; if it " +
+        "says vision is unavailable, do not retry and continue with the DOM/render evidence.\n" +
         "- check_types(): runs tsc against the real project.\n" +
         "- run_tests(): runs the project's vitest suite and reports which tests failed and " +
         "why. The only tool that tells you the code is CORRECT rather than merely rendering " +
@@ -2306,7 +2312,13 @@ export class PromptBuilder {
         "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
-        "check_page tells you something but not why, call read_logs.\n" +
+        "check_page reports an initial empty-state placeholder, treat it as a real product " +
+        "defect: populate the first-run client-side state (or correct the real backend flow), " +
+        "then re-check. If check_page tells you something but not why, call read_logs.\n" +
+        "4a. After the first successful render, call look_at_page exactly once when image input " +
+        "is available. Inspect hierarchy, spacing, contrast, alignment, clipping and visual " +
+        "consistency; fix visible issues and re-run the relevant checks. If the tool refuses " +
+        "because the model cannot accept images, do not retry it.\n" +
         "5. Call check_types. The dev server does NOT type-check — Vite strips types and " +
         "serves the file, so a type error renders a perfectly normal-looking page and ships " +
         "broken. check_page cannot see it. It costs one round; run it before you finish, " +
