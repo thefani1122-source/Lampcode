@@ -143,6 +143,25 @@ const blank = parseRenderReport(line({ routes: [{ route: "/x", blank: true, erro
 ok("a blank page is not ok", blank?.routes[0]?.ok === false);
 ok("allRoutesOk is false when one route is blank", allRoutesOk(blank!) === false);
 
+const emptyFirstRun = parseRenderReport(line({
+  routes: [{
+    route: "/",
+    blank: false,
+    errors: [],
+    text: "Habit Tracker Add Habit No habits yet Create your first habit",
+    emptyState: "No habits yet",
+  }],
+  unreachable: [],
+}));
+ok("a visible first-run empty state is not a page pass", emptyFirstRun?.routes[0]?.ok === false);
+ok("the empty-state copy survives parsing", emptyFirstRun?.routes[0]?.emptyState === "No habits yet");
+ok("allRoutesOk rejects the empty first-run screen", allRoutesOk(emptyFirstRun!) === false);
+ok(
+  "the model is told to populate the empty first-run screen",
+  formatRenderForAgent(emptyFirstRun!).includes("initial empty state") &&
+    formatRenderForAgent(emptyFirstRun!).includes("No habits yet"),
+);
+
 const overlay = parseRenderReport(
   line({ routes: [{ route: "/", blank: false, errors: [], text: "", overlay: "Failed to resolve import ./Foo" }], unreachable: [] }),
 );
@@ -240,6 +259,7 @@ ok("a removed route is reported", formatRenderForAgent(twoGood, added).includes(
 ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.launch\(/g) ?? []).length === 1);
 ok("the script resets errors per route", RENDER_SCRIPT.includes("errors = []"));
 ok("the script prints the marker", RENDER_SCRIPT.includes("LAMPCODE_RENDER:"));
+ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.includes("INITIAL_EMPTY_STATE_RE"));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
 
 
