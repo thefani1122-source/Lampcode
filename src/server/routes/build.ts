@@ -5230,7 +5230,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           checkTypes: outcome.checkTypes,
           checkTests: outcome.checkTests,
           turnsExhausted: outcome.turnsExhausted,
-          budgetExhausted: outcome.budgetExhausted,
+          budgetExhausted: outcome.budgetExhausted === true,
           wiring: wiringTally,
           wiringRepaired,
           schemaApply,
