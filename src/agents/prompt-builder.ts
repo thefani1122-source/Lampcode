@@ -238,7 +238,8 @@ Something a reasonable person could later point at and say "you did this" or "yo
 - "Drag a card between columns" — yes.
 - "Shows a 3D globe that the user can see" — yes. A visual thing the user named is a
   requirement, not decoration.
-- "Make it beautiful", "production quality", "clean code" — NO. Not checkable, leave out.
+- Generic adjectives alone ("make it beautiful", "production quality", "clean code") are not requirements verbatim. HOWEVER, do not silently discard the user's quality intent. Translate visual-quality language into a small set of observable visual criteria appropriate to the requested product, without inventing domain features: a deliberate visual hierarchy; coherent typography, spacing and colour tokens; a purposeful screen composition; readable contrast; and layouts that remain usable at desktop and mobile widths. If the user specifically asks for card-based login, a sidebar, a dense data table or another visual pattern, preserve that exact request as a criterion.
+- Visual quality is not proven by finding JSX or CSS classes alone. Require rendered-browser evidence for layout, responsiveness and visibility; if no trustworthy visual/browser evidence exists, mark the visual criterion "unverified" rather than dropping it or guessing.
 
 ## RULES
 - Take them from what the person actually wrote. Do not add features they did not ask for,
@@ -413,6 +414,39 @@ Before writing a single line of code, understand exactly what you are building:
 Understand the business model — it directly determines your RLS policies, data isolation strategy, and access control architecture. A SaaS with teams needs completely different security than a personal productivity app. Know this first.
 
 Think deeply before building. Always choose the technically better option. If the user specifies anything explicitly — a feature, a color, a design system, a library — follow it exactly, no deviation. When you see a better approach, build the better approach AND include what the user asked for.
+
+━━ PRODUCT UI DESIGN CONTRACT — REQUIRED ━━
+Before writing components, establish a coherent, product-specific design direction and apply it consistently across EVERY requested screen. Do not jump from the feature list straight into generic JSX.
+
+Your internal design brief must decide:
+- Product identity and mood; one intentional palette with semantic colours and accessible contrast.
+- Typography roles and scale (display/title/section/body/label/metadata), spacing rhythm, border/radius/shadow treatment, and density.
+- Application shell and information architecture: decide whether this product needs a sidebar, top navigation, both, or a focused single-screen layout. Multi-section workspaces need persistent, understandable navigation; do not omit navigation just to save code.
+- A distinct composition for each requested route: what is the primary task, what is the dominant content, what is secondary, and what belongs below the fold.
+- Desktop, tablet and mobile behaviour at 1440px, 1024px, 768px and 390px. No horizontal overflow, clipped controls or desktop-only layouts.
+
+AUTHENTICATION SCREEN DEFAULT:
+- Unless the user explicitly requests a full-bleed/split-screen authentication design, use a focused, centered card/panel for login, signup and password reset.
+- The form panel should remain content-width (normally max-width 420–460px), with deliberate padding and clear visual grouping. The page background may fill the viewport; the form itself must NOT stretch to fill the screen.
+- Include product identity, a clear heading, concise supporting text, properly labelled fields, visible focus states and clear validation/error feedback. Only add optional links or controls when they actually work.
+
+DASHBOARD / WORKSPACE DEFAULT:
+- A dashboard is not a heading followed by a row of generic KPI cards. Compose a real workspace: appropriate navigation, a clear page title and primary action, useful summary metrics where relevant, and the product's main working surface (for example a task table/board, recent activity, calendar, chart or records list).
+- Balance information density and whitespace intentionally. Avoid a mostly empty canvas, repetitive equal-weight cards, arbitrary icon colours, and one-size-fits-all layouts.
+- Use domain-specific content and hierarchy. The most important action and most useful information should be visually obvious without scanning the whole page.
+- Choose navigation and content patterns from the actual number of routes and user workflows; do not force a sidebar onto a focused single-screen tool.
+
+IMPLEMENTATION:
+- Use the existing Tailwind v4, Radix, lucide-react and project dependencies where appropriate; do not invent or import packages that are not installed.
+- Define app-specific theme tokens in src/theme.css and import it AFTER the baked src/styles.css when the app needs a custom palette. Do not overwrite template-owned files.
+- Prefer a small reusable set of primitives (Button, Input, Card, Badge, PageHeader, AppShell, Sidebar/TopNav, DataTable/Board) over inconsistent one-off markup. Reuse them across routes.
+- Use semantic landmarks and heading order; meet WCAG AA text contrast, visible keyboard focus, labelled controls and touch-friendly mobile targets.
+- Make loading, error, empty and populated states visually distinct. For a live backend, never invent records to make the dashboard look populated; use a designed honest empty state when the real database is empty.
+
+VISUAL SELF-REVIEW:
+- Before completion, inspect the rendered app at desktop AND mobile widths. Fix visible hierarchy, alignment, spacing, contrast, clipping and overflow defects.
+- A successful compile, non-empty DOM or working button is NOT evidence of good visual design. If image-based review is unavailable, use browser/DOM measurements and state clearly that subjective visual review remains unverified; never claim it passed.
+- Do not finish with a generic white page containing only a few cards when the product needs a real dashboard/workspace.
 
 ━━ DESIGN RULES ━━
 - Choose colors that MATCH the app's purpose and mood
@@ -1896,10 +1930,12 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("frontend-sandbox");
   }
 
-  // Core quality skills — always for any frontend/fullstack build
+  // Core implementation AND product-design skills — always for any frontend/fullstack build.
+  // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
   if (opts?.buildType) {
     skillsToLoad.add("react-production");
     skillsToLoad.add("typescript-strict");
+    skillsToLoad.add("product-ui-design");
   }
 
   // DB/RLS skills — only when the prompt implies a database or auth

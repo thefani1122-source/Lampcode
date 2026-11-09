@@ -41,6 +41,21 @@
  * re-check of an app that has not changed should cost almost nothing.
  */
 
+/** Objective layout facts collected in a real browser at one viewport. */
+export type ViewportLayout = {
+  width: number;
+  height: number;
+  scrollWidth: number;
+  horizontalOverflow: number;
+  mainCount: number;
+  navCount: number;
+  asideCount: number;
+  headingCount: number;
+  passwordFormWidth: number | null;
+  bodyFontFamily: string;
+  bodyBackground: string;
+};
+
 /** One route, as the browser found it. */
 export type RouteRender = {
   route: string;
@@ -58,6 +73,10 @@ export type RouteRender = {
   text: string;
   /** Visible first-run empty-state copy that should have been populated with sample data. */
   emptyState?: string;
+  /** Browser-measured layout at desktop and mobile widths. */
+  layout?: { desktop?: ViewportLayout; mobile?: ViewportLayout };
+  /** Objective responsive/auth-layout defects; subjective aesthetics remain a separate review. */
+  layoutIssues?: string[];
 };
 
 export type RenderReport = {
@@ -166,6 +185,30 @@ let browser
 try {
   browser = await chromium.launch()
   const page = await browser.newPage()
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  // Record objective layout facts: these cannot judge visual taste, but they
+  // catch mobile overflow and full-width authentication forms that DOM text
+  // checks never see.
+  const inspectLayout = () => page.evaluate(() => {
+    const password = document.querySelector('input[type="password"]')
+    const form = password ? (password.closest("form") || password) : null
+    const formWidth = form ? Math.round(form.getBoundingClientRect().width) : null
+    const bodyStyle = getComputedStyle(document.body)
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      horizontalOverflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+      mainCount: document.querySelectorAll("main").length,
+      navCount: document.querySelectorAll("nav").length,
+      asideCount: document.querySelectorAll("aside").length,
+      headingCount: document.querySelectorAll("h1").length,
+      passwordFormWidth: formWidth,
+      bodyFontFamily: bodyStyle.fontFamily.slice(0, 120),
+      bodyBackground: bodyStyle.backgroundColor,
+    }
+  })
 
   // Collected per navigation: reset before each goto so one broken route does
   // not smear its errors across every route checked after it.
@@ -188,6 +231,7 @@ try {
     errors = []
     failedRequests = []
     try {
+      await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(base + route, { waitUntil: "networkidle", timeout: 12000 })
       await page.waitForTimeout(400) // let async errors surface after load
 
@@ -216,6 +260,12 @@ try {
         return { text: fullText.slice(0, cap), emptyState }
       }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source, REQUIRE_INITIAL_CONTENT)
 
+      const desktopLayout = await inspectLayout()
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.waitForTimeout(120)
+      const mobileLayout = await inspectLayout()
+      await page.setViewportSize({ width: 1440, height: 900 })
+
       out.routes.push({
         route,
         blank,
@@ -224,6 +274,7 @@ try {
         failedRequests,
         text: pageContent.text,
         emptyState: pageContent.emptyState || undefined,
+        layout: { desktop: desktopLayout, mobile: mobileLayout },
       })
     } catch (err) {
       out.unreachable.push(route)
@@ -295,15 +346,54 @@ export function parseRenderReport(stdout: string): RenderReport | null {
         return [{ url, status }];
       });
 
+    const rawLayout = typeof e["layout"] === "object" && e["layout"] !== null
+      ? e["layout"] as Record<string, unknown>
+      : null;
+    const parseViewport = (value: unknown): ViewportLayout | undefined => {
+      if (typeof value !== "object" || value === null) return undefined;
+      const v = value as Record<string, unknown>;
+      const number = (key: string): number | null =>
+        typeof v[key] === "number" && Number.isFinite(v[key]) ? v[key] as number : null;
+      const width = number("width"), height = number("height"), scrollWidth = number("scrollWidth");
+      const horizontalOverflow = number("horizontalOverflow"), mainCount = number("mainCount");
+      const navCount = number("navCount"), asideCount = number("asideCount"), headingCount = number("headingCount");
+      if ([width, height, scrollWidth, horizontalOverflow, mainCount, navCount, asideCount, headingCount].some((n) => n === null)) return undefined;
+      return {
+        width: width!, height: height!, scrollWidth: scrollWidth!, horizontalOverflow: horizontalOverflow!,
+        mainCount: mainCount!, navCount: navCount!, asideCount: asideCount!, headingCount: headingCount!,
+        passwordFormWidth: number("passwordFormWidth"),
+        bodyFontFamily: typeof v["bodyFontFamily"] === "string" ? v["bodyFontFamily"].slice(0, 120) : "",
+        bodyBackground: typeof v["bodyBackground"] === "string" ? v["bodyBackground"].slice(0, 80) : "",
+      };
+    };
+    const desktop = rawLayout ? parseViewport(rawLayout["desktop"]) : undefined;
+    const mobile = rawLayout ? parseViewport(rawLayout["mobile"]) : undefined;
+    const layoutIssues: string[] = [];
+    if (mobile && mobile.horizontalOverflow > 8) {
+      layoutIssues.push(`mobile layout overflows horizontally by ${mobile.horizontalOverflow}px at ${mobile.width}px`);
+    }
+    if (desktop?.passwordFormWidth !== null && desktop?.passwordFormWidth !== undefined && desktop.passwordFormWidth > 560) {
+      layoutIssues.push(`authentication form is too wide on desktop (${desktop.passwordFormWidth}px; expected a constrained card/panel no wider than 560px)`);
+    }
+    if (mobile?.passwordFormWidth !== null && mobile?.passwordFormWidth !== undefined && mobile.passwordFormWidth > 370) {
+      layoutIssues.push(`authentication form has no safe mobile side margin (${mobile.passwordFormWidth}px at ${mobile.width}px)`);
+    }
+    const layout = desktop || mobile ? {
+      ...(desktop ? { desktop } : {}),
+      ...(mobile ? { mobile } : {}),
+    } : undefined;
+
     routes.push({
       route,
-      ok: !blank && !overlay && !emptyState && errors.length === 0 && failedRequests.length === 0,
+      ok: !blank && !overlay && !emptyState && errors.length === 0 && failedRequests.length === 0 && layoutIssues.length === 0,
       blank,
       errors,
       ...(emptyState ? { emptyState } : {}),
       ...(overlay ? { overlay } : {}),
       failedRequests,
       text,
+      ...(layout ? { layout } : {}),
+      ...(layoutIssues.length ? { layoutIssues } : {}),
     });
   }
 
@@ -417,9 +507,8 @@ function describeProblem(r: RouteRender): string {
   if (r.overlay) return `Vite error overlay: ${r.overlay}`;
   const parts: string[] = [];
   if (r.errors.length > 0) parts.push(`console error: ${r.errors.join("; ")}`);
-  // Said last and said plainly: in a generated app a request its own backend
-  // refuses is usually the whole reason a feature "does nothing".
   if (r.failedRequests.length > 0) parts.push(`request failed: ${describeRequests(r)}`);
+  if (r.layoutIssues?.length) parts.push(...r.layoutIssues);
   return parts.join(" · ");
 }
 
@@ -469,6 +558,19 @@ export function formatRenderForAgent(report: RenderReport, previous?: RenderRepo
     for (const r of working) {
       lines.push(r.text ? `  ${r.route} — "${r.text}"` : `  ${r.route} — renders, but has NO text on it at all`);
     }
+  }
+
+  // Report browser-measured facts without pretending they are a subjective aesthetic score.
+  for (const r of report.routes) {
+    const d = r.layout?.desktop;
+    const m = r.layout?.mobile;
+    if (!d && !m) continue;
+    const summary = [
+      d ? `desktop ${d.width}px: overflow=${d.horizontalOverflow}px, main=${d.mainCount}, nav=${d.navCount}, aside=${d.asideCount}, h1=${d.headingCount}${d.passwordFormWidth === null ? "" : `, auth-form=${d.passwordFormWidth}px`}` : "",
+      m ? `mobile ${m.width}px: overflow=${m.horizontalOverflow}px${m.passwordFormWidth === null ? "" : `, auth-form=${m.passwordFormWidth}px`}` : "",
+    ].filter(Boolean).join("; ");
+    lines.push(`  ${r.route} layout audit: ${summary}`);
+    for (const issue of r.layoutIssues ?? []) lines.push(`    UI FIX REQUIRED: ${issue}`);
   }
 
   // The point of carrying the text back. A page can render, type-check and
