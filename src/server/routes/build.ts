@@ -43,7 +43,7 @@ import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
-import { getUserSupabasePreviewCreds, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
+import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
@@ -1257,9 +1257,10 @@ export async function runFastBuild(
     let ownSupabaseConnected = false;
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
-      // If the user has connected their OWN Supabase (via MCP), point this
+      // If the user has connected their OWN Supabase (via MCP or integration), point this
       // project's preview at THEIR project; else fall back to the shared
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
+      let isConnected = await isUserSupabaseConnected(userId).catch(() => false);
       let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
 
       // No database of their own, and a full-stack app is about to be built on
@@ -1275,7 +1276,7 @@ export async function runFastBuild(
       // socket there is nobody to ask, and consuming the single ask on a
       // question that was never shown would mean the person is never asked at
       // all — a gate that silently spends itself is worse than no gate.
-      if (!userSupa && server && shouldAskForDatabase(userId)) {
+      if (!isConnected && !userSupa && server && shouldAskForDatabase(userId)) {
         const { question, options } = buildDatabaseQuestion();
         const toolCallId = `db-gate:${randomUUID()}`;
         const answer = await new Promise<string | null>((resolve) => {
@@ -1315,12 +1316,13 @@ export async function runFastBuild(
         }
         const intent = interpretDatabaseAnswer(answer);
         if (intent === "connect") {
+          isConnected = await isUserSupabaseConnected(userId).catch(() => false);
           userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
         }
         console.log(
-          `[build] db gate project=${projectId} intent=${intent} connected=${userSupa !== null}`,
+          `[build] db gate project=${projectId} intent=${intent} connected=${userSupa !== null || isConnected}`,
         );
-        if (intent === "connect" && !userSupa) {
+        if (intent === "connect" && !userSupa && !isConnected) {
           server?.thinking(sessionId, {
             sessionId,
             text:
@@ -1331,7 +1333,7 @@ export async function runFastBuild(
       }
 
       setProjectPreviewEnv(projectId, userSupa);
-      ownSupabaseConnected = userSupa !== null;
+      ownSupabaseConnected = isConnected || userSupa !== null;
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.

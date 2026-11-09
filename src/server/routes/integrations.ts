@@ -552,27 +552,28 @@ async function loadSupabaseIntegration(userId: string) {
 }
 
 /**
+ * Check whether the user has connected a Supabase database, via either
+ * an integration row (service key or PAT) or an active MCP connection.
+ */
+export async function isUserSupabaseConnected(userId: string): Promise<boolean> {
+  const [integ, mcpAuth] = await Promise.all([
+    loadSupabaseIntegration(userId).catch(() => null),
+    getUserSupabaseMcpAuth(userId).catch(() => null),
+  ]);
+  return integ !== null || mcpAuth !== null;
+}
+
+/**
  * The user's own Supabase project URL + anon key (decrypted) for injecting into
- * a preview, when they've connected via MCP. anon key is public/RLS-safe. Null
- * if not connected or the anon key wasn't resolved.
+ * a preview, when they've connected via MCP or integration. Null if not
+ * connected or cannot be resolved.
  */
 export async function getUserSupabasePreviewCreds(
   userId: string,
 ): Promise<{ url: string; anonKey: string; serviceKey?: string } | null> {
   const row = await loadSupabaseIntegration(userId);
-  if (!row) return null;
-  const cfg = row.config;
-  if (!cfg.supabaseUrl || !cfg.encryptedAnonKey || !cfg.encryptedAnonKeyIv || !cfg.encryptedAnonKeyTag) {
-    return null;
-  }
-  try {
-    const anonKey = decrypt({
-      encrypted: cfg.encryptedAnonKey,
-      iv: cfg.encryptedAnonKeyIv,
-      tag: cfg.encryptedAnonKeyTag,
-    });
-    // Service key (RLS-bypass) only if the user connected via the service-key
-    // flow. Backend-only — never returned to the frontend.
+  if (row) {
+    const cfg = row.config;
     let serviceKey: string | undefined;
     if (cfg.encryptedServiceKey && cfg.encryptedServiceKeyIv && cfg.encryptedServiceKeyTag) {
       try {
@@ -583,11 +584,43 @@ export async function getUserSupabasePreviewCreds(
         });
       } catch { /* ignore */ }
     }
-    return { url: cfg.supabaseUrl, anonKey, ...(serviceKey ? { serviceKey } : {}) };
-  } catch (err) {
-    logger.warn({ userId, err }, "Failed to decrypt user Supabase anon key");
-    return null;
+
+    if (cfg.supabaseUrl && cfg.encryptedAnonKey && cfg.encryptedAnonKeyIv && cfg.encryptedAnonKeyTag) {
+      try {
+        const anonKey = decrypt({
+          encrypted: cfg.encryptedAnonKey,
+          iv: cfg.encryptedAnonKeyIv,
+          tag: cfg.encryptedAnonKeyTag,
+        });
+        return { url: cfg.supabaseUrl, anonKey, ...(serviceKey ? { serviceKey } : {}) };
+      } catch (err) {
+        logger.warn({ userId, err }, "Failed to decrypt user Supabase anon key");
+      }
+    }
+
+    // Direct service-role key fallback if anon key is not stored
+    if (cfg.supabaseUrl && serviceKey) {
+      return { url: cfg.supabaseUrl, anonKey: serviceKey, serviceKey };
+    }
   }
+
+  // Also check MCP connection
+  const mcpAuth = await getUserSupabaseMcpAuth(userId).catch(() => null);
+  if (mcpAuth) {
+    try {
+      const creds = await fetchSupabaseProjectCreds(mcpAuth).catch(() => null);
+      if (creds?.url && creds?.anonKey) {
+        return { url: creds.url, anonKey: creds.anonKey };
+      }
+      if (mcpAuth.projectRef) {
+        return { url: `https://${mcpAuth.projectRef}.supabase.co`, anonKey: creds?.anonKey ?? "" };
+      }
+    } catch (err) {
+      logger.warn({ userId, err }, "Failed to resolve Supabase project creds from MCP auth");
+    }
+  }
+
+  return null;
 }
 
 /**
