@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { eq } from "drizzle-orm";
 import { AppError } from "../server/middleware/error-handler.js";
+import { logger } from "../server/logger.js";
 import { getSupabaseAdmin } from "./supabase-server.js";
 import { db } from "../db/client.js";
 import { user as userTable } from "../db/schema.js";
@@ -39,6 +40,10 @@ export const requireAuth: MiddlewareHandler = createMiddleware(async (c, next) =
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
   if (error || !user || !user.email) {
+    logger.warn(
+      { error: error?.message, hasUser: !!user, hasEmail: !!user?.email },
+      "[auth] Token verification rejected by Supabase",
+    );
     throw new AppError(401, "Invalid or expired token", "UNAUTHORIZED");
   }
 
