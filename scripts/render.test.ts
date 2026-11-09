@@ -189,6 +189,37 @@ const overlay = parseRenderReport(
 );
 ok("a Vite overlay is not ok", overlay?.routes[0]?.ok === false);
 
+const authLayoutReport = parseRenderReport(line({
+  routes: [{
+    route: "/login",
+    blank: false,
+    errors: [],
+    text: "Sign in",
+    layout: {
+      desktop: { width: 1440, height: 900, scrollWidth: 1440, horizontalOverflow: 0, mainCount: 1, navCount: 0, asideCount: 0, headingCount: 1, passwordFormWidth: 900, bodyFontFamily: "Inter", bodyBackground: "rgb(248, 250, 252)" },
+      mobile: { width: 390, height: 844, scrollWidth: 412, horizontalOverflow: 22, mainCount: 1, navCount: 0, asideCount: 0, headingCount: 1, passwordFormWidth: 390, bodyFontFamily: "Inter", bodyBackground: "rgb(248, 250, 252)" },
+    },
+  }],
+  unreachable: [],
+}))!;
+ok("a stretched desktop login form fails the layout gate", authLayoutReport.routes[0]?.ok === false);
+ok("mobile horizontal overflow fails the layout gate", authLayoutReport.routes[0]?.layoutIssues?.some((x) => x.includes("overflows horizontally")) === true);
+ok("a full-width desktop password form is specifically identified", authLayoutReport.routes[0]?.layoutIssues?.some((x) => x.includes("authentication form is too wide")) === true);
+ok("mobile form edge-to-edge layout is specifically identified", authLayoutReport.routes[0]?.layoutIssues?.some((x) => x.includes("safe mobile side margin")) === true);
+ok("layout findings are passed back to the agent", formatRenderForAgent(authLayoutReport).includes("UI FIX REQUIRED"));
+
+const goodAuthLayout = parseRenderReport(line({
+  routes: [{
+    route: "/login", blank: false, errors: [], text: "Sign in",
+    layout: {
+      desktop: { width: 1440, height: 900, scrollWidth: 1440, horizontalOverflow: 0, mainCount: 1, navCount: 0, asideCount: 0, headingCount: 1, passwordFormWidth: 440, bodyFontFamily: "Inter", bodyBackground: "rgb(248, 250, 252)" },
+      mobile: { width: 390, height: 844, scrollWidth: 390, horizontalOverflow: 0, mainCount: 1, navCount: 0, asideCount: 0, headingCount: 1, passwordFormWidth: 358, bodyFontFamily: "Inter", bodyBackground: "rgb(248, 250, 252)" },
+    },
+  }],
+  unreachable: [],
+}))!;
+ok("a constrained card-based login layout passes objective checks", goodAuthLayout.routes[0]?.ok === true);
+
 check("text is capped", parseRenderReport(
   line({ routes: [{ route: "/", blank: false, errors: [], text: "x".repeat(5000) }], unreachable: [] }),
 )?.routes[0]?.text.length, MAX_TEXT_CHARS);
@@ -282,6 +313,9 @@ ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.la
 ok("the script resets errors per route", RENDER_SCRIPT.includes("errors = []"));
 ok("the script prints the marker", RENDER_SCRIPT.includes("LAMPCODE_RENDER:"));
 ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.includes("INITIAL_EMPTY_STATE_RE"));
+ok("the browser sweep checks desktop and mobile viewports", RENDER_SCRIPT.includes("width: 1440, height: 900") && RENDER_SCRIPT.includes("width: 390, height: 844"));
+ok("the browser sweep measures password form width", RENDER_SCRIPT.includes('input[type="password"]') && RENDER_SCRIPT.includes("passwordFormWidth"));
+ok("the browser sweep measures mobile horizontal overflow", RENDER_SCRIPT.includes("horizontalOverflow"));
 ok("the browser sweep receives the app's first-run content policy", RENDER_SCRIPT.includes('process.argv[4] !== "false"'));
 ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
