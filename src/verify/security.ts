@@ -151,14 +151,39 @@ function extractSqlTableNames(re: RegExp, sql: string): string[] {
   return out;
 }
 
-/** Each CREATE POLICY statement, with the table it is on and its body. */
-function policyStatements(sql: string): Array<{ table: string; body: string }> {
-  const out: Array<{ table: string; body: string }> = [];
+/** Roles which can reach a Supabase public-schema table through its client APIs. */
+const CLIENT_POLICY_ROLES = new Set(["public", "anon", "authenticated"]);
+
+/**
+ * A CREATE POLICY with no TO clause applies to PUBLIC. Policies explicitly
+ * restricted to Supabase's internal roles (e.g. supabase_auth_admin) must not
+ * be mistaken for policies exposed to browser/API callers.
+ */
+function policyRoles(body: string): string[] {
+  const match = /\bTO\s+([\s\S]*?)(?=\s+\b(?:USING|WITH\s+CHECK)\b|$)/i.exec(body);
+  if (!match) return ["public"];
+  const roles = match[1]!
+    .split(",")
+    .map((role) => role.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase())
+    .filter(Boolean);
+  return roles.length > 0 ? roles : ["public"];
+}
+
+function isClientPolicy(policy: { roles: string[] }): boolean {
+  return policy.roles.some((role) => CLIENT_POLICY_ROLES.has(role));
+}
+
+/** Each CREATE POLICY statement, with its table, body, and effective target roles. */
+function policyStatements(sql: string): Array<{ table: string; body: string; roles: string[] }> {
+  const out: Array<{ table: string; body: string; roles: string[] }> = [];
   const re = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?([\s\S]*?);/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
     const table = m[2] ? m[2] : m[1];
-    if (table) out.push({ table: table.toLowerCase(), body: m[3] ?? "" });
+    if (table) {
+      const body = m[3] ?? "";
+      out.push({ table: table.toLowerCase(), body, roles: policyRoles(body) });
+    }
   }
   return out;
 }
@@ -191,7 +216,9 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   const policies = policyStatements(allSql);
   const problems: string[] = [];
 
-  for (const { table, body } of policies) {
+  const clientPolicies = policies.filter(isClientPolicy);
+
+  for (const { table, body } of clientPolicies) {
     if (!ALWAYS_TRUE_RE.test(body)) continue;
     if (WRITE_ACTION_RE.test(body)) {
       problems.push(`${table}: a write policy allows everyone (USING (true)) — anyone signed in can change or delete anyone's rows`);
@@ -215,7 +242,7 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   // "anybody who is logged in", which is a fine rule for SELECT on a shared
   // table and never a sufficient one for INSERT on a table that records who
   // did something.
-  for (const { table, body } of policies) {
+  for (const { table, body } of clientPolicies) {
     if (!/\bfor\s+(insert|all)\b/i.test(body)) continue;
     const cols = bodies.get(table) ?? "";
     const owner = cols.match(OWNER_COLUMN_RE)?.[0];
@@ -236,7 +263,7 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
 
   // Owner-scoped tables whose policies never mention who is asking.
   const scopedByTable = new Map<string, boolean>();
-  for (const { table, body } of policies) {
+  for (const { table, body } of clientPolicies) {
     scopedByTable.set(table, (scopedByTable.get(table) ?? false) || /auth\.uid\s*\(\s*\)/i.test(body));
   }
   for (const [table, cols] of bodies) {
@@ -262,12 +289,12 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
 
   return {
     id: "rls-scoping",
-    status: policies.length > 0 ? "pass" : "skip",
+    status: clientPolicies.length > 0 ? "pass" : "skip",
     severity: "critical",
     message:
-      policies.length > 0
-        ? `All ${policies.length} policy/policies scope access to the caller`
-        : "No policies found to check scoping",
+      clientPolicies.length > 0
+        ? `All ${clientPolicies.length} client-facing policy/policies were checked for caller scoping`
+        : "No client-facing policies found to check; internal-role policies are not exposed to anon/authenticated callers",
   };
 }
 
@@ -296,8 +323,10 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const tables = [...new Set(extractSqlTableNames(tableRe, allSql))];
   const rlsOn  = [...new Set(extractSqlTableNames(rlsRe, allSql))];
-  const polOn  = [...new Set(extractSqlTableNames(polRe, allSql))];
-
+  // Only policies available to PostgREST client roles count as a usable client
+  // access policy. A policy granted solely to supabase_auth_admin is an
+  // internal trigger policy, not an open policy for signed-in users.
+  const clientPolicyTables = new Set(policyStatements(allSql).filter(isClientPolicy).map((p) => p.table));
   const noRls = tables.filter((t) => !rlsOn.includes(t));
   if (noRls.length > 0) {
     return {
@@ -309,14 +338,20 @@ export function checkRLS(files: FileTree): SecurityCheck {
     };
   }
 
-  const noPol = rlsOn.filter((t) => !polOn.includes(t));
-  if (noPol.length > 0) {
+  const noClientPolicy = rlsOn.filter((t) => !clientPolicyTables.has(t));
+  if (noClientPolicy.length > 0) {
     return {
       id: "rls-enabled",
-      status: "fail",
-      severity: "high",
+      // RLS with no client-facing policy defaults to DENY. That may make an
+      // app table inaccessible, but it is not an exposure vulnerability and
+      // must not be reported as an open-data security failure.
+      status: "warn",
+      severity: "medium",
       file: sqlFiles[0]?.[0],
-      message: `Tables with RLS enabled but no policies: ${noPol.join(", ")}`,
+      message:
+        `RLS is enabled and no client-facing policy exists for: ${noClientPolicy.join(", ")}. ` +
+        "Postgres will deny anon/authenticated API access to these tables by default. " +
+        "This is appropriate for server-only tables; add narrowly scoped policies only if the browser needs access.",
     };
   }
 
@@ -324,7 +359,7 @@ export function checkRLS(files: FileTree): SecurityCheck {
     id: "rls-enabled",
     status: "pass",
     severity: "high",
-    message: `RLS + policies verified on ${rlsOn.length} table(s)`,
+    message: `RLS + client-facing policies verified on ${clientPolicyTables.size} table(s)`,
   };
 }
 
