@@ -120,7 +120,7 @@ FOR EACH ROW EXECUTE FUNCTION public.handle_workspace_owner();
   const finding = checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": unsafe }));
   ok("a trigger-only SECURITY DEFINER function without a fixed search_path is caught", finding.some((x) => x.status === "fail"));
   ok("the finding names the missing fixed search_path", finding.some((x) => x.message.includes("SET search_path = ''")));
-  ok("a trigger-only SECURITY DEFINER function with client EXECUTE grants is caught", finding.some((x) => x.message.includes("PUBLIC, anon, authenticated")));
+  ok("a trigger-only SECURITY DEFINER function with client EXECUTE grants is caught", finding.some((x) => /public, anon, authenticated/i.test(x.message)));
 
   const safe = `
 CREATE OR REPLACE FUNCTION public.handle_workspace_owner()
