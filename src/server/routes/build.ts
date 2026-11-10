@@ -2865,7 +2865,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         const fixGuidance: string[] = [];
         if (hasRlsIssue) {
           fixGuidance.push(
-            "- FOR RLS ISSUES IN SQL: In the schema/migration file, explicitly add `ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;` and `CREATE POLICY ... ON <table_name> ...` for each table. For owner-scoped data, use `USING (auth.uid() = user_id)` (or matching owner column). For public catalogue data, use `FOR SELECT USING (true)`. A write policy must NEVER be `USING (true)`.",
+            "- FOR RLS ISSUES IN SQL: inspect each policy's TO clause before changing it. No TO clause means PUBLIC; TO anon/authenticated is client-facing. A policy TO supabase_auth_admin is internal-only and may legitimately use WITH CHECK (true) for an auth trigger — preserve that role restriction and do not rewrite it as a user-owned policy. For user-facing owner data, scope reads/writes to auth.uid() and bind created_by/user_id/author_id in INSERT WITH CHECK. RLS enabled with no client policy is default-deny, not a data leak; do not add permissive policies unless the browser actually needs access. A client-facing write policy must never allow every user to write another user's rows.",
           );
         }
         if (hasCallerIdentityIssue) {
