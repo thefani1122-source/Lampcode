@@ -745,7 +745,7 @@ async function writeProjectFilesToDirectory(
   for (const [relativePath, content] of Object.entries(files)) {
     if (
       !relativePath || relativePath.startsWith("/") || relativePath.startsWith("\\") ||
-      relativePath.split(/[\\/]/).includes("..") || relativePath.includes("\\0")
+      relativePath.split(/[\\/]/).includes("..") || relativePath.includes("\0")
     ) {
       logger.warn({ relativePath }, "Skipped unsafe path in recovered project snapshot");
       continue;
