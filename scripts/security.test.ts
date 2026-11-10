@@ -47,9 +47,14 @@ check(
   "fail",
 );
 check(
-  "RLS fails when enabled RLS has no policy",
+  "RLS with no client policy is a deny-all advisory, not an exposure failure",
   checkRLS(tree({ "src/db/schema.sql": "CREATE TABLE notes (id uuid primary key);\nALTER TABLE notes ENABLE ROW LEVEL SECURITY;" })).status,
-  "fail",
+  "warn",
+);
+check(
+  "a table with RLS and only an internal-role policy still denies client API access",
+  checkRLS(tree({ "src/db/schema.sql": "CREATE TABLE notes (id uuid primary key);\nALTER TABLE notes ENABLE ROW LEVEL SECURITY;\nCREATE POLICY auth_only ON notes FOR INSERT TO supabase_auth_admin WITH CHECK (true);" })).status,
+  "warn",
 );
 check(
   "RLS passes a table with RLS and a policy",
@@ -67,6 +72,18 @@ check(
   checkRLS(tree({ "src/db/schema.ts": "pgTable(\"notes\", {})" })).status,
   "warn",
 );
+
+{
+  const sql = `
+CREATE TABLE users (id uuid primary key, email text);
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY auth_service_insert ON users FOR INSERT TO supabase_auth_admin WITH CHECK (true);
+CREATE POLICY users_select_own ON users FOR SELECT USING (auth.uid() = id);
+CREATE POLICY users_update_own ON users FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+`;
+  check("Supabase's internal auth-service insert does not cause a client RLS failure", checkRLS(tree({ "src/db/schema.sql": sql })).status, "pass");
+  check("the internal auth-service insert does not make RLS scoping fail", checkRlsScoping(tree({ "src/db/schema.sql": sql })).status, "pass");
+}
 
 {
   const report = await runSecurityChecks("security-report-test", async () =>
@@ -139,6 +156,31 @@ check(
   "a write policy open to everyone fails",
   checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR ALL USING (true);` })).status,
   "fail",
+);
+
+check(
+  "an explicitly authenticated write policy open to every caller fails",
+  checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR INSERT TO authenticated WITH CHECK (true);` })).status,
+  "fail",
+);
+
+check(
+  "a permissive policy restricted to Supabase's internal auth-admin role is not treated as public",
+  checkRlsScoping(tree({
+    "src/db/schema.sql": OWNED_TABLE +
+      `CREATE POLICY auth_service_insert ON issues FOR INSERT TO supabase_auth_admin WITH CHECK (true);\n` +
+      `CREATE POLICY owner_read ON issues FOR SELECT USING (auth.uid() = user_id);`,
+  })).status,
+  "pass",
+);
+
+check(
+  "an internal auth-admin policy alone is not treated as a client-facing policy",
+  checkRlsScoping(tree({
+    "src/db/schema.sql": OWNED_TABLE +
+      `CREATE POLICY auth_service_insert ON issues FOR INSERT TO supabase_auth_admin WITH CHECK (true);`,
+  })).status,
+  "skip",
 );
 
 check(
