@@ -94,6 +94,12 @@ export const SECURE_GENERATION_CONTRACT = [
 "- Check object ownership, tenant/workspace membership and role on every request. Derive identity from a verified session/token; never trust user_id, owner_id, tenant_id, role, price or permission supplied in a request body or query string.",
 "- For multi-tenant applications, scope every database read and write to the authenticated tenant and verify membership. Prevent cross-tenant access even when an attacker guesses another record ID.",
 "- Use database row-level security where supported and write policies that enforce the intended actor/data relationship. For other databases, enforce equivalent server-side query scoping. Never use an admin/service-role credential as a shortcut around user-level authorization.",
+"POLICY ROLES AND INTERNAL DATABASE FUNCTIONS",
+"- In Postgres, a CREATE POLICY with no TO clause applies to PUBLIC. Policies TO anon or TO authenticated are client-facing and must enforce the caller's row-level permissions.",
+"- A policy explicitly TO supabase_auth_admin (or another internal Supabase role) is not exposed to browser users. Do not treat its WITH CHECK (true) as a public write hole, and do not broaden its TO clause. Inspect the role target before changing a policy.",
+"- RLS enabled with no client-facing policy is default-deny: it prevents API access rather than exposing rows. Treat it as a possible functionality/configuration issue; never add USING (true) simply to make the scanner green.",
+"- SECURITY DEFINER trigger functions run with the function owner's privileges. If only a trigger should invoke one, use a fixed safe search_path (prefer SET search_path = '') and schema-qualified names, and do not grant direct EXECUTE to PUBLIC, anon or authenticated. Preserve and verify the actual trigger.",
+
 "",
 "INPUTS, OUTPUTS AND ABUSE RESISTANCE",
 "- Validate every untrusted input at the server boundary with schemas, strict types, length/range limits and allowlists. Use parameterized queries; never concatenate untrusted input into SQL or shell commands.",
