@@ -741,19 +741,9 @@ check(
   const asks = (what: string, needle: string): void =>
     ok(`the prompt asks for: ${what}`, prompt.includes(needle));
 
-  ok("there is a block about controls doing something", prompt.includes("EVERY CONTROL YOU RENDER MUST DO SOMETHING"));
-  asks("buttons with no handler", "A <button> with no onClick");
-  asks("forms that submit nowhere", "<form> with no onSubmit");
-  asks("links to undeclared routes", "a path no <Route> declares");
-  asks("fetches to endpoints that do not exist", "an endpoint the backend never defines");
-  asks("endpoints nothing calls", "A backend endpoint nothing in the frontend ever calls");
-  asks("placeholder text", '"Coming soon", "TODO"');
-  asks("orphan files and stylesheets", "a stylesheet nothing loads");
-  ok("and it says leaving a feature out is the honest move",
-    prompt.includes("leave it OUT and"));
-  // The reason to ask rather than only check: a failed check costs a repair
-  // dispatch, and the person waits for it.
-  ok("it tells the model the checks run automatically", prompt.includes("measured automatically after you stop"));
+  ok("the prompt prioritizes the requested workflow without scope inflation", prompt.includes("Don't inflate scope with unrelated sections"));
+  ok("the prompt distinguishes sample data from connected production data", prompt.includes("connected production data"));
+  ok("the prompt keeps visible controls tied to the requested workflow", prompt.includes("without adding controls or features the product doesn't need"));
 }
 
 console.log(failures === 0 ? "\nAll wiring cases passed." : `\n${failures} case(s) failed.`);

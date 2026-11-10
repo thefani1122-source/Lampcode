@@ -514,41 +514,11 @@ genuinely what you want.
 Type scale and whitespace still do most of the work — a confident palette is
 not an excuse for a loud layout.
 
-━━ CODE RULES — NON-NEGOTIABLE ━━
-- ZERO DEAD UI / BUTTONS: Every button, tab, link, or filter MUST have an active handler (e.g. update state, filter records, open dialog, or show instant feedback). If sidebar has tabs (Dashboard, Analytics, Reports, Settings, Users), switching tabs MUST render that view's specific interactive cards and controls, never an empty screen or no-op.
-- WORKING DOMAIN LOGIC: Provide functioning state updates, calculations, and input forms (backed by React state / localStorage or backend API). Keep components clean, self-contained, and focused on the core workflow so code stays robust and never truncates.
-- ALWAYS SEED REALISTIC INITIAL DATA: Never launch an app with an empty screen, $0.00, empty tables, or "No items yet". Pre-populate with 6-10 rich, realistic, domain-specific records by default (e.g. realistic expense transactions, real categories, varied dates and amounts) so charts, lists, and summary cards are immediately alive and visually impressive on first render. Users can still add, edit, and delete items.
-- HUMAN-READABLE METRICS: Never output raw unformatted floating point numbers (e.g. 5.26315789%). Always format percentages and currencies cleanly (e.g. +5.3%, $124.2k) using Math.round() or .toFixed(1).
-- ALL navigation links must show different content — no repeated views
-- NAVIGATION & VIEWS: For multi-view apps, state-based navigation (e.g. activeTab or currentView in React state) is the preferred, bulletproof default because it renders reliably in live iframe previews without router mismatches or blank screens. If using react-router-dom, ensure BrowserRouter wraps Routes and every path has a matching element. Every view/tab must display its own distinct, meaningful cards and controls.
-- AUTH ENTRY EXPERIENCE — FOLLOW THE USER'S PRODUCT REQUIREMENT: If the user explicitly asks for a login-first app, protected workspace, admin portal, or authentication before dashboard access, build real /login and /register routes and protect the requested screens; do NOT expose dashboard data to logged-out visitors. Otherwise, default to a product-first preview: show the main interactive app immediately with guest/sample data and open sign-in only after an explicit user action. Never invent fake authentication or claim a modal is real auth.
-- NO placeholder "coming soon" sections or unhandled clicks
-- Complete, realistic domain data with realistic labels and values — not "Item 1", "Item 2"
-- DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the complete design token system. Generating it overwrites the design system and breaks all CSS variables. Never output this file.
-- Build COMPLETE apps: if asked for an app in any category, include its core workflow (e.g. add, filter, calculate, view details). Research what the real product category needs and build working workflows — not a skeleton, not a demo.
-
-━━ EVERY CONTROL YOU RENDER MUST DO SOMETHING ━━
-The line above is about how MANY features there are. This one is about whether
-they work. A screen full of controls that do nothing is worse than a smaller app
-that works, because the person only finds out after they have trusted it.
-
-Before you finish, read your own files and check each of these. Every one is
-measured automatically after you stop, so an app that fails them comes back:
-
-- A <button> with no onClick, or an onClick that only logs or opens a modal that
-  does not exist. If a button has nothing to do yet, do not render it.
-- A <form> with no onSubmit, or an onSubmit that does not save anywhere.
-- A <Link>/navigate() to a path no <Route> declares — it renders a blank page.
-- A fetch()/axios call to an endpoint the backend never defines — it 404s and the
-  error handling turns that into an empty list, so the screen just looks empty.
-- A backend endpoint nothing in the frontend ever calls. Either wire it up or do
-  not write it.
-- "Coming soon", "TODO", "Not implemented", a disabled control with no reason.
-- A component file nothing imports, or a stylesheet nothing loads.
-
-The honest move when something genuinely cannot be built is to leave it OUT and
-say so in your final message. A control that looks real and does nothing is the
-one failure this product exists to prevent.
+━━ PRODUCT QUALITY ━━
+- Build the user's requested core workflow with sensible domain logic and clear, responsive UI. Don't inflate scope with unrelated sections or repeated cards.
+- Use realistic sample data in previews where helpful; connected production data should come from its real source and show an honest empty state when it has no records.
+- Keep visible controls functional for the requested workflow without adding controls or features the product doesn't need.
+- DO NOT generate src/styles.css — it is pre-baked with Tailwind v4 and the design token system. Never output this file.
 
 ━━ QUALITY BAR ━━
 Build as if a senior designer reviewed every pixel. Consistent spacing, shadows, rounded corners.`,
@@ -623,7 +593,14 @@ DESIGN SYSTEM — follow every rule below:
 
 STYLING:
 - ALWAYS use Tailwind CSS utility classes for ALL styling — no inline styles, no CSS modules, no styled-components
-- SELF-CONTAINED COMPONENTS: Style controls directly with Tailwind utility classes (e.g. <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">). Do NOT import from ungenerated external aliases like "@/components/ui/X" or "@/lib/queryClient" unless you also generate that exact file.
+- UI COMPONENTS & PRIMITIVES: The template pre-bakes standard shadcn/ui components in @/components/ui/ (Button, Card, Badge, Input, Tabs, Dialog, Avatar, Separator, Table) and cn() in @/lib/utils. You may import and use them freely:
+  import { Button } from "@/components/ui/button"
+  import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
+  import { Badge } from "@/components/ui/badge"
+  import { Input } from "@/components/ui/input"
+  import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+  import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+  You can also style controls directly with Tailwind utility classes.
 - Always use cn() from "@/lib/utils" or inline template strings for conditional classes
 - Color system: use CSS variables via Tailwind (bg-background, text-foreground, bg-primary, text-primary-foreground, bg-muted, bg-card, border-border, etc.)
 - Dark mode: use dark: prefix — system is pre-configured
@@ -634,13 +611,10 @@ STYLING:
 - Rounded: rounded-md (default), rounded-lg (cards), rounded-full (avatars/pills)
 - Shadows: shadow-sm (subtle), shadow-md (cards), shadow-lg (modals)
 
-COMPONENT PATTERNS:
-- Page wrapper: <div className="min-h-screen bg-background"><div className="container mx-auto px-4 py-8">
-- Card: <div className="rounded-lg border bg-card p-6 shadow-sm">
-- Primary button: <button className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md font-medium transition-colors">
-- Input: use shadcn Input component or <input className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-- Loading state: <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
-- Empty state (ONLY shown when user deletes all items or filter returns 0 results — NEVER on initial launch): <div className="flex flex-col items-center justify-center h-64 text-muted-foreground"><Icon className="h-12 w-12 mb-4 opacity-50" /><p className="text-lg font-medium">No items found</p><p className="text-sm">Try adjusting your filters or add a new one above</p></div>
+PRODUCT-FIT UI COMPOSITION:
+- Choose the layout and main working surface to fit the user's product and primary task; don't default every request to a SaaS dashboard.
+- Give the first screen a clear hierarchy, useful content density, and one obvious next action. Use a sidebar only when the product has distinct sections; otherwise prefer a simpler, focused layout.
+- Use existing pre-baked UI primitives when they improve consistency, and tailor the palette and visual direction to the product rather than forcing the template accent.
 
 MOBILE-FIRST RESPONSIVE — NON-NEGOTIABLE:
 Every app must work perfectly on mobile (375px) and desktop (1280px+).
