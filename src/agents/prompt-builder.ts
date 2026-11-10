@@ -1444,6 +1444,168 @@ const UNIVERSAL_PREVIEW_DATA_CONTRACT =
   "- Keep seed records realistic and internally consistent; calculate KPIs/charts from the same records rather than hardcoded unrelated numbers. Add, edit, delete, filter and summary counts must all operate on the same source of truth.\n" +
   "- For a real backend/database app, do not write fake rows into the user's database or pretend mock data is live data. Use the real API as the source of truth; show a truthful loading/error/empty state when the real service has no records or is unavailable.";
 
+// ── Screenshot / design-reference instruction ────────────────────────────────
+
+const SCREENSHOT_DESIGN_INSTRUCTION = `
+━━ VISUAL REFERENCE / SCREENSHOT INSTRUCTION ━━
+The user has provided a visual reference screenshot or design image.
+Carefully inspect and match its visual design:
+- Layout and structure (header, navigation, hero, cards, sidebars, grids, footer)
+- Color scheme and palette (backgrounds, accents, borders, gradients, contrasts)
+- Typography hierarchy (font sizes, weights, line heights, text alignment)
+- Component styling (border radiuses, shadows, padding, margins, badges, buttons)
+- Recreate the look and feel faithfully while making all interactive elements functional and responsive.
+`;
+
+const AGENT_BUILD_INSTRUCTION = "";
+
+const ANIMATION_DEFAULT_INSTRUCTION = `
+
+ANIMATION SYSTEM — Lampcode E2B template has these pre-installed: Framer Motion, GSAP, Lenis, tsParticles, AOS, Three.js, @react-three/fiber, @splinetool/react-spline. Use them correctly:
+
+━━ SIMPLE TRANSITIONS (Tailwind — always prefer these first) ━━
+- Hover scale: className="transition-transform duration-200 hover:scale-105"
+- Hover lift: className="transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
+- Fade in: className="transition-opacity duration-300 opacity-0 animate-in fade-in"
+- Color transition: className="transition-colors duration-150"
+- Slide up entrance: className="animate-in slide-in-from-bottom-4 duration-500"
+- Ping indicator: className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
+- Pulse skeleton: className="animate-pulse bg-muted rounded"
+- Spin loader: className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"
+
+━━ FRAMER MOTION (for interactive + complex animations) ━━
+import { motion, AnimatePresence } from "framer-motion"
+
+Entrance:
+<motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}>
+
+Stagger children:
+<motion.div variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} initial="hidden" animate="show">
+  <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}>
+
+Hover + tap:
+<motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+
+Scroll reveal:
+<motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }}>
+
+List items (AnimatePresence for add/remove):
+<AnimatePresence>
+  {items.map(item => (
+    <motion.div key={item.id} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+  ))}
+</AnimatePresence>
+
+Modal/drawer:
+<motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
+
+━━ GSAP (for scroll timelines + complex sequences) ━━
+Use gsap.context() inside useLayoutEffect. Do NOT import "@gsap/react" — that is a
+SEPARATE package and it is not installed; useGSAP would fail to resolve. The pattern
+below needs only "gsap", which is installed.
+
+import { useLayoutEffect, useRef } from "react"
+import gsap from "gsap"
+import { ScrollTrigger } from "gsap/ScrollTrigger"
+gsap.registerPlugin(ScrollTrigger)
+
+Scroll-triggered entrance (ctx.revert() cleans up every tween AND its ScrollTrigger):
+const root = useRef<HTMLDivElement>(null)
+useLayoutEffect(() => {
+  const ctx = gsap.context(() => {
+    gsap.from(".reveal", {
+      opacity: 0, y: 40, duration: 0.7, ease: "power3.out",
+      scrollTrigger: { trigger: ".reveal", start: "top 80%" }
+    })
+    gsap.from(".card-item", {
+      opacity: 0, y: 30, stagger: 0.1, duration: 0.5,
+      scrollTrigger: { trigger: ".cards-container", start: "top 75%" }
+    })
+  }, root)
+  return () => ctx.revert()
+}, [])
+// …then <div ref={root}> around the animated section.
+
+Pinned / scrubbed sequence (the backbone of a scroll-driven site):
+gsap.timeline({ scrollTrigger: {
+  trigger: ".chapter", start: "top top", end: "+=1200", scrub: 1, pin: true,
+}}).to(".layer", { yPercent: -30 }).to(".title", { opacity: 0 }, "<")
+
+Every GSAP plugin is free as of GSAP 3.13 and ships in the installed package — import
+them from "gsap/<Name>" and registerPlugin, same as ScrollTrigger:
+  ScrollTrigger   scroll-driven animation, pinning, scrubbing
+  ScrollSmoother  smooth scrolling (requires ScrollTrigger; do not combine with Lenis)
+  SplitText       split headings into chars/words/lines for stagger reveals
+  Flip            animate an element between two layouts/positions
+  Observer        unified wheel/touch/pointer input without wiring listeners
+  MorphSVGPlugin  morph one SVG path into another
+Respect prefers-reduced-motion: skip the animation and set the end state directly.
+
+━━ LENIS (smooth scrolling — add to root component) ━━
+import Lenis from "lenis"
+import { useEffect } from "react"
+useEffect(() => {
+  const lenis = new Lenis()
+  function raf(time: number) { lenis.raf(time); requestAnimationFrame(raf) }
+  requestAnimationFrame(raf)
+  return () => lenis.destroy()
+}, [])
+
+━━ PARTICLES (for hero backgrounds) ━━
+import Particles from "tsparticles"
+// Use preset: "links" | "stars" | "snow" | "confetti"
+
+━━ AOS (simple scroll animations via CSS classes) ━━
+import AOS from "aos"
+import "aos/dist/aos.css"
+useEffect(() => { AOS.init({ duration: 600, once: true }) }, [])
+// On elements: data-aos="fade-up" data-aos-delay="100"
+
+━━ THREE.JS / R3F (for 3D scenes) ━━
+import { Canvas } from "@react-three/fiber"
+import { OrbitControls, Sphere, MeshDistortMaterial } from "@react-three/drei"
+<Canvas><Sphere /><OrbitControls /></Canvas>
+
+━━ SPLINE (for pre-made 3D scenes) ━━
+import Spline from "@splinetool/react-spline"
+<Spline scene="https://prod.spline.design/[scene-id]/scene.splinecode" />
+
+━━ FULL-BLEED BACKGROUND LAYERS (canvas, Three.js, particles) — GET THIS RIGHT ━━
+A fixed full-viewport layer behind the content is the standard way to put a canvas
+behind a page. Done wrong it renders perfectly and is INVISIBLE, and nothing reports
+it: the page loads, the console is clean, types check, tests pass.
+
+The trap: an app shell with position:relative and no z-index is NOT a stacking context,
+so a child at -z-10 resolves against the ROOT — where it paints BEFORE the shell. The
+shell's own opaque background then covers the canvas completely.
+
+NEVER — the canvas is painted, then hidden by the shell's background:
+  <div className="relative min-h-screen bg-[#04080e]">   {/* opaque shell */}
+    <div className="fixed inset-0 -z-10"><canvas /></div> {/* painted under it */}
+
+DO — keep the background ON the layer and lift the content above it:
+  <div className="relative min-h-screen">                 {/* NO background here */}
+    <div className="fixed inset-0 z-0 bg-[#04080e]"><canvas /></div>
+    <main className="relative z-10"> … </main>
+
+Rule: whichever element owns the page background must NOT sit above the canvas. Either
+the background lives on the canvas layer itself, or the shell has no background at all.
+If you write a fixed full-bleed canvas, check the page after and confirm you can SEE it —
+a dark flat page is what this bug looks like.
+
+━━ ABSOLUTE RULES ━━
+- NEVER: style={{ animation: "..." }} — use Tailwind animate-* or Framer Motion
+- NEVER: style={{ transform: "translateX(20px)" }} for static values — use Tailwind translate-*
+- NEVER: style={{ transition: "all 0.3s" }} — use Tailwind transition-* duration-*
+- DO: style={{ transform: \`translateX(\${dynamicValue}px)\` }} — dynamic runtime values only
+- Prefer Tailwind → Framer Motion → GSAP (in that order of complexity)
+- All animations must feel smooth, modern, purposeful — not distracting
+`;
+
+/**
+ * Preserve the user's request and append only product-agnostic preview guidance.
+ * Product-specific requirements are left to the planning pass, not keyword regexes.
+ */
 export function expandUserPrompt(prompt: string): string {
   if (!prompt.trim()) return prompt;
   return prompt + "\n\nBuild the complete, fully-functional version:\n" + UNIVERSAL_PREVIEW_DATA_CONTRACT;
