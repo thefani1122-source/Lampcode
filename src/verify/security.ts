@@ -725,7 +725,7 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
-    checkSecurityDefinerFunctions(files),
+    ...checkSecurityDefinerFunctions(files),
     checkServiceRole(files),
     checkCallerIdentity(files),
     ...checkSecrets(files),
