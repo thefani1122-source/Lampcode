@@ -319,7 +319,6 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
   const rlsRe   = /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
-  const polRe   = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
 
   const tables = [...new Set(extractSqlTableNames(tableRe, allSql))];
   const rlsOn  = [...new Set(extractSqlTableNames(rlsRe, allSql))];
