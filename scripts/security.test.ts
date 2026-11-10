@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  checkSecurityDefinerFunctions,
   blockingSecurityFindings,
   runSecurityChecksSafely,
   runSecurityChecks,
@@ -47,15 +48,36 @@ check(
   "fail",
 );
 check(
-  "RLS fails when enabled RLS has no policy",
+  "RLS with no client policy is a deny-all advisory, not an exposure failure",
   checkRLS(tree({ "src/db/schema.sql": "CREATE TABLE notes (id uuid primary key);\nALTER TABLE notes ENABLE ROW LEVEL SECURITY;" })).status,
-  "fail",
+  "warn",
+);
+check(
+  "a table with RLS and only an internal-role policy still denies client API access",
+  checkRLS(tree({ "src/db/schema.sql": "CREATE TABLE notes (id uuid primary key);\nALTER TABLE notes ENABLE ROW LEVEL SECURITY;\nCREATE POLICY auth_only ON notes FOR INSERT TO supabase_auth_admin WITH CHECK (true);" })).status,
+  "warn",
 );
 check(
   "RLS passes a table with RLS and a policy",
   checkRLS(tree({ "src/db/schema.sql": "CREATE TABLE notes (id uuid primary key);\nALTER TABLE notes ENABLE ROW LEVEL SECURITY;\nCREATE POLICY p ON notes FOR SELECT USING (true);" })).status,
   "pass",
 );
+
+{
+  const qualified = `
+CREATE TABLE public.users (id uuid primary key, user_id uuid);
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY users_read ON public.users FOR SELECT USING (auth.uid() = user_id);
+`;
+  const quoted = `
+CREATE TABLE "public"."users" (id uuid primary key, user_id uuid);
+ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY users_read ON "public"."users" FOR SELECT USING (auth.uid() = user_id);
+`;
+  check("schema-qualified public.users is parsed as users, not public", checkRLS(tree({ "src/db/schema.sql": qualified })).status, "pass");
+  check("quoted schema-qualified public.users is parsed as users, not public", checkRLS(tree({ "src/db/schema.sql": quoted })).status, "pass");
+  check("schema-qualified public.users keeps a correctly scoped client policy", checkRlsScoping(tree({ "src/db/schema.sql": qualified })).status, "pass");
+}
 
 check(
   "no SQL and no schema skips RLS rather than claiming verification",
@@ -67,6 +89,68 @@ check(
   checkRLS(tree({ "src/db/schema.ts": "pgTable(\"notes\", {})" })).status,
   "warn",
 );
+
+{
+  const sql = `
+CREATE TABLE users (id uuid primary key, email text);
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY auth_service_insert ON users FOR INSERT TO supabase_auth_admin WITH CHECK (true);
+CREATE POLICY users_select_own ON users FOR SELECT USING (auth.uid() = id);
+CREATE POLICY users_update_own ON users FOR UPDATE USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+`;
+  check("Supabase's internal auth-service insert does not cause a client RLS failure", checkRLS(tree({ "src/db/schema.sql": sql })).status, "pass");
+  check("the internal auth-service insert does not make RLS scoping fail", checkRlsScoping(tree({ "src/db/schema.sql": sql })).status, "pass");
+}
+
+{
+  const unsafe = `
+CREATE OR REPLACE FUNCTION public.handle_workspace_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  INSERT INTO public.workspace_members (workspace_id, user_id) VALUES (NEW.id, NEW.owner_id);
+  RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER on_workspace_created AFTER INSERT ON public.workspaces
+FOR EACH ROW EXECUTE FUNCTION public.handle_workspace_owner();
+`;
+  const finding = checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": unsafe }));
+  ok("a trigger-only SECURITY DEFINER function without a fixed search_path is caught", finding.some((x) => x.status === "fail"));
+  ok("the finding names the missing fixed search_path", finding.some((x) => x.message.includes("SET search_path = ''")));
+  ok("a trigger-only SECURITY DEFINER function with client EXECUTE grants is caught", finding.some((x) => /public, anon, authenticated/i.test(x.message)));
+
+  const safe = `
+CREATE OR REPLACE FUNCTION public.handle_workspace_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+BEGIN
+  INSERT INTO public.workspace_members (workspace_id, user_id) VALUES (NEW.id, NEW.owner_id);
+  RETURN NEW;
+END;
+$function$;
+REVOKE EXECUTE ON FUNCTION public.handle_workspace_owner() FROM PUBLIC, anon, authenticated;
+CREATE TRIGGER on_workspace_created AFTER INSERT ON public.workspaces
+FOR EACH ROW EXECUTE FUNCTION public.handle_workspace_owner();
+`;
+  check("a trigger-only SECURITY DEFINER function with safe search_path and revoked client EXECUTE passes",
+    checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": safe }))[0]?.status, "pass");
+
+  const invoker = `
+CREATE OR REPLACE FUNCTION public.list_workspace_members()
+RETURNS SETOF public.workspace_members
+LANGUAGE sql
+SECURITY INVOKER
+AS $function$ SELECT * FROM public.workspace_members; $function$;
+`;
+  check("SECURITY INVOKER functions are not incorrectly flagged",
+    checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": invoker }))[0]?.status, "pass");
+}
 
 {
   const report = await runSecurityChecks("security-report-test", async () =>
@@ -139,6 +223,31 @@ check(
   "a write policy open to everyone fails",
   checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR ALL USING (true);` })).status,
   "fail",
+);
+
+check(
+  "an explicitly authenticated write policy open to every caller fails",
+  checkRlsScoping(tree({ "src/db/schema.sql": OWNED_TABLE + `CREATE POLICY p ON issues FOR INSERT TO authenticated WITH CHECK (true);` })).status,
+  "fail",
+);
+
+check(
+  "a permissive policy restricted to Supabase's internal auth-admin role is not treated as public",
+  checkRlsScoping(tree({
+    "src/db/schema.sql": OWNED_TABLE +
+      `CREATE POLICY auth_service_insert ON issues FOR INSERT TO supabase_auth_admin WITH CHECK (true);\n` +
+      `CREATE POLICY owner_read ON issues FOR SELECT USING (auth.uid() = user_id);`,
+  })).status,
+  "pass",
+);
+
+check(
+  "an internal auth-admin policy alone is not treated as a client-facing policy",
+  checkRlsScoping(tree({
+    "src/db/schema.sql": OWNED_TABLE +
+      `CREATE POLICY auth_service_insert ON issues FOR INSERT TO supabase_auth_admin WITH CHECK (true);`,
+  })).status,
+  "skip",
 );
 
 check(
@@ -406,6 +515,14 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
 }
 
 
+{
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("every security-aware code agent is told CREATE POLICY defaults to PUBLIC", prompt.includes("a CREATE POLICY with no TO clause applies to PUBLIC"));
+  ok("internal supabase_auth_admin policies are explicitly distinguished from browser policies", prompt.includes("A policy explicitly TO supabase_auth_admin"));
+  ok("SECURITY DEFINER trigger functions require safe search_path", prompt.includes("fixed safe search_path"));
+  ok("trigger-only security definer functions must not be directly executable by clients", prompt.includes("do not grant direct EXECUTE to PUBLIC, anon or authenticated"));
+}
+ 
 // The safe runner must preserve scanner failure as an unavailable result.
 {
   const expectedError = new Error("simulated scanner failure");

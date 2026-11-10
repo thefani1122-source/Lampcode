@@ -60,6 +60,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
+import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
@@ -735,6 +736,32 @@ async function copyExistingFiles(srcDir: string, destDir: string): Promise<numbe
   return entries.length;
 }
 
+/** Restore a project Storage snapshot into a new session directory without trusting stored paths. */
+async function writeProjectFilesToDirectory(
+  files: Record<string, string>,
+  destDir: string,
+): Promise<number> {
+  let written = 0;
+  for (const [relativePath, content] of Object.entries(files)) {
+    if (
+      !relativePath || relativePath.startsWith("/") || relativePath.startsWith("\\") ||
+      relativePath.split(/[\\/]/).includes("..") || relativePath.includes("\0")
+    ) {
+      logger.warn({ relativePath }, "Skipped unsafe path in recovered project snapshot");
+      continue;
+    }
+    const fullPath = resolve(destDir, relativePath);
+    if (fullPath !== destDir && !fullPath.startsWith(destDir + sep)) {
+      logger.warn({ relativePath }, "Skipped recovered project path outside session directory");
+      continue;
+    }
+    await mkdir(dirname(fullPath), { recursive: true });
+    await writeFile(fullPath, content, "utf8");
+    written += 1;
+  }
+  return written;
+}
+
 function buildEditPrompt(files: Record<string, string>, userRequest: string): string {
   const fileBlocks = Object.entries(files)
     .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
@@ -973,41 +1000,57 @@ export async function runFastBuild(
   }
 
   try {
-    // ── Load existing files to decide new-build vs edit-existing ────────────
-    // Only load files from a prior build that belongs to THIS project + THIS user
-    // and that actually has files on disk (outputDir IS NOT NULL).
-    // A brand-new project has no matching row → existingFiles stays {}.
-    const lastSuccessRow = await db
-      .select({ outputDir: buildSessions.outputDir })
+    // ── Load the latest recoverable project source, not only successful builds ──
+    // A security/type/render gate can correctly mark a session FAILED after the
+    // complete generated files have already been persisted. That status means
+    // "verification did not pass", not "throw away the app". Selecting only
+    // status=success made the next repair prompt a fresh build, so a reply with
+    // only the corrected schema/security helpers failed "missing src/App.tsx".
+    const lastRecoverableRow = await db
+      .select({ outputDir: buildSessions.outputDir, status: buildSessions.status })
       .from(buildSessions)
       .where(and(
         eq(buildSessions.projectId, projectId),
         eq(buildSessions.userId, userId),
-        eq(buildSessions.status, "success"),
+        inArray(buildSessions.status, [...RECOVERABLE_BUILD_STATUSES]),
         isNotNull(buildSessions.outputDir),
       ))
       .orderBy(desc(buildSessions.createdAt))
       .limit(1);
 
-    const existingFiles = lastSuccessRow[0]?.outputDir
-      ? await loadProjectFiles(lastSuccessRow[0].outputDir)
+    let existingFiles = lastRecoverableRow[0]?.outputDir
+      ? await loadProjectFiles(lastRecoverableRow[0].outputDir)
       : {};
 
+    // Backward compatibility for failed builds created before output_dir was
+    // saved on the session. Files are persisted in the project-private Storage
+    // bucket before the security gate. Recover only a snapshot with a real app
+    // entrypoint; ten isolated security helper files must not turn a failed
+    // first build into an "existing application" and bypass entrypoint checks.
+    let restoredFromProjectStorage = false;
+    if (!lastRecoverableRow[0] && Object.keys(existingFiles).length === 0) {
+      const storedFiles = await downloadProjectFiles(projectId).catch((err) => {
+        logger.warn({ sessionId, projectId, err }, "Could not recover failed build source from project storage");
+        return {};
+      });
+      if (hasRecoverableAppEntrypoint(storedFiles)) {
+        existingFiles = storedFiles;
+        restoredFromProjectStorage = true;
+        logger.info(
+          { sessionId, projectId, files: Object.keys(storedFiles).length },
+          "Recovered failed build source from project storage for a follow-up repair",
+        );
+      }
+    }
+
     const hasExistingCode = Object.keys(existingFiles).length > 0;
-    console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length}`);
+    console.log(`[build] sessionId=${sessionId} hasExistingCode=${hasExistingCode} existingFileCount=${Object.keys(existingFiles).length} recoveredFromStorage=${restoredFromProjectStorage}`);
 
     // Whether this build must carry the project's prior files forward. Every
-    // edit does — the output format has no way to express a deletion, so a file
-    // the model doesn't re-emit is unchanged, never removed. This used to be
-    // tied to smartSelectionUsed, which is only ever set for follow-ups of <= 20
-    // words; a longer follow-up therefore copied nothing, rebuilt allFiles from
-    // this turn's output alone, and was saved as the new success outputDir that
-    // the NEXT edit reads from — silently dropping every file the model hadn't
-    // re-emitted. The Supabase Storage copy couldn't recover it either, since
-    // that fallback only fires when the directory is completely empty.
-    // Deliberately separate from smartSelectionUsed, which still (correctly)
-    // controls only the output-format instructions given to the model.
-    const preserveExistingFiles = hasExistingCode && Boolean(lastSuccessRow[0]?.outputDir);
+    // edit does — the output format has no way to express a deletion, so files
+    // the model does not re-emit remain unchanged. This includes a failed build
+    // whose complete source tree was saved before its verification gate failed.
+    const preserveExistingFiles = hasExistingCode;
 
     // ── Check if prompt is a conversational query / service inspection ──
     const promptIntent = await classifyPromptIntent(prompt, {
@@ -1899,11 +1942,17 @@ export async function runFastBuild(
     const outputDir = join(WORKSPACE_BASE, projectId, sessionId, "frontend");
     await mkdir(outputDir, { recursive: true });
 
-    // For every follow-up edit: copy ALL existing files first so unchanged files
-    // remain present. LLM output then overwrites only the changed ones.
-    if (preserveExistingFiles && lastSuccessRow[0]?.outputDir) {
-      const copied = await copyExistingFiles(lastSuccessRow[0].outputDir, outputDir);
-      console.log(`[build] copied ${copied} existing files to new outputDir`);
+    // For every follow-up edit: seed the new output directory with the COMPLETE
+    // previous app. Prefer its session directory; old failed builds may only
+    // have the project-scoped Storage snapshot, which must be materialised here.
+    if (preserveExistingFiles) {
+      if (lastRecoverableRow[0]?.outputDir) {
+        const copied = await copyExistingFiles(lastRecoverableRow[0].outputDir, outputDir);
+        console.log(`[build] copied ${copied} existing files from recoverable session to new outputDir`);
+      } else {
+        await writeProjectFilesToDirectory(existingFiles, outputDir);
+        console.log(`[build] restored ${Object.keys(existingFiles).length} project-storage files to new outputDir`);
+      }
     }
 
     // Keep the build-start snapshot for diff_since while removing these paths from current output.
@@ -2579,6 +2628,17 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // pipeline path, whose files never pass through the agentic write tools.
     await persistFilesAsWritten(projectId, allFiles);
 
+    // Save the artifact pointer BEFORE security/type/render gates can fail.
+    // A failed session with a complete source tree is a repairable draft, not a
+    // dead end. This is deliberately not marked success; the normal final
+    // outcome still determines the session status.
+    await db.update(buildSessions)
+      .set({ outputDir })
+      .where(and(eq(buildSessions.id, sessionId), eq(buildSessions.userId, userId)))
+      .catch((err) => {
+        logger.error({ sessionId, projectId, err }, "Could not attach recoverable source directory to build session");
+      });
+
     // ── Declare the tables the app actually queries ──────────────────────────
     // `data-layer.ts` has detected this since 2026-10-17 and nothing acted on
     // it. Of its four findings this is the only one that is a MODEL mistake
@@ -2805,7 +2865,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         const fixGuidance: string[] = [];
         if (hasRlsIssue) {
           fixGuidance.push(
-            "- FOR RLS ISSUES IN SQL: In the schema/migration file, explicitly add `ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;` and `CREATE POLICY ... ON <table_name> ...` for each table. For owner-scoped data, use `USING (auth.uid() = user_id)` (or matching owner column). For public catalogue data, use `FOR SELECT USING (true)`. A write policy must NEVER be `USING (true)`.",
+            "- FOR RLS ISSUES IN SQL: inspect each policy's TO clause before changing it. No TO clause means PUBLIC; TO anon/authenticated is client-facing. A policy TO supabase_auth_admin is internal-only and may legitimately use WITH CHECK (true) for an auth trigger — preserve that role restriction and do not rewrite it as a user-owned policy. For user-facing owner data, scope reads/writes to auth.uid() and bind created_by/user_id/author_id in INSERT WITH CHECK. RLS enabled with no client policy is default-deny, not a data leak; do not add permissive policies unless the browser actually needs access. A client-facing write policy must never allow every user to write another user's rows.",
           );
         }
         if (hasCallerIdentityIssue) {

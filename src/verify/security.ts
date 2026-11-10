@@ -151,14 +151,39 @@ function extractSqlTableNames(re: RegExp, sql: string): string[] {
   return out;
 }
 
-/** Each CREATE POLICY statement, with the table it is on and its body. */
-function policyStatements(sql: string): Array<{ table: string; body: string }> {
-  const out: Array<{ table: string; body: string }> = [];
+/** Roles which can reach a Supabase public-schema table through its client APIs. */
+const CLIENT_POLICY_ROLES = new Set(["public", "anon", "authenticated"]);
+
+/**
+ * A CREATE POLICY with no TO clause applies to PUBLIC. Policies explicitly
+ * restricted to Supabase's internal roles (e.g. supabase_auth_admin) must not
+ * be mistaken for policies exposed to browser/API callers.
+ */
+function policyRoles(body: string): string[] {
+  const match = /\bTO\s+([\s\S]*?)(?=\s+\b(?:USING|WITH\s+CHECK)\b|$)/i.exec(body);
+  if (!match) return ["public"];
+  const roles = match[1]!
+    .split(",")
+    .map((role) => role.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase())
+    .filter(Boolean);
+  return roles.length > 0 ? roles : ["public"];
+}
+
+function isClientPolicy(policy: { roles: string[] }): boolean {
+  return policy.roles.some((role) => CLIENT_POLICY_ROLES.has(role));
+}
+
+/** Each CREATE POLICY statement, with its table, body, and effective target roles. */
+function policyStatements(sql: string): Array<{ table: string; body: string; roles: string[] }> {
+  const out: Array<{ table: string; body: string; roles: string[] }> = [];
   const re = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?([\s\S]*?);/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
     const table = m[2] ? m[2] : m[1];
-    if (table) out.push({ table: table.toLowerCase(), body: m[3] ?? "" });
+    if (table) {
+      const body = m[3] ?? "";
+      out.push({ table: table.toLowerCase(), body, roles: policyRoles(body) });
+    }
   }
   return out;
 }
@@ -191,7 +216,9 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   const policies = policyStatements(allSql);
   const problems: string[] = [];
 
-  for (const { table, body } of policies) {
+  const clientPolicies = policies.filter(isClientPolicy);
+
+  for (const { table, body } of clientPolicies) {
     if (!ALWAYS_TRUE_RE.test(body)) continue;
     if (WRITE_ACTION_RE.test(body)) {
       problems.push(`${table}: a write policy allows everyone (USING (true)) — anyone signed in can change or delete anyone's rows`);
@@ -215,7 +242,7 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
   // "anybody who is logged in", which is a fine rule for SELECT on a shared
   // table and never a sufficient one for INSERT on a table that records who
   // did something.
-  for (const { table, body } of policies) {
+  for (const { table, body } of clientPolicies) {
     if (!/\bfor\s+(insert|all)\b/i.test(body)) continue;
     const cols = bodies.get(table) ?? "";
     const owner = cols.match(OWNER_COLUMN_RE)?.[0];
@@ -236,7 +263,7 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
 
   // Owner-scoped tables whose policies never mention who is asking.
   const scopedByTable = new Map<string, boolean>();
-  for (const { table, body } of policies) {
+  for (const { table, body } of clientPolicies) {
     scopedByTable.set(table, (scopedByTable.get(table) ?? false) || /auth\.uid\s*\(\s*\)/i.test(body));
   }
   for (const [table, cols] of bodies) {
@@ -262,12 +289,12 @@ export function checkRlsScoping(files: FileTree): SecurityCheck {
 
   return {
     id: "rls-scoping",
-    status: policies.length > 0 ? "pass" : "skip",
+    status: clientPolicies.length > 0 ? "pass" : "skip",
     severity: "critical",
     message:
-      policies.length > 0
-        ? `All ${policies.length} policy/policies scope access to the caller`
-        : "No policies found to check scoping",
+      clientPolicies.length > 0
+        ? `All ${clientPolicies.length} client-facing policy/policies were checked for caller scoping`
+        : "No client-facing policies found to check; internal-role policies are not exposed to anon/authenticated callers",
   };
 }
 
@@ -292,12 +319,13 @@ export function checkRLS(files: FileTree): SecurityCheck {
 
   const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
   const rlsRe   = /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi;
-  const polRe   = /CREATE\s+POLICY\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:["'`][^"'`]+["'`]|[a-zA-Z0-9_]+)\s+ON\s+(?:ONLY\s+)?(?:["'`]?([a-zA-Z0-9_]+)["'`]?\s*\.\s*)?["'`]?([a-zA-Z0-9_]+)["'`]?/gi;
 
   const tables = [...new Set(extractSqlTableNames(tableRe, allSql))];
   const rlsOn  = [...new Set(extractSqlTableNames(rlsRe, allSql))];
-  const polOn  = [...new Set(extractSqlTableNames(polRe, allSql))];
-
+  // Only policies available to PostgREST client roles count as a usable client
+  // access policy. A policy granted solely to supabase_auth_admin is an
+  // internal trigger policy, not an open policy for signed-in users.
+  const clientPolicyTables = new Set(policyStatements(allSql).filter(isClientPolicy).map((p) => p.table));
   const noRls = tables.filter((t) => !rlsOn.includes(t));
   if (noRls.length > 0) {
     return {
@@ -309,14 +337,20 @@ export function checkRLS(files: FileTree): SecurityCheck {
     };
   }
 
-  const noPol = rlsOn.filter((t) => !polOn.includes(t));
-  if (noPol.length > 0) {
+  const noClientPolicy = rlsOn.filter((t) => !clientPolicyTables.has(t));
+  if (noClientPolicy.length > 0) {
     return {
       id: "rls-enabled",
-      status: "fail",
-      severity: "high",
+      // RLS with no client-facing policy defaults to DENY. That may make an
+      // app table inaccessible, but it is not an exposure vulnerability and
+      // must not be reported as an open-data security failure.
+      status: "warn",
+      severity: "medium",
       file: sqlFiles[0]?.[0],
-      message: `Tables with RLS enabled but no policies: ${noPol.join(", ")}`,
+      message:
+        `RLS is enabled and no client-facing policy exists for: ${noClientPolicy.join(", ")}. ` +
+        "Postgres will deny anon/authenticated API access to these tables by default. " +
+        "This is appropriate for server-only tables; add narrowly scoped policies only if the browser needs access.",
     };
   }
 
@@ -324,7 +358,7 @@ export function checkRLS(files: FileTree): SecurityCheck {
     id: "rls-enabled",
     status: "pass",
     severity: "high",
-    message: `RLS + policies verified on ${rlsOn.length} table(s)`,
+    message: `RLS + client-facing policies verified on ${clientPolicyTables.size} table(s)`,
   };
 }
 
@@ -598,6 +632,89 @@ export function checkPackages(files: FileTree): SecurityCheck[] {
   }));
 }
 
+// ── SECURITY DEFINER function hardening ──────────────────────────────────────
+
+/**
+ * Inspect SQL-defined SECURITY DEFINER functions. Trigger-only helpers should
+ * not become callable public RPC endpoints, and every definer function must
+ * pin search_path so an untrusted schema cannot shadow objects resolved by the
+ * function owner. Findings are auto-fixable/advisory, not hard release stops.
+ */
+export function checkSecurityDefinerFunctions(files: FileTree): SecurityCheck[] {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) {
+    return [{ id: "security-definer", status: "skip", severity: "high", message: "No SQL files found to inspect SECURITY DEFINER functions" }];
+  }
+
+  const sql = sqlFiles.map(([, content]) => content).join("\n");
+  const triggerNames = new Set<string>();
+  const triggerRe = /\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = triggerRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (name) triggerNames.add(name);
+  }
+
+  const revokedByFunction = new Map<string, Set<string>>();
+  const revokeRe = /\bREVOKE\s+(?:EXECUTE|ALL\s+PRIVILEGES)\s+ON\s+FUNCTION\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\([^;]*?\)\s+FROM\s+([^;]+);/gi;
+  while ((match = revokeRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (!name) continue;
+    const roles = (match[2] ?? "").split(",").map((role) =>
+      role.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase(),
+    );
+    const revoked = revokedByFunction.get(name) ?? new Set<string>();
+    for (const role of roles) revoked.add(role);
+    revokedByFunction.set(name, revoked);
+  }
+
+  const findings: string[] = [];
+  const functionRe = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\(/gi;
+  while ((match = functionRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (!name) continue;
+
+    // Read declaration options before the dollar-quoted body. The function
+    // body can contain arbitrary SQL and must not be mistaken for its config.
+    const tail = sql.slice(match.index);
+    const asMatch = /\bAS\s+(\$[a-zA-Z0-9_]*\$)/i.exec(tail);
+    if (!asMatch) continue;
+    const header = tail.slice(0, asMatch.index);
+    if (!/\bSECURITY\s+DEFINER\b/i.test(header)) continue;
+
+    if (!/\bSET\s+search_path\s*(?:=|TO)\s*''/i.test(header)) {
+      findings.push(
+        `${name}(): SECURITY DEFINER has no fixed empty search_path. Add SET search_path = '' and schema-qualify every referenced object.`,
+      );
+    }
+
+    if (triggerNames.has(name)) {
+      const revoked = revokedByFunction.get(name) ?? new Set<string>();
+      const missing = ["public", "anon", "authenticated"].filter((role) => !revoked.has(role));
+      if (missing.length > 0) {
+        findings.push(
+          `${name}(): trigger-only SECURITY DEFINER function is not explicitly revoked from ${missing.join(", ")}. Revoke direct EXECUTE from client roles while preserving its trigger.`,
+        );
+      }
+    }
+  }
+
+  return findings.length > 0
+    ? [{
+        id: "security-definer",
+        status: "fail",
+        severity: "high",
+        file: sqlFiles[0]?.[0],
+        message: `SECURITY DEFINER function hardening required: ${findings.join("; ")}`,
+      }]
+    : [{
+        id: "security-definer",
+        status: "pass",
+        severity: "high",
+        message: "No unsafe SECURITY DEFINER search_path or trigger-only client EXECUTE grants detected",
+      }];
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export async function runSecurityChecks(
@@ -608,6 +725,7 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
+    ...checkSecurityDefinerFunctions(files),
     checkServiceRole(files),
     checkCallerIdentity(files),
     ...checkSecrets(files),
