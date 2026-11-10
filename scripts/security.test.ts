@@ -62,6 +62,22 @@ check(
   "pass",
 );
 
+{
+  const qualified = `
+CREATE TABLE public.users (id uuid primary key, user_id uuid);
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY users_read ON public.users FOR SELECT USING (auth.uid() = user_id);
+`;
+  const quoted = `
+CREATE TABLE "public"."users" (id uuid primary key, user_id uuid);
+ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY users_read ON "public"."users" FOR SELECT USING (auth.uid() = user_id);
+`;
+  check("schema-qualified public.users is parsed as users, not public", checkRLS(tree({ "src/db/schema.sql": qualified })).status, "pass");
+  check("quoted schema-qualified public.users is parsed as users, not public", checkRLS(tree({ "src/db/schema.sql": quoted })).status, "pass");
+  check("schema-qualified public.users keeps a correctly scoped client policy", checkRlsScoping(tree({ "src/db/schema.sql": qualified })).status, "pass");
+}
+
 check(
   "no SQL and no schema skips RLS rather than claiming verification",
   checkRLS(tree({ "src/App.tsx": "export default () => null;" })).status,
@@ -448,6 +464,14 @@ CREATE POLICY "read_all" ON posts FOR SELECT USING (auth.uid() IS NOT NULL);
 }
 
 
+{
+  const prompt = readFileSync(new URL("../src/agents/prompt-builder.ts", import.meta.url), "utf8");
+  ok("every security-aware code agent is told CREATE POLICY defaults to PUBLIC", prompt.includes("a CREATE POLICY with no TO clause applies to PUBLIC"));
+  ok("internal supabase_auth_admin policies are explicitly distinguished from browser policies", prompt.includes("A policy explicitly TO supabase_auth_admin"));
+  ok("SECURITY DEFINER trigger functions require safe search_path", prompt.includes("fixed safe search_path"));
+  ok("trigger-only security definer functions must not be directly executable by clients", prompt.includes("do not grant direct EXECUTE to PUBLIC, anon or authenticated"));
+}
+ 
 // The safe runner must preserve scanner failure as an unavailable result.
 {
   const expectedError = new Error("simulated scanner failure");
