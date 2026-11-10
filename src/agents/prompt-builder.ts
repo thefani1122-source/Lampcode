@@ -788,6 +788,22 @@ CREATE POLICY "team_member_insert" ON {table_name} FOR INSERT WITH CHECK (
   EXISTS (SELECT 1 FROM team_members WHERE team_members.team_id = {table_name}.team_id AND team_members.user_id = auth.uid())
 );
 
+TEAM TABLES STILL BIND THE ACTOR:
+- A membership check only proves the caller belongs to the workspace. If the inserted row also has created_by, user_id, author_id or another actor/owner column, require that column to equal auth.uid() in the SAME WITH CHECK predicate.
+- Example: WITH CHECK (EXISTS (...workspace membership...) AND auth.uid() = created_by).
+- Give created_by/user_id an appropriate DEFAULT auth.uid() when the caller is the actor. Never let a member attribute a task, comment or audit row to another member merely because both belong to the same workspace.
+
+POLICY TARGET ROLES — DO NOT CONFUSE INTERNAL ROLES WITH APP USERS:
+- A CREATE POLICY with no TO clause applies to PUBLIC. Explicit targets such as TO anon and TO authenticated are client-facing and must be scoped to the caller.
+- A policy explicitly TO supabase_auth_admin (or another internal Supabase service role) is NOT available to browser users. Do not report or rewrite its WITH CHECK (true) as an open client policy merely because the predicate is true; preserve the role restriction.
+- Keep internal auth-trigger policies narrowly targeted to the internal role. Do not add anon/authenticated to make signup/profile triggers work.
+- RLS enabled with no client-facing policy is PostgreSQL's default-deny state. It may mean the browser cannot access the table, but it is not an open-data vulnerability. Do not invent a USING (true) policy to silence a warning. Add a scoped client policy only if the product actually requires browser access.
+
+SECURITY DEFINER TRIGGER FUNCTIONS:
+- A trigger-only SECURITY DEFINER function runs with its owner's privileges. Set a safe fixed search_path (prefer SET search_path = '') and schema-qualify every referenced table/function.
+- If the function is only meant to run through a database trigger, revoke direct EXECUTE from PUBLIC, anon and authenticated; do not expose it as a public PostgREST RPC. Keep the trigger itself intact and verify the intended INSERT/UPDATE still fires it.
+- Keep SECURITY DEFINER only when privilege elevation is genuinely needed. Never replace it with SECURITY INVOKER blindly if that would break a carefully designed trigger, but never leave an elevated function publicly callable without explicit justification.
+
 NEVER FAKE A FEATURE TO MAKE IT LOOK FIXED — no exception, ever:
 - Do NOT add a "demo mode", mock data, an in-memory store, or a localStorage
   fallback because an API call is failing. That makes a broken feature LOOK
