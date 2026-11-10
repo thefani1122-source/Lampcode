@@ -7,6 +7,7 @@ import {
   checkCallerIdentity,
   checkSecrets,
   checkServiceRole,
+  checkSecurityDefinerFunctions,
   blockingSecurityFindings,
   runSecurityChecksSafely,
   runSecurityChecks,
@@ -99,6 +100,56 @@ CREATE POLICY users_update_own ON users FOR UPDATE USING (auth.uid() = id) WITH 
 `;
   check("Supabase's internal auth-service insert does not cause a client RLS failure", checkRLS(tree({ "src/db/schema.sql": sql })).status, "pass");
   check("the internal auth-service insert does not make RLS scoping fail", checkRlsScoping(tree({ "src/db/schema.sql": sql })).status, "pass");
+}
+
+{
+  const unsafe = `
+CREATE OR REPLACE FUNCTION public.handle_workspace_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  INSERT INTO public.workspace_members (workspace_id, user_id) VALUES (NEW.id, NEW.owner_id);
+  RETURN NEW;
+END;
+$function$;
+CREATE TRIGGER on_workspace_created AFTER INSERT ON public.workspaces
+FOR EACH ROW EXECUTE FUNCTION public.handle_workspace_owner();
+`;
+  const finding = checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": unsafe }));
+  ok("a trigger-only SECURITY DEFINER function without a fixed search_path is caught", finding.some((x) => x.status === "fail"));
+  ok("the finding names the missing fixed search_path", finding.some((x) => x.message.includes("SET search_path = ''")));
+  ok("a trigger-only SECURITY DEFINER function with client EXECUTE grants is caught", finding.some((x) => x.message.includes("PUBLIC, anon, authenticated")));
+
+  const safe = `
+CREATE OR REPLACE FUNCTION public.handle_workspace_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+BEGIN
+  INSERT INTO public.workspace_members (workspace_id, user_id) VALUES (NEW.id, NEW.owner_id);
+  RETURN NEW;
+END;
+$function$;
+REVOKE EXECUTE ON FUNCTION public.handle_workspace_owner() FROM PUBLIC, anon, authenticated;
+CREATE TRIGGER on_workspace_created AFTER INSERT ON public.workspaces
+FOR EACH ROW EXECUTE FUNCTION public.handle_workspace_owner();
+`;
+  check("a trigger-only SECURITY DEFINER function with safe search_path and revoked client EXECUTE passes",
+    checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": safe }))[0]?.status, "pass");
+
+  const invoker = `
+CREATE OR REPLACE FUNCTION public.list_workspace_members()
+RETURNS SETOF public.workspace_members
+LANGUAGE sql
+SECURITY INVOKER
+AS $function$ SELECT * FROM public.workspace_members; $function$;
+`;
+  check("SECURITY INVOKER functions are not incorrectly flagged",
+    checkSecurityDefinerFunctions(tree({ "src/db/schema.sql": invoker }))[0]?.status, "pass");
 }
 
 {
