@@ -632,6 +632,89 @@ export function checkPackages(files: FileTree): SecurityCheck[] {
   }));
 }
 
+// ── SECURITY DEFINER function hardening ──────────────────────────────────────
+
+/**
+ * Inspect SQL-defined SECURITY DEFINER functions. Trigger-only helpers should
+ * not become callable public RPC endpoints, and every definer function must
+ * pin search_path so an untrusted schema cannot shadow objects resolved by the
+ * function owner. Findings are auto-fixable/advisory, not hard release stops.
+ */
+export function checkSecurityDefinerFunctions(files: FileTree): SecurityCheck[] {
+  const sqlFiles = [...files].filter(([path]) => path.endsWith(".sql"));
+  if (sqlFiles.length === 0) {
+    return [{ id: "security-definer", status: "skip", severity: "high", message: "No SQL files found to inspect SECURITY DEFINER functions" }];
+  }
+
+  const sql = sqlFiles.map(([, content]) => content).join("\n");
+  const triggerNames = new Set<string>();
+  const triggerRe = /\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = triggerRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (name) triggerNames.add(name);
+  }
+
+  const revokedByFunction = new Map<string, Set<string>>();
+  const revokeRe = /\bREVOKE\s+(?:EXECUTE|ALL\s+PRIVILEGES)\s+ON\s+FUNCTION\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\([^;]*?\)\s+FROM\s+([^;]+);/gi;
+  while ((match = revokeRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (!name) continue;
+    const roles = (match[2] ?? "").split(",").map((role) =>
+      role.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase(),
+    );
+    const revoked = revokedByFunction.get(name) ?? new Set<string>();
+    for (const role of roles) revoked.add(role);
+    revokedByFunction.set(name, revoked);
+  }
+
+  const findings: string[] = [];
+  const functionRe = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+((?:(?:"?[a-zA-Z0-9_]+"?)\s*\.\s*)?"?[a-zA-Z0-9_]+"?)\s*\(/gi;
+  while ((match = functionRe.exec(sql)) !== null) {
+    const name = (match[1] ?? "").split(".").at(-1)?.replace(/"/g, "").trim().toLowerCase();
+    if (!name) continue;
+
+    // Read declaration options before the dollar-quoted body. The function
+    // body can contain arbitrary SQL and must not be mistaken for its config.
+    const tail = sql.slice(match.index);
+    const asMatch = /\bAS\s+(\$[a-zA-Z0-9_]*\$)/i.exec(tail);
+    if (!asMatch) continue;
+    const header = tail.slice(0, asMatch.index);
+    if (!/\bSECURITY\s+DEFINER\b/i.test(header)) continue;
+
+    if (!/\bSET\s+search_path\s*(?:=|TO)\s*''/i.test(header)) {
+      findings.push(
+        `${name}(): SECURITY DEFINER has no fixed empty search_path. Add SET search_path = '' and schema-qualify every referenced object.`,
+      );
+    }
+
+    if (triggerNames.has(name)) {
+      const revoked = revokedByFunction.get(name) ?? new Set<string>();
+      const missing = ["public", "anon", "authenticated"].filter((role) => !revoked.has(role));
+      if (missing.length > 0) {
+        findings.push(
+          `${name}(): trigger-only SECURITY DEFINER function is not explicitly revoked from ${missing.join(", ")}. Revoke direct EXECUTE from client roles while preserving its trigger.`,
+        );
+      }
+    }
+  }
+
+  return findings.length > 0
+    ? [{
+        id: "security-definer",
+        status: "fail",
+        severity: "high",
+        file: sqlFiles[0]?.[0],
+        message: `SECURITY DEFINER function hardening required: ${findings.join("; ")}`,
+      }]
+    : [{
+        id: "security-definer",
+        status: "pass",
+        severity: "high",
+        message: "No unsafe SECURITY DEFINER search_path or trigger-only client EXECUTE grants detected",
+      }];
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 export async function runSecurityChecks(
@@ -642,6 +725,7 @@ export async function runSecurityChecks(
   const checks: SecurityCheck[] = [
     checkRLS(files),
     checkRlsScoping(files),
+    checkSecurityDefinerFunctions(files),
     checkServiceRole(files),
     checkCallerIdentity(files),
     ...checkSecrets(files),
