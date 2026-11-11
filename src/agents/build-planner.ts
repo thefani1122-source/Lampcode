@@ -295,6 +295,8 @@ export function formatPlanForPrompt(plan: BuildPlan): string {
     "",
     "IMPLEMENTATION PRIORITIES:",
     "- Treat the approach above as the planned product outcome: implement its named screens, primary user journeys, data rules and visual direction. Do not silently omit a screen or workflow because the file list is incomplete.",
+    "- Give the first screen meaningful, product-specific content and a clear primary action; do not ship a blank shell or a generic placeholder dashboard.",
+    "- Keep loading, failure/error, and genuinely empty data states distinct. A failed or uninitialised data source must never be presented as a successful empty state.",
     "- The user's original request, explicit acceptance requirements, this build's authoritative runtime/framework context, and the existing project's proven conventions take priority over any planner assumption. If the approach conflicts with one of those, follow the higher-priority source and preserve the conflict in the build notes rather than guessing.",
     "- The file list is a proposed decomposition, not an exhaustive or immutable manifest. Add framework-required files, preserve existing files, and adjust paths when the actual project structure requires it. Do not collapse a multi-screen product into one large file.",
     "- Planner out-of-scope items must never be used to drop something the user explicitly requested.",
