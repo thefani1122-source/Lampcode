@@ -2563,7 +2563,7 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(
     prompt: string,
-    buildType?: "frontend" | "fullstack",
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb",
   ): Promise<string> {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
