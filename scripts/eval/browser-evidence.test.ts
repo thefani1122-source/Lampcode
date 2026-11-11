@@ -89,6 +89,11 @@ check(
 );
 
 const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
+const screenshotRouteStart = buildRouteSource.indexOf('buildRouter.get("/:sessionId/eval-screenshot"');
+const screenshotRouteEnd = buildRouteSource.indexOf("// POST /api/build/:sessionId/cancel", screenshotRouteStart);
+const screenshotRouteSource = screenshotRouteStart >= 0 && screenshotRouteEnd > screenshotRouteStart
+  ? buildRouteSource.slice(screenshotRouteStart, screenshotRouteEnd)
+  : "";
 check(
   "eval journey endpoint reuses the bounded safe journey parser",
   buildRouteSource.includes('buildRouter.post("/:sessionId/eval-journey"') &&
@@ -110,9 +115,9 @@ check(
 );
 check(
   "screenshots are streamed and not uploaded or made public by the eval route",
-  buildRouteSource.includes('"Content-Type": "image/png"') &&
-    buildRouteSource.includes('"Cache-Control": "no-store"') &&
-    !buildRouteSource.includes("uploadPreviewScreenshot(session.projectId"),
+  screenshotRouteSource.includes('"Content-Type": "image/png"') &&
+    screenshotRouteSource.includes('"Cache-Control": "no-store"') &&
+    !screenshotRouteSource.includes("uploadPreviewScreenshot"),
   true,
 );
 
