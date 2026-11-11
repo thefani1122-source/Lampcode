@@ -11,7 +11,7 @@
  * regex miss reads as a miss.
  */
 
-import { scoreChecks, type BuildOutcome, type FileEntry } from "./score.js";
+import { scoreChecks, scoreJourney, type BuildOutcome, type FileEntry, type EvalJourneyReport } from "./score.js";
 import type { EvalTask } from "./tasks.js";
 
 const f = (path: string, content: string): FileEntry => ({
@@ -239,6 +239,73 @@ expectChecks(
   "./-prefixed template paths are still recognised",
   scoreChecks(task({}), [f("./src/styles.css", "@theme {}")], outcome()),
   ["overwrote template-owned file"],
+);
+
+// Independent browser journey scoring. Unavailable infrastructure must not
+// be counted as a bad generated app, while an actual failed step must.
+const journeyTask = task({
+  journey: [
+    { do: "click", text: "Increase" },
+    { do: "expect", text: "1" },
+  ],
+});
+const journeyReport = (over: Partial<EvalJourneyReport> = {}): EvalJourneyReport => ({
+  ran: true,
+  steps: [
+    { step: 1, did: 'click "Increase"', ok: true, detail: "" },
+    { step: 2, did: 'expect "1"', ok: true, detail: "" },
+  ],
+  consoleErrors: [],
+  finalUrl: "http://localhost/",
+  ...over,
+});
+const journeyExpect = (name: string, got: unknown, want: unknown): void => {
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    failures++;
+    console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
+  } else {
+    console.log(`✔ ${name}`);
+  }
+};
+journeyExpect(
+  "tasks without a journey remain explicitly not requested",
+  scoreJourney(task({}), null).verdict,
+  "not-requested",
+);
+journeyExpect(
+  "browser infrastructure unavailable is not an app failure",
+  scoreJourney(journeyTask, { ...journeyReport(), ran: false, steps: [], reason: "no live preview" }).verdict,
+  "unavailable",
+);
+journeyExpect(
+  "a browser journey that completes all expected steps passes",
+  scoreJourney(journeyTask, journeyReport()).verdict,
+  "pass",
+);
+journeyExpect(
+  "a concrete failed journey step is a finding",
+  scoreJourney(journeyTask, journeyReport({
+    steps: [
+      { step: 1, did: 'click "Increase"', ok: true, detail: "" },
+      { step: 2, did: 'expect "1"', ok: false, detail: '"1" is not on the page' },
+    ],
+  })).verdict,
+  "fail",
+);
+journeyExpect(
+  "a partial journey without an infrastructure reason does not pass",
+  scoreJourney(journeyTask, journeyReport({ steps: [{ step: 1, did: "click", ok: true, detail: "" }] })).verdict,
+  "fail",
+);
+journeyExpect(
+  "console errors during a completed journey are findings",
+  scoreJourney(journeyTask, journeyReport({ consoleErrors: ["TypeError: state is undefined"] })).verdict,
+  "fail",
+);
+journeyExpect(
+  "journey score records expected and completed steps",
+  scoreJourney(journeyTask, journeyReport()).stepsRun,
+  2,
 );
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
