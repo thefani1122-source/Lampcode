@@ -227,7 +227,7 @@ check("the plan is treated as product direction while file paths remain adaptabl
 check("the builder is told to implement the named product screens", /implement its named screens/.test(block), true);
 check("the primary journeys are treated as a required deliverable", /primary user journeys/.test(block), true);
 check("the first screen must have meaningful content", /first screen meaningful content/.test(block), true);
-check("loading, errors and empty data are kept distinct", /loading, error and truly-empty states/.test(block), true);
+check("loading, failures and genuinely empty data are kept distinct", /loading, failure\/error, and genuinely empty data states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });
