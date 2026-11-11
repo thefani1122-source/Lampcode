@@ -782,9 +782,10 @@ function detectFrameworkFromFiles(files: Record<string, string>): FullstackFrame
 }
 
 /**
- * Like buildEditPrompt but prefixed with FULLSTACK BUILD:/FULLSTACK AUTH BUILD:
- * so PromptBuilder injects the correct NEXTJS_INSTRUCTION / TANSTACK_INSTRUCTION.
- * The framework keyword on line 2 lets detectFullstackFramework() pick it up.
+ * Existing backend edit variant of buildEditPrompt. Its dedicated prefix tells
+ * PromptBuilder to retain the full-stack runtime/provider context without
+ * loading the new-app scaffolding contract. The framework keyword on line 2
+ * lets detectFullstackFramework() pick up the existing framework.
  */
 function buildFullstackEditPrompt(
   files: Record<string, string>,
