@@ -1605,13 +1605,12 @@ export async function runFastBuild(
         ]
       : requirements;
 
-    // ── Planning pass, for long new builds only ─────────────────────────────
-    // One cheap dispatch that decides the file layout before any code exists.
-    // A big build was otherwise one long improvisation: the model found out
-    // what the app was while writing it, which is where the one-file-app habit
-    // comes from, and when ForgeFlow died at round 14 nothing stated what it
-    // had set out to make. Never throws — a build must not fail because its
-    // optional planning pass did.
+    // ── Planning pass — agentic new builds and existing-project edits ───────
+    // The planner creates the product blueprint and proposed file map before
+    // generation. It receives the same trusted build shape that the generator
+    // receives below, so an existing backend edit is not mislabelled frontend-
+    // only and a missing user DB connection is not misread as localStorage.
+    // Never throws — a build must not fail because its optional planning pass did.
     let buildPlan: BuildPlan | null = null;
     let planCostUsd = 0;
 
