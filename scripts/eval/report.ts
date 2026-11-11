@@ -62,9 +62,9 @@ function summarize(run: Run): void {
   console.log(
     `\n${pad("task", 18)}${pad("verdict", 8)}${pad("rounds", 7)}${pad("files", 6)}` +
     `${pad("biggest", 8)}${pad("page", 12)}${pad("types", 12)}${pad("tests", 12)}` +
-    `${pad("cost", 8)}${"time"}`,
+    `${pad("journey", 13)}${pad("visual", 12)}${pad("cost", 8)}${"time"}`,
   );
-  console.log("─".repeat(104));
+  console.log("─".repeat(129));
   for (const t of r) {
     console.log(
       pad(t.taskId, 18) +
@@ -75,10 +75,21 @@ function summarize(run: Run): void {
       pad(t.outcome?.checkPage ?? "—", 12) +
       pad(t.outcome?.checkTypes ?? "—", 12) +
       pad(t.outcome?.checkTests ?? "—", 12) +
-      pad(t.outcome ? `$${t.outcome.costUsd.toFixed(3)}` : "—", 8) +
+      pad(t.journey?.verdict ?? "—", 13) +
+      pad(t.visual?.verdict ?? "—", 12) +
+      pad(t.outcome ? `${t.outcome.costUsd.toFixed(3)}` : "—", 8) +
       `${t.wallClockSec}s`,
     );
     for (const c of t.failedChecks) console.log(`${" ".repeat(18)}↳ ${c}`);
+    if (t.journey && t.journey.verdict !== "not-requested" && t.journey.reason) {
+      console.log(`${" ".repeat(18)}↳ journey: ${t.journey.stepsRun}/${t.journey.stepsExpected} steps — ${t.journey.reason}`);
+    }
+    if (t.visual?.reason) console.log(`${" ".repeat(18)}↳ visual capture: ${t.visual.reason}`);
+    if (t.visual?.screenshots) {
+      for (const [viewport, shot] of Object.entries(t.visual.screenshots)) {
+        if (shot) console.log(`${" ".repeat(18)}↳ ${viewport}: ${shot.path} (${shot.width}×${shot.height})`);
+      }
+    }
     if (t.error) console.log(`${" ".repeat(18)}↳ ${t.error}`);
   }
 
@@ -105,6 +116,22 @@ function summarize(run: Run): void {
   console.log(`built but flawed   ${count((t) => t.verdict === "soft-fail")}`);
   console.log(`build failed       ${count((t) => t.verdict === "fail")}`);
   console.log(`harness error      ${count((t) => t.verdict === "error")}`);
+  const journeyRows = r.filter((t) => t.journey && t.journey.verdict !== "not-requested");
+  if (journeyRows.length > 0) {
+    console.log(
+      `browser journeys   ${count((t) => t.journey?.verdict === "pass")} pass` +
+      `  ${count((t) => t.journey?.verdict === "fail")} fail` +
+      `  ${count((t) => t.journey?.verdict === "unavailable")} unavailable`,
+    );
+  }
+  const visualRows = r.filter((t) => t.visual && t.visual.verdict !== "not-requested");
+  if (visualRows.length > 0) {
+    console.log(
+      `visual evidence    ${count((t) => t.visual?.verdict === "captured")} desktop+mobile` +
+      `  ${count((t) => t.visual?.verdict === "partial")} partial` +
+      `  ${count((t) => t.visual?.verdict === "unavailable")} unavailable`,
+    );
+  }
   if (withOutcome.length > 0) {
     console.log(`mean rounds        ${mean(withOutcome.map((t) => t.outcome!.rounds)).toFixed(1)}`);
     console.log(`turns exhausted    ${count((t) => t.outcome?.turnsExhausted === true)}`);
