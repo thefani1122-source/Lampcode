@@ -269,20 +269,20 @@ export function formatPlanForPrompt(plan: BuildPlan): string {
   if (plan.approach && plan.approach.length > 0) {
     lines.push(
       "",
-      "How it works — build to these decisions, they are not suggestions:",
+      "Planned product decisions — implement these outcomes unless a higher-priority user/runtime constraint conflicts:",
       ...plan.approach.map((a) => `- ${a}`),
     );
   }
 
   lines.push(
     "",
-    "Write these files, in this order:",
+    "Suggested file decomposition (add or adapt files required by the actual framework/project):",
     ...plan.files.map((f, i) => `${i + 1}. ${f.path} — ${f.purpose}`),
   );
   if (plan.outOfScope && plan.outOfScope.length > 0) {
     lines.push(
       "",
-      `Deliberately out of scope: ${plan.outOfScope.join("; ")}. Do not build these.`,
+      `Planner-suggested out-of-scope items: ${plan.outOfScope.join("; ")}. Do not add these unless the original user request explicitly requires them.`,
     );
   }
   lines.push(
