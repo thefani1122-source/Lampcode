@@ -40,7 +40,11 @@ export type JourneyReport = {
   steps: JourneyStepResult[];
   consoleErrors: string[];
   finalUrl: string;
-  /** Why the journey could not run at all. Empty when it did. */
+  /** Whether every requested step completed. False on timeout or a partial run. */
+  completed?: boolean;
+  /** Number of steps requested by the model, even when the driver stops early. */
+  totalSteps?: number;
+  /** Why the journey could not run at all, or why a started journey was incomplete. */
   reason?: string;
 };
 
@@ -132,17 +136,26 @@ export function parseJourneyReport(stdout: string): JourneyReport {
   try {
     const value = JSON.parse(line) as Partial<JourneyReport>;
     if (typeof value !== "object" || value === null) return empty;
+    const steps = Array.isArray(value.steps)
+      ? value.steps.filter((s): s is JourneyStepResult =>
+          !!s && typeof s === "object" && typeof (s as JourneyStepResult).did === "string")
+      : [];
+    const ran = value.ran === true;
+    const reason = typeof value.reason === "string" && value.reason ? value.reason : undefined;
     return {
-      ran: value.ran === true,
-      steps: Array.isArray(value.steps)
-        ? value.steps.filter((s): s is JourneyStepResult =>
-            !!s && typeof s === "object" && typeof (s as JourneyStepResult).did === "string")
-        : [],
+      ran,
+      steps,
       consoleErrors: Array.isArray(value.consoleErrors)
         ? value.consoleErrors.filter((e): e is string => typeof e === "string").slice(0, 10)
         : [],
       finalUrl: typeof value.finalUrl === "string" ? value.finalUrl : "",
-      ...(typeof value.reason === "string" && value.reason ? { reason: value.reason } : {}),
+      // Older drivers did not send `completed`; a no-reason successful report
+      // remains complete, while a timeout reason must never be upgraded.
+      completed: typeof value.completed === "boolean" ? value.completed : ran && !reason,
+      totalSteps: typeof value.totalSteps === "number" && Number.isFinite(value.totalSteps) && value.totalSteps >= 0
+        ? Math.floor(value.totalSteps)
+        : steps.length,
+      ...(reason ? { reason } : {}),
     };
   } catch {
     return empty;
@@ -162,9 +175,13 @@ export function formatJourney(report: JourneyReport): string {
   }
   const lines = report.steps.map((s) => `${s.ok ? "ok  " : "FAIL"} ${s.step}. ${s.did}${s.detail ? ` — ${s.detail}` : ""}`);
   const failedAt = report.steps.find((s) => !s.ok);
+  const totalSteps = report.totalSteps ?? report.steps.length;
+  const remaining = Math.max(0, totalSteps - report.steps.length);
   const head = failedAt
     ? `The journey failed at step ${failedAt.step}.`
-    : `All ${report.steps.length} step(s) worked.`;
+    : report.completed === false
+      ? `The journey did not complete${report.reason ? ` (${report.reason})` : ""}: ${report.steps.length} of ${totalSteps} step(s) ran${remaining > 0 ? `; ${remaining} remaining step(s) were not run` : ""}.`
+      : `All ${report.steps.length} step(s) worked.`;
   const errors = report.consoleErrors.length > 0
     ? `\n\nConsole errors during the journey:\n${report.consoleErrors.map((e) => `- ${e}`).join("\n")}`
     : "";
@@ -188,15 +205,24 @@ let steps = [];
 const results = [];
 const consoleErrors = [];
 let finalUrl = "";
+let started = false;
 
-function print(ran, reason) {
+function print(ran, reason, completed = false) {
   if (printed) return;
   printed = true;
-  process.stdout.write(JSON.stringify({ ran, steps: results, consoleErrors: consoleErrors.slice(0, 10), finalUrl, reason: reason || "" }) + "\n");
+  process.stdout.write(JSON.stringify({
+    ran,
+    completed,
+    totalSteps: steps.length,
+    steps: results,
+    consoleErrors: consoleErrors.slice(0, 10),
+    finalUrl,
+    reason: reason || "",
+  }) + "\\n");
 }
 // A hung browser must not hold the build. Whatever was completed is still
 // reported — a killed command with no output proves nothing.
-const watchdog = setTimeout(() => { print(results.length > 0, "the journey timed out"); process.exit(0); }, 75000);
+const watchdog = setTimeout(() => { print(started, "the journey timed out", false); process.exit(0); }, 75000);
 
 function describe(step) {
   switch (step.do) {
@@ -239,6 +265,7 @@ try {
   const first = await page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 15000 });
   if (!first || !first.ok()) { print(false, "the preview did not load"); process.exit(0); }
   await page.waitForTimeout(400);
+  started = true;
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
@@ -274,9 +301,9 @@ try {
   }
 
   finalUrl = page.url();
-  print(true, "");
+  print(true, "", results.length === steps.length);
 } catch (err) {
-  print(results.length > 0, String(err && err.message ? err.message : err).slice(0, 200));
+  print(started || results.length > 0, String(err && err.message ? err.message : err).slice(0, 200), false);
 } finally {
   if (browser) await browser.close().catch(() => {});
   clearTimeout(watchdog);
