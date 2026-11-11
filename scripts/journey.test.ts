@@ -142,6 +142,11 @@ console.log("\n— the driver —");
   ok("fields by label or placeholder", src.includes("getByLabel") && src.includes("getByPlaceholder"));
   ok("there is no arbitrary-JavaScript step", !src.includes("page.evaluate("));
 
+  ok("the driver reads steps from structured input", src.includes('readFile(process.argv[2], "utf8")'));
+  const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("journey steps are written to per-run JSON input", service.includes('runSandboxScriptWithJsonInput(sandbox, "lampcode-journey.mjs", JOURNEY_SCRIPT'));
+  ok("journey command receives only a generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(steps))"));
+
   const handler = readFileSync(new URL("../src/agents/tools/browser-interact.ts", import.meta.url), "utf8");
   ok("steps are validated before a browser starts", handler.indexOf("parseJourney(") < handler.indexOf("runJourney("));
 

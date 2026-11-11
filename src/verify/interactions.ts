@@ -35,14 +35,11 @@ const INTERACTION_BODY = String.raw`
 const entries = [];
 let browser;
 let printed = false;
-const base = process.argv[2] || "http://localhost:5173";
-const routes = JSON.parse(process.argv[3] || '["/"]');
+const base = "http://localhost:5173";
+let routes = ["/"];
 const selector = 'button, a[href^="/"], form';
 const deadline = Date.now() + 45000;
-// Spread the shared budget across pages. Without a per-page cap the home page
-// would consume it and every later route would report "not attempted" — the
-// same blindness this change exists to remove, just moved one step along.
-const PER_ROUTE = Math.max(3, Math.floor(12 / Math.max(1, routes.length)));
+let PER_ROUTE = 12;
 let storageSnapshot = null;
 function mergeStorage(next) {
   if (!next || typeof next !== "object") return;
@@ -92,6 +89,12 @@ async function open(context, route) {
 }
 
 try {
+  // Route data is read from a file, never parsed out of shell syntax.
+  const { readFile } = await import("node:fs/promises");
+  const input = JSON.parse(await readFile(process.argv[2], "utf8"));
+  if (Array.isArray(input.routes)) routes = input.routes;
+  PER_ROUTE = Math.max(3, Math.floor(12 / Math.max(1, routes.length)));
+
   // Dynamic import stays inside the guard: even missing browser tooling must
   // produce a skipped report rather than an uncaught module-load exception.
   const { chromium } = await import("playwright");

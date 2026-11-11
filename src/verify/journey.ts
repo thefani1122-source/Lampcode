@@ -183,8 +183,8 @@ export function formatJourney(report: JourneyReport): string {
 export const JOURNEY_SCRIPT = String.raw`
 let browser;
 let printed = false;
-const base = process.argv[2] || "http://localhost:5173";
-const steps = JSON.parse(process.argv[3] || "[]");
+let base = "http://localhost:5173";
+let steps: JourneyStep[] = [];
 const results = [];
 const consoleErrors = [];
 let finalUrl = "";
@@ -224,6 +224,10 @@ function field(page, into) {
 }
 
 try {
+  const { readFile } = await import("node:fs/promises");
+  const input = JSON.parse(await readFile(process.argv[2], "utf8"));
+  if (typeof input.base === "string") base = input.base;
+  if (Array.isArray(input.steps)) steps = input.steps;
   const { chromium } = await import("playwright");
   browser = await chromium.launch({ headless: true, timeout: 8000 });
   const context = await browser.newContext();

@@ -316,10 +316,17 @@ ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.inclu
 ok("the browser sweep checks desktop and mobile viewports", RENDER_SCRIPT.includes("width: 1440, height: 900") && RENDER_SCRIPT.includes("width: 390, height: 844"));
 ok("the browser sweep measures password form width", RENDER_SCRIPT.includes('input[type="password"]') && RENDER_SCRIPT.includes("passwordFormWidth"));
 ok("the browser sweep measures mobile horizontal overflow", RENDER_SCRIPT.includes("horizontalOverflow"));
-ok("the browser sweep receives the app's first-run content policy", RENDER_SCRIPT.includes('process.argv[4] !== "false"'));
+ok("the browser sweep receives the app's first-run content policy from structured input", RENDER_SCRIPT.includes("input.requireInitialContent !== false"));
 ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
-ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
+ok("the script reads configuration from a JSON input file", RENDER_SCRIPT.includes('readFile(process.argv[2], "utf8")'));
+ok("the script closes the browser in a finally", /finally\\s*\\{[\\s\\S]*browser\\.close/.test(RENDER_SCRIPT));
 
+
+{
+  const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("render routes use per-run JSON input", service.includes('runSandboxScriptWithJsonInput(sandbox, "lampcode-render.mjs", RENDER_SCRIPT'));
+  ok("shell receives only the generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(routes))"));
+}
 
 // ── the overlay is hidden, never disabled ────────────────────────────────────
 // MEASURED 2026-10-18: a person watching their build met a full-screen red

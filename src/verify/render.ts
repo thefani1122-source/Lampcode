@@ -172,17 +172,23 @@ export function routesToVisit(declared: string[]): string[] {
  * errors out loud. Same pattern as `lampcode-interact.mjs`.
  */
 export const RENDER_SCRIPT = String.raw`import { chromium } from "playwright"
+import { readFile } from "node:fs/promises"
 
-const base = process.argv[2] || "http://localhost:5173"
-const routes = JSON.parse(process.argv[3] || '["/"]')
 const MAX_TEXT = ${MAX_TEXT_CHARS}
-const REQUIRE_INITIAL_CONTENT = process.argv[4] !== "false"
 const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_RE.source)}, "i")
+let base = "http://localhost:5173"
+let routes = ["/"]
+let REQUIRE_INITIAL_CONTENT = true
 
 const out = { routes: [], unreachable: [] }
 let browser
 
 try {
+  const input = JSON.parse(await readFile(process.argv[2], "utf8"))
+  if (typeof input.base === "string") base = input.base
+  if (Array.isArray(input.routes)) routes = input.routes
+  REQUIRE_INITIAL_CONTENT = input.requireInitialContent !== false
+
   browser = await chromium.launch()
   const page = await browser.newPage()
   await page.setViewportSize({ width: 1440, height: 900 })
