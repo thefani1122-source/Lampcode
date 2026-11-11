@@ -212,6 +212,7 @@ check(
 
 const block = formatPlanForPrompt({
   summary: "A client tracker.",
+  approach: ["the primary workflow creates and updates client records"],
   files: [
     { path: "src/types.ts", purpose: "shared types" },
     { path: "src/views/Dashboard.tsx", purpose: "KPI cards" },
@@ -226,7 +227,7 @@ check("planner out-of-scope stays subordinate to explicit user requirements", /D
 check("the plan is treated as product direction while file paths remain adaptable", /Planned product decisions/.test(block) && /Suggested file decomposition/.test(block), true);
 check("the builder is told to implement the named product screens", /implement its named screens/.test(block), true);
 check("the primary journeys are treated as a required deliverable", /primary user journeys/.test(block), true);
-check("the first screen must have meaningful content", /first screen meaningful content/.test(block), true);
+check("the first screen must have meaningful product-specific content and a primary action", /first screen meaningful, product-specific content and a clear primary action/.test(block), true);
 check("loading, failures and genuinely empty data are kept distinct", /loading, failure\/error, and genuinely empty data states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
 
