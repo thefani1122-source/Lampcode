@@ -2063,6 +2063,8 @@ export class PromptBuilder {
       agentType === "frontend" &&
       task.description.includes("EXISTING PROJECT FILES:") &&
       !task.projectMemory;
+    const isExistingFullstackEdit =
+      task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const editModePreamble =
       "\n\nEDIT MODE — You are modifying an existing app:\n" +
       "- Preserve the existing design system, colors, and component patterns\n" +
@@ -2088,15 +2090,21 @@ export class PromptBuilder {
           "Do NOT use // BEGIN_EDIT or // END_EDIT markers. Nothing will splice them, and a file\n" +
           "containing them is rejected.\n" +
           "Files you do not write are left untouched, so write only the files you actually change."
-        : editModePreamble +
-          "\nSURGICAL EDITS — use for small, targeted changes:\n" +
-          "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
-          "  // BEGIN_EDIT: [brief description of what changes]\n" +
-          "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
-          "  // END_EDIT\n" +
-          "The system will splice this in place of the matching section in the existing file.\n" +
-          "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
-          "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
+        : isExistingFullstackEdit
+          ? editModePreamble +
+            "\nFULL-FILE EDITS — preserve the existing backend and data-layer structure:\n" +
+            "Output complete updated file contents for every changed file. Do NOT use // BEGIN_EDIT\n" +
+            "or // END_EDIT markers in this existing full-stack edit. Files you do not output remain\n" +
+            "untouched. Preserve existing API routes, database clients, schemas, auth and RLS patterns."
+          : editModePreamble +
+            "\nSURGICAL EDITS — use for small, targeted changes:\n" +
+            "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
+            "  // BEGIN_EDIT: [brief description of what changes]\n" +
+            "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
+            "  // END_EDIT\n" +
+            "The system will splice this in place of the matching section in the existing file.\n" +
+            "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
+            "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
 
     const jsonInstruction =
       JSON_OUTPUT_AGENTS.has(agentType) || task.outputFormat === "json"
