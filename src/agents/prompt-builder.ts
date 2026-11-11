@@ -1995,8 +1995,6 @@ export class PromptBuilder {
 
     const isExistingFullstackEdit =
       task.description.startsWith("EXISTING FULLSTACK EDIT:");
-    const isExistingDatabaseUnknown =
-      isExistingFullstackEdit && /Existing data provider:\s*unknown/i.test(task.description);
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
@@ -2046,10 +2044,11 @@ export class PromptBuilder {
       : "";
 
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
-    // If an existing app's provider could not be inferred, do not silently
-    // inject Supabase's provider-specific instructions as the default.
+    // Provider-specific database instructions describe a new scaffold and
+    // fixed file layout. Existing projects must follow their own code/schema
+    // conventions instead of being migrated to the current template.
     const dbInstruction =
-      isFullstackMode && !isExistingDatabaseUnknown ? DB_INSTRUCTIONS[db] : "";
+      isFullstackMode && !isExistingFullstackEdit ? DB_INSTRUCTIONS[db] : "";
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
