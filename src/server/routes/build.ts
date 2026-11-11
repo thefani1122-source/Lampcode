@@ -1492,12 +1492,19 @@ export async function runFastBuild(
       : hasExistingCode
         ? smartSelectionUsed
           ? fullstackEditMode
-            ? [
-                "Output only the relevant changed files using the exact format: ```filename:<path>.",
-                "For this agentic full-stack edit, output complete file contents for files you change; do not use pipeline surgical edit markers.",
-                "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
-                "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
-              ]
+            ? agenticBuild
+              ? [
+                  "Use the agentic sandbox tools to modify the existing full-stack project; do not print fenced code or pipeline surgical edit markers.",
+                  "Prefer edit_file for existing files and write_files for new files. When write_files is used, provide complete file contents.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                ]
+              : [
+                  "Output only the relevant changed files using the exact format: ```filename:<path>.",
+                  "Output complete file contents for changed files; do not use pipeline surgical edit markers.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                ]
             : [
                 "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
                 "Do NOT output src/index.tsx or package.json if they are unchanged.",
@@ -1506,13 +1513,22 @@ export async function runFastBuild(
                 "Preserve all existing logic and structure that was not mentioned in the request.",
               ]
           : fullstackEditMode
-            ? [
-                "Output each changed file using the exact format: ```filename:<path> (path in the fence opening).",
-                "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
-                "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
-                "Keep existing functionality and the design system unless the user explicitly asks to change them.",
-                "Do NOT output package.json or .env unless the user explicitly requests a dependency/environment change.",
-              ]
+            ? agenticBuild
+              ? [
+                  "Use the agentic sandbox tools to modify the existing full-stack project; do not print fenced code or pipeline surgical edit markers.",
+                  "Prefer edit_file for existing files and write_files for new files. When write_files is used, provide complete file contents.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                  "Keep existing functionality and the design system unless the user explicitly asks to change them.",
+                ]
+              : [
+                  "Output each changed file using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Output complete file contents for changed files; do not use pipeline surgical edit markers.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                  "Keep existing functionality and the design system unless the user explicitly asks to change them.",
+                  "Do NOT output package.json or .env unless the user explicitly requests a dependency/environment change.",
+                ]
             : editDetectedFramework !== "react"
               ? [
                   "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
