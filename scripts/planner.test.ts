@@ -14,6 +14,7 @@
 
 import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, type PlanningBuildShape } from "../src/agents/build-planner.js";
 import { readFileSync } from "node:fs";
+import { PromptBuilder, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -419,5 +420,74 @@ check(
   true,
 );
 
-console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
+// ── full-stack edit prompt mode ───────────────────────────────────────────────
+
+async function runPromptModeChecks(): Promise<void> {
+  const mongoSkills = await loadRelevantSkillsForPrompt(
+    "Add an export action to the existing app.",
+    "fullstack-mongodb",
+  );
+  check(
+    "MongoDB full-stack projects do not receive the Supabase-specific Hono skill",
+    !mongoSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  check(
+    "MongoDB full-stack projects still receive core production and product UI skills",
+    mongoSkills.includes("## Skill: react-production") &&
+      mongoSkills.includes("## Skill: product-ui-design"),
+    true,
+  );
+
+  const supabaseSkills = await loadRelevantSkillsForPrompt(
+    "Build a Supabase-backed task app.",
+    "fullstack",
+  );
+  check(
+    "Supabase full-stack projects retain the fullstack-hono skill",
+    supabaseSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+
+  const builder = new PromptBuilder();
+  const built = await builder.build(
+    "frontend",
+    {
+      description:
+        "FULLSTACK BUILD:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "USER REQUEST: Add a reporting endpoint.",
+      outputFormat: "code",
+      agenticBuild: true,
+    },
+    {
+      projectId: "planner-prompt-test",
+      userId: "planner-prompt-test",
+      mode: "fast",
+      prompt: "Add a reporting endpoint.",
+    },
+  );
+  check(
+    "full-stack edit prompt still includes the edit-mode preservation contract",
+    built.systemPrompt.includes("EDIT MODE — You are modifying an existing app") &&
+      built.systemPrompt.includes("Preserve all working functionality and state management"),
+    true,
+  );
+  check(
+    "agentic full-stack edits use complete-file writes rather than pipeline surgical markers",
+    built.systemPrompt.includes("write_files replaces each file ENTIRELY") &&
+      !built.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
+    true,
+  );
+  check(
+    "existing React/Hono edits get full-stack backend instructions",
+    built.systemPrompt.includes("Hono") &&
+      built.systemPrompt.includes("DATABASE: Supabase"),
+    true,
+  );
+}
+
+await runPromptModeChecks();
+
+console.log(failures === 0 ? "\\nall cases passed" : `\\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
