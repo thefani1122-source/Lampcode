@@ -42,7 +42,7 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, captureStorage, checkInteractions, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, captureStorage, checkInteractions, checkRender, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
@@ -85,7 +85,7 @@ import {
 } from "../../verify/hollow-tests.js";
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
 import type { StorageSnapshot } from "../../verify/storage.js";
-import { routesToVisit } from "../../verify/render.js";
+import { allRoutesOk, routesToVisit, shouldRequireInitialContent } from "../../verify/render.js";
 import { parseJourney, MAX_JOURNEY_STEPS } from "../../verify/journey.js";
 import { formatPreviewEmailConfirmationGuidance } from "../../verify/preview-auth-guidance.js";
 import {
@@ -4553,9 +4553,25 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         } else stillStale.push("types");
       }
       if ((staleBefore.staleCheckPage ?? 0) > 0) {
-        const page = await verifyBrowserRender(projectId).catch(() => null);
-        if (page && !page.unavailable) {
-          recorder.record({ type: "verification/result", gate: "page", status: page.ok ? "pass" : "fail" });
+        const pageRoutes = routesToVisit(
+          [...new Set(Object.values(allFiles).flatMap((code) => declaredRoutes(code)))],
+        );
+        const page = await checkRender(
+          projectId,
+          pageRoutes,
+          shouldRequireInitialContent({
+            agentType: "frontend",
+            taskDescription,
+            userPrompt: prompt,
+            projectFiles: hasExistingCode ? existingFiles : undefined,
+          }),
+        ).catch(() => null);
+        if (page?.ran && page.report) {
+          recorder.record({
+            type: "verification/result",
+            gate: "page",
+            status: allRoutesOk(page.report) ? "pass" : "fail",
+          });
           revalidated.push("page");
         } else stillStale.push("page");
       }

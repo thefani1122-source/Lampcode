@@ -14,6 +14,7 @@ import {
   MAX_TEXT_CHARS,
   RENDER_SCRIPT,
   INITIAL_EMPTY_STATE_RE,
+  shouldRequireInitialContent,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -306,6 +307,31 @@ ok("changed text on a working page is shown", formatRenderForAgent(textChanged, 
 const added = mk([{ route: "/", text: "Home" }, { route: "/shifts", text: "Shifts" }, { route: "/staff", text: "Staff" }]);
 ok("a newly declared route is reported", formatRenderForAgent(added, twoGood).includes("/staff is new"));
 ok("a removed route is reported", formatRenderForAgent(twoGood, added).includes("no longer declared: /staff"));
+
+// ── first-run content policy, shared by both verification passes ──────────────
+
+const frontendPolicy = {
+  agentType: "frontend",
+  taskDescription: "Build a habit tracker",
+  userPrompt: "Build a habit tracker",
+};
+ok("a plain frontend first run must contain initial content", shouldRequireInitialContent(frontendPolicy));
+ok("a non-frontend agent has no first-run content requirement", !shouldRequireInitialContent({ ...frontendPolicy, agentType: "backend" }));
+ok("a full-stack build is not forced to contain seeded browser data", !shouldRequireInitialContent({ ...frontendPolicy, taskDescription: "FULLSTACK BUILD: habit tracker" }));
+ok("an existing backend project is not forced to contain seeded content", !shouldRequireInitialContent({ ...frontendPolicy, projectFiles: { "src/server/index.ts": "export {}" } }));
+ok("an explicit empty first run is respected", !shouldRequireInitialContent({ ...frontendPolicy, userPrompt: "Start with an empty first run; no sample data." }));
+
+{
+  const dispatcher = readFileSync(new URL("../src/agents/dispatcher.ts", import.meta.url), "utf8");
+  ok("the agentic sweep uses the shared first-run policy", dispatcher.includes("shouldRequireInitialContent({"));
+  const buildRoute = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const start = buildRoute.indexOf("const revalidateStaleGates");
+  const end = buildRoute.indexOf("await revalidateStaleGates();", start);
+  const block = start >= 0 && end > start ? buildRoute.slice(start, end) : "";
+  ok("post-repair page revalidation uses the multi-route sweep", block.includes("await checkRender(") && block.includes("allRoutesOk(page.report)"));
+  ok("post-repair page revalidation does not downgrade to the homepage-only check", !block.includes("verifyBrowserRender("));
+  ok("post-repair page revalidation preserves the same seeded-content rule", block.includes("shouldRequireInitialContent({"));
+}
 
 // ── the script itself ────────────────────────────────────────────────────────
 

@@ -45,6 +45,7 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
+import { shouldRequireInitialContent } from "../verify/render.js";
 import type { RenderReport } from "../verify/render.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 
@@ -592,18 +593,12 @@ export class AgentDispatcher {
     const isFullstackBuild =
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    const existingProjectHasBackend = Object.keys(options.projectFiles ?? {}).some((path) =>
-      /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
-    );
-    const originalUserRequest = options.userPrompt ?? task.description;
-    const explicitlyRequestsEmptyFirstRun =
-      /\bno sample data\b|\b(?:first|initial|default|start|begin|launch|open)\b.{0,45}\b(?:empty|blank)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default|start|begin|launch)\b/i.test(
-        originalUserRequest,
-      );
-    const requireInitialContent = agentType === "frontend" &&
-      !isFullstackBuild &&
-      !existingProjectHasBackend &&
-      !explicitlyRequestsEmptyFirstRun;
+    const requireInitialContent = shouldRequireInitialContent({
+      agentType,
+      taskDescription: task.description,
+      userPrompt: options.userPrompt,
+      projectFiles: options.projectFiles,
+    });
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
