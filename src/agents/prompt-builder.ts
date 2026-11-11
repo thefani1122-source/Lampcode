@@ -1422,118 +1422,27 @@ const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
 ]);
 
 // ── Prompt expansion ──────────────────────────────────────────────────────────
-
-// Per-app-type feature expectations appended to short prompts so the model
-// builds the COMPLETE version rather than a skeleton. Runs before the main build.
-const APP_TYPE_EXPANSIONS: Array<{ match: RegExp; expansion: string }> = [
-  {
-    match: /\bhabit|habbit|streak|routine|daily tracker\b/i,
-    expansion: `Build a COMPLETE, highly visual Habit & Routine Tracker with:
-- Pre-load 5–6 rich, realistic sample habits (e.g. "Drink 2.5L Water", "Morning Workout 30m", "Read 20 pages", "Mindfulness Meditation", "No Screen 1h Before Sleep") with active streaks (e.g. 14 days, 7 days, 21 days), category tags (Health, Fitness, Mindset, Productivity), and today's completion status (some checked, some unchecked).
-- FIRST-RUN SEED INITIALISATION: On first launch, initialise the habit list with this seed set so habit cards, fire-icon streak counters and today's completion progress appear immediately. For localStorage, use a seed-version marker: when the marker is absent, keep any non-empty saved habits; otherwise write the seed set, then mark initialization complete. Once marked, preserve a user's deliberate empty list after they delete all habits—never re-seed on every reload.
-- Interactive habit cards: checkbox to toggle today's completion (instantly updates streak and progress bar), fire icon with streak count, frequency badge (Daily/Weekly), category badge, and delete button.
-- Add habit form: input for habit name, category selector, frequency selector, and "+ Add Habit" button.
-- Filter tabs: All / Active / Completed / Categories with count badges.
-- Progress overview: Visual circular or bar progress for today's habits with completion percentage.
-- Empty state: ONLY render "No habits match filter" when a search/filter has zero matches or if the user manually deletes every single habit — NEVER on initial app launch.`,
-  },
-  {
-    match: /\brestaurant|cafe|food ordering|menu|pos|bistro|diner|kitchen\b/i,
-    expansion: `Build a COMPLETE Restaurant Management / Ordering app with:
-- Pre-load 8–10 realistic, appetizing menu items across categories (Starters, Mains, Desserts, Beverages) with realistic prices, descriptions, calorie counts, badges (Chef's Special, Vegetarian), and category filters.
-- Pre-load 3–4 active table orders in different statuses (Preparing, Ready, Served, Paid) with order timestamps, items, table numbers, and totals.
-- Include summary KPI metrics (Today's Revenue e.g. $1,420, Active Orders: 4, Occupied Tables: 6/12).
-- NEVER launch with an empty menu or empty order list. State must default to the pre-loaded items so the dashboard is vibrant and functional immediately on first render.`,
-  },
-  {
-    match: /\bfinance|expense|budget|accounting|money tracker|spending\b/i,
-    expansion: `Build a COMPLETE Personal Finance & Expense Tracker with:
-- Pre-load 8–12 realistic, varied transactions across diverse categories (Groceries, Housing, Dining, Utilities, Entertainment, Salary) with dates over the past 30 days, positive/negative amounts, and payment methods.
-- Summary KPI cards: Total Balance (e.g. $4,850.00), Monthly Income ($5,200), Monthly Expenses ($2,350), Savings Rate (54%).
-- Category breakdown with visual progress bars or SVG chart showing spending per category.
-- Add transaction form, category filters, and search bar.
-- NEVER launch with $0.00 or an empty transaction table. Default state to the pre-loaded transactions so all charts and metrics are alive on first render.`,
-  },
-  {
-    match: /\bfitness|workout|gym|exercise|training\b/i,
-    expansion: `Build a COMPLETE Workout & Fitness Tracker with:
-- Pre-load 4–5 realistic workout routines (e.g. Upper Body Strength, Leg Day Blast, Core & Cardio) with exercises, sets, reps, and weights.
-- Pre-load recent workout history log showing dates, duration (45 mins), and calories burned.
-- Weekly workout activity chart or streak indicator.
-- Log workout form and exercise library filter.
-- NEVER launch with an empty workout log or 0 calories.`,
-  },
-  {
-    match: /\bcrm|lead|client|customer pipeline|contacts\b/i,
-    expansion: `Build a COMPLETE CRM & Lead Management app with:
-- Pre-load 6–8 realistic leads across pipeline stages (New Lead, Contacted, In Negotiation, Won, Lost) with company names, deal values ($2,500 to $28,000), contact person, email, and last contact date.
-- Pipeline value summary card, deal conversion rate, and stage filter tabs.
-- Add lead form and stage move actions.
-- NEVER launch with an empty pipeline or $0 deal value.`,
-  },
-  {
-    match: /\btodo|task list|task manager\b/i,
-    expansion: `Build a COMPLETE task management app with ALL these features:
-- Add tasks with title, priority (High/Medium/Low badge), and due date
-- Priority color-coded badges: High=red, Medium=yellow/amber, Low=green
-- Filter tabs: All / Active / Completed — each showing filtered count
-- Sort controls: by Priority / Due Date / Created
-- Task count display (e.g. "3 of 7 tasks remaining")
-- Delete and toggle-complete for every task
-- Empty state message when no tasks match the current filter
-- Keyboard shortcut: press Enter in the input to add a task
-- Clean, polished UI with smooth hover/transition effects
-- Pre-load 4–5 realistic sample tasks relevant to the app's domain.
-  Use fresh, varied task names every time — NEVER generic "Task 1" placeholders.`,
-  },
-  {
-    match: /\bdashboard|admin panel|analytics\b/i,
-    expansion: `Build a COMPLETE analytics dashboard with ALL these sections:
-- Sidebar with navigation items relevant to the domain (with icons via Unicode/SVG)
-- 4 KPI cards with trend arrows (↑/↓) and percentage change.
-  Use realistic numbers appropriate to the domain — generate fresh values every time,
-  do NOT reuse the same numbers across builds.
-- SVG bar or line chart (300×160 px minimum) with at least 7 data points and axis labels.
-  Use domain-appropriate data — generate varied, realistic values.
-- Activity feed or table: 5–8 rows of recent-activity data with realistic names, actions, timestamps, and status badges
-- Status badges color-coded: e.g. Completed=green, Pending=yellow, Failed=red
-- Professional theme with consistent spacing and typography`,
-  },
-  {
-    match: /\bkanban|board|drag|trello\b/i,
-    expansion: `Build a Kanban board WITHOUT any drag-and-drop library.
-Use ONLY component state for moving cards between columns — no external DnD libs.
-Clicking a card shows a move button: [→ Move to Next Column]
-Three columns: Todo, In Progress, Done
-Each column has: header with task count badge and list of cards
-Each card has: title, priority badge (High/Medium/Low), and a "→ Move" button
-For drag-and-drop card states use Tailwind cn() — NEVER inline styles:
-className={cn(
-  "rounded-lg border bg-card p-3 shadow-sm cursor-grab active:cursor-grabbing select-none",
-  isDragging && "opacity-50 scale-95 rotate-1 shadow-xl ring-2 ring-primary/50",
-  isOver && "border-primary border-2 border-dashed bg-primary/5"
-)}
-Column states:
-className={cn(
-  "rounded-xl bg-muted/50 p-3 min-h-[200px] transition-colors",
-  isDragOver && "bg-primary/10 ring-1 ring-primary"
-)}
-Pre-load 6 sample tasks distributed across the three columns.
-Use realistic task names relevant to the app's domain — generate fresh names every time.`,
-  },
-  {
-    match: /\blanding page|marketing site|homepage\b/i,
-    expansion: "Include: a hero section, features grid, pricing tiers, testimonials, a clear CTA, and a footer.",
-  },
-  {
-    match: /\btimer|stopwatch|pomodoro|countdown\b/i,
-    expansion: "Include: start/stop/reset controls, a visual progress indicator, and clean time formatting.",
-  },
-  {
-    match: /\bchat|messaging|messenger\b/i,
-    expansion: "Include: a message list, an input box, send-on-Enter, mock conversation data, and auto-scroll to the latest message.",
-  },
-];
+//
+// Keep this compatibility helper deliberately product-agnostic. App-type regex
+// bundles used to turn one word (for example "habit" or "dashboard") into a
+// second, hidden product specification. That silently added features, sample
+// records, filters and interactions the user had not requested, and could even
+// imply a storage implementation that the user had not chosen.
+//
+// Product-specific requirements belong in the planning pass, derived from the
+// user's original request. This helper may add only a small, generic preview
+// data policy. Keep the user's text byte-for-byte at the start of the result.
+//
+// The universal policy is intentionally conditional: it does not create
+// collections for products that do not need them, respects explicit empty/no
+// sample-data requests, and never substitutes mock data for a real backend.
+const UNIVERSAL_PREVIEW_DATA_CONTRACT =
+  "━━ FIRST-RUN CONTENT CONTRACT — APPLY WHEN THE PRODUCT NEEDS A COLLECTION ━━\n" +
+  "- For a dashboard, tracker, manager, catalog, data table or other product whose core experience is a collection of records, show 5–8 realistic domain-specific sample records on first launch when the user requested or reasonably expects a mock/preview experience. Populate KPIs and charts from those same records. Do not leave a new habit/task/product list at 'No items yet'.\n" +
+  "- Do NOT invent record collections for login/register-only pages, marketing/landing pages, simple counters or calculators, form-only flows, creative canvases, or blank starter templates. Render the actual primary experience those products require. Always respect an explicit request for an empty/blank first launch or no sample data.\n" +
+  "- For localStorage-backed collections, distinguish NEVER INITIALISED from INTENTIONALLY EMPTY. Do not use JSON.parse(localStorage.getItem(KEY) || '[]') or saved ?? INITIAL_SAMPLE_DATA as the only initializer: an already-saved empty array suppresses the seed forever. Use a per-app seed-version marker. If the marker is absent, preserve non-empty saved data but replace missing/empty initial data with INITIAL_SAMPLE_DATA, persist it, then set the marker. Once the marker exists, preserve a user's deliberate empty array after they delete every record; never reseed on each reload.\n" +
+  "- Keep seed records realistic and internally consistent; calculate KPIs/charts from the same records rather than hardcoded unrelated numbers. Add, edit, delete, filter and summary counts must all operate on the same source of truth.\n" +
+  "- For a real backend/database app, do not write fake rows into the user's database or pretend mock data is live data. Use the real API as the source of truth; show a truthful loading/error/empty state when the real service has no records or is unavailable.";
 
 // ── Screenshot / design-reference instruction ────────────────────────────────
 
@@ -1694,27 +1603,12 @@ a dark flat page is what this bug looks like.
 `;
 
 /**
- * Expand a short user prompt with completeness expectations for its app type.
- * Pure and additive — never replaces the user's intent, only appends guidance.
- * Call this BEFORE dispatching the main build so the model targets a full app.
+ * Preserve the user's request and append only product-agnostic preview guidance.
+ * Product-specific requirements are left to the planning pass, not keyword regexes.
  */
 export function expandUserPrompt(prompt: string): string {
-  const trimmed = prompt.trim();
-  const matched = APP_TYPE_EXPANSIONS.filter((e) => e.match.test(trimmed));
-  const universalSeedRule =
-    "━━ FIRST-RUN CONTENT CONTRACT — APPLY WHEN THE PRODUCT NEEDS A COLLECTION ━━\n" +
-    "- For a dashboard, tracker, manager, catalog, data table or other product whose core experience is a collection of records, show 5–8 realistic domain-specific sample records on first launch when the user requested or reasonably expects a mock/preview experience. Populate KPIs and charts from those same records. Do not leave a new habit/task/product list at 'No items yet'.\n" +
-    "- Do NOT invent record collections for login/register-only pages, marketing/landing pages, simple counters or calculators, form-only flows, creative canvases, or blank starter templates. Render the actual primary experience those products require. Always respect an explicit request for an empty/blank first launch or no sample data.\n" +
-    "- For localStorage-backed collections, distinguish NEVER INITIALISED from INTENTIONALLY EMPTY. Do not use `JSON.parse(localStorage.getItem(KEY) || '[]')` or `saved ?? INITIAL_SAMPLE_DATA` as the only initializer: an already-saved empty array suppresses the seed forever. Use a per-app seed-version marker. If the marker is absent, preserve non-empty saved data but replace missing/empty initial data with INITIAL_SAMPLE_DATA, persist it, then set the marker. Once the marker exists, preserve a user's deliberate empty array after they delete every record; never reseed on each reload.\n" +
-    "- Keep seed records realistic and internally consistent; calculate KPIs/charts from the same records rather than hardcoded unrelated numbers. Add, edit, delete, filter and summary counts must all operate on the same source of truth.\n" +
-    "- For a real backend/database app, do not write fake rows into the user's database or pretend mock data is live data. Use the real API as the source of truth; show a truthful loading/error/empty state when the real service has no records or is unavailable.";
-
-  if (matched.length === 0) {
-    return `${trimmed}\n\nBuild the complete, fully-functional version:\n${universalSeedRule}`;
-  }
-
-  const additions = matched.map((e) => `- ${e.expansion}`).join("\n");
-  return `${trimmed}\n\nBuild the complete, fully-functional version:\n${universalSeedRule}\n\nSpecific category requirements:\n${additions}`;
+  if (!prompt.trim()) return prompt;
+  return prompt + "\n\nBuild the complete, fully-functional version:\n" + UNIVERSAL_PREVIEW_DATA_CONTRACT;
 }
 
 /** Returns the base frontend agent system prompt for use in external streaming handlers. */
