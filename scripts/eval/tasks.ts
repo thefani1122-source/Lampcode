@@ -1,7 +1,7 @@
 /**
  * The fixed evaluation set.
  *
- * Twenty prompts that do not change between runs. That is the whole point: until
+ * Twenty-one prompts that do not change between runs. That is the whole point: until
  * now every prompt change, every harness change and every model switch was
  * judged on one build somebody happened to watch, which is why the styling bug
  * survived three months and `check_page` could be structurally broken for three
@@ -21,8 +21,10 @@
  *  - `maxLinesPerFile` catches the same thing from the other side.
  *
  * Tiers exist so a cheap smoke run is possible without the full set — a full
- * sweep is twenty real builds and real money.
+ * sweep is twenty-one real builds and real money.
  */
+
+import type { JourneyStep } from "../../src/verify/journey.js";
 
 export type EvalTask = {
   id: string;
@@ -44,6 +46,8 @@ export type EvalTask = {
    *  asks for tests. Asking for tests on a layout task would penalise a build
    *  for something it was never told to do. */
   minTestFiles?: number;
+  /** Independent browser journey to run after the build has completed. */
+  journey?: JourneyStep[];
   /** Set instead of deleting a task, so old results stay readable. */
   retired?: boolean;
 };
@@ -73,6 +77,34 @@ export const EVAL_TASKS: EvalTask[] = [
       "The count survives a page reload. Center it on the page with large type.",
     mustContain: [PERSISTS],
   },
+  {
+    id: "counter-journey",
+    title: "Counter with an independently verified browser journey",
+    tier: "smoke",
+    prompt:
+      "Build a persistent counter app. It starts at 0 and displays the current count as visible text. " +
+      "Provide buttons labeled exactly 'Increase', 'Decrease', and 'Reset'. Increase adds one, " +
+      "Decrease subtracts one but never goes below zero, and Reset returns the count to zero. " +
+      "The count survives a page reload. Keep the interface clean and responsive.",
+    mustContain: [PERSISTS],
+    journey: [
+      { do: "expect", text: "0" },
+      { do: "click", text: "Increase" },
+      { do: "expect", text: "1" },
+      { do: "click", text: "Decrease" },
+      { do: "expect", text: "0" },
+      { do: "click", text: "Decrease" },
+      { do: "expect", text: "0" },
+      { do: "click", text: "Increase" },
+      { do: "click", text: "Increase" },
+      { do: "expect", text: "2" },
+      { do: "goto", route: "/" },
+      { do: "expect", text: "2" },
+      { do: "click", text: "Reset" },
+      { do: "expect", text: "0" },
+    ],
+  },
+
   {
     id: "todo",
     title: "Todo list",

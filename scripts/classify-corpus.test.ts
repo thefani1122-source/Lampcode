@@ -181,9 +181,9 @@ console.log("\n— instruction —");
 }
 
 // ── The eval corpus must not move ───────────────────────────────────────────
-// These twenty prompts have scored runs behind them. Exactly one of them —
-// python-api — asks for a server. If this block ever reports a different
-// number, every stored eval comparison has quietly changed meaning.
+// The original twenty prompts have scored runs behind them and remain unchanged.
+// One additional counter task adds a deterministic browser journey. Exactly one
+// task — python-api — asks for a server; the new journey task is frontend-only.
 
 console.log("\n— the eval corpus —");
 {
@@ -194,7 +194,11 @@ console.log("\n— the eval corpus —");
     if (c.buildType === "fullstack") fullstack.push(task.id);
   }
   ok(`exactly one eval task needs a server (got: ${fullstack.join(",") || "none"})`, fullstack.length === 1 && fullstack[0] === "python-api");
-  ok("all twenty were classified", tasks.length === 20);
+  ok("all twenty-one eval tasks were classified", tasks.length === 21);
+  ok(
+    "the new counter browser journey stays a frontend-only eval task",
+    tasks.some((task) => task.id === "counter-journey" && !fullstack.includes(task.id)),
+  );
 }
 
 

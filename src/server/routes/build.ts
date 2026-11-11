@@ -42,7 +42,7 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, captureStorage, checkInteractions, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, captureStorage, checkInteractions, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
@@ -86,6 +86,7 @@ import {
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
 import type { StorageSnapshot } from "../../verify/storage.js";
 import { routesToVisit } from "../../verify/render.js";
+import { parseJourney, MAX_JOURNEY_STEPS } from "../../verify/journey.js";
 import { formatPreviewEmailConfirmationGuidance } from "../../verify/preview-auth-guidance.js";
 import {
   shouldAudit,
@@ -5778,6 +5779,81 @@ buildRouter.get("/:sessionId/status", async (c) => {
     createdAt: session.createdAt,
     startedAt: session.startedAt,
     completedAt: session.completedAt,
+  });
+});
+
+// POST /api/build/:sessionId/eval-journey
+// The eval harness runs a fixed, validated browser journey independently of
+// the generation agent. This accepts the same small no-JavaScript DSL used by
+// browser_interact; it never accepts code, remote URLs or arbitrary commands.
+buildRouter.post("/:sessionId/eval-journey", async (c) => {
+  const authUser = c.get("authUser");
+  const { sessionId } = c.req.param();
+  const bodyRaw = await c.req.json().catch(() => {
+    throw new AppError(400, "Invalid JSON body", "VALIDATION_ERROR");
+  });
+  const body = z.object({
+    steps: z.array(z.unknown()).min(1).max(MAX_JOURNEY_STEPS),
+  }).safeParse(bodyRaw);
+  if (!body.success) {
+    throw new AppError(400, "Provide between 1 and 20 journey steps.", "VALIDATION_ERROR");
+  }
+  const journey = parseJourney(body.data.steps);
+  if ("error" in journey) {
+    throw new AppError(400, journey.error, "VALIDATION_ERROR");
+  }
+
+  const [session] = await db
+    .select({ projectId: buildSessions.projectId, status: buildSessions.status })
+    .from(buildSessions)
+    .where(and(eq(buildSessions.id, sessionId), eq(buildSessions.userId, authUser.id)))
+    .limit(1);
+  if (!session) throw new AppError(404, "Build session not found", "NOT_FOUND");
+  if (session.status !== "success" && session.status !== "completed") {
+    throw new AppError(409, "The build must finish before an eval journey can run.", "BUILD_NOT_READY");
+  }
+
+  // runJourney keeps infrastructure-unavailable separate from a journey that
+  // ran and failed. The evaluator must never score a missing sandbox as a bug.
+  return c.json(await runJourney(session.projectId, journey.steps));
+});
+
+// GET /api/build/:sessionId/eval-screenshot?viewport=desktop|mobile
+// Returns a fresh screenshot from the session's live sandbox. It is streamed
+// directly to the authenticated owner and is not persisted or made public.
+buildRouter.get("/:sessionId/eval-screenshot", async (c) => {
+  const authUser = c.get("authUser");
+  const { sessionId } = c.req.param();
+  const requestedViewport = c.req.query("viewport") ?? "desktop";
+  if (requestedViewport !== "desktop" && requestedViewport !== "mobile") {
+    throw new AppError(400, "viewport must be desktop or mobile.", "VALIDATION_ERROR");
+  }
+  const viewport: PreviewScreenshotViewport = requestedViewport;
+
+  const [session] = await db
+    .select({ projectId: buildSessions.projectId, status: buildSessions.status })
+    .from(buildSessions)
+    .where(and(eq(buildSessions.id, sessionId), eq(buildSessions.userId, authUser.id)))
+    .limit(1);
+  if (!session) throw new AppError(404, "Build session not found", "NOT_FOUND");
+  if (session.status !== "success" && session.status !== "completed") {
+    throw new AppError(409, "The build must finish before a screenshot can be captured.", "BUILD_NOT_READY");
+  }
+
+  const png = await capturePreviewScreenshot(session.projectId, viewport);
+  if (!png) {
+    return c.json({
+      available: false,
+      reason: "The preview sandbox or screenshot browser was unavailable.",
+      viewport,
+    }, 503);
+  }
+  // Copy Buffer into a plain Uint8Array so Hono's body overload receives
+  // an ArrayBuffer-backed view rather than Node's ArrayBufferLike Buffer.
+  return c.body(Uint8Array.from(png), 200, {
+    "Content-Type": "image/png",
+    "Cache-Control": "no-store",
+    "X-Eval-Viewport": viewport,
   });
 });
 
