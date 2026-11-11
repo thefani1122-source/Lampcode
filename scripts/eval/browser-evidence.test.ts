@@ -3,6 +3,8 @@ import {
   pngDimensions,
   type EvalVisualEvidence,
 } from "./browser-evidence.js";
+import { readFileSync } from "node:fs";
+import { EVAL_TASKS } from "./tasks.js";
 
 let failures = 0;
 function check(name: string, got: unknown, expected: unknown): void {
@@ -71,6 +73,48 @@ check("visual scores start as unreviewed rather than fabricated", template.tasks
 check("visual rubric explicitly separates product fit and responsiveness", Object.keys(template.rubric), [
   "productFit", "visualHierarchy", "contentDensity", "designConsistency", "responsiveLayout",
 ]);
+
+const taskSet = EVAL_TASKS;
+const counterJourney = taskSet.find((t) => t.id === "counter-journey");
+check("the deterministic counter journey is added without changing the original counter prompt", !!counterJourney && counterJourney.journey?.length, 14);
+check(
+  "the counter journey covers a reload before reset",
+  counterJourney?.journey?.some((step) => step.do === "goto" && step.route === "/"),
+  true,
+);
+check(
+  "the counter journey task requests exact accessible control labels",
+  counterJourney?.prompt.includes("labeled exactly 'Increase', 'Decrease', and 'Reset'"),
+  true,
+);
+
+const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
+check(
+  "eval journey endpoint reuses the bounded safe journey parser",
+  buildRouteSource.includes('buildRouter.post("/:sessionId/eval-journey"') &&
+    buildRouteSource.includes("parseJourney(body.data.steps)") &&
+    buildRouteSource.includes("MAX_JOURNEY_STEPS"),
+  true,
+);
+check(
+  "eval journey endpoint checks ownership and completed session state",
+  buildRouteSource.includes("eq(buildSessions.userId, authUser.id)") &&
+    buildRouteSource.includes('session.status !== "success" && session.status !== "completed"'),
+  true,
+);
+check(
+  "screenshot endpoint is owner-scoped and supports only the two fixed viewports",
+  buildRouteSource.includes('buildRouter.get("/:sessionId/eval-screenshot"') &&
+    buildRouteSource.includes('requestedViewport !== "desktop" && requestedViewport !== "mobile"'),
+  true,
+);
+check(
+  "screenshots are streamed and not uploaded or made public by the eval route",
+  buildRouteSource.includes('"Content-Type": "image/png"') &&
+    buildRouteSource.includes('"Cache-Control": "no-store"') &&
+    !buildRouteSource.includes("uploadPreviewScreenshot(session.projectId"),
+  true,
+);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
