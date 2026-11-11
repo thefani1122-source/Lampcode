@@ -1835,7 +1835,11 @@ async function loadSkillsForPrompt(
       /\b(database|supabase|postgres|postgresql|sql|sqlite|mysql|mongodb|table|schema|crud|persist|persistence)\b/i.test(prompt))
   ) {
     skillsToLoad.add("database-rls");
-    skillsToLoad.add("supabase-rls");
+    // Supabase-specific guidance must not leak into MongoDB builds or
+    // existing projects whose provider is governed by their current code.
+    if (opts.buildType === "fullstack") {
+      skillsToLoad.add("supabase-rls");
+    }
   }
 
   // FIRECRAWL — only when scraping/crawling requested
