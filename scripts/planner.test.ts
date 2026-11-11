@@ -473,6 +473,11 @@ check(
     buildRouteSource.includes("do not use pipeline surgical edit markers"),
   true,
 );
+check(
+  "MongoDB full-stack builds are not sent through the Supabase-only database connection gate",
+  buildRouteSource.includes('fullstackDb === "supabase" && !isConnected && !userSupa && server && shouldAskForDatabase(userId)'),
+  true,
+);
 
 // ── full-stack edit prompt mode ───────────────────────────────────────────────
 
