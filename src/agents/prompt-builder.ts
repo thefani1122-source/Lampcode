@@ -1808,7 +1808,7 @@ async function buildPipManifest(): Promise<string> {
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" },
+  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1877,7 +1877,7 @@ async function loadSkillsForPrompt(
  */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
-  buildType: "frontend" | "fullstack" = "frontend",
+  buildType: "frontend" | "fullstack" | "fullstack-mongodb" = "frontend",
 ): Promise<string> {
   return loadSkillsForPrompt(prompt, { buildType });
 }
@@ -1900,12 +1900,16 @@ export class PromptBuilder {
   ): Promise<BuiltPrompt> {
     // Detect build type from the task description prefix so the right
     // build-type skill (frontend-sandbox vs fullstack-hono) gets injected.
-    const buildType: "frontend" | "fullstack" | undefined =
+    const isFullstackBuildDescription =
+      task.description.startsWith("FULLSTACK BUILD:") ||
+      task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const isMongoBuildDescription =
+      /\\bmongodb\\b|MONGODB_URI|\\bmongoose\\b/i.test(task.description);
+    const buildType: "frontend" | "fullstack" | "fullstack-mongodb" | undefined =
       agentType === "frontend"
-        ? (task.description.startsWith("FULLSTACK BUILD:") ||
-           task.description.startsWith("FULLSTACK AUTH BUILD:")
-            ? "fullstack"
-            : "frontend")
+        ? isFullstackBuildDescription
+          ? isMongoBuildDescription ? "fullstack-mongodb" : "fullstack"
+          : "frontend"
         : undefined;
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
@@ -2034,7 +2038,7 @@ export class PromptBuilder {
 
     const isEditMode =
       agentType === "frontend" &&
-      task.description.startsWith("EXISTING PROJECT FILES:") &&
+      task.description.includes("EXISTING PROJECT FILES:") &&
       !task.projectMemory;
     const editModePreamble =
       "\n\nEDIT MODE — You are modifying an existing app:\n" +
