@@ -1908,7 +1908,7 @@ export class PromptBuilder {
     const isMongoBuildDescription =
       /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
     const isExistingDatabaseUnknown =
-      isExistingFullstackEdit && /Existing data provider:\\s*unknown/i.test(task.description);
+      isExistingFullstackEdit && /Existing data provider:\s*unknown/i.test(task.description);
     const buildType:
       | "frontend"
       | "fullstack"
@@ -2584,7 +2584,7 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(
     prompt: string,
-    buildType?: "frontend" | "fullstack" | "fullstack-mongodb",
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown",
   ): Promise<string> {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
