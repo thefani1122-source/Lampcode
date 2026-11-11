@@ -1808,7 +1808,7 @@ async function buildPipManifest(): Promise<string> {
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" },
+  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1877,7 +1877,7 @@ async function loadSkillsForPrompt(
  */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
-  buildType: "frontend" | "fullstack" | "fullstack-mongodb" = "frontend",
+  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" = "frontend",
 ): Promise<string> {
   return loadSkillsForPrompt(prompt, { buildType });
 }
@@ -1903,12 +1903,24 @@ export class PromptBuilder {
     const isFullstackBuildDescription =
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const isExistingFullstackEdit =
+      task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const isMongoBuildDescription =
       /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
-    const buildType: "frontend" | "fullstack" | "fullstack-mongodb" | undefined =
-      agentType === "frontend"
-        ? isFullstackBuildDescription
-          ? isMongoBuildDescription ? "fullstack-mongodb" : "fullstack"
+    const isExistingDatabaseUnknown =
+      isExistingFullstackEdit && /Existing data provider:\\s*unknown/i.test(task.description);
+    const buildType:
+      | "frontend"
+      | "fullstack"
+      | "fullstack-mongodb"
+      | "fullstack-unknown"
+      | undefined = agentType === "frontend"
+        ? isFullstackBuildDescription || isExistingFullstackEdit
+          ? isMongoBuildDescription
+            ? "fullstack-mongodb"
+            : isExistingDatabaseUnknown
+              ? "fullstack-unknown"
+              : "fullstack"
           : "frontend"
         : undefined;
 
@@ -1980,10 +1992,13 @@ export class PromptBuilder {
     }
     const base = SYSTEM_PROMPTS[agentType];
 
+    const isExistingFullstackEdit =
+      task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:"));
+       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+       isExistingFullstackEdit);
     // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
     // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
     const fullstackFramework: FullstackFramework = isFullstackMode
@@ -1994,7 +2009,10 @@ export class PromptBuilder {
     // Next.js and TanStack have their own backend model (API routes / server functions).
     const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
 
-    let fullstackInstruction = isFullstackMode
+    // Existing-project edits need the correct runtime/DB context, but
+    // must not receive new-app scaffolding instructions that demand rewriting
+    // the project's file layout and backend from scratch.
+    let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
@@ -2025,7 +2043,10 @@ export class PromptBuilder {
       : "";
 
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
-    const dbInstruction = isFullstackMode ? DB_INSTRUCTIONS[db] : "";
+    // If an existing app's provider could not be inferred, do not silently
+    // inject Supabase's provider-specific instructions as the default.
+    const dbInstruction =
+      isFullstackMode && !isExistingDatabaseUnknown ? DB_INSTRUCTIONS[db] : "";
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
