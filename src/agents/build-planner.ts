@@ -245,12 +245,12 @@ export function parsePlan(raw: string): BuildPlan | null {
 }
 
 /**
- * Render a plan as the block injected into the build's own prompt.
+ * Render the planner's product outcomes and proposed file map for the generator.
  *
- * Phrased as a starting point rather than a contract on purpose. The planner
- * saw only the prompt; the builder sees the running app, and when the two
- * disagree the builder is the one with evidence. A plan presented as binding
- * would make the model follow it past the point where it had learned better.
+ * Product behaviour/design outcomes are the target, but cannot override the
+ * original request, trusted runtime shape or proven existing-project contracts.
+ * File paths/order remain adaptable because the generator can inspect the real
+ * project and framework constraints.
  */
 export function formatPlanForPrompt(plan: BuildPlan): string {
   const lines = [
