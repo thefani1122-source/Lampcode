@@ -63,7 +63,7 @@ import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, 
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
-import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
+import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, type PlanningBuildShape } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
@@ -1298,6 +1298,9 @@ export async function runFastBuild(
     // it: applying `schema.sql` only ever happens against a Supabase the user
     // connected themselves, so this flag IS "the app's tables will exist".
     let ownSupabaseConnected = false;
+    // Planner context records the actual database-gate result. A missing
+    // user-owned DB must never be translated into "use localStorage".
+    let databaseSetupState: PlanningBuildShape["databaseAccess"] = "not-applicable";
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP or integration), point this
@@ -1305,6 +1308,9 @@ export async function runFastBuild(
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
       let isConnected = await isUserSupabaseConnected(userId).catch(() => false);
       let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+      databaseSetupState = fullstackDb === "supabase"
+        ? (isConnected || userSupa ? "user-connected" : "not-confirmed")
+        : "unknown";
 
       // No database of their own, and a full-stack app is about to be built on
       // top of nothing. Ask now, because the sandbox .env is written during
@@ -1358,9 +1364,16 @@ export async function runFastBuild(
           });
         }
         const intent = interpretDatabaseAnswer(answer);
+        if (fullstackDb === "supabase") {
+          if (intent === "decline") databaseSetupState = "declined";
+          else if (intent === "unclear") databaseSetupState = "not-confirmed";
+        }
         if (intent === "connect") {
           isConnected = await isUserSupabaseConnected(userId).catch(() => false);
           userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+          if (fullstackDb === "supabase") {
+            databaseSetupState = isConnected || userSupa ? "user-connected" : "not-confirmed";
+          }
         }
         console.log(
           `[build] db gate project=${projectId} intent=${intent} connected=${userSupa !== null || isConnected}`,
@@ -1377,6 +1390,11 @@ export async function runFastBuild(
 
       setProjectPreviewEnv(projectId, userSupa);
       ownSupabaseConnected = isConnected || userSupa !== null;
+      if (fullstackDb === "supabase") {
+        databaseSetupState = ownSupabaseConnected
+          ? "user-connected"
+          : databaseSetupState === "declined" ? "declined" : "not-confirmed";
+      }
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.
@@ -1596,6 +1614,43 @@ export async function runFastBuild(
     // optional planning pass did.
     let buildPlan: BuildPlan | null = null;
     let planCostUsd = 0;
+
+    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
+    const existingHasPython = Object.keys(existingFiles).some(
+      (path) => path.endsWith(".py") || path === "requirements.txt",
+    );
+    const planningShape: PlanningBuildShape = hasExistingCode
+      ? {
+          projectMode: "existing-project",
+          framework: editDetectedFramework,
+          database: inferExistingDatabase(existingFiles),
+          backendRuntime: existingHasPython
+            ? "python"
+            : existingBackendPaths.length > 0 ? "node" : "unknown",
+          databaseAccess: "preserve-existing",
+          auth: "preserve-existing",
+          existingBackendArtifacts: existingBackendPaths.length > 0,
+        }
+      : isFullstackBuild
+        ? {
+            projectMode: "new-fullstack",
+            framework: fullstackFramework,
+            database: fullstackDb,
+            backendRuntime: wantsPython ? "python" : "node",
+            databaseAccess: databaseSetupState,
+            auth: classification?.needsAuth ? "required" : "not-required",
+            existingBackendArtifacts: false,
+          }
+        : {
+            projectMode: "new-frontend",
+            framework: "react",
+            database: "browser",
+            backendRuntime: "none",
+            databaseAccess: "not-applicable",
+            auth: "not-applicable",
+            existingBackendArtifacts: false,
+          };
+
     if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
       server?.emitToRoom(sessionId, "build:preview_log", {
         sessionId,
@@ -1606,7 +1661,7 @@ export async function runFastBuild(
       const planned = await planBuild({
         dispatcher, prompt, sessionId, userId, projectId, provider,
         ...(hasExistingCode ? { existingFiles } : {}),
-        shape: { fullstack: isFullstackBuild, databaseConnected: ownSupabaseConnected },
+        shape: planningShape,
       });
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;
@@ -1837,7 +1892,9 @@ export async function runFastBuild(
       provider,
       task: {
         description:
-          (buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription) +
+          taskDescription +
+          formatBuildShapeForPrompt(planningShape) +
+          (buildPlan ? formatPlanForPrompt(buildPlan) : "") +
           connectedDataRule +
           (threatBlock ? `\n\n${threatBlock}` : ""),
         requirements: effectiveRequirements,
