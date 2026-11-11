@@ -8,7 +8,7 @@
  * local `npm run dev` without any code change.
  *
  * It costs real money. Every task is a real build: model tokens and an E2B
- * sandbox. Four smoke tasks is a pulse check; the full set is twenty builds.
+ * sandbox. Five smoke tasks is a pulse check; the full set is twenty-one builds.
  *
  *   EVAL_EMAIL=you@example.com EVAL_PASSWORD=… EVAL_SUPABASE_ANON_KEY=… \
  *   EVAL_BASE_URL=https://lampcode-production.up.railway.app \
