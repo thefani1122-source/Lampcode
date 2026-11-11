@@ -144,7 +144,7 @@ console.log("\n— the driver —");
 
   ok("the driver reads steps from structured input", src.includes('readFile(process.argv[2], "utf8")'));
   const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
-  ok("journey steps are written to per-run JSON input", service.includes('runSandboxScriptWithJsonInput(sandbox, "lampcode-journey.mjs", JOURNEY_SCRIPT'));
+  ok("journey steps are written to per-run JSON input", /runSandboxScriptWithJsonInput\\(\\s*sandbox,\\s*"lampcode-journey\\.mjs",\\s*JOURNEY_SCRIPT/.test(service));
   ok("journey command receives only a generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(steps))"));
 
   const handler = readFileSync(new URL("../src/agents/tools/browser-interact.ts", import.meta.url), "utf8");

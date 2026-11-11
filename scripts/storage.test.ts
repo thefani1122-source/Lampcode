@@ -112,7 +112,7 @@ check(
   check("findings and storage are split, not parsed together", svc.includes("splitInteractionStdout"));
   check("a missing sandbox is ran:false, never an empty snapshot passed off as read", svc.includes("return { findings: [], ran: false, storage: EMPTY_STORAGE }"));
   check("the standalone capture exists for when the probe did not run", svc.includes("export async function captureStorage"));
-  check("storage capture sends route data through JSON input", svc.includes('runSandboxScriptWithJsonInput(sandbox, "lampcode-storage.mjs", STORAGE_SCRIPT'));
+  check("storage capture sends route data through JSON input", /runSandboxScriptWithJsonInput\\(\\s*sandbox,\\s*"lampcode-storage\\.mjs",\\s*STORAGE_SCRIPT/.test(svc));
   check("storage script reads route data from its input file", STORAGE_SCRIPT.includes('readFile(process.argv[2], "utf8")') && STORAGE_SCRIPT.includes("input.route"));
   check("a capture failure never fails the build", svc.includes("storage capture unavailable"));
 }
