@@ -1808,7 +1808,7 @@ async function buildPipManifest(): Promise<string> {
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing" },
+  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1877,7 +1877,7 @@ async function loadSkillsForPrompt(
  */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
-  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing" = "frontend",
+  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" = "frontend",
 ): Promise<string> {
   return loadSkillsForPrompt(prompt, { buildType });
 }
@@ -1913,7 +1913,7 @@ export class PromptBuilder {
       | "frontend"
       | "fullstack"
       | "fullstack-mongodb"
-      | "fullstack-unknown"
+     
       | "fullstack-existing"
       | undefined = agentType === "frontend"
         ? isExistingFullstackEdit
@@ -2583,7 +2583,7 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(
     prompt: string,
-    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing",
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing",
   ): Promise<string> {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
