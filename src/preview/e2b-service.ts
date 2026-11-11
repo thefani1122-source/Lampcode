@@ -2370,16 +2370,31 @@ export async function killAllSandboxes(): Promise<void> {
  * never fail a build that otherwise succeeded — same policy as the other
  * sandbox-side gates.
  */
-export async function capturePreviewScreenshot(projectId: string): Promise<Buffer | null> {
+export type PreviewScreenshotViewport = "desktop" | "mobile";
+
+/**
+ * Capture the running preview at a fixed evaluation viewport.
+ *
+ * The default remains the existing project-card thumbnail size. Eval callers
+ * can request a phone-sized viewport without installing another browser or
+ * changing the generated project.
+ */
+export async function capturePreviewScreenshot(
+  projectId: string,
+  viewport: PreviewScreenshotViewport = "desktop",
+): Promise<Buffer | null> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return null;
 
   const framework = sandboxFrameworks.get(projectId) ?? "react";
   const port = devPort(framework);
+  const dimensions = viewport === "mobile"
+    ? { width: 390, height: 844 }
+    : { width: 1280, height: 800 };
   const script = `
 import { chromium } from "playwright";
 const b = await chromium.launch();
-const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+const p = await b.newPage({ viewport: { width: ${dimensions.width}, height: ${dimensions.height} } });
 try {
   await p.goto("http://localhost:${port}", { waitUntil: "networkidle", timeout: 20000 });
 } catch {}
