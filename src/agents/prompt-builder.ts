@@ -2063,8 +2063,6 @@ export class PromptBuilder {
       agentType === "frontend" &&
       task.description.includes("EXISTING PROJECT FILES:") &&
       !task.projectMemory;
-    const isExistingFullstackEdit =
-      task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const editModePreamble =
       "\n\nEDIT MODE — You are modifying an existing app:\n" +
       "- Preserve the existing design system, colors, and component patterns\n" +
