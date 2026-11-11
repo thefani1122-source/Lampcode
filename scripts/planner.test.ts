@@ -545,9 +545,15 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   check(
-    "existing React/Hono edits keep provider-specific backend instructions",
-    built.systemPrompt.includes("Hono") &&
-      built.systemPrompt.includes("DATABASE: Supabase"),
+    "existing React/Hono edits carry the real existing project files into the generation message",
+    built.userMessage.includes("EXISTING FULLSTACK EDIT:") &&
+      built.userMessage.includes("src/server/index.ts"),
+    true,
+  );
+  check(
+    "existing-project edits do not receive fresh Supabase or MongoDB schema scaffolding",
+    !built.systemPrompt.includes("DATABASE: Supabase") &&
+      !built.systemPrompt.includes("DATABASE: MongoDB"),
     true,
   );
   check(
