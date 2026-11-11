@@ -38,7 +38,7 @@ Three gate states stay distinct and are never collapsed into "fail":
 ## Running it
 
 It spends real money. Every task is a real build: model tokens plus an E2B sandbox.
-Five smoke tasks is a pulse check; the full set is twenty builds.
+Five smoke tasks is a pulse check; the full set is twenty-one builds.
 
 ```bash
 EVAL_EMAIL=you@example.com \
@@ -52,7 +52,7 @@ npm run eval:report -- --diff eval-results/<old>.json eval-results/<new>.json
 ```
 
 The harness **signs in itself and refreshes the session** (`auth.ts`). That is not
-convenience — a Supabase access token lives about an hour, and the full twenty-task
+convenience — a Supabase access token lives about an hour, and the full twenty-one-task
 set is sixty minutes or more of real builds, so a fixed token expires partway
 through and every remaining task fails with a 401 that looks like a broken harness.
 
@@ -73,7 +73,7 @@ Nothing here reads the database, so it can be pointed at production or at a loca
 gitignored — they are local to whoever ran them.
 
 `--dry-run` lists what would run and spends nothing. `--only counter,todo` runs
-exactly those. `--keep-projects` leaves the created projects unarchived.
+exactly those. `--keep-projects` leaves the created projects unarchived. `--capture-visual` captures desktop and mobile screenshots for review.
 
 ## Browser evidence and visual review
 
