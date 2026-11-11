@@ -1657,7 +1657,7 @@ export async function runFastBuild(
         ? {
             projectMode: "new-fullstack",
             framework: fullstackFramework,
-            database: fullstackDb,
+            database: fullstackDb === "none" ? "unknown" : fullstackDb,
             backendRuntime: wantsPython ? "python" : "node",
             databaseAccess: databaseSetupState,
             auth: classification?.needsAuth ? "required" : "not-required",
