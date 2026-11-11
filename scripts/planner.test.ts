@@ -220,18 +220,18 @@ const block = formatPlanForPrompt({
 });
 check("the block numbers the files in order", /1\. src\/types\.ts — shared types/.test(block), true);
 check("the block lists every file", /2\. src\/views\/Dashboard\.tsx/.test(block), true);
-check("out-of-scope items are told not to be built", /Do not build these/.test(block), true);
+check("planner out-of-scope stays subordinate to explicit user requirements", /Do not add these unless the original user request explicitly requires them/.test(block), true);
 // The planner saw only the prompt; the builder can see the running app. A plan
 // presented as binding would make the model follow it past learning better.
-check("the plan is presented as a starting point, not a contract", /not a contract/.test(block), true);
-check("the builder is told to implement every planned screen", /every named screen/.test(block), true);
-check("the primary journeys are treated as a required deliverable", /primary journeys work end to end/.test(block), true);
+check("the plan is treated as product direction while file paths remain adaptable", /Planned product decisions/.test(block) && /Suggested file decomposition/.test(block), true);
+check("the builder is told to implement the named product screens", /implement its named screens/.test(block), true);
+check("the primary journeys are treated as a required deliverable", /primary user journeys/.test(block), true);
 check("the first screen must have meaningful content", /first screen meaningful content/.test(block), true);
 check("loading, errors and empty data are kept distinct", /loading, error and truly-empty states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });
-check("no out-of-scope section when there is nothing to exclude", /Do not build these/.test(noScope), false);
+check("no out-of-scope section when there is nothing to exclude", /Planner-suggested out-of-scope items/.test(noScope), false);
 
 
 
@@ -365,7 +365,7 @@ const noBackendFilesShape: PlanningBuildShape = {
 const noBackendFilesContext = formatBuildShapeForPrompt(noBackendFilesShape);
 check(
   "absence of a backend file in selected context is not treated as proof of frontend-only architecture",
-  noBackendFilesContext.includes("not found does NOT prove the whole application is frontend-only"),
+  noBackendFilesContext.includes("Not found does NOT prove the whole application is frontend-only"),
   true,
 );
 
