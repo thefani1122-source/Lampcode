@@ -553,7 +553,7 @@ async function runPromptModeChecks(): Promise<void> {
 
   const unknownProviderSkills = await loadRelevantSkillsForPrompt(
     "Add an API field to the existing app.",
-    "fullstack-unknown",
+    "fullstack-existing",
   );
   check(
     "unknown existing providers do not receive a Supabase-specific Hono skill",
