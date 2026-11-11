@@ -89,7 +89,7 @@ for (const kind of ["backend-start", "type-check", "browser-render"]) {
 
 // ── Freshness: re-run, or say it is unverified. Never upgrade to pass ──────
 
-check("the re-run only happens with a live sandbox", build.includes("if (hasSandbox(projectId)) {"));
+check("the re-run only happens with a live, known sandbox state", build.includes("if (hasSandbox(projectId) && !sandboxWriteFailed) {"));
 check("a gate that could not be re-run is listed as still stale", build.includes("stillStale.push("));
 check("and that reaches the record", build.includes("unverifiedGates: stillStale"));
 check("and the user is told in plain words", build.includes("treat them as unverified"));
