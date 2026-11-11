@@ -496,6 +496,7 @@ check(
 // ── full-stack edit prompt mode ───────────────────────────────────────────────
 
 async function runPromptModeChecks(): Promise<void> {
+  const builder = new PromptBuilder();
   const mongoSkills = await loadRelevantSkillsForPrompt(
     "Add login and row-level protection to this MongoDB app.",
     "fullstack-mongodb",
@@ -548,7 +549,6 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
 
-  const builder = new PromptBuilder();
   const built = await builder.build(
     "frontend",
     {
