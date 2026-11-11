@@ -262,6 +262,13 @@ console.log("\n— the wiring —");
   ok("tools are off — this is one shot at a file set", build.includes("enableTools: false"));
   ok("the outcome is logged with its numbers", build.includes("[build] audit repair session="));
 
+  ok("repair writes use the fail-closed sandbox apply helper", build.includes("const applyRepairWriteToSandbox = async"));
+  ok("a failed apply is logged with its affected paths", build.includes("Repair files could not be fully applied to the live sandbox"));
+  ok("a failed apply marks page, type and test evidence unavailable", build.includes('gate, status: "unavailable"'));
+  ok("the preview stops verification instead of checking a partial tree", build.includes("Skipping post-preview verification because repair files were not fully applied"));
+  ok("stale checks are blocked while the sandbox state is uncertain", build.includes("hasSandbox(projectId) && !sandboxWriteFailed"));
+  ok("a successful full refresh re-opens freshness checks", build.includes("noteSuccessfulSandboxRefresh();"));
+
   // In the record as well as the log. A loop that spent money and achieved
   // nothing has to be visible later — an unchanged audit alone would read as
   // if no repair had ever run.

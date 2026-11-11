@@ -2743,6 +2743,60 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         logger.error({ sessionId, projectId, err }, "Could not attach recoverable source directory to build session");
       });
 
+    // A rejected sandbox write can leave Promise.all's successful file writes
+    // in place while other paths fail. Never run a verifier against that
+    // unknown mixture as though it represented the complete in-memory tree.
+    let sandboxWriteFailed = false;
+    const applyRepairWriteToSandbox = async (
+      kind: string,
+      paths: string[],
+    ): Promise<boolean> => {
+      if (sandboxWriteFailed) return false;
+      try {
+        await writeFilesToSandbox(projectId, allFiles, (line) =>
+          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
+        );
+        recorder.record({ type: "files/written", paths, added: 0, removed: 0 });
+        return true;
+      } catch (err) {
+        sandboxWriteFailed = true;
+        logger.error(
+          { sessionId, projectId, kind, paths, err },
+          "Repair files could not be fully applied to the live sandbox — verification stopped",
+        );
+        // Record attempted paths so prior gate verdicts cannot remain fresh.
+        // Unavailable results are the current truth until a complete refresh
+        // succeeds and those gates are genuinely re-run.
+        recorder.record({ type: "files/written", paths, added: 0, removed: 0 });
+        for (const gate of ["page", "types", "tests"] as const) {
+          recorder.record({ type: "verification/result", gate, status: "unavailable" });
+        }
+        server?.emitToRoom(sessionId, "build:warning", {
+          sessionId,
+          message:
+            "I generated a repair, but could not confirm that the complete file set reached the preview. " +
+            "I stopped further checks rather than treating a partially updated app as verified.",
+        });
+        return false;
+      }
+    };
+    const noteSuccessfulSandboxRefresh = (): void => {
+      if (!sandboxWriteFailed) return;
+      sandboxWriteFailed = false;
+      // The full project tree has now been applied successfully. This write
+      // invalidates older gate results, so the normal freshness pass must run.
+      recorder.record({
+        type: "files/written",
+        paths: Object.keys(allFiles),
+        added: 0,
+        removed: 0,
+      });
+      logger.info(
+        { sessionId, projectId, files: Object.keys(allFiles).length },
+        "A complete sandbox refresh restored a known file state after a repair write failure",
+      );
+    };
+
     // ── Declare the tables the app actually queries ──────────────────────────
     // `data-layer.ts` has detected this since 2026-10-17 and nothing acted on
     // it. Of its four findings this is the only one that is a MODEL mistake
@@ -3616,10 +3670,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               { allowNew: false, refuse: isTemplateOwnedFile },
             );
             const touched = cutPaths.length;
-            if (cutPaths.length > 0) {
-              recorder.record({ type: "files/written", paths: cutPaths, added: 0, removed: 0 });
-            }
-
             if (touched === 0) {
               // MEASURED 2026-10-18, session dc1fbc17: `dead=23 touched=0` —
               // a removal dispatch paid for and not one file changed. That was
@@ -3638,8 +3688,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
                 "Cut dispatch returned no usable files — paid for nothing",
               );
               console.log(`[build] cut session=${sessionId} dead=${dead.length} touched=0 verdict=no-op`);
-            } else {
-              await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+            } else if (await applyRepairWriteToSandbox("dead-code-cut", cutPaths)) {
               const typesAfter = await runTypeCheck(projectId).catch(() => null);
               if (typesAfter?.ok === true) {
                 codeCut = dead.length - findDeadCode(allFiles).filter((f) => CUTTABLE.has(f.kind)).length;
@@ -3651,11 +3700,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
                 codeCutReverted = true;
                 for (const k of Object.keys(allFiles)) delete allFiles[k];
                 Object.assign(allFiles, snapshot);
-                await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
+                const restored = await applyRepairWriteToSandbox("dead-code-cut-revert", cutPaths);
                 console.log(
-                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} verdict=REVERTED types-broke`,
+                  `[build] cut session=${sessionId} dead=${dead.length} files=${touched} verdict=${restored ? "REVERTED types-broke" : "rollback-unavailable"}`,
                 );
-                server?.thinking(sessionId, {
+                if (restored) server?.thinking(sessionId, {
                   sessionId,
                   text: "That removal broke the type check, so I put everything back exactly as it was.",
                 });
@@ -3902,6 +3951,13 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     const finishPreview = async (url: string): Promise<void> => {
       // Emit preview URL immediately so client renders iframe without waiting for post-checks
       server?.emitPreviewUrl(sessionId, { sessionId, url });
+      if (sandboxWriteFailed) {
+        logger.warn(
+          { sessionId, projectId },
+          "Skipping post-preview verification because repair files were not fully applied",
+        );
+        return;
+      }
       try {
         await db.update(buildSessions).set({ previewUrl: url }).where(eq(buildSessions.id, sessionId));
       } catch (err) {
@@ -3976,22 +4032,15 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           for (const f of parseFilesFromContent(fix.content)) {
             if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
           }
-          // Every gate verdict above now describes code this build no longer
-          // has. The event says so; the projection turns it into staleness.
-          if (repaired.length > 0) {
-            recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
-          }
         } catch (fixErr) {
           logger.error({ sessionId, fixErr }, "Backend agentic fix dispatch failed");
           break;
         }
         if (fixedCount === 0) break;
+        if (!(await applyRepairWriteToSandbox("backend-start", repaired))) return;
         repairedAfterCompletion = true;
         recorder.record({ type: "repair/applied", kind: "backend-start" });
-        // Write the fix back — this restarts the backend with the new code.
-        await writeFilesToSandbox(projectId, allFiles, (line) =>
-          server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
-        ).catch(() => {});
+        // The write completed and the backend can now be re-checked.
       }
 
       // Type-check the generated project against its real dependency graph and
@@ -4093,19 +4142,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             for (const f of parseFilesFromContent(fix.content)) {
               if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
             }
-            if (repaired.length > 0) {
-              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
-            }
           } catch (fixErr) {
             logger.error({ sessionId, fixErr }, "Type-check fix dispatch failed");
             break;
           }
           if (fixedCount === 0) break;
+          if (!(await applyRepairWriteToSandbox("type-check", repaired))) return;
           repairedAfterCompletion = true;
           recorder.record({ type: "repair/applied", kind: "type-check" });
-          await writeFilesToSandbox(projectId, allFiles, (line) =>
-            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
-          ).catch(() => {});
         }
       }
 
@@ -4191,19 +4235,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             for (const f of parseFilesFromContent(fix.content)) {
               if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
             }
-            if (repaired.length > 0) {
-              recorder.record({ type: "files/written", paths: repaired, added: 0, removed: 0 });
-            }
           } catch (fixErr) {
             logger.error({ sessionId, fixErr }, "Browser-render fix dispatch failed");
             break;
           }
           if (fixedCount === 0) break;
+          if (!(await applyRepairWriteToSandbox("browser-render", repaired))) return;
           repairedAfterCompletion = true;
           recorder.record({ type: "repair/applied", kind: "browser-render" });
-          await writeFilesToSandbox(projectId, allFiles, (line) =>
-            server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
-          ).catch(() => {});
         }
       }
 
@@ -4428,6 +4467,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line });
         })
           .then((url) => {
+            noteSuccessfulSandboxRefresh();
             console.log(`[E2B] Sandbox files updated for project=${projectId} url=${url}`);
             return finishPreview(url);
           })
@@ -4446,6 +4486,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               `createPreviewSandbox (fallback) exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
             )
               .then((url) => {
+                noteSuccessfulSandboxRefresh();
                 console.log(`[E2B] Fallback sandbox ready for session=${sessionId} url=${url}`);
                 return finishPreview(url);
               })
@@ -4474,6 +4515,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             `createPreviewSandbox exceeded ${E2B_PREVIEW_TIMEOUT_MS}ms`,
           )
             .then((url) => {
+              noteSuccessfulSandboxRefresh();
               console.log(`[E2B] Preview sandbox ready for session=${sessionId} url=${url}`);
               return finishPreview(url);
             })
@@ -4544,7 +4586,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       { type: "build/end", turnsExhausted: false, filesWritten: 0, costUsd: 0, durationMs: 0 },
     ]);
     const revalidated: string[] = [];
-    if (hasSandbox(projectId)) {
+    if (hasSandbox(projectId) && !sandboxWriteFailed) {
       if ((staleBefore.staleCheckTypes ?? 0) > 0) {
         const types = await runTypeCheck(projectId).catch(() => null);
         if (types && !types.unavailable) {
@@ -4588,6 +4630,8 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           revalidated.push("tests");
         } else stillStale.push("tests");
       }
+    } else if (sandboxWriteFailed) {
+      stillStale.push("page", "types", "tests");
     } else {
       for (const gate of ["page", "types", "tests"] as const) {
         const count =
@@ -4721,7 +4765,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // list is short enough that one dispatch could plausibly close it, and the
     // result is kept only if it survives a type check and does not un-prove
     // something that was already proven.
-    const repairPlan = hasSandbox(projectId) ? planAuditRepair(completionAudit) : null;
+    const repairPlan = hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair(completionAudit) : null;
     if (completionAudit && !repairPlan) {
       console.log(`[build] audit repair session=${sessionId} skipped=${whyNoRepair(completionAudit)}`);
     }
@@ -4769,11 +4813,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         }
 
         if (written.length > 0) {
-          await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
-          recorder.record({ type: "repair/applied", kind: "completion-audit" });
-          recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
-
-          const typesAfter = await runTypeCheck(projectId).catch(() => null);
+          if (!(await applyRepairWriteToSandbox("completion-audit", written))) {
+            outcome = "no-files";
+          } else {
+            recorder.record({ type: "repair/applied", kind: "completion-audit" });
+            const typesAfter = await runTypeCheck(projectId).catch(() => null);
 
           // Re-audit with the SAME criteria over the new files. This is the
           // only way to know whether the repair worked, and it is paid for
@@ -4819,9 +4863,10 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           } else {
             Object.assign(allFiles, snapshot);
             for (const path of written) if (!(path in snapshot)) delete allFiles[path];
-            await writeFilesToSandbox(projectId, allFiles).catch(() => undefined);
-            recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
-            recorder.record({ type: "files/written", paths: written, added: 0, removed: 0 });
+            const restored = await applyRepairWriteToSandbox("completion-audit-revert", written);
+            if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
+            else outcome = "no-files";
+          }
           }
         }
       } catch (err) {
