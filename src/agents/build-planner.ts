@@ -24,17 +24,6 @@ const MAX_PLANNED_FILES = 25;
  * Existing-project edits are distinct from new frontend builds because the
  * fresh-build classifier deliberately does not run on edits.
  */
-/** React/Hono edits need the full-stack prompt path too; only Next/TanStack
- *  were previously recognised as full-stack edits by the build route. */
-export function shouldUseFullstackEdit(opts: {
-  hasExistingCode: boolean;
-  framework: PlanningBuildShape["framework"];
-  existingBackendArtifacts: boolean;
-}): boolean {
-  return opts.hasExistingCode &&
-    (opts.framework !== "react" || opts.existingBackendArtifacts);
-}
-
 export type PlanningBuildShape = {
   projectMode: "new-frontend" | "new-fullstack" | "existing-project";
   framework: "react" | "nextjs" | "tanstack" | "unknown";
@@ -50,6 +39,17 @@ export type PlanningBuildShape = {
   auth: "required" | "not-required" | "not-applicable" | "preserve-existing";
   existingBackendArtifacts: boolean;
 };
+
+/** React/Hono edits need the full-stack prompt path too; only Next/TanStack
+ *  were previously recognised as full-stack edits by the build route. */
+export function shouldUseFullstackEdit(opts: {
+  hasExistingCode: boolean;
+  framework: PlanningBuildShape["framework"];
+  existingBackendArtifacts: boolean;
+}): boolean {
+  return opts.hasExistingCode &&
+    (opts.framework !== "react" || opts.existingBackendArtifacts);
+}
 
 /** Infer only what loaded source proves. Missing keywords do not prove a browser-only app. */
 export function inferExistingDatabase(
