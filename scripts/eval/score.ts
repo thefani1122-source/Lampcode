@@ -43,6 +43,92 @@ export type BuildOutcome = {
 
 export type FileEntry = { path: string; content: string; lines: number };
 
+export type EvalJourneyReport = {
+  ran: boolean;
+  steps: Array<{ step: number; did: string; ok: boolean; detail: string }>;
+  consoleErrors: string[];
+  finalUrl: string;
+  reason?: string;
+};
+
+export type EvalJourneyScore = {
+  verdict: "not-requested" | "pass" | "fail" | "unavailable";
+  stepsRun: number;
+  stepsExpected: number;
+  failedStep?: number;
+  consoleErrors: number;
+  reason?: string;
+};
+
+/**
+ * Score a browser journey independently from static file checks and from the
+ * model's own browser_interact call. Infrastructure absence remains
+ * unavailable; it is never converted into an application failure.
+ */
+export function scoreJourney(
+  task: EvalTask,
+  report: EvalJourneyReport | null,
+  unavailableReason?: string,
+): EvalJourneyScore {
+  const expected = task.journey?.length ?? 0;
+  if (expected === 0) {
+    return { verdict: "not-requested", stepsRun: 0, stepsExpected: 0, consoleErrors: 0 };
+  }
+  if (!report || report.ran !== true) {
+    return {
+      verdict: "unavailable",
+      stepsRun: report?.steps.length ?? 0,
+      stepsExpected: expected,
+      consoleErrors: report?.consoleErrors.length ?? 0,
+      reason: unavailableReason ?? report?.reason ?? "the browser journey could not run",
+    };
+  }
+  if (report.reason) {
+    return {
+      verdict: "unavailable",
+      stepsRun: report.steps.length,
+      stepsExpected: expected,
+      consoleErrors: report.consoleErrors.length,
+      reason: report.reason,
+    };
+  }
+  const failed = report.steps.find((step) => !step.ok);
+  if (failed) {
+    return {
+      verdict: "fail",
+      stepsRun: report.steps.length,
+      stepsExpected: expected,
+      failedStep: failed.step,
+      consoleErrors: report.consoleErrors.length,
+      reason: failed.detail || failed.did,
+    };
+  }
+  if (report.steps.length !== expected) {
+    return {
+      verdict: "fail",
+      stepsRun: report.steps.length,
+      stepsExpected: expected,
+      consoleErrors: report.consoleErrors.length,
+      reason: `Only ${report.steps.length} of ${expected} expected journey steps completed.`,
+    };
+  }
+  if (report.consoleErrors.length > 0) {
+    return {
+      verdict: "fail",
+      stepsRun: report.steps.length,
+      stepsExpected: expected,
+      consoleErrors: report.consoleErrors.length,
+      reason: `The journey produced ${report.consoleErrors.length} browser console error(s).`,
+    };
+  }
+  return {
+    verdict: "pass",
+    stepsRun: report.steps.length,
+    stepsExpected: expected,
+    consoleErrors: 0,
+  };
+}
+
 export function collectFiles(groups: Record<string, FileEntry[]>): FileEntry[] {
   return Object.values(groups).flat();
 }
