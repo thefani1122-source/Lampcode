@@ -791,7 +791,10 @@ function buildFullstackEditPrompt(
   userRequest: string,
   framework: FullstackFramework,
 ): string {
-  const prefix = needsAuth(userRequest) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
+  // This is an edit to an existing backend, not a request to scaffold a new
+  // full-stack app. PromptBuilder has a separate mode so it keeps the correct
+  // runtime/DB context without re-applying new-app file-generation contracts.
+  const prefix = "EXISTING FULLSTACK EDIT:";
   const fileBlocks = Object.entries(files)
     .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
     .join("\n\n");
