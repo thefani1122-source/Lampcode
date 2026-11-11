@@ -1808,7 +1808,7 @@ async function buildPipManifest(): Promise<string> {
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" },
+  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing" },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1877,7 +1877,7 @@ async function loadSkillsForPrompt(
  */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
-  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" = "frontend",
+  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing" = "frontend",
 ): Promise<string> {
   return loadSkillsForPrompt(prompt, { buildType });
 }
@@ -1914,14 +1914,13 @@ export class PromptBuilder {
       | "fullstack"
       | "fullstack-mongodb"
       | "fullstack-unknown"
+      | "fullstack-existing"
       | undefined = agentType === "frontend"
-        ? isFullstackBuildDescription || isExistingFullstackEdit
-          ? isMongoBuildDescription
-            ? "fullstack-mongodb"
-            : isExistingDatabaseUnknown
-              ? "fullstack-unknown"
-              : "fullstack"
-          : "frontend"
+        ? isExistingFullstackEdit
+          ? "fullstack-existing"
+          : isFullstackBuildDescription
+            ? isMongoBuildDescription ? "fullstack-mongodb" : "fullstack"
+            : "frontend"
         : undefined;
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
@@ -2584,7 +2583,7 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(
     prompt: string,
-    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown",
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-unknown" | "fullstack-existing",
   ): Promise<string> {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }
