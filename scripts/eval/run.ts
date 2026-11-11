@@ -8,7 +8,7 @@
  * local `npm run dev` without any code change.
  *
  * It costs real money. Every task is a real build: model tokens and an E2B
- * sandbox. Four smoke tasks is a pulse check; the full set is twenty builds.
+ * sandbox. Five smoke tasks is a pulse check; the full set is twenty-one builds.
  *
  *   EVAL_EMAIL=you@example.com EVAL_PASSWORD=… EVAL_SUPABASE_ANON_KEY=… \
  *   EVAL_BASE_URL=https://lampcode-production.up.railway.app \
@@ -31,9 +31,10 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { tasksFor, type EvalTask } from "./tasks.js";
-import { collectFiles, scoreChecks, type BuildOutcome, type FileEntry } from "./score.js";
+import { collectFiles, scoreChecks, scoreJourney, type BuildOutcome, type FileEntry, type EvalJourneyReport, type EvalJourneyScore } from "./score.js";
+import { makeVisualReviewTemplate, pngDimensions, type EvalVisualEvidence, type EvalViewport, type ScreenshotEvidence } from "./browser-evidence.js";
 import { createTokenProvider, type TokenProvider } from "./auth.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ type Args = {
   timeoutSec: number;
   keepProjects: boolean;
   dryRun: boolean;
+  captureVisual: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -64,6 +66,7 @@ function parseArgs(argv: string[]): Args {
     timeoutSec: 900,
     keepProjects: false,
     dryRun: false,
+    captureVisual: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -84,6 +87,8 @@ function parseArgs(argv: string[]): Args {
       out.keepProjects = true;
     } else if (a === "--dry-run") {
       out.dryRun = true;
+    } else if (a === "--capture-visual") {
+      out.captureVisual = true;
     } else if (a === "--help" || a === "-h") {
       console.log(HELP);
       process.exit(0);
@@ -110,6 +115,7 @@ scripts/eval/run.ts — run the fixed eval set against a deployed Lampcode.
   --timeout N              per-build seconds (default 900)
   --keep-projects          leave the projects unarchived afterwards
   --dry-run                list what would run and exit
+  --capture-visual        capture 1280px desktop + 390px mobile PNGs for visual review
 `.trim();
 
 // ── Shapes we read back ───────────────────────────────────────────────────────
@@ -141,6 +147,8 @@ export type TaskResult = {
   largestFileLines: number;
   wallClockSec: number;
   outcome: BuildOutcome | null;
+  journey: EvalJourneyScore;
+  visual: EvalVisualEvidence;
   error: string | null;
 };
 
@@ -173,6 +181,61 @@ async function api<T>(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Binary counterpart to api(); errors stay local to evidence collection. */
+async function apiBytes(path: string): Promise<{ bytes: Uint8Array | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: { authorization: `Bearer ${await auth!.token()}` },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      return { bytes: null, error: `GET ${path} → ${res.status} ${text.slice(0, 200)}` };
+    }
+    return { bytes: new Uint8Array(await res.arrayBuffer()) };
+  } catch (err) {
+    return { bytes: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Capture both viewports from the actual session sandbox, not from source files. */
+async function captureVisualEvidence(sessionId: string): Promise<EvalVisualEvidence> {
+  const screenshots: Partial<Record<EvalViewport, ScreenshotEvidence>> = {};
+  const failures: string[] = [];
+  const directory = join(RESULTS_DIR, "visuals");
+  await mkdir(directory, { recursive: true });
+
+  for (const viewport of ["desktop", "mobile"] as const) {
+    const result = await apiBytes(
+      `/api/build/${sessionId}/eval-screenshot?viewport=${viewport}`,
+    );
+    if (!result.bytes) {
+      failures.push(`${viewport}: ${result.error ?? "no image returned"}`);
+      continue;
+    }
+    const dimensions = pngDimensions(result.bytes);
+    const expected = viewport === "desktop" ? { width: 1280, height: 800 } : { width: 390, height: 844 };
+    if (!dimensions || dimensions.width !== expected.width || dimensions.height !== expected.height) {
+      failures.push(`${viewport}: unexpected or invalid PNG dimensions`);
+      continue;
+    }
+    const file = join(directory, `${sessionId}-${viewport}.png`);
+    await writeFile(file, result.bytes);
+    screenshots[viewport] = {
+      path: relative(process.cwd(), file),
+      width: dimensions.width,
+      height: dimensions.height,
+      bytes: result.bytes.byteLength,
+    };
+  }
+
+  const captured = Object.keys(screenshots).length;
+  return {
+    verdict: captured === 2 ? "captured" : captured === 1 ? "partial" : "unavailable",
+    screenshots,
+    ...(failures.length > 0 ? { reason: failures.join("; ") } : {}),
+  };
+}
+
 // ── One task ──────────────────────────────────────────────────────────────────
 
 async function runTask(task: EvalTask, args: Args): Promise<TaskResult> {
@@ -190,6 +253,10 @@ async function runTask(task: EvalTask, args: Args): Promise<TaskResult> {
     largestFileLines: 0,
     wallClockSec: 0,
     outcome: null,
+    journey: scoreJourney(task, null, "The build has not completed yet."),
+    visual: args.captureVisual
+      ? { verdict: "unavailable", screenshots: {}, reason: "The build has not completed yet." }
+      : { verdict: "not-requested", screenshots: {} },
     error: null,
   };
 
@@ -249,6 +316,35 @@ async function runTask(task: EvalTask, args: Args): Promise<TaskResult> {
     base.largestFileLines = files.reduce((m, f) => Math.max(m, f.lines), 0);
 
     base.failedChecks = scoreChecks(task, files, base.outcome);
+
+    // Screenshots are independent visual evidence, not an automatic aesthetic
+    // score. They are captured before the journey mutates the app's state.
+    if (args.captureVisual) {
+      base.visual = await captureVisualEvidence(started.sessionId);
+    }
+
+    if (task.journey) {
+      try {
+        const report = await api<EvalJourneyReport>(
+          "POST",
+          `/api/build/${started.sessionId}/eval-journey`,
+          { steps: task.journey },
+        );
+        base.journey = scoreJourney(task, report);
+      } catch (err) {
+        base.journey = scoreJourney(
+          task,
+          null,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (base.journey.verdict === "fail") {
+        base.failedChecks.push(
+          `browser journey failed${base.journey.failedStep ? ` at step ${base.journey.failedStep}` : ""}: ${base.journey.reason ?? "see journey evidence"}`,
+        );
+      }
+    }
+
     base.verdict = base.failedChecks.length === 0 ? "pass" : "soft-fail";
     return base;
   } catch (err) {
@@ -301,7 +397,8 @@ async function main(): Promise<void> {
 
   console.log(
     `Running ${tasks.length} task(s) against ${BASE_URL}, concurrency ${args.concurrency}\n` +
-    `Auth: ${auth.describe()}`,
+    `Auth: ${auth.describe()}\n` +
+    `Browser journeys: ${tasks.filter((t) => t.journey).length}; visual capture: ${args.captureVisual ? "desktop + mobile" : "off"}`,
   );
   const results: TaskResult[] = [];
   const queue = [...tasks];
@@ -343,15 +440,33 @@ async function main(): Promise<void> {
   const file = join(RESULTS_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   await writeFile(file, JSON.stringify(run, null, 2), "utf8");
 
+  if (args.captureVisual) {
+    const template = makeVisualReviewTemplate(results);
+    if (template.tasks.length > 0) {
+      const reviewFile = file.replace(/\.json$/, ".visual-review.json");
+      await writeFile(reviewFile, JSON.stringify(template, null, 2), "utf8");
+      console.log(`visual review template written to ${reviewFile}`);
+    }
+  }
+
   const counts = results.reduce<Record<string, number>>((acc, r) => {
     acc[r.verdict] = (acc[r.verdict] ?? 0) + 1;
     return acc;
   }, {});
   const spend = results.reduce((sum, r) => sum + (r.outcome?.costUsd ?? 0), 0);
+  const journeyResults = results.filter((r) => r.journey.verdict !== "not-requested");
+  const journeyPass = journeyResults.filter((r) => r.journey.verdict === "pass").length;
+  const journeyFail = journeyResults.filter((r) => r.journey.verdict === "fail").length;
+  const journeyUnavailable = journeyResults.filter((r) => r.journey.verdict === "unavailable").length;
+  const visualCaptured = results.filter((r) => Object.keys(r.visual.screenshots).length > 0).length;
   console.log(
     `\n${results.length} task(s): ` +
     Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ") +
-    `\nmodel spend (our reckoning, a ceiling): $${spend.toFixed(3)}` +
+    (journeyResults.length > 0
+      ? `\nbrowser journeys: ${journeyPass} pass, ${journeyFail} fail, ${journeyUnavailable} unavailable`
+      : "") +
+    (args.captureVisual ? `\nvisual screenshots: ${visualCaptured}/${results.length} task(s) with at least one viewport captured` : "") +
+    `\nmodel spend (our reckoning, a ceiling): ${spend.toFixed(3)}` +
     `\nwritten to ${file}`,
   );
 
