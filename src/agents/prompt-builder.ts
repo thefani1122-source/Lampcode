@@ -1904,7 +1904,7 @@ export class PromptBuilder {
       task.description.startsWith("FULLSTACK BUILD:") ||
       task.description.startsWith("FULLSTACK AUTH BUILD:");
     const isMongoBuildDescription =
-      /\\bmongodb\\b|MONGODB_URI|\\bmongoose\\b/i.test(task.description);
+      /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
     const buildType: "frontend" | "fullstack" | "fullstack-mongodb" | undefined =
       agentType === "frontend"
         ? isFullstackBuildDescription
