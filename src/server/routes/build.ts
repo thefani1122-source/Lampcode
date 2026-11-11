@@ -1485,13 +1485,20 @@ export async function runFastBuild(
           ]
       : hasExistingCode
         ? smartSelectionUsed
-          ? [
-              "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
-              "Do NOT output src/index.tsx or package.json if they are unchanged.",
-              "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
-              "For large changes (>50% of file): output the complete file.",
-              "Preserve all existing logic and structure that was not mentioned in the request.",
-            ]
+          ? fullstackEditMode
+            ? [
+                "Output only the relevant changed files using the exact format: ```filename:<path>.",
+                "For this agentic full-stack edit, output complete file contents for files you change; do not use pipeline surgical edit markers.",
+                "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+              ]
+            : [
+                "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
+                "Do NOT output src/index.tsx or package.json if they are unchanged.",
+                "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
+                "For large changes (>50% of file): output the complete file.",
+                "Preserve all existing logic and structure that was not mentioned in the request.",
+              ]
           : fullstackEditMode
             ? [
                 "Output each changed file using the exact format: ```filename:<path> (path in the fence opening).",
