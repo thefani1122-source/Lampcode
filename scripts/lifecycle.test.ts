@@ -154,12 +154,13 @@ check(
 );
 
 // Every repair loop that mutates allFiles must emit files/written, or its
-// writes invalidate a gate verdict silently. On the real build the
-// broken-import loop rewrote files after check_page and check_types had passed
-// and the record still read staleCheckPage=0.
+// writes invalidate a gate verdict silently. Pre-preview repairs still record
+// directly; post-preview repairs use the shared fail-closed apply helper so a
+// successful write and a failed partial write both invalidate prior gates.
 check(
-  "every pre-preview repair loop records its writes",
-  (build.match(/recorder\.record\(\{ type: "files\/written"/g) ?? []).length >= 7,
+  "pre-preview repairs and the shared post-preview helper record their writes",
+  (build.match(/recorder\.record\(\{ type: "files\/written"/g) ?? []).length >= 6 &&
+    build.includes("const applyRepairWriteToSandbox = async"),
 );
 for (const [label, marker] of [
   ["fake-removal", "paths: rewritten,"],
