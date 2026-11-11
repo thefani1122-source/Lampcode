@@ -468,11 +468,18 @@ check(
   true,
 );
 check(
-  "smart-selected full-stack edits are told to use full-file writes rather than surgical pipeline markers",
-  buildRouteSource.includes("For this agentic full-stack edit, output complete file contents") &&
-    buildRouteSource.includes("do not use pipeline surgical edit markers"),
+  "agentic full-stack edits are directed to sandbox tools, not fenced code or pipeline markers",
+  buildRouteSource.includes("Use the agentic sandbox tools to modify the existing full-stack project") &&
+    buildRouteSource.includes("Prefer edit_file for existing files and write_files for new files"),
   true,
 );
+check(
+  "pipeline full-stack edits retain complete filename-fenced output",
+  buildRouteSource.includes("Output each changed file using the exact format: ```filename:<path>") &&
+    buildRouteSource.includes("Output complete file contents for changed files"),
+  true,
+);
+
 check(
   "MongoDB full-stack builds are not sent through the Supabase-only database connection gate",
   buildRouteSource.includes('fullstackDb === "supabase" && !isConnected && !userSupa && server && shouldAskForDatabase(userId)'),
