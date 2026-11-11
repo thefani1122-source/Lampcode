@@ -63,7 +63,7 @@ import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, 
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
-import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, type PlanningBuildShape } from "../../agents/build-planner.js";
+import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
@@ -1240,6 +1240,16 @@ export async function runFastBuild(
     const promptWordCount = prompt.trim().split(/\s+/).length;
     const isShortFollowUp = hasExistingCode && promptWordCount <= 20;
 
+    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
+    const existingHasPython = Object.keys(existingFiles).some(
+      (path) => path.endsWith(".py") || path === "requirements.txt",
+    );
+    const fullstackEditMode = shouldUseFullstackEdit({
+      hasExistingCode,
+      framework: detectFrameworkFromFiles(existingFiles),
+      existingBackendArtifacts: existingBackendPaths.length > 0,
+    });
+
     let contextFiles = existingFiles;
     let smartSelectionUsed = false;
     let isTokenOnlyEdit = false;
@@ -1248,7 +1258,7 @@ export async function runFastBuild(
     if (isShortFollowUp) {
       // Feature addition: send ALL files so LLM can output correct full App.tsx.
       // Must be detected before token-only check since theme changes aren't additions.
-      if (!isTokenOnlyEdit && isAdditionPrompt(prompt) && existingFiles["src/App.tsx"]) {
+      if (!isTokenOnlyEdit && !fullstackEditMode && isAdditionPrompt(prompt) && existingFiles["src/App.tsx"]) {
         isFeatureAddition = true;
         // contextFiles not used for feature-addition (buildAdditionEditPrompt takes App.tsx directly)
         smartSelectionUsed = true; // ensures copy-existing-files step runs
@@ -1450,7 +1460,7 @@ export async function runFastBuild(
       : isFeatureAddition
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
-          ? editDetectedFramework !== "react"
+          ? fullstackEditMode
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
@@ -1482,19 +1492,27 @@ export async function runFastBuild(
               "For large changes (>50% of file): output the complete file.",
               "Preserve all existing logic and structure that was not mentioned in the request.",
             ]
-          : editDetectedFramework !== "react"
+          : fullstackEditMode
             ? [
-                "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
-                "Keep ALL existing functionality that the user did NOT ask to change.",
-                "Preserve the existing design system, color palette, and component structure.",
-                "Do NOT output package.json or .env — the environment provides them.",
+                "Output each changed file using the exact format: ```filename:<path> (path in the fence opening).",
+                "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                "Keep existing functionality and the design system unless the user explicitly asks to change them.",
+                "Do NOT output package.json or .env unless the user explicitly requests a dependency/environment change.",
               ]
-            : [
-                "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-                "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
-                "Keep ALL existing functionality that the user did NOT ask to change.",
-                "Preserve the existing design system, color palette, and component structure.",
-              ]
+            : editDetectedFramework !== "react"
+              ? [
+                  "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Keep ALL existing functionality that the user did NOT ask to change.",
+                  "Preserve the existing design system, color palette, and component structure.",
+                  "Do NOT output package.json or .env — the environment provides them.",
+                ]
+              : [
+                  "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+                  "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+                  "Keep ALL existing functionality that the user did NOT ask to change.",
+                  "Preserve the existing design system, color palette, and component structure.",
+                ]
         : isFullstackBuild
           ? fullstackFramework === "nextjs"
             ? fullstackDb === "mongodb"
@@ -1614,10 +1632,6 @@ export async function runFastBuild(
     let buildPlan: BuildPlan | null = null;
     let planCostUsd = 0;
 
-    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
-    const existingHasPython = Object.keys(existingFiles).some(
-      (path) => path.endsWith(".py") || path === "requirements.txt",
-    );
     const planningShape: PlanningBuildShape = hasExistingCode
       ? {
           projectMode: "existing-project",
