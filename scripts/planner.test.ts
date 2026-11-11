@@ -514,6 +514,26 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
 
+  const newSupabaseBuild = await builder.build(
+    "frontend",
+    {
+      description: "FULLSTACK BUILD:\\nBuild a Supabase-backed task app with real API routes.",
+      outputFormat: "code",
+    },
+    {
+      projectId: "planner-prompt-new-build-test",
+      userId: "planner-prompt-new-build-test",
+      mode: "fast",
+      prompt: "Build a Supabase-backed task app.",
+    },
+  );
+  check(
+    "new full-stack builds retain their required scaffolding and provider instructions",
+    newSupabaseBuild.systemPrompt.includes("GENERATE THESE FILES IN THIS EXACT ORDER") &&
+      newSupabaseBuild.systemPrompt.includes("DATABASE: Supabase"),
+    true,
+  );
+
   const builder = new PromptBuilder();
   const built = await builder.build(
     "frontend",
