@@ -1,6 +1,6 @@
 # Eval harness
 
-Twenty fixed prompts, run through the real API, scored the same way every time.
+Twenty-one fixed prompts, run through the real API, scored the same way every time.
 
 ## Why it exists
 
@@ -38,7 +38,7 @@ Three gate states stay distinct and are never collapsed into "fail":
 ## Running it
 
 It spends real money. Every task is a real build: model tokens plus an E2B sandbox.
-Four smoke tasks is a pulse check; the full set is twenty builds.
+Five smoke tasks is a pulse check; the full set is twenty builds.
 
 ```bash
 EVAL_EMAIL=you@example.com \
@@ -74,6 +74,43 @@ gitignored — they are local to whoever ran them.
 
 `--dry-run` lists what would run and spends nothing. `--only counter,todo` runs
 exactly those. `--keep-projects` leaves the created projects unarchived.
+
+## Browser evidence and visual review
+
+Tasks with a `journey` run a second, independent Playwright journey after the build
+finishes. It uses the same bounded, no-JavaScript step vocabulary as the
+`browser_interact` tool, but it is driven by the eval task rather than by the
+generation model. A journey verdict is kept separate from build status:
+
+- `pass` — all expected steps ran and passed.
+- `fail` — a real step failed, the journey was incomplete, or browser console errors occurred.
+- `unavailable` — the live sandbox/browser could not run the journey; this is not scored as a model failure.
+- `not-requested` — the task has no scripted journey.
+
+The `counter-journey` smoke task verifies increment, decrement floor, reload
+persistence and reset using its exact requested control labels.
+
+Visual evidence is opt-in:
+
+```bash
+npm run eval -- --only counter-journey --capture-visual --label "visual-baseline"
+```
+
+This captures the actual preview at desktop 1280×800 and mobile 390×844. PNGs
+are written under `eval-results/visuals/`; the result JSON records their paths,
+dimensions and byte sizes. A companion `.visual-review.json` file is created
+with an explicit 1–5 review rubric for product fit, hierarchy, content density,
+design consistency and responsive layout.
+
+**Capture is not a quality score.** The tool does not pretend that PNG existence
+means the design is good. Review the images and fill in the rubric; null scores
+mean not yet reviewed. Missing screenshots remain `unavailable`/ `partial`
+evidence and are not converted into a failed application verdict.
+
+The new authenticated endpoints are scoped to the build session owner and
+completed sessions only. Journeys accept only the validated step DSL (no
+arbitrary JavaScript or remote navigation); screenshots are streamed directly
+to the owner and are not persisted or made public.
 
 ## Reading a result
 
