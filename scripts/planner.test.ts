@@ -513,7 +513,7 @@ async function runPromptModeChecks(): Promise<void> {
     "frontend",
     {
       description:
-        "FULLSTACK BUILD:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
         "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
         "USER REQUEST: Add a reporting endpoint.",
       outputFormat: "code",
@@ -539,9 +539,49 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   check(
-    "existing React/Hono edits get full-stack backend instructions",
+    "existing React/Hono edits keep provider-specific backend instructions",
     built.systemPrompt.includes("Hono") &&
       built.systemPrompt.includes("DATABASE: Supabase"),
+    true,
+  );
+  check(
+    "existing full-stack edits do not receive new-app scaffold/rewrite instructions",
+    !built.systemPrompt.includes("GENERATE THESE FILES IN THIS EXACT ORDER") &&
+      !built.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY)"),
+    true,
+  );
+
+  const unknownProviderSkills = await loadRelevantSkillsForPrompt(
+    "Add an API field to the existing app.",
+    "fullstack-unknown",
+  );
+  check(
+    "unknown existing providers do not receive a Supabase-specific Hono skill",
+    !unknownProviderSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  const unknownProviderBuild = await builder.build(
+    "frontend",
+    {
+      description:
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "USER REQUEST: Add an API field.\\n" +
+        "AUTHORITATIVE BUILD CONTEXT\\n- Project mode: edit an existing application.\\n" +
+        "- Existing data provider: unknown.",
+      outputFormat: "code",
+      agenticBuild: true,
+    },
+    {
+      projectId: "planner-prompt-unknown-test",
+      userId: "planner-prompt-unknown-test",
+      mode: "fast",
+      prompt: "Add an API field.",
+    },
+  );
+  check(
+    "unknown existing database providers do not silently receive Supabase DB instructions",
+    !unknownProviderBuild.systemPrompt.includes("DATABASE: Supabase") &&
+      !unknownProviderBuild.systemPrompt.includes("DATABASE: MongoDB"),
     true,
   );
 }
