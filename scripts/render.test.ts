@@ -319,7 +319,7 @@ ok("the browser sweep measures mobile horizontal overflow", RENDER_SCRIPT.includ
 ok("the browser sweep receives the app's first-run content policy from structured input", RENDER_SCRIPT.includes("input.requireInitialContent !== false"));
 ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
 ok("the script reads configuration from a JSON input file", RENDER_SCRIPT.includes('readFile(process.argv[2], "utf8")'));
-ok("the script closes the browser in a finally", /finally\\s*\\{[\\s\\S]*browser\\.close/.test(RENDER_SCRIPT));
+ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
 
 
 {

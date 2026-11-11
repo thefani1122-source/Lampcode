@@ -184,7 +184,7 @@ export const JOURNEY_SCRIPT = String.raw`
 let browser;
 let printed = false;
 let base = "http://localhost:5173";
-let steps: JourneyStep[] = [];
+let steps = [];
 const results = [];
 const consoleErrors = [];
 let finalUrl = "";
