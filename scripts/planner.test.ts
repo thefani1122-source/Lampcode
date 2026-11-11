@@ -12,7 +12,7 @@
  * "planned files" heading with nothing under it into the build prompt.
  */
 
-import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, type PlanningBuildShape } from "../src/agents/build-planner.js";
+import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../src/agents/build-planner.js";
 import { readFileSync } from "node:fs";
 import { PromptBuilder, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 
@@ -290,6 +290,43 @@ check(
 
 // ── authoritative shape passed to both planner and generator ──────────────────
 
+check(
+  "existing React projects with backend artifacts use the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "react",
+    existingBackendArtifacts: true,
+  }),
+  true,
+);
+check(
+  "existing React frontend-only projects keep the frontend edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "react",
+    existingBackendArtifacts: false,
+  }),
+  false,
+);
+check(
+  "existing Next.js/TanStack projects keep the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "nextjs",
+    existingBackendArtifacts: false,
+  }),
+  true,
+);
+check(
+  "a new app never enters the existing-project full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: false,
+    framework: "react",
+    existingBackendArtifacts: true,
+  }),
+  false,
+);
+
 const existingMongoShape: PlanningBuildShape = {
   projectMode: "existing-project",
   framework: "react",
@@ -417,6 +454,23 @@ check(
 check(
   "the generator receives build-shape context independently of whether a plan exists",
   buildRouteSource.includes("formatBuildShapeForPrompt(planningShape)"),
+  true,
+);
+check(
+  "existing React backend edits are routed through buildFullstackEditPrompt",
+  buildRouteSource.includes("fullstackEditMode") &&
+    buildRouteSource.includes("? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)"),
+  true,
+);
+check(
+  "the feature-addition shortcut does not bypass the full-stack edit mode",
+  buildRouteSource.includes("!fullstackEditMode && isAdditionPrompt(prompt)"),
+  true,
+);
+check(
+  "smart-selected full-stack edits are told to use full-file writes rather than surgical pipeline markers",
+  buildRouteSource.includes("For this agentic full-stack edit, output complete file contents") &&
+    buildRouteSource.includes("do not use pipeline surgical edit markers"),
   true,
 );
 
