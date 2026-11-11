@@ -1907,8 +1907,6 @@ export class PromptBuilder {
       task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const isMongoBuildDescription =
       /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
-    const isExistingDatabaseUnknown =
-      isExistingFullstackEdit && /Existing data provider:\s*unknown/i.test(task.description);
     const buildType:
       | "frontend"
       | "fullstack"
@@ -1993,6 +1991,8 @@ export class PromptBuilder {
 
     const isExistingFullstackEdit =
       task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const isExistingDatabaseUnknown =
+      isExistingFullstackEdit && /Existing data provider:\s*unknown/i.test(task.description);
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
