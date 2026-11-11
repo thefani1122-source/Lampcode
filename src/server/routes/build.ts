@@ -4008,6 +4008,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         }
 
         let fixedCount = 0;
+        const repaired: string[] = [];
         try {
           const fix = await dispatcher.dispatch({
             agentType: "frontend",
@@ -4028,7 +4029,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             projectId,
           });
           cumulativeCostUsd += fix.costUsd;
-          const repaired: string[] = [];
           for (const f of parseFilesFromContent(fix.content)) {
             if (f.path.startsWith("src/server/")) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
           }
@@ -4119,6 +4119,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               .join("\n\n");
 
           let fixedCount = 0;
+          const repaired: string[] = [];
           try {
             const fix = await dispatcher.dispatch({
               agentType: "frontend",
@@ -4138,7 +4139,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               projectId,
             });
             cumulativeCostUsd += fix.costUsd;
-            const repaired: string[] = [];
             for (const f of parseFilesFromContent(fix.content)) {
               if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
             }
@@ -4212,6 +4212,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             affectedFiles.map(([p, code]) => `\`\`\`filename:${p}\n${code}\n\`\`\``).join("\n\n");
 
           let fixedCount = 0;
+          const repaired: string[] = [];
           try {
             const fix = await dispatcher.dispatch({
               agentType: "frontend",
@@ -4231,7 +4232,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               projectId,
             });
             cumulativeCostUsd += fix.costUsd;
-            const repaired: string[] = [];
             for (const f of parseFilesFromContent(fix.content)) {
               if (affected.has(f.path)) { allFiles[f.path] = f.code; fixedCount++; repaired.push(f.path); }
             }
