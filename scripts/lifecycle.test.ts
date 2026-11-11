@@ -89,7 +89,7 @@ for (const kind of ["backend-start", "type-check", "browser-render"]) {
 
 // ── Freshness: re-run, or say it is unverified. Never upgrade to pass ──────
 
-check("the re-run only happens with a live sandbox", build.includes("if (hasSandbox(projectId)) {"));
+check("the re-run only happens with a live, known sandbox state", build.includes("if (hasSandbox(projectId) && !sandboxWriteFailed) {"));
 check("a gate that could not be re-run is listed as still stale", build.includes("stillStale.push("));
 check("and that reaches the record", build.includes("unverifiedGates: stillStale"));
 check("and the user is told in plain words", build.includes("treat them as unverified"));
@@ -154,18 +154,19 @@ check(
 );
 
 // Every repair loop that mutates allFiles must emit files/written, or its
-// writes invalidate a gate verdict silently. On the real build the
-// broken-import loop rewrote files after check_page and check_types had passed
-// and the record still read staleCheckPage=0.
+// writes invalidate a gate verdict silently. Pre-preview repairs still record
+// directly; post-preview repairs use the shared fail-closed apply helper so a
+// successful write and a failed partial write both invalidate prior gates.
 check(
-  "every pre-preview repair loop records its writes",
-  (build.match(/recorder\.record\(\{ type: "files\/written"/g) ?? []).length >= 7,
+  "pre-preview repairs and the shared post-preview helper record their writes",
+  (build.match(/recorder\.record\(\{ type: "files\/written"/g) ?? []).length >= 6 &&
+    build.includes("const applyRepairWriteToSandbox = async"),
 );
 for (const [label, marker] of [
   ["fake-removal", "paths: rewritten,"],
   ["wiring", "paths: wired,"],
   ["broken-imports", "paths: created,"],
-  ["dead-code-cut", "paths: cutPaths,"],
+  ["dead-code-cut", 'applyRepairWriteToSandbox("dead-code-cut", cutPaths)'],
 ] as const) {
   check(`${label} says which files it changed`, build.includes(marker));
 }

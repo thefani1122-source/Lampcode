@@ -239,7 +239,7 @@ console.log("\n— the wiring —");
 
   ok("the repair runs AFTER the audit it acts on",
     build.indexOf("formatAuditForUser(completionAudit)") < build.indexOf("planAuditRepair(completionAudit)"));
-  ok("it needs a live sandbox", build.includes("hasSandbox(projectId) ? planAuditRepair"));
+  ok("it needs a live, known sandbox state", build.includes("hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair"));
   ok("and it respects the cost ceiling", build.includes("cumulativeCostUsd < MAX_BUILD_COST_USD"));
   ok("a skipped repair is logged with its reason", build.includes("skipped=${whyNoRepair(completionAudit)}"));
 
@@ -261,6 +261,13 @@ console.log("\n— the wiring —");
   ok("a failed dispatch does not fail the build", build.includes("Completion-audit repair dispatch failed"));
   ok("tools are off — this is one shot at a file set", build.includes("enableTools: false"));
   ok("the outcome is logged with its numbers", build.includes("[build] audit repair session="));
+
+  ok("repair writes use the fail-closed sandbox apply helper", build.includes("const applyRepairWriteToSandbox = async"));
+  ok("a failed apply is logged with its affected paths", build.includes("Repair files could not be fully applied to the live sandbox"));
+  ok("a failed apply marks page, type and test evidence unavailable", build.includes('gate, status: "unavailable"'));
+  ok("the preview stops verification instead of checking a partial tree", build.includes("Skipping post-preview verification because repair files were not fully applied"));
+  ok("stale checks are blocked while the sandbox state is uncertain", build.includes("hasSandbox(projectId) && !sandboxWriteFailed"));
+  ok("a successful full refresh re-opens freshness checks", build.includes("noteSuccessfulSandboxRefresh();"));
 
   // In the record as well as the log. A loop that spent money and achieved
   // nothing has to be visible later — an unchanged audit alone would read as

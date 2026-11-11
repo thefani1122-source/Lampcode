@@ -113,7 +113,27 @@ console.log("\n— the report —");
   const allGood = parseJourneyReport(JSON.stringify({
     ran: true, steps: [{ step: 1, did: "go to /", ok: true, detail: "" }], consoleErrors: [], finalUrl: "/",
   }));
-  ok("a clean journey says so", formatJourney(allGood).includes("All 1 step(s) worked"));
+  ok("a clean legacy report without completion metadata still says so", formatJourney(allGood).includes("All 1 step(s) worked"));
+}
+{
+  const partial = parseJourneyReport(JSON.stringify({
+    ran: true,
+    completed: false,
+    totalSteps: 5,
+    steps: [
+      { step: 1, did: "go to /", ok: true, detail: "" },
+      { step: 2, did: "click Add", ok: true, detail: "" },
+    ],
+    consoleErrors: [],
+    finalUrl: "http://localhost:5173/",
+    reason: "the journey timed out",
+  }));
+  const text = formatJourney(partial);
+  ok("a timeout preserves completed step observations", text.includes("1. go to /") && text.includes("2. click Add"));
+  ok("a timeout is formatted as incomplete", text.includes("The journey did not complete"));
+  ok("a timeout compares completed versus requested steps", text.includes("2 of 5 step(s) ran"));
+  ok("a timeout identifies the remaining unrun steps", text.includes("3 remaining step(s) were not run"));
+  ok("a partial timeout never claims all steps worked", !text.includes("All 2 step(s) worked"));
 }
 {
   // ran:false is a different fact from "a step failed", and the formatter must
@@ -136,11 +156,19 @@ console.log("\n— the driver —");
   ok("one browser, one context, one page", src.includes("const context = await browser.newContext()") && (src.match(/newPage\(\)/g) ?? []).length === 1);
   ok("a failed step stops the journey", src.includes("break; // everything after a failed step"));
   ok("a hung browser cannot hold the build", src.includes("const watchdog = setTimeout"));
-  ok("whatever completed is still reported on a timeout", src.includes('print(results.length > 0, "the journey timed out")'));
+  ok("the watchdog reports started state and marks its report incomplete", src.includes('print(started, "the journey timed out", false)'));
+  ok("the driver includes its requested step count", src.includes("totalSteps: steps.length"));
+  ok("normal completion requires every requested step", src.includes("results.length === steps.length"));
+  ok("the report exposes an explicit completion flag", src.includes("completed,"));
   ok("console errors are collected", src.includes('page.on("console"') && src.includes('page.on("pageerror"'));
   ok("controls are found by what a user sees", src.includes("page.getByText(step.text"));
   ok("fields by label or placeholder", src.includes("getByLabel") && src.includes("getByPlaceholder"));
   ok("there is no arbitrary-JavaScript step", !src.includes("page.evaluate("));
+
+  ok("the driver reads steps from structured input", src.includes('readFile(process.argv[2], "utf8")'));
+  const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("journey steps are written to per-run JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-journey.mjs"') && service.includes("JOURNEY_SCRIPT"));
+  ok("journey command receives only a generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(steps))"));
 
   const handler = readFileSync(new URL("../src/agents/tools/browser-interact.ts", import.meta.url), "utf8");
   ok("steps are validated before a browser starts", handler.indexOf("parseJourney(") < handler.indexOf("runJourney("));

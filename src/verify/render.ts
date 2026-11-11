@@ -140,6 +140,35 @@ export const INITIAL_EMPTY_STATE_RE =
   /\b(?:no (?:habits?|tasks?|items?|entries|records?|data|events?|orders?|customers?|projects?|notes?|shifts?|transactions?|messages?)\s+yet|nothing (?:here|to show|to display) yet|create your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message)|add your first (?:habit|task|item|entry|record|event|order|customer|project|note|shift|transaction|message))\b/i;
 
 /**
+ * Whether a first-run frontend should be expected to contain seeded content.
+ * Kept pure so the initial agentic sweep and the post-repair freshness check
+ * cannot quietly apply different acceptance rules to the same build.
+ */
+export function shouldRequireInitialContent(opts: {
+  agentType: string;
+  taskDescription: string;
+  userPrompt?: string | undefined;
+  projectFiles?: Record<string, string> | undefined;
+}): boolean {
+  const isFullstackBuild =
+    opts.taskDescription.startsWith("FULLSTACK BUILD:") ||
+    opts.taskDescription.startsWith("FULLSTACK AUTH BUILD:");
+  const existingProjectHasBackend = Object.keys(opts.projectFiles ?? {}).some((path) =>
+    /(^|\/)(?:server|backend|api|db|database)(?:\/|\.|$)/i.test(path),
+  );
+  const originalUserRequest = opts.userPrompt ?? opts.taskDescription;
+  const explicitlyRequestsEmptyFirstRun =
+    /\bno sample data\b|\b(?:first|initial|default|start|begin|launch|open)\b.{0,45}\b(?:empty|blank)\b|\b(?:empty|blank)\b.{0,45}\b(?:first|initial|default|start|begin|launch)\b/i.test(
+      originalUserRequest,
+    );
+
+  return opts.agentType === "frontend" &&
+    !isFullstackBuild &&
+    !existingProjectHasBackend &&
+    !explicitlyRequestsEmptyFirstRun;
+}
+
+/**
  * Routes to visit, from the project's own files.
  *
  * `/` is always included and always first: it is the one route every app has,
@@ -172,17 +201,23 @@ export function routesToVisit(declared: string[]): string[] {
  * errors out loud. Same pattern as `lampcode-interact.mjs`.
  */
 export const RENDER_SCRIPT = String.raw`import { chromium } from "playwright"
+import { readFile } from "node:fs/promises"
 
-const base = process.argv[2] || "http://localhost:5173"
-const routes = JSON.parse(process.argv[3] || '["/"]')
 const MAX_TEXT = ${MAX_TEXT_CHARS}
-const REQUIRE_INITIAL_CONTENT = process.argv[4] !== "false"
 const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_RE.source)}, "i")
+let base = "http://localhost:5173"
+let routes = ["/"]
+let REQUIRE_INITIAL_CONTENT = true
 
 const out = { routes: [], unreachable: [] }
 let browser
 
 try {
+  const input = JSON.parse(await readFile(process.argv[2], "utf8"))
+  if (typeof input.base === "string") base = input.base
+  if (Array.isArray(input.routes)) routes = input.routes
+  REQUIRE_INITIAL_CONTENT = input.requireInitialContent !== false
+
   browser = await chromium.launch()
   const page = await browser.newPage()
   await page.setViewportSize({ width: 1440, height: 900 })

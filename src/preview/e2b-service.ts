@@ -1,4 +1,5 @@
 import { Sandbox, CommandExitError } from "e2b";
+import { randomUUID } from "node:crypto";
 import { config } from "../server/config.js";
 import { logger } from "../server/logger.js";
 import { createRedis } from "../lib/redis.js";
@@ -47,6 +48,32 @@ const TOOLS_ENV = `PLAYWRIGHT_BROWSERS_PATH=${TOOLS_DIR}/browsers`;
 // build turn (heartbeat). Generous so an active testing session never expires
 // mid-use; idle sandboxes are paused on WS disconnect well before this.
 const SANDBOX_TIMEOUT_MS = Number(process.env["SANDBOX_RUN_TIMEOUT_MS"] ?? 60 * 60 * 1000); // 1 hour
+
+/**
+ * Keep model-controlled data out of shell syntax. JSON.stringify protects JSON,
+ * not a shell command: substitutions such as $(...) still expand inside quotes.
+ * Each invocation gets a unique input file so concurrent checks cannot swap payloads.
+ */
+async function runSandboxScriptWithJsonInput(
+  sandbox: Sandbox,
+  filename: string,
+  script: string,
+  input: unknown,
+  timeoutMs: number,
+) {
+  const scriptPath = `${TOOLS_DIR}/${filename}`;
+  const inputPath = `${TOOLS_DIR}/${filename.replace(/\.mjs$/, "")}-input-${randomUUID()}.json`;
+  await sandbox.files.write(scriptPath, script);
+  try {
+    await sandbox.files.write(inputPath, JSON.stringify(input));
+    return await sandbox.commands.run(
+      `${TOOLS_ENV} node ${scriptPath} ${inputPath}`,
+      { timeoutMs },
+    );
+  } finally {
+    await sandbox.files.remove(inputPath).catch(() => {});
+  }
+}
 
 // Custom template that pre-installs Node, frontend deps, and a baseline
 // Vite/React scaffold.
@@ -957,10 +984,9 @@ export async function checkRender(
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { report: null, ran: false };
   try {
-    await sandbox.files.write(`${TOOLS_DIR}/lampcode-render.mjs`, RENDER_SCRIPT);
-    const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-render.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))} ${requireInitialContent ? "true" : "false"}`,
-      { timeoutMs: 90_000 },
+    const r = await runSandboxScriptWithJsonInput(
+      sandbox, "lampcode-render.mjs", RENDER_SCRIPT,
+      { base: "http://localhost:5173", routes, requireInitialContent }, 90_000,
     );
     const report = parseRenderReport(r.stdout);
     // Unparseable output means the pages were never actually looked at. Saying
@@ -998,10 +1024,9 @@ export async function checkInteractions(
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { findings: [], ran: false, storage: EMPTY_STORAGE };
   try {
-    await sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT);
-    const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-interact.mjs http://localhost:5173 ${JSON.stringify(JSON.stringify(routes))}`,
-      { timeoutMs: 90_000 },
+    const r = await runSandboxScriptWithJsonInput(
+      sandbox, "lampcode-interact.mjs", INTERACTION_SCRIPT,
+      { base: "http://localhost:5173", routes }, 90_000,
     );
     // The probe prints its findings, then — on a second line behind a marker —
     // what the app had persisted at the moment it finished clicking. Split
@@ -1047,11 +1072,10 @@ export async function captureStorage(projectId: string, route = "/"): Promise<St
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return EMPTY_STORAGE;
   try {
-    await sandbox.files.write(`${TOOLS_DIR}/lampcode-storage.mjs`, STORAGE_SCRIPT);
     const framework = sandboxFrameworks.get(projectId) ?? "react";
-    const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-storage.mjs http://localhost:${devPort(framework)} ${JSON.stringify(route)}`,
-      { timeoutMs: 60_000 },
+    const r = await runSandboxScriptWithJsonInput(
+      sandbox, "lampcode-storage.mjs", STORAGE_SCRIPT,
+      { base: `http://localhost:${devPort(framework)}`, route }, 60_000,
     );
     return parseStorageSnapshot(r.stdout.trim().split(/\r?\n/).at(-1) ?? "");
   } catch (err) {
@@ -1078,11 +1102,10 @@ export async function runJourney(
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "there is no live preview" };
   try {
-    await sandbox.files.write(`${TOOLS_DIR}/lampcode-journey.mjs`, JOURNEY_SCRIPT);
     const framework = sandboxFrameworks.get(projectId) ?? "react";
-    const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/lampcode-journey.mjs http://localhost:${devPort(framework)} ${JSON.stringify(JSON.stringify(steps))}`,
-      { timeoutMs: 90_000 },
+    const r = await runSandboxScriptWithJsonInput(
+      sandbox, "lampcode-journey.mjs", JOURNEY_SCRIPT,
+      { base: `http://localhost:${devPort(framework)}`, steps }, 90_000,
     );
     return parseJourneyReport(r.stdout);
   } catch (err) {

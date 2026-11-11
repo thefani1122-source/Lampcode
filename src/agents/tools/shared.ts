@@ -79,18 +79,24 @@ export async function runPageSweep(
   // per build, because driving a real browser over several pages costs seconds
   // and the answer rarely changes twice.
   if (allRoutesOk(report) && ctx.interactionsProbed && !ctx.interactionsProbed.value) {
-    ctx.interactionsProbed.value = true;
     const routes = report.routes.map((r) => r.route);
     const { findings, ran } = await checkInteractions(projectId, routes);
     console.log(
       `[tools] interactions in-build trigger=${trigger} routes=${routes.length} ` +
       `ran=${ran} findings=${findings.length}`,
     );
-    if (ran && findings.length > 0) {
-      out += `\n\n${formatInteractions(findings)}`;
-    } else if (ran) {
-      out += `\n\nI also operated the controls on those pages: every button, link and form I ` +
-        `could try produced a visible response.`;
+    if (ran) {
+      // Only consume the once-per-build attempt after the probe actually ran.
+      // An unavailable sandbox must remain retryable on the next page sweep.
+      ctx.interactionsProbed.value = true;
+      if (findings.length > 0) {
+        out += `\n\n${formatInteractions(findings)}`;
+      } else {
+        out += `\n\nI also operated the controls on those pages: every button, link and form I ` +
+          `could try produced a visible response.`;
+      }
+    } else {
+      out += `\n\nThe interaction probe could not run; it remains pending and can be retried on the next page check.`;
     }
   }
 

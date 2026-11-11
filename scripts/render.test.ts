@@ -14,6 +14,7 @@ import {
   MAX_TEXT_CHARS,
   RENDER_SCRIPT,
   INITIAL_EMPTY_STATE_RE,
+  shouldRequireInitialContent,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -307,6 +308,31 @@ const added = mk([{ route: "/", text: "Home" }, { route: "/shifts", text: "Shift
 ok("a newly declared route is reported", formatRenderForAgent(added, twoGood).includes("/staff is new"));
 ok("a removed route is reported", formatRenderForAgent(twoGood, added).includes("no longer declared: /staff"));
 
+// ── first-run content policy, shared by both verification passes ──────────────
+
+const frontendPolicy = {
+  agentType: "frontend",
+  taskDescription: "Build a habit tracker",
+  userPrompt: "Build a habit tracker",
+};
+ok("a plain frontend first run must contain initial content", shouldRequireInitialContent(frontendPolicy));
+ok("a non-frontend agent has no first-run content requirement", !shouldRequireInitialContent({ ...frontendPolicy, agentType: "backend" }));
+ok("a full-stack build is not forced to contain seeded browser data", !shouldRequireInitialContent({ ...frontendPolicy, taskDescription: "FULLSTACK BUILD: habit tracker" }));
+ok("an existing backend project is not forced to contain seeded content", !shouldRequireInitialContent({ ...frontendPolicy, projectFiles: { "src/server/index.ts": "export {}" } }));
+ok("an explicit empty first run is respected", !shouldRequireInitialContent({ ...frontendPolicy, userPrompt: "Start with an empty first run; no sample data." }));
+
+{
+  const dispatcher = readFileSync(new URL("../src/agents/dispatcher.ts", import.meta.url), "utf8");
+  ok("the agentic sweep uses the shared first-run policy", dispatcher.includes("shouldRequireInitialContent({"));
+  const buildRoute = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const start = buildRoute.indexOf("const revalidateStaleGates");
+  const end = buildRoute.indexOf("await revalidateStaleGates();", start);
+  const block = start >= 0 && end > start ? buildRoute.slice(start, end) : "";
+  ok("post-repair page revalidation uses the multi-route sweep", block.includes("await checkRender(") && block.includes("allRoutesOk(page.report)"));
+  ok("post-repair page revalidation does not downgrade to the homepage-only check", !block.includes("verifyBrowserRender("));
+  ok("post-repair page revalidation preserves the same seeded-content rule", block.includes("shouldRequireInitialContent({"));
+}
+
 // ── the script itself ────────────────────────────────────────────────────────
 
 ok("the script launches exactly one browser", (RENDER_SCRIPT.match(/chromium\.launch\(/g) ?? []).length === 1);
@@ -316,10 +342,17 @@ ok("the browser sweep detects known first-run empty states", RENDER_SCRIPT.inclu
 ok("the browser sweep checks desktop and mobile viewports", RENDER_SCRIPT.includes("width: 1440, height: 900") && RENDER_SCRIPT.includes("width: 390, height: 844"));
 ok("the browser sweep measures password form width", RENDER_SCRIPT.includes('input[type="password"]') && RENDER_SCRIPT.includes("passwordFormWidth"));
 ok("the browser sweep measures mobile horizontal overflow", RENDER_SCRIPT.includes("horizontalOverflow"));
-ok("the browser sweep receives the app's first-run content policy", RENDER_SCRIPT.includes('process.argv[4] !== "false"'));
+ok("the browser sweep receives the app's first-run content policy from structured input", RENDER_SCRIPT.includes("input.requireInitialContent !== false"));
 ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
+ok("the script reads configuration from a JSON input file", RENDER_SCRIPT.includes('readFile(process.argv[2], "utf8")'));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
 
+
+{
+  const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
+  ok("render routes use per-run JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-render.mjs"') && service.includes("RENDER_SCRIPT"));
+  ok("shell receives only the generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(routes))"));
+}
 
 // ── the overlay is hidden, never disabled ────────────────────────────────────
 // MEASURED 2026-10-18: a person watching their build met a full-screen red

@@ -84,8 +84,8 @@ return {
 export const STORAGE_SCRIPT = `
 let browser;
 let printed = false;
-const base = process.argv[2] || "http://localhost:5173";
-const route = process.argv[3] || "/";
+let base = "http://localhost:5173";
+let route = "/";
 const EMPTY = { local: [], session: [], indexedDb: [], ran: false };
 const SNIPPET = ${JSON.stringify(STORAGE_BROWSER_SNIPPET)};
 function print(snapshot) {
@@ -97,6 +97,10 @@ function print(snapshot) {
 // which is the honest answer and is kept apart from "captured, found nothing".
 const watchdog = setTimeout(() => { print(EMPTY); process.exit(0); }, 40000);
 try {
+  const { readFile } = await import("node:fs/promises");
+  const input = JSON.parse(await readFile(process.argv[2], "utf8"));
+  if (typeof input.base === "string") base = input.base;
+  if (typeof input.route === "string") route = input.route;
   const { chromium } = await import("playwright");
   browser = await chromium.launch({ headless: true, timeout: 8000 });
   const page = await browser.newPage();

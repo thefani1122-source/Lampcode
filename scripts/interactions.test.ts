@@ -70,34 +70,41 @@ check("parsing is not capped", parse(Array.from({ length: 40 }, () => entry)).le
 // These are source guards, not a claim that a browser ran. The separate local
 // browser probe exercises the exported string itself, without translating it.
 const imports = [...INTERACTION_SCRIPT.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]);
-check("script imports only playwright", imports, ["playwright"]);
+check("script imports only the file reader and playwright", imports, ["node:fs/promises", "playwright"]);
 ok("no static imports or require escape hatch", !/\bimport\s+|\brequire\s*\(/.test(INTERACTION_SCRIPT.replace(/\/\/[^\n]*/g, "")));
 ok("script never references baked renderer", !INTERACTION_SCRIPT.includes("check-render.mjs"));
 ok("script opens the preview port", INTERACTION_SCRIPT.includes('http://localhost:5173'));
 const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
-ok("runtime writes into tooling directory", service.includes('sandbox.files.write(`${TOOLS_DIR}/lampcode-interact.mjs`, INTERACTION_SCRIPT)'));
+ok("runtime passes the probe through JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-interact.mjs"') && service.includes("INTERACTION_SCRIPT"));
 // Asserts the INTENT — the baked Playwright is on the path and the runtime
 // script is what runs — rather than one exact command string. The previous
 // version matched the string verbatim and broke the moment routes were passed
 // as arguments, which is a case failing for a change that was correct.
 ok(
   "runtime supplies browser environment",
-  /\$\{TOOLS_ENV\} node \$\{TOOLS_DIR\}\/lampcode-interact\.mjs/.test(service),
+  service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}'),
 );
 ok(
-  "runtime passes the routes to probe",
-  /lampcode-interact\.mjs http:\/\/localhost:5173 \$\{JSON\.stringify\(JSON\.stringify\(routes\)\)\}/.test(service),
+  "runtime passes routes as JSON file data",
+  service.includes('{ base: "http://localhost:5173", routes }') && service.includes("sandbox.files.write(inputPath, JSON.stringify(input))"),
 );
 
 // The probe used to open "/" and nothing else, so a multi-page app's own
 // buttons were never touched — the owner's standing complaint, literally true
 // of this script.
-ok("script reads routes from its arguments", INTERACTION_SCRIPT.includes("process.argv[3]"));
+ok("script reads routes from structured input", INTERACTION_SCRIPT.includes('readFile(process.argv[2], "utf8")'));
 ok("script loops over them", /for \(const route of routes\)/.test(INTERACTION_SCRIPT));
 ok("each entry records which route it came from", INTERACTION_SCRIPT.includes("route,"));
 // Without a per-page cap the home page eats the shared budget and every later
 // route reports "not attempted" — the same blindness, moved one step along.
 ok("the budget is spread across pages", INTERACTION_SCRIPT.includes("PER_ROUTE"));
+
+const shared = readFileSync(new URL("../src/agents/tools/shared.ts", import.meta.url), "utf8");
+const probeCall = shared.indexOf("const { findings, ran } = await checkInteractions(projectId, routes)");
+const markAttempted = shared.indexOf("ctx.interactionsProbed.value = true");
+ok("the probe is only marked attempted after its result is known", probeCall >= 0 && markAttempted > probeCall);
+ok("only a real run consumes the once-per-build attempt", shared.includes("if (ran) {") && shared.includes("ctx.interactionsProbed.value = true;"));
+ok("an unavailable probe is explicitly left pending for retry", shared.includes("it remains pending and can be retried on the next page check"));
 
 console.log(failures === 0 ? "\nAll interaction cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);
