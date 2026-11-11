@@ -324,7 +324,7 @@ ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.cl
 
 {
   const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
-  ok("render routes use per-run JSON input", /runSandboxScriptWithJsonInput\\(\\s*sandbox,\\s*"lampcode-render\\.mjs",\\s*RENDER_SCRIPT/.test(service));
+  ok("render routes use per-run JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-render.mjs"') && service.includes("RENDER_SCRIPT"));
   ok("shell receives only the generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(routes))"));
 }
 

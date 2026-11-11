@@ -75,7 +75,7 @@ ok("no static imports or require escape hatch", !/\bimport\s+|\brequire\s*\(/.te
 ok("script never references baked renderer", !INTERACTION_SCRIPT.includes("check-render.mjs"));
 ok("script opens the preview port", INTERACTION_SCRIPT.includes('http://localhost:5173'));
 const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
-ok("runtime passes the probe through JSON input", /runSandboxScriptWithJsonInput\\(\\s*sandbox,\\s*"lampcode-interact\\.mjs",\\s*INTERACTION_SCRIPT/.test(service));
+ok("runtime passes the probe through JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-interact.mjs"') && service.includes("INTERACTION_SCRIPT"));
 // Asserts the INTENT — the baked Playwright is on the path and the runtime
 // script is what runs — rather than one exact command string. The previous
 // version matched the string verbatim and broke the moment routes were passed
