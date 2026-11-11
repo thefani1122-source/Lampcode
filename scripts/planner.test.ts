@@ -459,7 +459,7 @@ check(
 check(
   "existing React backend edits are routed through buildFullstackEditPrompt",
   buildRouteSource.includes("fullstackEditMode") &&
-    buildRouteSource.includes("? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)"),
+    buildRouteSource.includes("buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)"),
   true,
 );
 check(
@@ -477,6 +477,13 @@ check(
   "pipeline full-stack edits retain complete filename-fenced output",
   buildRouteSource.includes("Output each changed file using the exact format: ```filename:<path>") &&
     buildRouteSource.includes("Output complete file contents for changed files"),
+  true,
+);
+check(
+  "full-stack edit prompt helper varies its write instruction by agentic mode",
+  buildRouteSource.includes("const writeInstruction = agenticBuild") &&
+    buildRouteSource.includes("Use the agentic sandbox tools to make the change") &&
+    buildRouteSource.includes("Output complete updated files using filename fences"),
   true,
 );
 
