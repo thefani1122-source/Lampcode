@@ -166,7 +166,7 @@ for (const [label, marker] of [
   ["fake-removal", "paths: rewritten,"],
   ["wiring", "paths: wired,"],
   ["broken-imports", "paths: created,"],
-  ["dead-code-cut", "paths: cutPaths,"],
+  ["dead-code-cut", 'applyRepairWriteToSandbox("dead-code-cut", cutPaths)'],
 ] as const) {
   check(`${label} says which files it changed`, build.includes(marker));
 }
