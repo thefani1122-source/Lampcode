@@ -791,6 +791,7 @@ function buildFullstackEditPrompt(
   files: Record<string, string>,
   userRequest: string,
   framework: FullstackFramework,
+  agenticBuild: boolean,
 ): string {
   // This is an edit to an existing backend, not a request to scaffold a new
   // full-stack app. PromptBuilder has a separate mode so it keeps the correct
@@ -799,12 +800,15 @@ function buildFullstackEditPrompt(
   const fileBlocks = Object.entries(files)
     .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
     .join("\n\n");
+  const writeInstruction = agenticBuild
+    ? "Use the agentic sandbox tools to make the change. Prefer edit_file for existing files and write_files for new files; do not print fenced code in the reply."
+    : "Output complete updated files using filename fences for every changed file.";
   return (
     `${prefix}\n${framework}\n\n` +
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
-    `Keep everything that does not need to change. Output the complete updated files.`
+    `Keep everything that does not need to change. ${writeInstruction}`
   );
 }
 
@@ -1467,7 +1471,7 @@ export async function runFastBuild(
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
           ? fullstackEditMode
-            ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)
+            ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
             ? buildFullstackPrompt(prompt, classification?.needsAuth)
