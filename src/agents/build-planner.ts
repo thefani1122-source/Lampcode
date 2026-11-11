@@ -6,24 +6,121 @@ import { isTemplateOwnedFile } from "../preview/e2b-service.js";
 import type { BuildPlan, PlannedFile } from "../db/schema.js";
 
 /**
- * One cheap dispatch before a long build, deciding the file layout.
+ * One bounded planning dispatch before an agentic build or edit.
  *
- * A big build used to be one long improvisation: the model started writing and
- * found out what the app was as it went. Two costs. The one-file-app habit —
- * four views, a kanban and a chart all landing in App.tsx — is what you get
- * when nobody decided on a layout first. And when the ForgeFlow build died
- * mid-repair at round 14, nothing anywhere stated what it had set out to make,
- * so there was no way to resume it or to tell which of its fifteen files were
- * still missing.
- *
- * The plan is a list of files and what each is for. Nothing else. It does not
- * design schemas, pick libraries or write code — a plan that specifies
- * everything costs as much as the build and is wrong by the second file.
+ * It produces a concise product blueprint (screens, journeys, data behaviour,
+ * visual direction and verification outcomes) plus a proposed file map. The
+ * blueprint keeps the generator from improvising the product while it writes;
+ * the file map discourages a one-file app without pretending to be an immutable
+ * implementation manifest. The generator still has to inspect the live project
+ * and verify the result.
  */
 
 /** Hard ceiling on planned files, matching the planner's own instruction. A
  *  model that ignores it gets truncated rather than handed a 200-file plan. */
 const MAX_PLANNED_FILES = 25;
+/**
+ * Trusted build context shared by the planner and the code generator.
+ * Existing-project edits are distinct from new frontend builds because the
+ * fresh-build classifier deliberately does not run on edits.
+ */
+export type PlanningBuildShape = {
+  projectMode: "new-frontend" | "new-fullstack" | "existing-project";
+  framework: "react" | "nextjs" | "tanstack" | "unknown";
+  database: "browser" | "supabase" | "mongodb" | "unknown";
+  backendRuntime: "none" | "node" | "python" | "unknown";
+  databaseAccess:
+    | "not-applicable"
+    | "user-connected"
+    | "declined"
+    | "not-confirmed"
+    | "preserve-existing"
+    | "unknown";
+  auth: "required" | "not-required" | "not-applicable" | "preserve-existing";
+  existingBackendArtifacts: boolean;
+};
+
+/** React/Hono edits need the full-stack prompt path too; only Next/TanStack
+ *  were previously recognised as full-stack edits by the build route. */
+export function shouldUseFullstackEdit(opts: {
+  hasExistingCode: boolean;
+  framework: PlanningBuildShape["framework"];
+  existingBackendArtifacts: boolean;
+}): boolean {
+  return opts.hasExistingCode &&
+    (opts.framework !== "react" || opts.existingBackendArtifacts);
+}
+
+/** Infer only what loaded source proves. Missing keywords do not prove a browser-only app. */
+export function inferExistingDatabase(
+  files: Record<string, string>,
+): "supabase" | "mongodb" | "unknown" {
+  const source = Object.entries(files)
+    .map(([path, content]) => path + "\n" + content)
+    .join("\n");
+  if (/MONGODB_URI|mongodb(?:\+srv)?:\/\/|from\s+["']mongoose["']|mongoose\.connect/i.test(source)) {
+    return "mongodb";
+  }
+  if (/@supabase\/supabase-js|SUPABASE_URL|SUPABASE_ANON_KEY|supabase\.from\(/i.test(source)) {
+    return "supabase";
+  }
+  return "unknown";
+}
+
+/** State authoritative build/runtime facts without inventing persistence guarantees. */
+export function formatBuildShapeForPrompt(shape: PlanningBuildShape): string {
+  const lines = [
+    "",
+    "AUTHORITATIVE BUILD CONTEXT — decided by the build pipeline, not by the planning model",
+  ];
+
+  if (shape.projectMode === "new-frontend") {
+    lines.push(
+      "- Project mode: new frontend-only application.",
+      "- Framework: " + shape.framework + ".",
+      "- No application server or database is part of this build. Do not add one just because it seems more professional.",
+      "- Data scope: browser-local only when the user's requested behaviour needs persistence. Do not describe browser storage as multi-user or cross-device storage.",
+    );
+  } else if (shape.projectMode === "new-fullstack") {
+    lines.push(
+      "- Project mode: new full-stack application. A real server-side implementation is required by the build pipeline; do not generate a browser-only substitute.",
+      "- Framework: " + shape.framework + ".",
+      "- Backend runtime: " + shape.backendRuntime + ".",
+      "- Database provider selected by the build pipeline: " + shape.database + ". Do not silently switch providers.",
+      "- Authentication requirement: " + shape.auth + ".",
+    );
+    if (shape.databaseAccess === "user-connected") {
+      lines.push("- The user's own database connection is confirmed. Use the selected provider and keep the real database as the source of truth.");
+    } else if (shape.databaseAccess === "declined") {
+      lines.push(
+        "- The user explicitly declined database setup. Be truthful: do not claim entered data persists, do not fabricate database rows, and do not silently substitute localStorage as if it were the requested database. Keep persistence-limited states explicit.",
+      );
+    } else if (shape.databaseAccess === "not-confirmed") {
+      lines.push(
+        "- A user-owned database connection is not confirmed. Do not claim database writes work. Preserve the selected server/data architecture, use only credentials genuinely available to the runtime, and show an honest unconfigured/error state if the database cannot be reached. Do not fake persistence with localStorage.",
+      );
+    } else {
+      lines.push(
+        "- Database access was not established by this planning context. Do not infer that it is connected; preserve the selected provider and avoid claims of persistence without runtime evidence.",
+      );
+    }
+  } else {
+    lines.push(
+      "- Project mode: edit an existing application, not a new app.",
+      "- Existing framework: " + shape.framework + ". Preserve the current framework and project conventions.",
+      "- Existing backend artifacts in the loaded project files: " + (shape.existingBackendArtifacts ? "yes" : "not found") + ". Not found does NOT prove the whole application is frontend-only; it may use remote APIs or files outside the selected context.",
+      "- Existing data provider: " + shape.database + ". If unknown, inspect the existing data client and project files before deciding. Preserve the current data source; do not switch to localStorage or another provider unless the user explicitly requests a migration.",
+      "- Backend runtime in the loaded project: " + shape.backendRuntime + ". Preserve it where present; do not introduce a parallel server.",
+      "- Authentication and authorization: preserve the existing implementation and its security boundaries unless the user explicitly asks to change them.",
+    );
+  }
+
+  lines.push(
+    "- Priority: the user's original request and the existing project's proven architecture outrank any assumptions made by the planner.",
+  );
+  return lines.join("\n");
+}
+
 
 /** Budget for the planning dispatch alone. It writes a short JSON object, so
  *  this is generous; it exists so a planner that rambles cannot eat the
@@ -159,12 +256,12 @@ export function parsePlan(raw: string): BuildPlan | null {
 }
 
 /**
- * Render a plan as the block injected into the build's own prompt.
+ * Render the planner's product outcomes and proposed file map for the generator.
  *
- * Phrased as a starting point rather than a contract on purpose. The planner
- * saw only the prompt; the builder sees the running app, and when the two
- * disagree the builder is the one with evidence. A plan presented as binding
- * would make the model follow it past the point where it had learned better.
+ * Product behaviour/design outcomes are the target, but cannot override the
+ * original request, trusted runtime shape or proven existing-project contracts.
+ * File paths/order remain adaptable because the generator can inspect the real
+ * project and framework constraints.
  */
 export function formatPlanForPrompt(plan: BuildPlan): string {
   const lines = [
@@ -178,26 +275,32 @@ export function formatPlanForPrompt(plan: BuildPlan): string {
   if (plan.approach && plan.approach.length > 0) {
     lines.push(
       "",
-      "How it works — build to these decisions, they are not suggestions:",
+      "Planned product decisions — implement these outcomes unless a higher-priority user/runtime constraint conflicts:",
       ...plan.approach.map((a) => `- ${a}`),
     );
   }
 
   lines.push(
     "",
-    "Write these files, in this order:",
+    "Suggested file decomposition (add or adapt files required by the actual framework/project):",
     ...plan.files.map((f, i) => `${i + 1}. ${f.path} — ${f.purpose}`),
   );
   if (plan.outOfScope && plan.outOfScope.length > 0) {
     lines.push(
       "",
-      `Deliberately out of scope: ${plan.outOfScope.join("; ")}. Do not build these.`,
+      `Planner-suggested out-of-scope items: ${plan.outOfScope.join("; ")}. Do not add these unless the original user request explicitly requires them.`,
     );
   }
   lines.push(
     "",
-    "Before coding, use the approach above as the product contract: implement every named screen, make the primary journeys work end to end, use one consistent design system, and give the first screen meaningful content. Keep loading, error and truly-empty states distinct from a failed or never-initialised data source.",
-    "This is a starting point, not a contract on implementation details. You can see the running app and the planner could not, so if live evidence requires a better layout, change it and say so in your final reply. What you must not do is collapse it back into one large file.",
+    "IMPLEMENTATION PRIORITIES:",
+    "- Treat the approach above as the planned product outcome: implement its named screens, primary user journeys, data rules and visual direction. Do not silently omit a screen or workflow because the file list is incomplete.",
+    "- Give the first screen meaningful, product-specific content and a clear primary action; do not ship a blank shell or a generic placeholder dashboard.",
+    "- Keep loading, failure/error, and genuinely empty data states distinct. A failed or uninitialised data source must never be presented as a successful empty state.",
+    "- The user's original request, explicit acceptance requirements, this build's authoritative runtime/framework context, and the existing project's proven conventions take priority over any planner assumption. If the approach conflicts with one of those, follow the higher-priority source and preserve the conflict in the build notes rather than guessing.",
+    "- The file list is a proposed decomposition, not an exhaustive or immutable manifest. Add framework-required files, preserve existing files, and adjust paths when the actual project structure requires it. Do not collapse a multi-screen product into one large file.",
+    "- Planner out-of-scope items must never be used to drop something the user explicitly requested.",
+    "- Verify the resulting screens and primary journeys in the running application; a plan is not proof that the feature exists.",
   );
   return lines.join("\n");
 }
@@ -223,14 +326,10 @@ export async function planBuild(opts: {
   provider: "anthropic" | "modal";
   /** The project as it stands. Present on an edit, empty on a new build. */
   existingFiles?: Record<string, string>;
-  /** What the pipeline has ALREADY decided, before the planner is asked
-   *  anything. Without it the planner decides independently and the two
-   *  contradict each other — a plan saying "no backend, mock login" against a
-   *  build the classifier had already routed as fullstack. The agent then has
-   *  to pick a side mid-build, which it reported out loud: "I see there's a
-   *  conflict: the planning pass says no backend with localStorage, but…".
-   *  Seen 2026-10-23. */
-  shape?: { fullstack: boolean; databaseConnected: boolean };
+  /** Trusted architecture/runtime facts. Existing-project edits must not
+   *  be described as frontend-only just because the fresh-build classifier
+   *  did not run; lack of a user-owned DB must not imply localStorage. */
+  shape?: PlanningBuildShape;
 }): Promise<PlanResult> {
   // A plan for a change has to be made against the app that exists, or it is
   // guesswork about which files to touch. The manifest is paths and purposes
@@ -253,16 +352,7 @@ export async function planBuild(opts: {
   );
 
   if (opts.shape) {
-    parts.push(
-      "",
-      "ALREADY DECIDED — plan within this, do not contradict it:",
-      opts.shape.fullstack
-        ? "- This build HAS a real backend. Do not plan around localStorage as the store of record, and do not mock away anything the backend should do."
-        : "- This build is frontend-only. Do not plan a server or an API of your own.",
-      opts.shape.databaseConnected
-        ? "- A real database is connected. Data belongs in it, and anything behind a sign-in must be genuinely protected — a login that accepts any password is not a feature, it is a hole."
-        : "- No database is connected, so persistence is local to the browser. Say so plainly in approach rather than implying accounts are real.",
-    );
+    parts.push(formatBuildShapeForPrompt(opts.shape));
   }
 
   if (Object.keys(existing).length > 0) {

@@ -1808,7 +1808,7 @@ async function buildPipManifest(): Promise<string> {
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" },
+  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1835,7 +1835,11 @@ async function loadSkillsForPrompt(
       /\b(database|supabase|postgres|postgresql|sql|sqlite|mysql|mongodb|table|schema|crud|persist|persistence)\b/i.test(prompt))
   ) {
     skillsToLoad.add("database-rls");
-    skillsToLoad.add("supabase-rls");
+    // Supabase-specific guidance must not leak into MongoDB builds or
+    // existing projects whose provider is governed by their current code.
+    if (opts.buildType === "fullstack") {
+      skillsToLoad.add("supabase-rls");
+    }
   }
 
   // FIRECRAWL — only when scraping/crawling requested
@@ -1877,7 +1881,7 @@ async function loadSkillsForPrompt(
  */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
-  buildType: "frontend" | "fullstack" = "frontend",
+  buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" = "frontend",
 ): Promise<string> {
   return loadSkillsForPrompt(prompt, { buildType });
 }
@@ -1900,12 +1904,25 @@ export class PromptBuilder {
   ): Promise<BuiltPrompt> {
     // Detect build type from the task description prefix so the right
     // build-type skill (frontend-sandbox vs fullstack-hono) gets injected.
-    const buildType: "frontend" | "fullstack" | undefined =
-      agentType === "frontend"
-        ? (task.description.startsWith("FULLSTACK BUILD:") ||
-           task.description.startsWith("FULLSTACK AUTH BUILD:")
-            ? "fullstack"
-            : "frontend")
+    const isFullstackBuildDescription =
+      task.description.startsWith("FULLSTACK BUILD:") ||
+      task.description.startsWith("FULLSTACK AUTH BUILD:");
+    const isExistingFullstackEdit =
+      task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const isMongoBuildDescription =
+      /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
+    const buildType:
+      | "frontend"
+      | "fullstack"
+      | "fullstack-mongodb"
+     
+      | "fullstack-existing"
+      | undefined = agentType === "frontend"
+        ? isExistingFullstackEdit
+          ? "fullstack-existing"
+          : isFullstackBuildDescription
+            ? isMongoBuildDescription ? "fullstack-mongodb" : "fullstack"
+            : "frontend"
         : undefined;
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
@@ -1976,10 +1993,13 @@ export class PromptBuilder {
     }
     const base = SYSTEM_PROMPTS[agentType];
 
+    const isExistingFullstackEdit =
+      task.description.startsWith("EXISTING FULLSTACK EDIT:");
     const isFullstackMode =
       agentType === "frontend" &&
       (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:"));
+       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+       isExistingFullstackEdit);
     // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
     // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
     const fullstackFramework: FullstackFramework = isFullstackMode
@@ -1990,7 +2010,10 @@ export class PromptBuilder {
     // Next.js and TanStack have their own backend model (API routes / server functions).
     const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
 
-    let fullstackInstruction = isFullstackMode
+    // Existing-project edits need the correct runtime/DB context, but
+    // must not receive new-app scaffolding instructions that demand rewriting
+    // the project's file layout and backend from scratch.
+    let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
@@ -2021,7 +2044,11 @@ export class PromptBuilder {
       : "";
 
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
-    const dbInstruction = isFullstackMode ? DB_INSTRUCTIONS[db] : "";
+    // Provider-specific database instructions describe a new scaffold and
+    // fixed file layout. Existing projects must follow their own code/schema
+    // conventions instead of being migrated to the current template.
+    const dbInstruction =
+      isFullstackMode && !isExistingFullstackEdit ? DB_INSTRUCTIONS[db] : "";
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
@@ -2034,7 +2061,7 @@ export class PromptBuilder {
 
     const isEditMode =
       agentType === "frontend" &&
-      task.description.startsWith("EXISTING PROJECT FILES:") &&
+      task.description.includes("EXISTING PROJECT FILES:") &&
       !task.projectMemory;
     const editModePreamble =
       "\n\nEDIT MODE — You are modifying an existing app:\n" +
@@ -2061,15 +2088,21 @@ export class PromptBuilder {
           "Do NOT use // BEGIN_EDIT or // END_EDIT markers. Nothing will splice them, and a file\n" +
           "containing them is rejected.\n" +
           "Files you do not write are left untouched, so write only the files you actually change."
-        : editModePreamble +
-          "\nSURGICAL EDITS — use for small, targeted changes:\n" +
-          "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
-          "  // BEGIN_EDIT: [brief description of what changes]\n" +
-          "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
-          "  // END_EDIT\n" +
-          "The system will splice this in place of the matching section in the existing file.\n" +
-          "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
-          "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
+        : isExistingFullstackEdit
+          ? editModePreamble +
+            "\nFULL-FILE EDITS — preserve the existing backend and data-layer structure:\n" +
+            "Output complete updated file contents for every changed file. Do NOT use // BEGIN_EDIT\n" +
+            "or // END_EDIT markers in this existing full-stack edit. Files you do not output remain\n" +
+            "untouched. Preserve existing API routes, database clients, schemas, auth and RLS patterns."
+          : editModePreamble +
+            "\nSURGICAL EDITS — use for small, targeted changes:\n" +
+            "If fewer than 50% of a file changes, wrap ONLY the changed section:\n" +
+            "  // BEGIN_EDIT: [brief description of what changes]\n" +
+            "  [new content for this section only — must include the full block, e.g. the full :root { } rule]\n" +
+            "  // END_EDIT\n" +
+            "The system will splice this in place of the matching section in the existing file.\n" +
+            "If more than 50% of a file changes, output the COMPLETE file as normal.\n" +
+            "Always output at least the files provided in context — omit only src/index.tsx and package.json if unchanged.";
 
     const jsonInstruction =
       JSON_OUTPUT_AGENTS.has(agentType) || task.outputFormat === "json"
@@ -2559,7 +2592,7 @@ export class PromptBuilder {
 
   private async loadRelevantSkills(
     prompt: string,
-    buildType?: "frontend" | "fullstack",
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing",
   ): Promise<string> {
     return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
   }

@@ -12,7 +12,9 @@
  * "planned files" heading with nothing under it into the build prompt.
  */
 
-import { shouldPlan, parsePlan, formatPlanForPrompt } from "../src/agents/build-planner.js";
+import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../src/agents/build-planner.js";
+import { readFileSync } from "node:fs";
+import { PromptBuilder, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -210,6 +212,7 @@ check(
 
 const block = formatPlanForPrompt({
   summary: "A client tracker.",
+  approach: ["the primary workflow creates and updates client records"],
   files: [
     { path: "src/types.ts", purpose: "shared types" },
     { path: "src/views/Dashboard.tsx", purpose: "KPI cards" },
@@ -218,18 +221,18 @@ const block = formatPlanForPrompt({
 });
 check("the block numbers the files in order", /1\. src\/types\.ts — shared types/.test(block), true);
 check("the block lists every file", /2\. src\/views\/Dashboard\.tsx/.test(block), true);
-check("out-of-scope items are told not to be built", /Do not build these/.test(block), true);
+check("planner out-of-scope stays subordinate to explicit user requirements", /Do not add these unless the original user request explicitly requires them/.test(block), true);
 // The planner saw only the prompt; the builder can see the running app. A plan
 // presented as binding would make the model follow it past learning better.
-check("the plan is presented as a starting point, not a contract", /not a contract/.test(block), true);
-check("the builder is told to implement every planned screen", /every named screen/.test(block), true);
-check("the primary journeys are treated as a required deliverable", /primary journeys work end to end/.test(block), true);
-check("the first screen must have meaningful content", /first screen meaningful content/.test(block), true);
-check("loading, errors and empty data are kept distinct", /loading, error and truly-empty states/.test(block), true);
+check("the plan is treated as product direction while file paths remain adaptable", /Planned product decisions/.test(block) && /Suggested file decomposition/.test(block), true);
+check("the builder is told to implement the named product screens", /implement its named screens/.test(block), true);
+check("the primary journeys are treated as a required deliverable", /primary user journeys/.test(block), true);
+check("the first screen must have meaningful product-specific content and a primary action", /first screen meaningful, product-specific content and a clear primary action/.test(block), true);
+check("loading, failures and genuinely empty data are kept distinct", /loading, failure\/error, and genuinely empty data states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });
-check("no out-of-scope section when there is nothing to exclude", /Do not build these/.test(noScope), false);
+check("no out-of-scope section when there is nothing to exclude", /Planner-suggested out-of-scope items/.test(noScope), false);
 
 
 
@@ -257,8 +260,24 @@ check("no out-of-scope section when there is nothing to exclude", /Do not build 
     true,
   );
   check(
-    "and they are stated as decisions, not suggestions",
-    text.includes("they are not suggestions"),
+    "product outcomes are required unless higher-priority user/runtime constraints conflict",
+    text.includes("Treat the approach above as the planned product outcome") &&
+      text.includes("authoritative runtime/framework context"),
+    true,
+  );
+  check(
+    "the file list is a proposed decomposition, not an exhaustive manifest",
+    text.includes("file list is a proposed decomposition"),
+    true,
+  );
+  check(
+    "planner out-of-scope cannot override explicit user requirements",
+    text.includes("must never be used to drop something the user explicitly requested"),
+    true,
+  );
+  check(
+    "the formatter no longer contradicts itself about whether the plan is binding",
+    !text.includes("they are not suggestions") && !text.includes("This is a starting point, not a contract"),
     true,
   );
 }
@@ -269,5 +288,381 @@ check(
   "string",
 );
 
-console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
+
+// ── authoritative shape passed to both planner and generator ──────────────────
+
+check(
+  "existing React projects with backend artifacts use the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "react",
+    existingBackendArtifacts: true,
+  }),
+  true,
+);
+check(
+  "existing React frontend-only projects keep the frontend edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "react",
+    existingBackendArtifacts: false,
+  }),
+  false,
+);
+check(
+  "existing Next.js/TanStack projects keep the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "nextjs",
+    existingBackendArtifacts: false,
+  }),
+  true,
+);
+check(
+  "a new app never enters the existing-project full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: false,
+    framework: "react",
+    existingBackendArtifacts: true,
+  }),
+  false,
+);
+
+const existingMongoShape: PlanningBuildShape = {
+  projectMode: "existing-project",
+  framework: "react",
+  database: "mongodb",
+  backendRuntime: "node",
+  databaseAccess: "preserve-existing",
+  auth: "preserve-existing",
+  existingBackendArtifacts: true,
+};
+const existingMongoContext = formatBuildShapeForPrompt(existingMongoShape);
+check(
+  "existing full-stack edits are identified as an existing project, not a new frontend",
+  existingMongoContext.includes("edit an existing application") &&
+    !existingMongoContext.includes("Project mode: new frontend-only application"),
+  true,
+);
+check(
+  "existing backend artifacts are explicitly preserved",
+  existingMongoContext.includes("Existing backend artifacts in the loaded project files: yes") &&
+    existingMongoContext.includes("Preserve it where present"),
+  true,
+);
+check(
+  "existing MongoDB provider is not replaced with browser storage",
+  existingMongoContext.includes("Existing data provider: mongodb") &&
+    existingMongoContext.includes("do not switch to localStorage"),
+  true,
+);
+
+const noBackendFilesShape: PlanningBuildShape = {
+  ...existingMongoShape,
+  database: "unknown",
+  backendRuntime: "unknown",
+  existingBackendArtifacts: false,
+};
+const noBackendFilesContext = formatBuildShapeForPrompt(noBackendFilesShape);
+check(
+  "absence of a backend file in selected context is not treated as proof of frontend-only architecture",
+  noBackendFilesContext.includes("Not found does NOT prove the whole application is frontend-only"),
+  true,
+);
+
+const declinedDatabaseShape: PlanningBuildShape = {
+  projectMode: "new-fullstack",
+  framework: "react",
+  database: "supabase",
+  backendRuntime: "node",
+  databaseAccess: "declined",
+  auth: "required",
+  existingBackendArtifacts: false,
+};
+const declinedContext = formatBuildShapeForPrompt(declinedDatabaseShape);
+check(
+  "a declined database setup is distinct from a connected or browser-persisted database",
+  declinedContext.includes("explicitly declined database setup") &&
+    declinedContext.includes("do not claim entered data persists"),
+  true,
+);
+check(
+  "a full-stack database decline does not silently tell the agent to use localStorage",
+  !declinedContext.includes("Data scope: browser-local") &&
+    declinedContext.includes("do not silently substitute localStorage"),
+  true,
+);
+
+const unconfirmedShape: PlanningBuildShape = {
+  ...declinedDatabaseShape,
+  databaseAccess: "not-confirmed",
+};
+const unconfirmedContext = formatBuildShapeForPrompt(unconfirmedShape);
+check(
+  "an unconfirmed database connection is not falsely reported as declined",
+  unconfirmedContext.includes("not confirmed") &&
+    !unconfirmedContext.includes("explicitly declined"),
+  true,
+);
+
+const frontendShape: PlanningBuildShape = {
+  projectMode: "new-frontend",
+  framework: "react",
+  database: "browser",
+  backendRuntime: "none",
+  databaseAccess: "not-applicable",
+  auth: "not-applicable",
+  existingBackendArtifacts: false,
+};
+const frontendContext = formatBuildShapeForPrompt(frontendShape);
+check(
+  "new frontend-only builds receive an explicit no-backend shape",
+  frontendContext.includes("new frontend-only application") &&
+    frontendContext.includes("No application server or database"),
+  true,
+);
+
+check(
+  "existing MongoDB package/configuration is detected",
+  inferExistingDatabase({
+    "package.json": '{"dependencies":{"mongoose":"^8.0.0"}}',
+    "src/db/client.ts": 'mongoose.connect(process.env.MONGODB_URI)',
+  }),
+  "mongodb",
+);
+check(
+  "existing Supabase package/configuration is detected",
+  inferExistingDatabase({
+    "package.json": '{"dependencies":{"@supabase/supabase-js":"^2.0.0"}}',
+    "src/lib/db.ts": 'createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)',
+  }),
+  "supabase",
+);
+check(
+  "an unidentified existing database is left unknown rather than guessed",
+  inferExistingDatabase({ "src/lib/api.ts": 'fetch("/api/tasks")' }),
+  "unknown",
+);
+
+// Integration guard: the exact same trusted shape must reach the planning call
+// and the generation dispatch, even when planning returned null.
+const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
+check(
+  "planBuild receives the authoritative planningShape",
+  buildRouteSource.includes("shape: planningShape"),
+  true,
+);
+check(
+  "the generator receives build-shape context independently of whether a plan exists",
+  buildRouteSource.includes("formatBuildShapeForPrompt(planningShape)"),
+  true,
+);
+check(
+  "existing React backend edits are routed through buildFullstackEditPrompt",
+  buildRouteSource.includes("fullstackEditMode") &&
+    buildRouteSource.includes("buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)"),
+  true,
+);
+check(
+  "the feature-addition shortcut does not bypass the full-stack edit mode",
+  buildRouteSource.includes("!fullstackEditMode && isAdditionPrompt(prompt)"),
+  true,
+);
+check(
+  "agentic full-stack edits are directed to sandbox tools, not fenced code or pipeline markers",
+  buildRouteSource.includes("Use the agentic sandbox tools to modify the existing full-stack project") &&
+    buildRouteSource.includes("Prefer edit_file for existing files and write_files for new files"),
+  true,
+);
+check(
+  "pipeline full-stack edits retain complete filename-fenced output",
+  buildRouteSource.includes("Output each changed file using the exact format: ```filename:<path>") &&
+    buildRouteSource.includes("Output complete file contents for changed files"),
+  true,
+);
+check(
+  "full-stack edit prompt helper varies its write instruction by agentic mode",
+  buildRouteSource.includes("const writeInstruction = agenticBuild") &&
+    buildRouteSource.includes("Use the agentic sandbox tools to make the change") &&
+    buildRouteSource.includes("Output complete updated files using filename fences"),
+  true,
+);
+
+check(
+  "MongoDB full-stack builds are not sent through the Supabase-only database connection gate",
+  buildRouteSource.includes('fullstackDb === "supabase" && !isConnected && !userSupa && server && shouldAskForDatabase(userId)'),
+  true,
+);
+
+// ── full-stack edit prompt mode ───────────────────────────────────────────────
+
+async function runPromptModeChecks(): Promise<void> {
+  const builder = new PromptBuilder();
+  const mongoSkills = await loadRelevantSkillsForPrompt(
+    "Add login and row-level protection to this MongoDB app.",
+    "fullstack-mongodb",
+  );
+  check(
+    "MongoDB full-stack projects do not receive the Supabase-specific Hono skill",
+    !mongoSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  check(
+    "MongoDB security requests retain generic database guidance but skip Supabase RLS guidance",
+    mongoSkills.includes("## Skill: database-rls") &&
+      !mongoSkills.includes("## Skill: supabase-rls"),
+    true,
+  );
+  check(
+    "MongoDB full-stack projects still receive core production and product UI skills",
+    mongoSkills.includes("## Skill: react-production") &&
+      mongoSkills.includes("## Skill: product-ui-design"),
+    true,
+  );
+
+  const supabaseSkills = await loadRelevantSkillsForPrompt(
+    "Build a Supabase-backed task app.",
+    "fullstack",
+  );
+  check(
+    "Supabase full-stack projects retain the fullstack-hono skill",
+    supabaseSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+
+  const newSupabaseBuild = await builder.build(
+    "frontend",
+    {
+      description: "FULLSTACK BUILD:\\nBuild a Supabase-backed task app with real API routes.",
+      outputFormat: "code",
+    },
+    {
+      projectId: "planner-prompt-new-build-test",
+      userId: "planner-prompt-new-build-test",
+      mode: "fast",
+      prompt: "Build a Supabase-backed task app.",
+    },
+  );
+  check(
+    "new full-stack builds retain their required scaffolding and provider instructions",
+    newSupabaseBuild.systemPrompt.includes("GENERATE THESE FILES IN THIS EXACT ORDER") &&
+      newSupabaseBuild.systemPrompt.includes("DATABASE: Supabase"),
+    true,
+  );
+
+  const built = await builder.build(
+    "frontend",
+    {
+      description:
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "USER REQUEST: Add a reporting endpoint.",
+      outputFormat: "code",
+      agenticBuild: true,
+    },
+    {
+      projectId: "planner-prompt-test",
+      userId: "planner-prompt-test",
+      mode: "fast",
+      prompt: "Add a reporting endpoint.",
+    },
+  );
+  check(
+    "full-stack edit prompt still includes the edit-mode preservation contract",
+    built.systemPrompt.includes("EDIT MODE — You are modifying an existing app") &&
+      built.systemPrompt.includes("Preserve all working functionality and state management"),
+    true,
+  );
+  check(
+    "agentic full-stack edits use complete-file writes rather than pipeline surgical markers",
+    built.systemPrompt.includes("write_files replaces each file ENTIRELY") &&
+      !built.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
+    true,
+  );
+  const pipelineEdit = await builder.build(
+    "frontend",
+    {
+      description:
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "USER REQUEST: Add a reporting endpoint.",
+      outputFormat: "code",
+      agenticBuild: false,
+    },
+    {
+      projectId: "planner-prompt-pipeline-test",
+      userId: "planner-prompt-pipeline-test",
+      mode: "fast",
+      prompt: "Add a reporting endpoint.",
+    },
+  );
+  check(
+    "non-agentic full-stack edits also use complete files and do not inherit generic surgical markers",
+    pipelineEdit.systemPrompt.includes("FULL-FILE EDITS") &&
+      !pipelineEdit.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
+    true,
+  );
+  check(
+    "existing React/Hono edits carry the real existing project files into the generation message",
+    built.userMessage.includes("EXISTING FULLSTACK EDIT:") &&
+      built.userMessage.includes("src/server/index.ts"),
+    true,
+  );
+  check(
+    "existing-project edits do not receive fresh Supabase or MongoDB schema scaffolding",
+    !built.systemPrompt.includes("DATABASE: Supabase") &&
+      !built.systemPrompt.includes("DATABASE: MongoDB"),
+    true,
+  );
+  check(
+    "existing full-stack edits do not receive new-app scaffold/rewrite instructions",
+    !built.systemPrompt.includes("GENERATE THESE FILES IN THIS EXACT ORDER") &&
+      !built.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED (NEVER EMPTY)"),
+    true,
+  );
+
+  const unknownProviderSkills = await loadRelevantSkillsForPrompt(
+    "Add login and row-level protection to the existing app.",
+    "fullstack-existing",
+  );
+  check(
+    "existing projects skip the Supabase-only full-stack scaffolding skill",
+    !unknownProviderSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  check(
+    "existing-project security edits keep generic DB rules without assuming Supabase RLS",
+    unknownProviderSkills.includes("## Skill: database-rls") &&
+      !unknownProviderSkills.includes("## Skill: supabase-rls"),
+    true,
+  );
+  const unknownProviderBuild = await builder.build(
+    "frontend",
+    {
+      description:
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "USER REQUEST: Add an API field.\\n" +
+        "AUTHORITATIVE BUILD CONTEXT\\n- Project mode: edit an existing application.\\n" +
+        "- Existing data provider: unknown.",
+      outputFormat: "code",
+      agenticBuild: true,
+    },
+    {
+      projectId: "planner-prompt-unknown-test",
+      userId: "planner-prompt-unknown-test",
+      mode: "fast",
+      prompt: "Add an API field.",
+    },
+  );
+  check(
+    "unknown existing database providers do not silently receive Supabase DB instructions",
+    !unknownProviderBuild.systemPrompt.includes("DATABASE: Supabase") &&
+      !unknownProviderBuild.systemPrompt.includes("DATABASE: MongoDB"),
+    true,
+  );
+}
+
+await runPromptModeChecks();
+
+console.log(failures === 0 ? "\\nall cases passed" : `\\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
