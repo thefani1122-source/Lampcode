@@ -63,7 +63,7 @@ import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, 
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
-import { shouldPlan, planBuild, formatPlanForPrompt } from "../../agents/build-planner.js";
+import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
@@ -783,25 +783,33 @@ function detectFrameworkFromFiles(files: Record<string, string>): FullstackFrame
 }
 
 /**
- * Like buildEditPrompt but prefixed with FULLSTACK BUILD:/FULLSTACK AUTH BUILD:
- * so PromptBuilder injects the correct NEXTJS_INSTRUCTION / TANSTACK_INSTRUCTION.
- * The framework keyword on line 2 lets detectFullstackFramework() pick it up.
+ * Existing backend edit variant of buildEditPrompt. Its dedicated prefix tells
+ * PromptBuilder to retain the full-stack runtime/provider context without
+ * loading the new-app scaffolding contract. The framework keyword on line 2
+ * lets detectFullstackFramework() pick up the existing framework.
  */
 function buildFullstackEditPrompt(
   files: Record<string, string>,
   userRequest: string,
   framework: FullstackFramework,
+  agenticBuild: boolean,
 ): string {
-  const prefix = needsAuth(userRequest) ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
+  // This is an edit to an existing backend, not a request to scaffold a new
+  // full-stack app. PromptBuilder has a separate mode so it keeps the correct
+  // runtime/DB context without re-applying new-app file-generation contracts.
+  const prefix = "EXISTING FULLSTACK EDIT:";
   const fileBlocks = Object.entries(files)
     .map(([p, c]) => `\`\`\`filename:${p}\n${c}\n\`\`\``)
     .join("\n\n");
+  const writeInstruction = agenticBuild
+    ? "Use the agentic sandbox tools to make the change. Prefer edit_file for existing files and write_files for new files; do not print fenced code in the reply."
+    : "Output complete updated files using filename fences for every changed file.";
   return (
     `${prefix}\n${framework}\n\n` +
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
-    `Keep everything that does not need to change. Output the complete updated files.`
+    `Keep everything that does not need to change. ${writeInstruction}`
   );
 }
 
@@ -1241,6 +1249,16 @@ export async function runFastBuild(
     const promptWordCount = prompt.trim().split(/\s+/).length;
     const isShortFollowUp = hasExistingCode && promptWordCount <= 20;
 
+    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
+    const existingHasPython = Object.keys(existingFiles).some(
+      (path) => path.endsWith(".py") || path === "requirements.txt",
+    );
+    const fullstackEditMode = shouldUseFullstackEdit({
+      hasExistingCode,
+      framework: detectFrameworkFromFiles(existingFiles),
+      existingBackendArtifacts: existingBackendPaths.length > 0,
+    });
+
     let contextFiles = existingFiles;
     let smartSelectionUsed = false;
     let isTokenOnlyEdit = false;
@@ -1249,7 +1267,7 @@ export async function runFastBuild(
     if (isShortFollowUp) {
       // Feature addition: send ALL files so LLM can output correct full App.tsx.
       // Must be detected before token-only check since theme changes aren't additions.
-      if (!isTokenOnlyEdit && isAdditionPrompt(prompt) && existingFiles["src/App.tsx"]) {
+      if (!isTokenOnlyEdit && !fullstackEditMode && isAdditionPrompt(prompt) && existingFiles["src/App.tsx"]) {
         isFeatureAddition = true;
         // contextFiles not used for feature-addition (buildAdditionEditPrompt takes App.tsx directly)
         smartSelectionUsed = true; // ensures copy-existing-files step runs
@@ -1299,6 +1317,9 @@ export async function runFastBuild(
     // it: applying `schema.sql` only ever happens against a Supabase the user
     // connected themselves, so this flag IS "the app's tables will exist".
     let ownSupabaseConnected = false;
+    // Planner context records the actual database-gate result. A missing
+    // user-owned DB must never be translated into "use localStorage".
+    let databaseSetupState: PlanningBuildShape["databaseAccess"] = "not-applicable";
     if (isFullstackBuild) {
       console.log(`[build] fullstack mode: generating frontend + backend + db files`);
       // If the user has connected their OWN Supabase (via MCP or integration), point this
@@ -1306,6 +1327,9 @@ export async function runFastBuild(
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
       let isConnected = await isUserSupabaseConnected(userId).catch(() => false);
       let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+      databaseSetupState = fullstackDb === "supabase"
+        ? (isConnected || userSupa ? "user-connected" : "not-confirmed")
+        : "unknown";
 
       // No database of their own, and a full-stack app is about to be built on
       // top of nothing. Ask now, because the sandbox .env is written during
@@ -1320,7 +1344,9 @@ export async function runFastBuild(
       // socket there is nobody to ask, and consuming the single ask on a
       // question that was never shown would mean the person is never asked at
       // all — a gate that silently spends itself is worse than no gate.
-      if (!isConnected && !userSupa && server && shouldAskForDatabase(userId)) {
+      // This gate is specifically for Supabase. A MongoDB build must not
+      // prompt the user to connect a different database provider.
+      if (fullstackDb === "supabase" && !isConnected && !userSupa && server && shouldAskForDatabase(userId)) {
         const { question, options } = buildDatabaseQuestion();
         const toolCallId = `db-gate:${randomUUID()}`;
         const answer = await new Promise<string | null>((resolve) => {
@@ -1359,9 +1385,16 @@ export async function runFastBuild(
           });
         }
         const intent = interpretDatabaseAnswer(answer);
+        if (fullstackDb === "supabase") {
+          if (intent === "decline") databaseSetupState = "declined";
+          else if (intent === "unclear") databaseSetupState = "not-confirmed";
+        }
         if (intent === "connect") {
           isConnected = await isUserSupabaseConnected(userId).catch(() => false);
           userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+          if (fullstackDb === "supabase") {
+            databaseSetupState = isConnected || userSupa ? "user-connected" : "not-confirmed";
+          }
         }
         console.log(
           `[build] db gate project=${projectId} intent=${intent} connected=${userSupa !== null || isConnected}`,
@@ -1378,6 +1411,11 @@ export async function runFastBuild(
 
       setProjectPreviewEnv(projectId, userSupa);
       ownSupabaseConnected = isConnected || userSupa !== null;
+      if (fullstackDb === "supabase") {
+        databaseSetupState = ownSupabaseConnected
+          ? "user-connected"
+          : databaseSetupState === "declined" ? "declined" : "not-confirmed";
+      }
       if (userSupa) console.log(`[build] using owner's connected Supabase for preview project=${projectId}`);
       // Warm the preview sandbox NOW, in the background, so Vite is already
       // running by the time the AI finishes generating.
@@ -1433,8 +1471,8 @@ export async function runFastBuild(
       : isFeatureAddition
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
         : hasExistingCode
-          ? editDetectedFramework !== "react"
-            ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework)
+          ? fullstackEditMode
+            ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
             ? buildFullstackPrompt(prompt, classification?.needsAuth)
@@ -1458,26 +1496,57 @@ export async function runFastBuild(
           ]
       : hasExistingCode
         ? smartSelectionUsed
-          ? [
-              "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
-              "Do NOT output src/index.tsx or package.json if they are unchanged.",
-              "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
-              "For large changes (>50% of file): output the complete file.",
-              "Preserve all existing logic and structure that was not mentioned in the request.",
-            ]
-          : editDetectedFramework !== "react"
-            ? [
-                "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
-                "Keep ALL existing functionality that the user did NOT ask to change.",
-                "Preserve the existing design system, color palette, and component structure.",
-                "Do NOT output package.json or .env — the environment provides them.",
-              ]
+          ? fullstackEditMode
+            ? agenticBuild
+              ? [
+                  "Use the agentic sandbox tools to modify the existing full-stack project; do not print fenced code or pipeline surgical edit markers.",
+                  "Prefer edit_file for existing files and write_files for new files. When write_files is used, provide complete file contents.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                ]
+              : [
+                  "Output only the relevant changed files using the exact format: ```filename:<path>.",
+                  "Output complete file contents for changed files; do not use pipeline surgical edit markers.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                ]
             : [
-                "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
-                "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
-                "Keep ALL existing functionality that the user did NOT ask to change.",
-                "Preserve the existing design system, color palette, and component structure.",
+                "Output ONLY the files you need to change using the exact format: ```filename:src/styles.css",
+                "Do NOT output src/index.tsx or package.json if they are unchanged.",
+                "For small changes: use surgical edit markers — // BEGIN_EDIT: [desc] ... // END_EDIT",
+                "For large changes (>50% of file): output the complete file.",
+                "Preserve all existing logic and structure that was not mentioned in the request.",
               ]
+          : fullstackEditMode
+            ? agenticBuild
+              ? [
+                  "Use the agentic sandbox tools to modify the existing full-stack project; do not print fenced code or pipeline surgical edit markers.",
+                  "Prefer edit_file for existing files and write_files for new files. When write_files is used, provide complete file contents.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                  "Keep existing functionality and the design system unless the user explicitly asks to change them.",
+                ]
+              : [
+                  "Output each changed file using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Output complete file contents for changed files; do not use pipeline surgical edit markers.",
+                  "Preserve the existing server runtime, API contracts, database provider/schema, authentication, authorization and RLS/security boundaries.",
+                  "Do not replace real backend calls with localStorage, mock data or a parallel in-memory implementation.",
+                  "Keep existing functionality and the design system unless the user explicitly asks to change them.",
+                  "Do NOT output package.json or .env unless the user explicitly requests a dependency/environment change.",
+                ]
+            : editDetectedFramework !== "react"
+              ? [
+                  "Output EVERY file you change using the exact format: ```filename:<path> (path in the fence opening).",
+                  "Keep ALL existing functionality that the user did NOT ask to change.",
+                  "Preserve the existing design system, color palette, and component structure.",
+                  "Do NOT output package.json or .env — the environment provides them.",
+                ]
+              : [
+                  "Output EVERY file using the exact format: ```filename:src/App.tsx (path in the fence opening).",
+                  "Always output src/App.tsx, src/index.tsx, and package.json — even if unchanged.",
+                  "Keep ALL existing functionality that the user did NOT ask to change.",
+                  "Preserve the existing design system, color palette, and component structure.",
+                ]
         : isFullstackBuild
           ? fullstackFramework === "nextjs"
             ? fullstackDb === "mongodb"
@@ -1588,15 +1657,47 @@ export async function runFastBuild(
         ]
       : requirements;
 
-    // ── Planning pass, for long new builds only ─────────────────────────────
-    // One cheap dispatch that decides the file layout before any code exists.
-    // A big build was otherwise one long improvisation: the model found out
-    // what the app was while writing it, which is where the one-file-app habit
-    // comes from, and when ForgeFlow died at round 14 nothing stated what it
-    // had set out to make. Never throws — a build must not fail because its
-    // optional planning pass did.
+    // ── Planning pass — agentic new builds and existing-project edits ───────
+    // The planner creates the product blueprint and proposed file map before
+    // generation. It receives the same trusted build shape that the generator
+    // receives below, so an existing backend edit is not mislabelled frontend-
+    // only and a missing user DB connection is not misread as localStorage.
+    // Never throws — a build must not fail because its optional planning pass did.
     let buildPlan: BuildPlan | null = null;
     let planCostUsd = 0;
+
+    const planningShape: PlanningBuildShape = hasExistingCode
+      ? {
+          projectMode: "existing-project",
+          framework: editDetectedFramework,
+          database: inferExistingDatabase(existingFiles),
+          backendRuntime: existingHasPython
+            ? "python"
+            : existingBackendPaths.length > 0 ? "node" : "unknown",
+          databaseAccess: "preserve-existing",
+          auth: "preserve-existing",
+          existingBackendArtifacts: existingBackendPaths.length > 0,
+        }
+      : isFullstackBuild
+        ? {
+            projectMode: "new-fullstack",
+            framework: fullstackFramework,
+            database: fullstackDb === "none" ? "unknown" : fullstackDb,
+            backendRuntime: wantsPython ? "python" : "node",
+            databaseAccess: databaseSetupState,
+            auth: classification?.needsAuth ? "required" : "not-required",
+            existingBackendArtifacts: false,
+          }
+        : {
+            projectMode: "new-frontend",
+            framework: "react",
+            database: "browser",
+            backendRuntime: "none",
+            databaseAccess: "not-applicable",
+            auth: "not-applicable",
+            existingBackendArtifacts: false,
+          };
+
     if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
       server?.emitToRoom(sessionId, "build:preview_log", {
         sessionId,
@@ -1607,7 +1708,7 @@ export async function runFastBuild(
       const planned = await planBuild({
         dispatcher, prompt, sessionId, userId, projectId, provider,
         ...(hasExistingCode ? { existingFiles } : {}),
-        shape: { fullstack: isFullstackBuild, databaseConnected: ownSupabaseConnected },
+        shape: planningShape,
       });
       buildPlan = planned.plan;
       planCostUsd = planned.costUsd;
@@ -1838,7 +1939,9 @@ export async function runFastBuild(
       provider,
       task: {
         description:
-          (buildPlan ? taskDescription + formatPlanForPrompt(buildPlan) : taskDescription) +
+          taskDescription +
+          formatBuildShapeForPrompt(planningShape) +
+          (buildPlan ? formatPlanForPrompt(buildPlan) : "") +
           connectedDataRule +
           (threatBlock ? `\n\n${threatBlock}` : ""),
         requirements: effectiveRequirements,
