@@ -52,10 +52,10 @@ export function inferExistingDatabase(
   const source = Object.entries(files)
     .map(([path, content]) => path + "\n" + content)
     .join("\n");
-  if (/MONGODB_URI|mongodb(?:\+srv)?:\\/\\/|from\\s+["']mongoose["']|mongoose\\.connect/i.test(source)) {
+  if (/MONGODB_URI|mongodb(?:\+srv)?:\/\/|from\s+["']mongoose["']|mongoose\.connect/i.test(source)) {
     return "mongodb";
   }
-  if (/@supabase\\/supabase-js|SUPABASE_URL|SUPABASE_ANON_KEY|supabase\\.from\\(/i.test(source)) {
+  if (/@supabase\/supabase-js|SUPABASE_URL|SUPABASE_ANON_KEY|supabase\.from\(/i.test(source)) {
     return "supabase";
   }
   return "unknown";
