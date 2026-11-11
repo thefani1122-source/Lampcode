@@ -571,6 +571,29 @@ async function runPromptModeChecks(): Promise<void> {
       !built.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
     true,
   );
+  const pipelineEdit = await builder.build(
+    "frontend",
+    {
+      description:
+        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
+        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "USER REQUEST: Add a reporting endpoint.",
+      outputFormat: "code",
+      agenticBuild: false,
+    },
+    {
+      projectId: "planner-prompt-pipeline-test",
+      userId: "planner-prompt-pipeline-test",
+      mode: "fast",
+      prompt: "Add a reporting endpoint.",
+    },
+  );
+  check(
+    "non-agentic full-stack edits also use complete files and do not inherit generic surgical markers",
+    pipelineEdit.systemPrompt.includes("FULL-FILE EDITS") &&
+      !pipelineEdit.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
+    true,
+  );
   check(
     "existing React/Hono edits carry the real existing project files into the generation message",
     built.userMessage.includes("EXISTING FULLSTACK EDIT:") &&
