@@ -239,7 +239,7 @@ console.log("\n— the wiring —");
 
   ok("the repair runs AFTER the audit it acts on",
     build.indexOf("formatAuditForUser(completionAudit)") < build.indexOf("planAuditRepair(completionAudit)"));
-  ok("it needs a live sandbox", build.includes("hasSandbox(projectId) ? planAuditRepair"));
+  ok("it needs a live, known sandbox state", build.includes("hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair"));
   ok("and it respects the cost ceiling", build.includes("cumulativeCostUsd < MAX_BUILD_COST_USD"));
   ok("a skipped repair is logged with its reason", build.includes("skipped=${whyNoRepair(completionAudit)}"));
 

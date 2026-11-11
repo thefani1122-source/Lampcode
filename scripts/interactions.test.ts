@@ -99,5 +99,12 @@ ok("each entry records which route it came from", INTERACTION_SCRIPT.includes("r
 // route reports "not attempted" — the same blindness, moved one step along.
 ok("the budget is spread across pages", INTERACTION_SCRIPT.includes("PER_ROUTE"));
 
+const shared = readFileSync(new URL("../src/agents/tools/shared.ts", import.meta.url), "utf8");
+const probeCall = shared.indexOf("const { findings, ran } = await checkInteractions(projectId, routes)");
+const markAttempted = shared.indexOf("ctx.interactionsProbed.value = true");
+ok("the probe is only marked attempted after its result is known", probeCall >= 0 && markAttempted > probeCall);
+ok("only a real run consumes the once-per-build attempt", shared.includes("if (ran) {") && shared.includes("ctx.interactionsProbed.value = true;"));
+ok("an unavailable probe is explicitly left pending for retry", shared.includes("it remains pending and can be retried on the next page check"));
+
 console.log(failures === 0 ? "\nAll interaction cases passed." : `\n${failures} case(s) failed.`);
 if (failures > 0) process.exit(1);
