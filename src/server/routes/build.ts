@@ -5848,7 +5848,9 @@ buildRouter.get("/:sessionId/eval-screenshot", async (c) => {
       viewport,
     }, 503);
   }
-  return c.body(png, 200, {
+  // Copy Buffer into a plain Uint8Array so Hono's body overload receives
+  // an ArrayBuffer-backed view rather than Node's ArrayBufferLike Buffer.
+  return c.body(Uint8Array.from(png), 200, {
     "Content-Type": "image/png",
     "Cache-Control": "no-store",
     "X-Eval-Viewport": viewport,
