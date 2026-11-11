@@ -12,7 +12,8 @@
  * "planned files" heading with nothing under it into the build prompt.
  */
 
-import { shouldPlan, parsePlan, formatPlanForPrompt } from "../src/agents/build-planner.js";
+import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, type PlanningBuildShape } from "../src/agents/build-planner.js";
+import { readFileSync } from "node:fs";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -257,8 +258,24 @@ check("no out-of-scope section when there is nothing to exclude", /Do not build 
     true,
   );
   check(
-    "and they are stated as decisions, not suggestions",
-    text.includes("they are not suggestions"),
+    "product outcomes are required unless higher-priority user/runtime constraints conflict",
+    text.includes("Treat the approach above as the planned product outcome") &&
+      text.includes("authoritative runtime/framework context"),
+    true,
+  );
+  check(
+    "the file list is a proposed decomposition, not an exhaustive manifest",
+    text.includes("file list is a proposed decomposition"),
+    true,
+  );
+  check(
+    "planner out-of-scope cannot override explicit user requirements",
+    text.includes("must never be used to drop something the user explicitly requested"),
+    true,
+  );
+  check(
+    "the formatter no longer contradicts itself about whether the plan is binding",
+    !text.includes("they are not suggestions") && !text.includes("This is a starting point, not a contract"),
     true,
   );
 }
@@ -267,6 +284,139 @@ check(
   "a plan with no approach still formats",
   typeof formatPlanForPrompt({ summary: "x", files: [{ path: "src/App.tsx", purpose: "shell" }] }),
   "string",
+);
+
+
+// ── authoritative shape passed to both planner and generator ──────────────────
+
+const existingMongoShape: PlanningBuildShape = {
+  projectMode: "existing-project",
+  framework: "react",
+  database: "mongodb",
+  backendRuntime: "node",
+  databaseAccess: "preserve-existing",
+  auth: "preserve-existing",
+  existingBackendArtifacts: true,
+};
+const existingMongoContext = formatBuildShapeForPrompt(existingMongoShape);
+check(
+  "existing full-stack edits are identified as an existing project, not a new frontend",
+  existingMongoContext.includes("edit an existing application") &&
+    !existingMongoContext.includes("Project mode: new frontend-only application"),
+  true,
+);
+check(
+  "existing backend artifacts are explicitly preserved",
+  existingMongoContext.includes("Existing backend artifacts in the loaded project files: yes") &&
+    existingMongoContext.includes("Preserve it where present"),
+  true,
+);
+check(
+  "existing MongoDB provider is not replaced with browser storage",
+  existingMongoContext.includes("Existing data provider: mongodb") &&
+    existingMongoContext.includes("do not switch to localStorage"),
+  true,
+);
+
+const noBackendFilesShape: PlanningBuildShape = {
+  ...existingMongoShape,
+  database: "unknown",
+  backendRuntime: "unknown",
+  existingBackendArtifacts: false,
+};
+const noBackendFilesContext = formatBuildShapeForPrompt(noBackendFilesShape);
+check(
+  "absence of a backend file in selected context is not treated as proof of frontend-only architecture",
+  noBackendFilesContext.includes("not found does NOT prove the whole application is frontend-only"),
+  true,
+);
+
+const declinedDatabaseShape: PlanningBuildShape = {
+  projectMode: "new-fullstack",
+  framework: "react",
+  database: "supabase",
+  backendRuntime: "node",
+  databaseAccess: "declined",
+  auth: "required",
+  existingBackendArtifacts: false,
+};
+const declinedContext = formatBuildShapeForPrompt(declinedDatabaseShape);
+check(
+  "a declined database setup is distinct from a connected or browser-persisted database",
+  declinedContext.includes("explicitly declined database setup") &&
+    declinedContext.includes("do not claim entered data persists"),
+  true,
+);
+check(
+  "a full-stack database decline does not silently tell the agent to use localStorage",
+  !declinedContext.includes("Data scope: browser-local") &&
+    declinedContext.includes("do not silently substitute localStorage"),
+  true,
+);
+
+const unconfirmedShape: PlanningBuildShape = {
+  ...declinedDatabaseShape,
+  databaseAccess: "not-confirmed",
+};
+const unconfirmedContext = formatBuildShapeForPrompt(unconfirmedShape);
+check(
+  "an unconfirmed database connection is not falsely reported as declined",
+  unconfirmedContext.includes("not confirmed") &&
+    !unconfirmedContext.includes("explicitly declined"),
+  true,
+);
+
+const frontendShape: PlanningBuildShape = {
+  projectMode: "new-frontend",
+  framework: "react",
+  database: "browser",
+  backendRuntime: "none",
+  databaseAccess: "not-applicable",
+  auth: "not-applicable",
+  existingBackendArtifacts: false,
+};
+const frontendContext = formatBuildShapeForPrompt(frontendShape);
+check(
+  "new frontend-only builds receive an explicit no-backend shape",
+  frontendContext.includes("new frontend-only application") &&
+    frontendContext.includes("No application server or database"),
+  true,
+);
+
+check(
+  "existing MongoDB package/configuration is detected",
+  inferExistingDatabase({
+    "package.json": '{"dependencies":{"mongoose":"^8.0.0"}}',
+    "src/db/client.ts": 'mongoose.connect(process.env.MONGODB_URI)',
+  }),
+  "mongodb",
+);
+check(
+  "existing Supabase package/configuration is detected",
+  inferExistingDatabase({
+    "package.json": '{"dependencies":{"@supabase/supabase-js":"^2.0.0"}}',
+    "src/lib/db.ts": 'createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)',
+  }),
+  "supabase",
+);
+check(
+  "an unidentified existing database is left unknown rather than guessed",
+  inferExistingDatabase({ "src/lib/api.ts": 'fetch("/api/tasks")' }),
+  "unknown",
+);
+
+// Integration guard: the exact same trusted shape must reach the planning call
+// and the generation dispatch, even when planning returned null.
+const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
+check(
+  "planBuild receives the authoritative planningShape",
+  buildRouteSource.includes("shape: planningShape"),
+  true,
+);
+check(
+  "the generator receives build-shape context independently of whether a plan exists",
+  buildRouteSource.includes("formatBuildShapeForPrompt(planningShape)"),
+  true,
 );
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
