@@ -483,12 +483,18 @@ check(
 
 async function runPromptModeChecks(): Promise<void> {
   const mongoSkills = await loadRelevantSkillsForPrompt(
-    "Add an export action to the existing app.",
+    "Add login and row-level protection to this MongoDB app.",
     "fullstack-mongodb",
   );
   check(
     "MongoDB full-stack projects do not receive the Supabase-specific Hono skill",
     !mongoSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  check(
+    "MongoDB security requests retain generic database guidance but skip Supabase RLS guidance",
+    mongoSkills.includes("## Skill: database-rls") &&
+      !mongoSkills.includes("## Skill: supabase-rls"),
     true,
   );
   check(
@@ -552,12 +558,18 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const unknownProviderSkills = await loadRelevantSkillsForPrompt(
-    "Add an API field to the existing app.",
+    "Add login and row-level protection to the existing app.",
     "fullstack-existing",
   );
   check(
-    "unknown existing providers do not receive a Supabase-specific Hono skill",
+    "existing projects skip the Supabase-only full-stack scaffolding skill",
     !unknownProviderSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  check(
+    "existing-project security edits keep generic DB rules without assuming Supabase RLS",
+    unknownProviderSkills.includes("## Skill: database-rls") &&
+      !unknownProviderSkills.includes("## Skill: supabase-rls"),
     true,
   );
   const unknownProviderBuild = await builder.build(
