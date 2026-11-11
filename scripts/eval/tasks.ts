@@ -1,7 +1,7 @@
 /**
  * The fixed evaluation set.
  *
- * Twenty prompts that do not change between runs. That is the whole point: until
+ * Twenty-one prompts that do not change between runs. That is the whole point: until
  * now every prompt change, every harness change and every model switch was
  * judged on one build somebody happened to watch, which is why the styling bug
  * survived three months and `check_page` could be structurally broken for three
@@ -21,7 +21,7 @@
  *  - `maxLinesPerFile` catches the same thing from the other side.
  *
  * Tiers exist so a cheap smoke run is possible without the full set — a full
- * sweep is twenty real builds and real money.
+ * sweep is twenty-one real builds and real money.
  */
 
 import type { JourneyStep } from "../../src/verify/journey.js";
