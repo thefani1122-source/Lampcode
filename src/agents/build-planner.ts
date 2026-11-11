@@ -6,19 +6,14 @@ import { isTemplateOwnedFile } from "../preview/e2b-service.js";
 import type { BuildPlan, PlannedFile } from "../db/schema.js";
 
 /**
- * One cheap dispatch before a long build, deciding the file layout.
+ * One bounded planning dispatch before an agentic build or edit.
  *
- * A big build used to be one long improvisation: the model started writing and
- * found out what the app was as it went. Two costs. The one-file-app habit —
- * four views, a kanban and a chart all landing in App.tsx — is what you get
- * when nobody decided on a layout first. And when the ForgeFlow build died
- * mid-repair at round 14, nothing anywhere stated what it had set out to make,
- * so there was no way to resume it or to tell which of its fifteen files were
- * still missing.
- *
- * The plan is a list of files and what each is for. Nothing else. It does not
- * design schemas, pick libraries or write code — a plan that specifies
- * everything costs as much as the build and is wrong by the second file.
+ * It produces a concise product blueprint (screens, journeys, data behaviour,
+ * visual direction and verification outcomes) plus a proposed file map. The
+ * blueprint keeps the generator from improvising the product while it writes;
+ * the file map discourages a one-file app without pretending to be an immutable
+ * implementation manifest. The generator still has to inspect the live project
+ * and verify the result.
  */
 
 /** Hard ceiling on planned files, matching the planner's own instruction. A
