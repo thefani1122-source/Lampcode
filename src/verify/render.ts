@@ -73,6 +73,8 @@ export type RouteRender = {
   text: string;
   /** Visible first-run empty-state copy that should have been populated with sample data. */
   emptyState?: string;
+  /** A collection-based product rendered only a shell instead of a usable workspace. */
+  contentIssue?: string;
   /** Browser-measured layout at desktop and mobile widths. */
   layout?: { desktop?: ViewportLayout; mobile?: ViewportLayout };
   /** Objective responsive/auth-layout defects; subjective aesthetics remain a separate review. */
@@ -162,10 +164,35 @@ export function shouldRequireInitialContent(opts: {
       originalUserRequest,
     );
 
+  // This policy concerns seeded RECORDS only. A full-stack app may have a
+  // genuinely empty database, and an explicit no-sample-data request must be
+  // respected. Workspace completeness is checked separately below.
   return opts.agentType === "frontend" &&
     !isFullstackBuild &&
     !existingProjectHasBackend &&
     !explicitlyRequestsEmptyFirstRun;
+}
+
+const COLLECTION_SURFACE_PROMPT_RE =
+  /\b(?:habits?|tasks?|to[ -]?do|trackers?|dashboards?|managers?|management|catalogs?|crm|inventory|kanban|calendars?|schedulers?|shift planners?|rosters?|expenses?|budgets?|invoices?|orders?|products?|customers?|clients?|contacts?|projects?|employees?|staff|bookings?|events?|transactions?|subscriptions?)\b/i;
+
+const COLLECTION_SURFACE_EXEMPT_RE =
+  /\b(?:blank|empty)\s+(?:starter|template|canvas)|(?:starter|template|canvas)\s+(?:blank|empty)|wireframe(?:\s+only)?|mock[- ]?up\s+only|static\s+prototype\s+only\b/i;
+
+/**
+ * Whether this build promises a real collection/workspace UI, independently
+ * from whether its first-run data should be seeded. A live database may contain
+ * zero rows, but that does not justify shipping only a heading and one button.
+ */
+export function shouldRequireCollectionSurface(opts: {
+  agentType: string;
+  taskDescription: string;
+  userPrompt?: string | undefined;
+}): boolean {
+  if (opts.agentType !== "frontend") return false;
+  const request = opts.userPrompt ?? opts.taskDescription;
+  return COLLECTION_SURFACE_PROMPT_RE.test(request) &&
+    !COLLECTION_SURFACE_EXEMPT_RE.test(request);
 }
 
 /**
@@ -208,6 +235,7 @@ const INITIAL_EMPTY_STATE_RE = new RegExp(${JSON.stringify(INITIAL_EMPTY_STATE_R
 let base = "http://localhost:5173"
 let routes = ["/"]
 let REQUIRE_INITIAL_CONTENT = true
+let REQUIRE_COLLECTION_SURFACE = false
 
 const out = { routes: [], unreachable: [] }
 let browser
@@ -217,6 +245,7 @@ try {
   if (typeof input.base === "string") base = input.base
   if (Array.isArray(input.routes)) routes = input.routes
   REQUIRE_INITIAL_CONTENT = input.requireInitialContent !== false
+  REQUIRE_COLLECTION_SURFACE = input.requireCollectionSurface === true
 
   browser = await chromium.launch()
   const page = await browser.newPage()
@@ -286,14 +315,53 @@ try {
         return text.replace(/\s+/g, " ").trim().slice(0, 500)
       })
 
-      const pageContent = await page.evaluate((cap, emptyStatePattern, requireInitialContent) => {
+      const pageContent = await page.evaluate((cap, emptyStatePattern, requireInitialContent, requireCollectionSurface) => {
         const body = document.body
         const fullText = (body?.innerText || "").replace(/\s+/g, " ").trim()
         const emptyState = requireInitialContent
           ? fullText.match(new RegExp(emptyStatePattern, "i"))?.[0] || null
           : null
-        return { text: fullText.slice(0, cap), emptyState }
-      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source, REQUIRE_INITIAL_CONTENT)
+
+        // Measure the primary workspace, not just the whole document. A real
+        // backend can return zero records, but the app must still render its
+        // summary, list/table container, guidance and useful empty-state actions.
+        const root = document.getElementById("root")
+        const surface = document.querySelector("main, [role=main]") || root || body
+        const visible = (el) => {
+          const style = getComputedStyle(el)
+          return style.display !== "none" && style.visibility !== "hidden" &&
+            Number(style.opacity) !== 0 && el.getClientRects().length > 0
+        }
+        const surfaceText = (surface?.innerText || "").replace(/\s+/g, " ").trim()
+        const semanticBlocks = surface
+          ? [...surface.querySelectorAll("section, article, table, ul, ol, form, [role=list], [role=grid], [role=table]")]
+              .filter(visible).length
+          : 0
+        const headings = surface
+          ? [...surface.querySelectorAll("h1, h2, h3")].filter(visible).length
+          : 0
+        const candidates = surface
+          ? [surface, ...surface.querySelectorAll("div, section, article, main, ul, ol, table, form")]
+          : []
+        let meaningfulGroups = 0
+        for (const node of candidates) {
+          const count = [...node.children].filter((child) =>
+            visible(child) && (child.innerText || "").replace(/\s+/g, " ").trim().length >= 12
+          ).length
+          meaningfulGroups = Math.max(meaningfulGroups, count)
+        }
+        const hasWorkspaceContent = surfaceText.length >= 90 &&
+          (semanticBlocks > 0 || meaningfulGroups >= 2 || headings >= 3)
+        const contentIssue = requireCollectionSurface && !hasWorkspaceContent
+          ? `The collection product is only a shell: the primary workspace has ${surfaceText.length} text characters, ${semanticBlocks} semantic content block(s), ${meaningfulGroups} meaningful content group(s), and ${headings} heading(s). Build the actual dashboard/list/table/progress surface and a useful empty-data state. Do not invent rows in a real database.`
+          : null
+
+        return {
+          text: fullText.slice(0, cap),
+          emptyState,
+          contentIssue,
+        }
+      }, MAX_TEXT, INITIAL_EMPTY_STATE_RE.source, REQUIRE_INITIAL_CONTENT, REQUIRE_COLLECTION_SURFACE)
 
       const desktopLayout = await inspectLayout()
       await page.setViewportSize({ width: 390, height: 844 })
@@ -309,6 +377,7 @@ try {
         failedRequests,
         text: pageContent.text,
         emptyState: pageContent.emptyState || undefined,
+        contentIssue: pageContent.contentIssue || undefined,
         layout: { desktop: desktopLayout, mobile: mobileLayout },
       })
     } catch (err) {
@@ -370,6 +439,9 @@ export function parseRenderReport(stdout: string): RenderReport | null {
     const emptyState = typeof e["emptyState"] === "string" && e["emptyState"].trim()
       ? e["emptyState"].trim().slice(0, 120)
       : undefined;
+    const contentIssue = typeof e["contentIssue"] === "string" && e["contentIssue"].trim()
+      ? e["contentIssue"].trim().slice(0, 500)
+      : undefined;
 
     const failedRequests = (Array.isArray(e["failedRequests"]) ? e["failedRequests"] : [])
       .flatMap((x) => {
@@ -420,10 +492,11 @@ export function parseRenderReport(stdout: string): RenderReport | null {
 
     routes.push({
       route,
-      ok: !blank && !overlay && !emptyState && errors.length === 0 && failedRequests.length === 0 && layoutIssues.length === 0,
+      ok: !blank && !overlay && !emptyState && !contentIssue && errors.length === 0 && failedRequests.length === 0 && layoutIssues.length === 0,
       blank,
       errors,
       ...(emptyState ? { emptyState } : {}),
+      ...(contentIssue ? { contentIssue } : {}),
       ...(overlay ? { overlay } : {}),
       failedRequests,
       text,
@@ -534,6 +607,7 @@ function describeProblem(r: RouteRender): string {
   if (r.emptyState) {
     return `shows the initial empty state "${r.emptyState}" instead of populated sample content`;
   }
+  if (r.contentIssue) return r.contentIssue;
   if (r.blank) {
     return r.errors.length > 0
       ? `renders NOTHING (#root is empty) — ${r.errors[0]}`
@@ -615,8 +689,9 @@ export function formatRenderForAgent(report: RenderReport, previous?: RenderRepo
   if (broken.length === 0 && report.unreachable.length === 0) {
     lines.push(
       `No errors anywhere. Now read the text above: does each page actually show what ` +
-      `the user asked for? A page that renders an empty state is still a page that does ` +
-      `not work.`,
+      `the user asked for? A collection product may have zero live records, but its ` +
+      `workspace still needs real sections, useful summaries and an intentional empty-data ` +
+      `state — a page that renders only a heading and one button is not complete.`,
     );
   }
 
