@@ -290,7 +290,7 @@ check(
 );
 check(
   "browser-local collection builds require a scripted core journey",
-  build.includes("const coreJourneyRequired = shouldRequireCoreJourney") &&
+  build.includes("const coreJourneyRequired = agenticBuild && shouldRequireCoreJourney") &&
     build.includes("const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true"),
 );
 const dispatcher = readFileSync("src/agents/dispatcher.ts", "utf8");
