@@ -24,11 +24,13 @@ async function expectType(
   prompt: string,
   want: "frontend" | "fullstack",
   wantAuth?: boolean,
+  wantDatabase?: "supabase" | "mongodb" | "none",
 ): Promise<void> {
   const c = await classifyBuild(prompt);
   const okType = c.buildType === want;
   const okAuth = wantAuth === undefined || c.needsAuth === wantAuth;
-  if (okType && okAuth) {
+  const okDatabase = wantDatabase === undefined || c.database === wantDatabase;
+  if (okType && okAuth && okDatabase) {
     console.log(`✔ ${name}`);
     return;
   }
@@ -55,6 +57,32 @@ await expectType(
   "The final step shows a summary of everything entered.",
   "frontend",
   false,
+);
+
+// Regression from the 2026-11-12 TaskFlow build: a provider named only inside
+// an explicit exclusion must not override browser-local architecture.
+await expectType(
+  "TaskFlow's localStorage build stays frontend when Supabase, external APIs and MCP are excluded",
+  "Build TaskFlow, a personal task manager. Persist task data using browser localStorage " +
+  "so it works without Supabase, external APIs, or MCP integrations. " +
+  "Do not create fake backend integrations.",
+  "frontend",
+  false,
+  "none",
+);
+await expectType(
+  "a list of excluded providers does not become a backend request",
+  "Build a single-user notes app with localStorage. Do not use Supabase, Firebase, or MongoDB.",
+  "frontend",
+  false,
+  "none",
+);
+await expectType(
+  "an explicitly rejected database does not replace the requested Supabase provider",
+  "Build a full-stack notes app that saves notes in Supabase. Do not use MongoDB.",
+  "fullstack",
+  false,
+  "supabase",
 );
 
 // ── Genuine fullstack must still be detected ──────────────────────────────────
