@@ -353,7 +353,11 @@ try {
         const hasWorkspaceContent = surfaceText.length >= 90 &&
           (semanticBlocks > 0 || meaningfulGroups >= 2 || headings >= 3)
         const contentIssue = requireCollectionSurface && !hasWorkspaceContent
-          ? `The collection product is only a shell: the primary workspace has \${surfaceText.length} text characters, \${semanticBlocks} semantic content block(s), \${meaningfulGroups} meaningful content group(s), and \${headings} heading(s). Build the actual dashboard/list/table/progress surface and a useful empty-data state. Do not invent rows in a real database.`
+          ? "The collection product is only a shell: the primary workspace has " +
+            surfaceText.length + " text characters, " + semanticBlocks +
+            " semantic content block(s), " + meaningfulGroups +
+            " meaningful content group(s), and " + headings +
+            " heading(s). Build the actual dashboard/list/table/progress surface and a useful empty-data state. Do not invent rows in a real database."
           : null
 
         return {
