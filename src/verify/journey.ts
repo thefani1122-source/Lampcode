@@ -52,6 +52,19 @@ export type JourneyReport = {
 export const MAX_JOURNEY_STEPS = 20;
 
 /**
+ * A browser journey is evidence about one file revision. Re-running the same
+ * journey against unchanged files repeats browser work without creating new
+ * evidence. Allow another attempt only after code changes, or when the previous
+ * attempt could not start at all (ran === false).
+ */
+export function hasJourneyForCurrentCode(
+  previous: { report: JourneyReport; writeCountAtRun: number } | null | undefined,
+  currentWriteCount: number,
+): boolean {
+  return previous?.report.ran === true && previous.writeCountAtRun === currentWriteCount;
+}
+
+/**
  * Validate what the model asked for, before a browser is started.
  *
  * Returns the steps it may run, or a sentence saying what is wrong with them.
