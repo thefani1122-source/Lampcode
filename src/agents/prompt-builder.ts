@@ -2302,15 +2302,19 @@ export class PromptBuilder {
         "directly, so it passes whether or not the app ever wires that module in. Implement " +
         "the behaviour each element is labelled with. NEVER delete an element to clear a " +
         "finding; the user asked for it. It is free and takes one round.\n" +
-        "9. For a collection product with a create/update/complete workflow (habit or task " +
-        "tracker, todo, kanban, CRM, calendar, inventory, bookings, expenses or similar), " +
-        "call browser_interact exactly once after the final page and wiring checks. Build a " +
-        "short journey from the ACTUAL visible labels and fields: perform one representative " +
+        "9. For a browser-local collection product with a create/update/complete workflow " +
+        "(habit or task tracker, todo, kanban, calendar, inventory or similar), call " +
+        "browser_interact exactly once after the final page and wiring checks. Build a short " +
+        "journey from the ACTUAL visible labels and fields: perform one representative " +
         "create/complete action, assert the result appears in the workspace, and when the " +
-        "request promises persistence reload and assert the record remains. Do not invent a " +
-        "selector or claim a journey passed if the tool could not run. If an action is blocked " +
-        "by real authentication or unavailable infrastructure, report that as unverified. " +
-        "A click-only interaction probe is not a substitute for this end-to-end journey.\\n" +
+        "request promises persistence reload and assert the record remains. The browser-local " +
+        "journey runs in an isolated browser context. Do not invent a selector or claim a " +
+        "journey passed if the tool could not run. A click-only interaction probe is not a " +
+        "substitute for this end-to-end journey.\\n" +
+        "For a live user-owned backend/database, NEVER create, update or delete real user " +
+        "records solely for verification. Use browser_interact only for a read-only journey " +
+        "that is safe on existing data; otherwise say the mutating workflow is unverified " +
+        "until an isolated test tenant or test account is configured.\\n" +
         "10. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page AND check_types and seen " +
