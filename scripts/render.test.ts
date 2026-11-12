@@ -15,6 +15,7 @@ import {
   RENDER_SCRIPT,
   INITIAL_EMPTY_STATE_RE,
   shouldRequireInitialContent,
+  shouldRequireCollectionSurface,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -185,6 +186,24 @@ ok(
     formatRenderForAgent(emptyFirstRun!).includes("No habits yet"),
 );
 
+const shellOnly = parseRenderReport(line({
+  routes: [{
+    route: "/",
+    blank: false,
+    errors: [],
+    text: "Habit Tracker New Habit",
+    contentIssue: "The collection product is only a shell: the primary workspace has 34 text characters and no meaningful content groups.",
+  }],
+  unreachable: [],
+}));
+ok("a heading and one primary button are not a complete collection workspace", shellOnly?.routes[0]?.ok === false);
+ok("the exact collection-surface issue survives report parsing", shellOnly?.routes[0]?.contentIssue?.includes("only a shell") === true);
+ok("the agent receives an actionable collection-surface defect", formatRenderForAgent(shellOnly!).includes("Build the actual dashboard/list/table/progress surface"));
+ok("an intentionally structured empty database page can pass the surface gate", parseRenderReport(line({
+  routes: [{ route: "/", blank: false, errors: [], text: "Habit Tracker Active habits 0 Weekly progress No habits yet Add a habit" }],
+  unreachable: [],
+}))?.routes[0]?.ok === true);
+
 const overlay = parseRenderReport(
   line({ routes: [{ route: "/", blank: false, errors: [], text: "", overlay: "Failed to resolve import ./Foo" }], unreachable: [] }),
 );
@@ -321,9 +340,32 @@ ok("a full-stack build is not forced to contain seeded browser data", !shouldReq
 ok("an existing backend project is not forced to contain seeded content", !shouldRequireInitialContent({ ...frontendPolicy, projectFiles: { "src/server/index.ts": "export {}" } }));
 ok("an explicit empty first run is respected", !shouldRequireInitialContent({ ...frontendPolicy, userPrompt: "Start with an empty first run; no sample data." }));
 
+ok("a full-stack tracker still needs a substantial workspace", shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  taskDescription: "FULLSTACK BUILD: Build a habit tracker",
+}));
+ok("an explicit no-sample-data request still needs real dashboard structure", shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  userPrompt: "Build a habit tracker with no sample data on first launch",
+}));
+ok("login-only apps do not get collection workspace requirements", !shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  userPrompt: "Build a login and registration page",
+}));
+ok("explicit wireframes do not get application-workspace requirements", !shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  userPrompt: "Build a blank wireframe only for a task tracker",
+}));
+ok("non-frontend agents do not get collection workspace requirements", !shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  agentType: "planning",
+}));
+
 {
   const dispatcher = readFileSync(new URL("../src/agents/dispatcher.ts", import.meta.url), "utf8");
   ok("the agentic sweep uses the shared first-run policy", dispatcher.includes("shouldRequireInitialContent({"));
+  ok("the agentic sweep carries the separate collection-surface policy", dispatcher.includes("shouldRequireCollectionSurface({"));
+  ok("the tool context receives the collection-surface flag", dispatcher.includes("requireCollectionSurface,") && readFileSync(new URL("../src/agents/tools.ts", import.meta.url), "utf8").includes("requireCollectionSurface?: boolean"));
   const buildRoute = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
   const start = buildRoute.indexOf("const revalidateStaleGates");
   const end = buildRoute.indexOf("await revalidateStaleGates();", start);
@@ -331,6 +373,7 @@ ok("an explicit empty first run is respected", !shouldRequireInitialContent({ ..
   ok("post-repair page revalidation uses the multi-route sweep", block.includes("await checkRender(") && block.includes("allRoutesOk(page.report)"));
   ok("post-repair page revalidation does not downgrade to the homepage-only check", !block.includes("verifyBrowserRender("));
   ok("post-repair page revalidation preserves the same seeded-content rule", block.includes("shouldRequireInitialContent({"));
+  ok("post-repair page revalidation repeats the collection-surface rule", block.includes("shouldRequireCollectionSurface({"));
 }
 
 // ── the script itself ────────────────────────────────────────────────────────
@@ -343,6 +386,8 @@ ok("the browser sweep checks desktop and mobile viewports", RENDER_SCRIPT.includ
 ok("the browser sweep measures password form width", RENDER_SCRIPT.includes('input[type="password"]') && RENDER_SCRIPT.includes("passwordFormWidth"));
 ok("the browser sweep measures mobile horizontal overflow", RENDER_SCRIPT.includes("horizontalOverflow"));
 ok("the browser sweep receives the app's first-run content policy from structured input", RENDER_SCRIPT.includes("input.requireInitialContent !== false"));
+ok("the browser sweep receives the separate collection-surface policy", RENDER_SCRIPT.includes("input.requireCollectionSurface === true"));
+ok("the collection-surface check measures semantic content rather than sample-record counts", RENDER_SCRIPT.includes("semanticBlocks") && RENDER_SCRIPT.includes("meaningfulGroups") && RENDER_SCRIPT.includes("contentIssue"));
 ok("the content policy is passed into the evaluated page", /INITIAL_EMPTY_STATE_RE\.source, REQUIRE_INITIAL_CONTENT/.test(RENDER_SCRIPT));
 ok("the script reads configuration from a JSON input file", RENDER_SCRIPT.includes('readFile(process.argv[2], "utf8")'));
 ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.close/.test(RENDER_SCRIPT));
@@ -351,6 +396,7 @@ ok("the script closes the browser in a finally", /finally\s*\{[\s\S]*browser\.cl
 {
   const service = readFileSync(new URL("../src/preview/e2b-service.ts", import.meta.url), "utf8");
   ok("render routes use per-run JSON input", service.includes("runSandboxScriptWithJsonInput(") && service.includes('"lampcode-render.mjs"') && service.includes("RENDER_SCRIPT"));
+  ok("render service passes both independent content policies", service.includes("requireInitialContent, requireCollectionSurface"));
   ok("shell receives only the generated input path", service.includes('${TOOLS_ENV} node ${scriptPath} ${inputPath}') && !service.includes("JSON.stringify(JSON.stringify(routes))"));
 }
 
