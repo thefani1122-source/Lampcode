@@ -15,10 +15,20 @@
  * cases that were already right.
  */
 
-import { classifyBuild } from "../src/agents/build-classifier.js";
+import { classifyBuild, hasPositiveDatabaseRequirement } from "../src/agents/build-classifier.js";
+import { inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 import { EVAL_TASKS } from "./eval/tasks.js";
 
 let failures = 0;
+function expectValue(name: string, got: unknown, want: unknown): void {
+  if (got === want) {
+    console.log(`✔ ${name}`);
+    return;
+  }
+  failures++;
+  console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
+}
+
 async function expectType(
   name: string,
   prompt: string,
@@ -197,6 +207,87 @@ for (const id of ["python-api"]) {
   const task = EVAL_TASKS.find((t) => t.id === id);
   if (task) await expectType(`eval task "${id}" is fullstack`, task.prompt, "fullstack");
 }
+
+// ── Architecture-aware skill selection ───────────────────────────────────────
+// A correct classifier decision is not enough if the prompt builder injects
+// vendor instructions from words that appear only in a user exclusion.
+const taskFlowPrompt =
+  "Build TaskFlow, a personal task manager. Persist task data using browser localStorage " +
+  "so it works without Supabase, external APIs, or MCP integrations. " +
+  "Do not create fake backend integrations.";
+
+expectValue(
+  "TaskFlow's excluded Supabase mention is not a positive database request",
+  hasPositiveDatabaseRequirement(taskFlowPrompt),
+  false,
+);
+
+const frontendSkills = await loadRelevantSkillsForPrompt(taskFlowPrompt, "frontend");
+expectValue(
+  "frontend localStorage builds do not receive Supabase database rules",
+  frontendSkills.includes("## Skill: database-rls"),
+  false,
+);
+expectValue(
+  "frontend localStorage builds do not receive Supabase RLS rules",
+  frontendSkills.includes("## Skill: supabase-rls"),
+  false,
+);
+expectValue(
+  "frontend localStorage builds still receive frontend sandbox guidance",
+  frontendSkills.includes("## Skill: frontend-sandbox"),
+  true,
+);
+
+const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database."; 
+const backendSkills = await loadRelevantSkillsForPrompt(backendWithoutDatabase, "fullstack");
+expectValue(
+  "a backend without a database does not receive Supabase RLS instructions",
+  backendSkills.includes("## Skill: supabase-rls"),
+  false,
+);
+
+const supabaseSkills = await loadRelevantSkillsForPrompt("Build a full-stack app that stores user data in Supabase and authenticates each user.", "fullstack");
+expectValue(
+  "a Supabase full-stack app still receives its database RLS skill",
+  supabaseSkills.includes("## Skill: database-rls"),
+  true,
+);
+expectValue(
+  "a Supabase full-stack app still receives its provider-specific RLS skill",
+  supabaseSkills.includes("## Skill: supabase-rls"),
+  true,
+);
+
+const mongoSkills = await loadRelevantSkillsForPrompt("Build an API backed by MongoDB.", "fullstack-mongodb");
+expectValue(
+  "MongoDB builds do not receive Supabase database rules",
+  mongoSkills.includes("## Skill: database-rls"),
+  false,
+);
+expectValue(
+  "MongoDB builds do not receive Supabase RLS rules",
+  mongoSkills.includes("## Skill: supabase-rls"),
+  false,
+);
+
+const existingSkills = await loadRelevantSkillsForPrompt("Extend the existing PostgreSQL-backed app and preserve its current database provider.", "fullstack-existing");
+expectValue(
+  "existing full-stack edits preserve their own provider-specific instructions",
+  existingSkills.includes("## Skill: supabase-rls"),
+  false,
+);
+
+expectValue(
+  "a negative MongoDB mention does not switch a full-stack task to MongoDB",
+  inferPromptBuildType("frontend", "FULLSTACK BUILD: Build a Hono API. Do not use MongoDB; use Supabase."),
+  "fullstack",
+);
+expectValue(
+  "a positive MongoDB request still selects the MongoDB provider",
+  inferPromptBuildType("frontend", "FULLSTACK BUILD: Build a MongoDB-backed API."),
+  "fullstack-mongodb",
+);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
