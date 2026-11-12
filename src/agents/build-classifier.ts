@@ -143,10 +143,10 @@ const AUTH_AS_UI_RE =
 const NEGATED_SERVER_TERM =
   "(?:external[ -]apis?|third[ -]party[ -]apis?|backend|server|database|db|apis?|accounts?|login|auth\\w*|" +
   "supabase|mongodb|mongo|postgresql|postgres|sqlite|mysql|planetscale|neon|firebase|firestore|dynamodb|redis|graphql|" +
-  "hono|express|fastapi|django|rails|stripe|paddle|lemon[ -]squeezy|oauth|sso|jwt|mcp(?:[ -](?:servers?|integrations?|tools?))?)";
+  "MONGODB_URI|mongoose|hono|express|fastapi|django|rails|stripe|paddle|lemon[ -]squeezy|oauth|sso|jwt|mcp(?:[ -](?:servers?|integrations?|tools?))?)";
 
 const NEGATED_SERVER_LIST =
-  `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)${NEGATED_SERVER_TERM})*`;
+  `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)(?:(?:a|an|the|any)\\s+)?${NEGATED_SERVER_TERM})*`;
 
 const NEGATED_SERVER_PHRASE_RE = new RegExp(
   String.raw`\b(?:no|without|avoid|never|do\s+not|don['’]t|does\s+not|doesn['’]t|not)\s+` +
