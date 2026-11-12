@@ -257,7 +257,7 @@ check(
   "a failing gate is not recorded as success",
   /const buildIncomplete =\s*gatesFailed/.test(build) &&
     build.includes("planningUnverified || auditIncomplete || hollowControls > 0") &&
-    build.includes("dataLayerIncomplete || stillStale.length > 0 || postBuildOverran") &&
+    build.includes("dataLayerIncomplete || stillStale.length > 0 || postBuildOverran || journeyIncomplete") &&
     build.includes('status: buildIncomplete ? "completed" : "success"'),
 );
 check(
@@ -287,6 +287,32 @@ check(
 check(
   "stale gates and post-build timeouts keep the build partial",
   build.includes("stillStale.length > 0 || postBuildOverran"),
+);
+check(
+  "browser-local collection builds require a scripted core journey",
+  build.includes("const coreJourneyRequired = shouldRequireCoreJourney") &&
+    build.includes("const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true"),
+);
+check(
+  "the model's journey is re-run against the final delivered files after repairs",
+  build.includes("const steps = result.journeyEvidence?.steps") &&
+    build.includes("const report = await runJourney(projectId, steps)") &&
+    build.includes("Independent end-to-end journey on the final delivered files"),
+);
+check(
+  "journey evidence is stored in build_outcome and shown in the checks card",
+  build.includes("...(journeyVerification ? { journey: journeyVerification } : {})") &&
+    build.includes("journey: journeyVerification ?? undefined"),
+);
+check(
+  "an unrun or failed journey prevents a success status and is explained to the user",
+  build.includes("journeyIncomplete") &&
+    build.includes("The main user workflow was not proven end to end"),
+);
+check(
+  "automated mutation journeys are explicitly not required for live full-stack databases",
+  build.includes("shouldRequireCoreJourney") &&
+    build.includes("A live user-owned database must never receive test"),
 );
 check(
   "the final message explains incomplete requirements instead of only logging them",
