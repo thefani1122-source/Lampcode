@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import {
   MAX_JOURNEY_STEPS,
   formatJourney,
+  hasJourneyForCurrentCode,
   parseJourney,
   parseJourneyReport,
   type JourneyStep,
@@ -147,6 +148,38 @@ ok("empty parses to not-run", !parseJourneyReport("").ran);
 ok("console errors are capped", parseJourneyReport(JSON.stringify({
   ran: true, steps: [], consoleErrors: Array.from({ length: 40 }, (_, i) => `e${i}`), finalUrl: "",
 })).consoleErrors.length <= 10);
+
+// ── Duplicate browser work is suppressed for unchanged code ────────────────
+{
+  const completed = parseJourneyReport(JSON.stringify({
+    ran: true,
+    steps: [{ step: 1, did: "click Add", ok: false, detail: "button did not respond" }],
+    consoleErrors: [],
+    finalUrl: "/",
+  }));
+  const previous = { report: completed, writeCountAtRun: 4 };
+
+  ok(
+    "a journey already run against the current file revision is not repeated",
+    hasJourneyForCurrentCode(previous, 4),
+  );
+  ok(
+    "a file write makes a new journey attempt eligible",
+    !hasJourneyForCurrentCode(previous, 5),
+  );
+
+  const unavailable = parseJourneyReport(JSON.stringify({
+    ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "preview not ready",
+  }));
+  ok(
+    "a journey that never started may be retried without a code change",
+    !hasJourneyForCurrentCode({ ...previous, report: unavailable }, 4),
+  );
+  ok(
+    "no prior journey permits the first attempt",
+    !hasJourneyForCurrentCode(null, 4),
+  );
+}
 
 // ── The driver's own rules ──────────────────────────────────────────────────
 
