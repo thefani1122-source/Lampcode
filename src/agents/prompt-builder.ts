@@ -3,7 +3,7 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
-import { hasPositiveDatabaseRequirement, readSignals } from "./build-classifier.js";
+import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -1819,7 +1819,7 @@ export function inferPromptBuildType(
     description.startsWith("FULLSTACK BUILD:") ||
     description.startsWith("FULLSTACK AUTH BUILD:");
   const isExistingFullstackEdit = description.startsWith("EXISTING FULLSTACK EDIT:");
-  const isMongoBuildDescription = readSignals(description).mentionsMongo;
+  const isMongoBuildDescription = hasPositiveMongoRequirement(description);
 
   if (agentType !== "frontend") return undefined;
   if (isExistingFullstackEdit) return "fullstack-existing";
