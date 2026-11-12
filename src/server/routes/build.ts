@@ -85,7 +85,7 @@ import {
 } from "../../verify/hollow-tests.js";
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
 import type { StorageSnapshot } from "../../verify/storage.js";
-import { allRoutesOk, routesToVisit, shouldRequireInitialContent } from "../../verify/render.js";
+import { allRoutesOk, routesToVisit, shouldRequireInitialContent, shouldRequireCollectionSurface } from "../../verify/render.js";
 import { parseJourney, MAX_JOURNEY_STEPS } from "../../verify/journey.js";
 import { formatPreviewEmailConfirmationGuidance } from "../../verify/preview-auth-guidance.js";
 import {
@@ -603,7 +603,7 @@ function needsAuth(prompt: string): boolean {
 /** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
 function buildFullstackPrompt(prompt: string, authWanted?: boolean): string {
   const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return `${prefix}\n${prompt}`;
+  return `${prefix}\n${expandUserPrompt(prompt)}`;
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -1698,7 +1698,10 @@ export async function runFastBuild(
             existingBackendArtifacts: false,
           };
 
-    if (shouldPlan({ prompt, hasExistingCode, agenticBuild })) {
+    const planningRequired = shouldPlan({ prompt, hasExistingCode, agenticBuild });
+    let planningUnverified = false;
+    let planningFailureReason = "";
+    if (planningRequired) {
       server?.emitToRoom(sessionId, "build:preview_log", {
         sessionId,
         line: hasExistingCode
@@ -1734,6 +1737,19 @@ export async function runFastBuild(
         server?.emitToRoom(sessionId, "build:preview_log", {
           sessionId,
           line: `Plan: ${buildPlan.files.length} file(s) — ${buildPlan.summary}`,
+        });
+      } else {
+        // A file list alone is not a product plan. Continue so the user still
+        // gets a preview, but never record this build as fully successful.
+        planningUnverified = true;
+        planningFailureReason = planned.reason ?? "the planner did not return a complete product blueprint";
+        logger.warn(
+          { sessionId, reason: planningFailureReason },
+          "[build] product blueprint unverified — delivering preview as partial",
+        );
+        server?.thinking(sessionId, {
+          sessionId,
+          text: "I could not validate a complete product plan before coding. I will still provide the preview, but I will not mark the build fully complete.",
         });
       }
     }
@@ -4607,6 +4623,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             userPrompt: prompt,
             projectFiles: hasExistingCode ? existingFiles : undefined,
           }),
+          shouldRequireCollectionSurface({
+            agentType: "frontend",
+            taskDescription,
+            userPrompt: prompt,
+          }),
         ).catch(() => null);
         if (page?.ran && page.report) {
           recorder.record({
@@ -5237,13 +5258,31 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // but the record must not claim the app was verified.
     const pageUnverified = outcome.checkPage === "never" || outcome.checkPage === "unavailable";
     const typesUnverified = outcome.checkTypes === "never" || outcome.checkTypes === "unavailable";
+    const auditUnresolvedCount = completionAudit
+      ? completionAudit.contradicted + completionAudit.unverified + (completionAudit.criteriaDropped ?? 0)
+      : 0;
+    const auditUnavailable = shouldAudit() && completionAudit === null;
+    const auditIncomplete = auditUnavailable || auditUnresolvedCount > 0;
+    // These five findings mean a visible control cannot complete its labelled
+    // action. Orphan endpoints and placeholder copy remain advisory because
+    // each requires a product decision rather than one deterministic repair.
+    const hollowControls =
+      wiringTally.deadHandlers + wiringTally.bareButtons + wiringTally.formsNoSubmit +
+      wiringTally.deadLinks + wiringTally.missingEndpoints;
+    const dataLayerIncomplete = dataLayerFindings.length > 0;
     const buildIncomplete =
       gatesFailed || pageUnverified || typesUnverified ||
-      result.turnsExhausted || result.budgetExhausted;
+      result.turnsExhausted || result.budgetExhausted ||
+      planningUnverified || auditIncomplete || hollowControls > 0 ||
+      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran;
     if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
-        `page=${outcome.checkPage} types=${outcome.checkTypes} turnsExhausted=${result.turnsExhausted} budgetExhausted=${result.budgetExhausted}`,
+        `page=${outcome.checkPage} types=${outcome.checkTypes} ` +
+        `planUnverified=${planningUnverified} auditUnresolved=${auditUnresolvedCount} ` +
+        `auditUnavailable=${auditUnavailable} hollowControls=${hollowControls} ` +
+        `dataLayerFindings=${dataLayerFindings.length} stale=${stillStale.length} ` +
+        `postBuildOverran=${postBuildOverran} turnsExhausted=${result.turnsExhausted} budgetExhausted=${result.budgetExhausted}`,
       );
     }
 
@@ -5309,7 +5348,9 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     const typesFailed = outcome.checkTypes === "fail";
     if (
       pageFailed || typesFailed || pageUnverified || typesUnverified ||
-      result.turnsExhausted || result.budgetExhausted
+      result.turnsExhausted || result.budgetExhausted ||
+      planningUnverified || auditIncomplete || hollowControls > 0 ||
+      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran
     ) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
@@ -5342,6 +5383,37 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       if (result.budgetExhausted) {
         closingLines.push(
           "• The build budget was reached while the agent still had work to do. The app may be partially built; continue with a follow-up build before treating it as ready.",
+        );
+      }
+      if (planningUnverified) {
+        closingLines.push(
+          `• The planning pass did not produce a complete product blueprint (${planningFailureReason}). The preview is available, but the requested scope is not fully verified.`,
+        );
+      }
+      if (auditUnavailable) {
+        closingLines.push(
+          "• I could not extract and independently audit the user's requirements, so product completeness is unverified.",
+        );
+      } else if (auditUnresolvedCount > 0 && completionAudit) {
+        const unresolvedCriteria = completionAudit.criteria
+          .filter((criterion) => completionAudit!.verdicts.some(
+            (verdict) => verdict.id === criterion.id && verdict.status !== "proven",
+          ))
+          .slice(0, 6)
+          .map((criterion) => criterion.text);
+        closingLines.push(
+          `• Product completeness is not proven: ${completionAudit.contradicted} requirement(s) look missing, ${completionAudit.unverified} could not be confirmed, and ${completionAudit.criteriaDropped ?? 0} were not audited.`,
+        );
+        for (const criterion of unresolvedCriteria) closingLines.push(`  – ${criterion}`);
+      }
+      if (hollowControls > 0) {
+        closingLines.push(
+          `• ${hollowControls} visible button, form or link issue(s) remain unresolved; some user actions may not work.`,
+        );
+      }
+      if (dataLayerIncomplete) {
+        closingLines.push(
+          `• The data layer still has ${dataLayerFindings.length} unresolved issue(s). Do not rely on saves or records until those are fixed.`,
         );
       }
       closingLines.push("Continue the build to finish the remaining work before publishing.");
