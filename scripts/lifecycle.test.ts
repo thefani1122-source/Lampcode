@@ -327,7 +327,7 @@ check(
 check(
   "journey evidence is stored in build_outcome and shown in the checks card",
   build.includes("...(journeyVerification ? { journey: journeyVerification } : {})") &&
-    build.includes("journey: journeyVerification ?? undefined"),
+    build.includes("journey: journeyVerification } : {})"),
 );
 check(
   "an unrun or failed journey prevents a success status and is explained to the user",
