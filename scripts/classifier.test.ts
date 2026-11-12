@@ -15,7 +15,7 @@
  * cases that were already right.
  */
 
-import { classifyBuild, hasPositiveDatabaseRequirement } from "../src/agents/build-classifier.js";
+import { classifyBuild, hasPositiveDatabaseRequirement, hasPositiveMongoRequirement } from "../src/agents/build-classifier.js";
 import { inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 import { EVAL_TASKS } from "./eval/tasks.js";
 
@@ -239,7 +239,7 @@ expectValue(
   true,
 );
 
-const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database."; 
+const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database.";
 const backendSkills = await loadRelevantSkillsForPrompt(backendWithoutDatabase, "fullstack");
 expectValue(
   "a backend without a database does not receive Supabase RLS instructions",
@@ -287,6 +287,21 @@ expectValue(
   "a positive MongoDB request still selects the MongoDB provider",
   inferPromptBuildType("frontend", "FULLSTACK BUILD: Build a MongoDB-backed API."),
   "fullstack-mongodb",
+);
+expectValue(
+  "an explicit MongoDB URI still selects MongoDB",
+  hasPositiveMongoRequirement("FULLSTACK BUILD: Use MONGODB_URI for persistence."),
+  true,
+);
+expectValue(
+  "Mongoose remains a supported positive MongoDB signal",
+  hasPositiveMongoRequirement("FULLSTACK BUILD: Use mongoose models."),
+  true,
+);
+expectValue(
+  "a negative MongoDB provider mention does not select MongoDB",
+  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not use MongoDB or mongoose."),
+  false,
 );
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
