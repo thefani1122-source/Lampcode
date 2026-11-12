@@ -151,7 +151,8 @@ const NEGATED_SERVER_LIST =
 const NEGATED_SERVER_PHRASE_RE = new RegExp(
   String.raw`\b(?:no|without|avoid|never|do\s+not|don['’]t|does\s+not|doesn['’]t|not)\s+` +
     String.raw`(?:(?:a|an|the|any)\s+)?` +
-    String.raw`(?:(?:need(?:ed|ing)?(?:\s+for)?|want|use|using|create|install|integrate|configure|connect(?:ed)?(?:\s+to)?|rely\s+on)\s+)?` +
+    String.raw`(?:(?:need(?:ed|ing)?(?:\s+for)?|want|use|using|create|add|generate|include|implement|install|integrate|configure|connect(?:ing|ed)?(?:\s+to)?|rely\s+on)\s+)?` +
+    String.raw`(?:(?:a|an|the|any|fake|mock|dummy|sample|real|external|third[ -]party|unnecessary|unneeded)\s+)*` +
     String.raw`(?:${NEGATED_SERVER_LIST})\b`,
   "gi",
 );
