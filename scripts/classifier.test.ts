@@ -261,12 +261,12 @@ expectValue(
 
 const mongoSkills = await loadRelevantSkillsForPrompt("Build an API backed by MongoDB.", "fullstack-mongodb");
 expectValue(
-  "MongoDB builds do not receive Supabase database rules",
+  "MongoDB builds receive provider-neutral database security guidance",
   mongoSkills.includes("## Skill: database-rls"),
-  false,
+  true,
 );
 expectValue(
-  "MongoDB builds do not receive Supabase RLS rules",
+  "MongoDB builds do not receive Supabase-specific RLS rules",
   mongoSkills.includes("## Skill: supabase-rls"),
   false,
 );
