@@ -195,6 +195,21 @@ export function shouldRequireCollectionSurface(opts: {
     !COLLECTION_SURFACE_EXEMPT_RE.test(request);
 }
 
+const CORE_JOURNEY_PROMPT_RE =
+  /\\b(?:habits?|tasks?|to[ -]?do|trackers?|kanban|calendars?|schedulers?|shift planners?|rosters?|crm|inventory|expenses?|budgets?|invoices?|orders?|products?|customers?|clients?|contacts?|projects?|employees?|staff|bookings?|events?|transactions?|subscriptions?)\\b/i;
+
+/** Products with a primary create/update/complete workflow need a real browser journey, not click-only evidence. */
+export function shouldRequireCoreJourney(opts: {
+  agentType: string;
+  taskDescription: string;
+  userPrompt?: string | undefined;
+}): boolean {
+  if (opts.agentType !== "frontend") return false;
+  const request = opts.userPrompt ?? opts.taskDescription;
+  return CORE_JOURNEY_PROMPT_RE.test(request) &&
+    !COLLECTION_SURFACE_EXEMPT_RE.test(request);
+}
+
 /**
  * Routes to visit, from the project's own files.
  *
