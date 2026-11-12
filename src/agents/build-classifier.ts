@@ -166,6 +166,18 @@ function deNegate(prompt: string): string {
   return prompt.replace(NEGATED_SERVER_PHRASE_RE, " ");
 }
 
+/**
+ * A database provider explicitly requested by the user, after removing
+ * negated mentions. Generic words like "persist", "table", and "CRUD" are
+ * deliberately excluded: browser-local apps use those too.
+ */
+const POSITIVE_DATABASE_REQUEST_RE =
+  /\b(?:database|databases|db|supabase|mongodb|mongo|postgresql|postgres|sqlite|mysql|planetscale|neon|firebase|firestore|dynamodb|redis)\b/i;
+
+export function hasPositiveDatabaseRequirement(prompt: string): boolean {
+  return POSITIVE_DATABASE_REQUEST_RE.test(deNegate(typeof prompt === "string" ? prompt : ""));
+}
+
 export type DeterministicSignals = {
   /** The user NAMED a browser store — localStorage, IndexedDB, "no backend".
    *  Their own instruction, not an inference about their intent. */
