@@ -45,7 +45,7 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
-import { shouldRequireInitialContent } from "../verify/render.js";
+import { shouldRequireInitialContent, shouldRequireCollectionSurface } from "../verify/render.js";
 import type { RenderReport } from "../verify/render.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 
@@ -599,6 +599,11 @@ export class AgentDispatcher {
       userPrompt: options.userPrompt,
       projectFiles: options.projectFiles,
     });
+    const requireCollectionSurface = shouldRequireCollectionSurface({
+      agentType,
+      taskDescription: task.description,
+      userPrompt: options.userPrompt,
+    });
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -954,6 +959,7 @@ export class AgentDispatcher {
             ? {
                 projectId,
                 requireInitialContent,
+                requireCollectionSurface,
                 generatedFiles,
                 deletedFiles,
                 checkpoints,
