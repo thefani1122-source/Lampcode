@@ -2310,11 +2310,11 @@ export class PromptBuilder {
         "request promises persistence reload and assert the record remains. The browser-local " +
         "journey runs in an isolated browser context. Do not invent a selector or claim a " +
         "journey passed if the tool could not run. A click-only interaction probe is not a " +
-        "substitute for this end-to-end journey.\\n" +
+        "substitute for this end-to-end journey.\n" +
         "For a live user-owned backend/database, NEVER create, update or delete real user " +
         "records solely for verification. Use browser_interact only for a read-only journey " +
         "that is safe on existing data; otherwise say the mutating workflow is unverified " +
-        "until an isolated test tenant or test account is configured.\\n" +
+        "until an isolated test tenant or test account is configured.\n" +
         "10. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page AND check_types and seen " +
