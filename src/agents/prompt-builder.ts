@@ -214,9 +214,12 @@ Output ONLY this JSON object, nothing before or after it:
 {
   "summary": "one or two sentences on what is being built",
   "approach": [
-    "calories come from a built-in table of common foods in src/lib/foods.ts — no model call, no network",
-    "entries persist in localStorage; no database is needed for this",
-    "the daily total and the remaining allowance are computed in src/lib/totals.ts, with tests"
+    "SCREENS: every requested view/route and its major visible sections",
+    "JOURNEYS: the primary user flows from action through to visible result",
+    "DATA: entities, source of truth, persistence and derived metrics",
+    "FIRST RUN: preview seed policy and distinct loading/error/real-empty states",
+    "VISUAL: product-specific hierarchy, navigation, visual direction and responsive layout",
+    "VERIFICATION: observable outcomes for every main screen and user journey"
   ],
   "files": [
     { "path": "src/types.ts", "purpose": "shared Client and Deal types" },
