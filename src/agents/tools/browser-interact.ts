@@ -26,5 +26,12 @@ export const browserInteractHandler: ToolHandler = async (
   if ("error" in parsed) return `Error: ${parsed.error}`;
 
   const report = await runJourney(projectId, parsed.steps);
+  if (ctx.journeyEvidence) {
+    ctx.journeyEvidence.value = {
+      steps: parsed.steps,
+      report,
+      writeCountAtRun: ctx.writeCounter?.value ?? 0,
+    };
+  }
   return formatJourney(report);
 };

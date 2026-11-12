@@ -129,6 +129,50 @@ check(
 );
 
 // Refusals. Each of these would make the build worse than no plan at all.
+const validBlueprintApproach = [
+  "SCREENS: a dashboard view with habit summary cards and a weekly progress section",
+  "JOURNEYS: a user adds a habit, marks it complete, and sees the streak update",
+  "DATA: habits and completions are the source of truth, persisted in browser storage",
+  "FIRST RUN: show preview records locally; for a real backend show clear loading, error and empty states",
+  "VISUAL: use a distinct fitness-product layout with responsive sidebar and progress hierarchy",
+  "VERIFICATION: add a habit, complete it, reload and verify the dashboard and weekly progress update",
+];
+const blueprintFiles = [{ path: "src/App.tsx", purpose: "application shell and route composition" }];
+
+check(
+  "a new-app file list without an approach is not an accepted blueprint",
+  parsePlan(JSON.stringify({ summary: "Habit tracker", files: blueprintFiles }), {
+    requireApproach: true, requireBlueprint: true,
+  }),
+  null,
+);
+check(
+  "an approach without all six product decisions is not a complete new-app blueprint",
+  parsePlan(JSON.stringify({
+    summary: "Habit tracker",
+    approach: validBlueprintApproach.slice(0, 3),
+    files: blueprintFiles,
+  }), { requireApproach: true, requireBlueprint: true }),
+  null,
+);
+check(
+  "a complete labelled blueprint is accepted for a new app",
+  parsePlan(JSON.stringify({
+    summary: "Habit tracker",
+    approach: validBlueprintApproach,
+    files: blueprintFiles,
+  }), { requireApproach: true, requireBlueprint: true })?.approach?.length,
+  6,
+);
+check(
+  "an existing-project edit can use one scoped approach decision",
+  parsePlan(JSON.stringify({
+    summary: "Add habit completion",
+    approach: ["JOURNEY: a user marks one existing habit complete and its streak updates"],
+    files: blueprintFiles,
+  }), { requireApproach: true, requireBlueprint: false })?.approach?.length,
+  1,
+);
 check("malformed JSON is refused", parsePlan("{not json at all"), null);
 check("empty output is refused", parsePlan(""), null);
 check("prose with no JSON is refused", parsePlan("I think you should start with the types."), null);
@@ -446,6 +490,26 @@ check(
 
 // Integration guard: the exact same trusted shape must reach the planning call
 // and the generation dispatch, even when planning returned null.
+const plannerSource = readFileSync("src/agents/build-planner.ts", "utf8");
+check(
+  "the actual planner call requires an approach for every planned build",
+  plannerSource.includes("requireApproach: true"),
+  true,
+);
+check(
+  "new apps require all six labelled product-blueprint decisions",
+  plannerSource.includes("requireBlueprint: Object.keys(existing).length === 0") &&
+    plannerSource.includes("REQUIRED_BLUEPRINT_SECTIONS"),
+  true,
+);
+const promptBuilderSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
+check(
+  "the planning prompt explicitly asks for all six labels",
+  ["SCREENS:", "JOURNEYS:", "DATA:", "FIRST RUN:", "VISUAL:", "VERIFICATION:"]
+    .every((label) => promptBuilderSource.includes(label)),
+  true,
+);
+
 const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
 check(
   "planBuild receives the authoritative planningShape",

@@ -45,8 +45,9 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
-import { shouldRequireInitialContent } from "../verify/render.js";
+import { shouldRequireInitialContent, shouldRequireCollectionSurface } from "../verify/render.js";
 import type { RenderReport } from "../verify/render.js";
+import type { JourneyReport, JourneyStep } from "../verify/journey.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 
 // Workspace root: one directory per project
@@ -219,6 +220,8 @@ export interface DispatchResult {
    *  key = the model never called that gate. The tool results go to the model
    *  as prose and nothing else saw them, so a finished build carried no
    *  evidence that the page ever rendered. */
+  /** Last model-authored end-to-end browser journey, if the model ran one. */
+  journeyEvidence?: { steps: JourneyStep[]; report: JourneyReport; writeCountAtRun: number };
   gateResults: {
     checkPage?: GateOutcome;
     checkTypes?: GateOutcome;
@@ -599,6 +602,11 @@ export class AgentDispatcher {
       userPrompt: options.userPrompt,
       projectFiles: options.projectFiles,
     });
+    const requireCollectionSurface = shouldRequireCollectionSurface({
+      agentType,
+      taskDescription: task.description,
+      userPrompt: options.userPrompt,
+    });
 
     // Thinking budget per agent type and task nature.
     // Haiku models (connection, deploy, monitor) ignore this — supportsThinking() returns false.
@@ -651,6 +659,9 @@ export class AgentDispatcher {
     const lastRender: { report: RenderReport | null } = { report: null };
     // Once per build — see ToolContext.interactionsProbed.
     const interactionsProbed = { value: false };
+    const journeyEvidence: {
+      value: { steps: JourneyStep[]; report: JourneyReport; writeCountAtRun: number } | null;
+    } = { value: null };
     const writeCounter = { value: 0 };
     const churn = { added: 0, removed: 0, created: 0, replaced: 0, edited: 0, deleted: 0 };
     const deadCode = { called: false, unusedImports: 0, unreferencedExports: 0, neverRendered: 0 };
@@ -954,6 +965,7 @@ export class AgentDispatcher {
             ? {
                 projectId,
                 requireInitialContent,
+                requireCollectionSurface,
                 generatedFiles,
                 deletedFiles,
                 checkpoints,
@@ -961,6 +973,7 @@ export class AgentDispatcher {
                 projectFiles: options.projectFiles,
                 gateResults,
                 lastRender,
+                journeyEvidence,
                 interactionsProbed,
                 pendingImages,
                 writeCounter,
@@ -1154,6 +1167,7 @@ export class AgentDispatcher {
       budgetExhausted,
       rounds: roundsUsed,
       pseudoToolCalls,
+      ...(journeyEvidence.value ? { journeyEvidence: journeyEvidence.value } : {}),
       gateResults,
       churn,
       deletedFiles: [...deletedFiles],

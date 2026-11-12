@@ -144,5 +144,25 @@ eq("no audit means nothing is claimed missing", buildChecksCard(base).missing, [
 
 eq("a build that needed no repair reports none", buildChecksCard(base).repairs, []);
 
+const journeyBase = {
+  required: true,
+  ran: true,
+  passed: true,
+  stepsRun: 7,
+  stepsExpected: 7,
+};
+eq("a completed core journey earns a pass row",
+  row({ ...base, journey: journeyBase }, "journey")?.status, "pass");
+eq("the journey row reports real browser evidence",
+  row({ ...base, journey: journeyBase }, "journey")?.detail, "7 steps completed in the browser");
+eq("a failed browser journey cannot show a pass",
+  row({ ...base, journey: { ...journeyBase, passed: false, stepsRun: 3, reason: "step 4 failed: submit did nothing" } }, "journey")?.status,
+  "fail");
+eq("a journey that could not run remains visibly unverified",
+  row({ ...base, journey: { ...journeyBase, ran: false, passed: false, stepsRun: 0, reason: "sandbox unavailable" } }, "journey")?.status,
+  "warn");
+eq("products that do not require a journey get no journey row",
+  row(base, "journey"), undefined);
+
 console.log(`\n${checks} checks-card checks, ${failures} failed`);
 if (failures > 0) process.exit(1);

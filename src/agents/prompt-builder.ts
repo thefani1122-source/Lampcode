@@ -214,9 +214,12 @@ Output ONLY this JSON object, nothing before or after it:
 {
   "summary": "one or two sentences on what is being built",
   "approach": [
-    "calories come from a built-in table of common foods in src/lib/foods.ts — no model call, no network",
-    "entries persist in localStorage; no database is needed for this",
-    "the daily total and the remaining allowance are computed in src/lib/totals.ts, with tests"
+    "SCREENS: every requested view/route and its major visible sections",
+    "JOURNEYS: the primary user flows from action through to visible result",
+    "DATA: entities, source of truth, persistence and derived metrics",
+    "FIRST RUN: preview seed policy and distinct loading/error/real-empty states",
+    "VISUAL: product-specific hierarchy, navigation, visual direction and responsive layout",
+    "VERIFICATION: observable outcomes for every main screen and user journey"
   ],
   "files": [
     { "path": "src/types.ts", "purpose": "shared Client and Deal types" },
@@ -2299,7 +2302,20 @@ export class PromptBuilder {
         "directly, so it passes whether or not the app ever wires that module in. Implement " +
         "the behaviour each element is labelled with. NEVER delete an element to clear a " +
         "finding; the user asked for it. It is free and takes one round.\n" +
-        "9. Only then write your final reply — a short, plain summary of what you built " +
+        "9. For a browser-local collection product with a create/update/complete workflow " +
+        "(habit or task tracker, todo, kanban, calendar, inventory or similar), call " +
+        "browser_interact exactly once after the final page and wiring checks. Build a short " +
+        "journey from the ACTUAL visible labels and fields: perform one representative " +
+        "create/complete action, assert the result appears in the workspace, and when the " +
+        "request promises persistence reload and assert the record remains. The browser-local " +
+        "journey runs in an isolated browser context. Do not invent a selector or claim a " +
+        "journey passed if the tool could not run. A click-only interaction probe is not a " +
+        "substitute for this end-to-end journey.\n" +
+        "For a live user-owned backend/database, NEVER create, update or delete real user " +
+        "records solely for verification. Use browser_interact only for a read-only journey " +
+        "that is safe on existing data; otherwise say the mutating workflow is unverified " +
+        "until an isolated test tenant or test account is configured.\n" +
+        "10. Only then write your final reply — a short, plain summary of what you built " +
         "or changed, for the user. No code, no file listings.\n" +
         "Never claim the app works without having called check_page AND check_types and seen " +
         "both pass. If a check reports that it could not run, that is NOT a pass — say so " +

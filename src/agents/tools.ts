@@ -10,6 +10,7 @@ import { callApprovedMcpTool } from "../mcp/approved-call.js";
 import { DEFERRED_STATIC_HANDLERS, REGISTRY } from "./tools/registry.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
 import type { RenderReport } from "../verify/render.js";
+import type { JourneyReport, JourneyStep } from "../verify/journey.js";
 import type { AgentDispatcher } from "./dispatcher.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
 
@@ -894,6 +895,8 @@ export interface ToolExecutionContext {
   toolCallId?: string | undefined;
   /** Whether this frontend build is expected to show first-run sample content. Real backend apps may legitimately begin with no rows. */
   requireInitialContent?: boolean | undefined;
+  /** Collection products need a substantive workspace even when real data is empty. */
+  requireCollectionSurface?: boolean | undefined;
   /** Required by the agentic build tools — identifies the live sandbox. */
   projectId?: string | undefined;
   /** The project's existing files on a follow-up edit, as build.ts already
@@ -941,6 +944,10 @@ export interface ToolExecutionContext {
    *  calls check_page eight times should not pay eight times for the same
    *  unchanged page. Last sweep wins. */
   lastRender?: { report: RenderReport | null } | undefined;
+  /** Last model-authored end-to-end browser journey, re-run by build.ts after repairs. */
+  journeyEvidence?: {
+    value: { steps: JourneyStep[]; report: JourneyReport; writeCountAtRun: number } | null;
+  } | undefined;
   /** Whether the controls have been operated yet this build. The probe drives
    *  a real browser and costs seconds, so it runs ONCE — the first time every
    *  page renders cleanly, which is the first moment its answer can mean

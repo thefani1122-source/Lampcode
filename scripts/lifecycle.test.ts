@@ -255,7 +255,9 @@ check(
 // The row has to agree with the gates, not with the model's summary.
 check(
   "a failing gate is not recorded as success",
-  /const buildIncomplete =\s*gatesFailed \|\| pageUnverified \|\| typesUnverified/.test(build) &&
+  /const buildIncomplete =\s*gatesFailed/.test(build) &&
+    build.includes("planningUnverified || auditIncomplete || hollowControls > 0") &&
+    build.includes("dataLayerIncomplete || stillStale.length > 0 || postBuildOverran || journeyIncomplete") &&
     build.includes('status: buildIncomplete ? "completed" : "success"'),
 );
 check(
@@ -266,6 +268,81 @@ check(
 check(
   "turn and budget exhaustion also make the build incomplete",
   build.includes("result.turnsExhausted || result.budgetExhausted"),
+);
+check(
+  "unresolved or unavailable completion audits cannot be recorded as success",
+  build.includes("const auditUnavailable = shouldAudit() && completionAudit === null") &&
+    build.includes("const auditIncomplete = auditUnavailable || auditUnresolvedCount > 0"),
+);
+check(
+  "a missing product blueprint keeps the build partial",
+  build.includes("let planningUnverified = false") &&
+    build.includes("planningUnverified || auditIncomplete"),
+);
+check(
+  "hollow controls and unresolved data-layer issues keep the build partial",
+  build.includes("const hollowControls =") &&
+    build.includes("const dataLayerIncomplete = dataLayerFindings.length > 0"),
+);
+check(
+  "stale gates and post-build timeouts keep the build partial",
+  build.includes("stillStale.length > 0 || postBuildOverran"),
+);
+check(
+  "browser-local collection builds require a scripted core journey",
+  build.includes("const coreJourneyRequired = agenticBuild && shouldRequireCoreJourney") &&
+    build.includes("const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true"),
+);
+const dispatcher = readFileSync("src/agents/dispatcher.ts", "utf8");
+const journeyHandler = readFileSync("src/agents/tools/browser-interact.ts", "utf8");
+const plannerPrompt = readFileSync("src/agents/prompt-builder.ts", "utf8");
+check(
+  "the dispatcher preserves model-authored journey steps for the final gate",
+  dispatcher.includes("journeyEvidence.value ? { journeyEvidence: journeyEvidence.value }") &&
+    dispatcher.includes("journeyEvidence,"),
+);
+check(
+  "browser_interact records the actual report and validated steps",
+  journeyHandler.includes("ctx.journeyEvidence.value =") &&
+    journeyHandler.includes("steps: parsed.steps") &&
+    journeyHandler.includes("report,"),
+);
+check(
+  "the build prompt requires a browser journey for browser-local collection workflows",
+  plannerPrompt.includes("call ") &&
+    plannerPrompt.includes("browser_interact exactly once after the final page and wiring checks") &&
+    plannerPrompt.includes("request promises persistence reload and assert the record remains"),
+);
+check(
+  "the build prompt forbids creating test records in live user-owned databases",
+  plannerPrompt.includes("NEVER create, update or delete real user") &&
+    plannerPrompt.includes("only for a read-only journey"),
+);
+check(
+  "the model's journey is re-run against the final delivered files after repairs",
+  build.includes("const steps = result.journeyEvidence?.steps") &&
+    build.includes("const report = await runJourney(projectId, steps)") &&
+    build.includes("Independent end-to-end journey on the final delivered files"),
+);
+check(
+  "journey evidence is stored in build_outcome and shown in the checks card",
+  build.includes("...(journeyVerification ? { journey: journeyVerification } : {})") &&
+    build.includes("journey: journeyVerification } : {})"),
+);
+check(
+  "an unrun or failed journey prevents a success status and is explained to the user",
+  build.includes("journeyIncomplete") &&
+    build.includes("The main user workflow was not proven end to end"),
+);
+check(
+  "automated mutation journeys are explicitly not required for live full-stack databases",
+  build.includes("shouldRequireCoreJourney") &&
+    build.includes("a live user-owned database must never receive test"),
+);
+check(
+  "the final message explains incomplete requirements instead of only logging them",
+  build.includes("Product completeness is not proven") &&
+    build.includes("I could not extract and independently audit"),
 );
 check(
   "the original hard-failure condition remains explicit",

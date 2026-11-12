@@ -432,6 +432,15 @@ export type BuildOutcome = {
    *  like the plan. Absent on builds from before it existed, and on builds
    *  where COMPLETION_AUDIT_ENABLED is off. */
   completionAudit?: CompletionAudit;
+  /** Final independent browser journey for an interactive browser-local collection app. */
+  journey?: {
+    required: boolean;
+    ran: boolean;
+    passed: boolean;
+    stepsRun: number;
+    stepsExpected: number;
+    reason?: string;
+  };
   /** The headline number, lifted out so a query can find the builds that
    *  shipped something unproven without unpacking the audit. "Done" means this
    *  is 0 — not that no check failed. */

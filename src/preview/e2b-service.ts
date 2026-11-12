@@ -980,13 +980,14 @@ export async function checkRender(
   projectId: string,
   routes: string[],
   requireInitialContent = true,
+  requireCollectionSurface = false,
 ): Promise<{ report: RenderReport | null; ran: boolean }> {
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { report: null, ran: false };
   try {
     const r = await runSandboxScriptWithJsonInput(
       sandbox, "lampcode-render.mjs", RENDER_SCRIPT,
-      { base: "http://localhost:5173", routes, requireInitialContent }, 90_000,
+      { base: "http://localhost:5173", routes, requireInitialContent, requireCollectionSurface }, 90_000,
     );
     const report = parseRenderReport(r.stdout);
     // Unparseable output means the pages were never actually looked at. Saying
