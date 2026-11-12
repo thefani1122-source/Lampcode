@@ -337,7 +337,7 @@ check(
 check(
   "automated mutation journeys are explicitly not required for live full-stack databases",
   build.includes("shouldRequireCoreJourney") &&
-    build.includes("A live user-owned database must never receive test"),
+    build.includes("a live user-owned database must never receive test"),
 );
 check(
   "the final message explains incomplete requirements instead of only logging them",
