@@ -96,12 +96,24 @@ check("parseCriteria: criteria not an array", parseCriteria('{"criteria":"lots"}
 check("parseCriteria: wrong top-level key", parseCriteria('{"requirements":[{"text":"X"}]}'), []);
 
 check(
-  "parseCriteria: capped at 18",
+  "parseCriteria: capped at 36",
   parseCriteria(
     JSON.stringify({ criteria: Array.from({ length: 40 }, (_, i) => ({ text: `req ${i}` })) }),
   ).length,
-  18,
+  36,
 );
+
+// A realistic multi-feature prompt should not lose requirements at the old
+// eighteen-criterion ceiling.
+{
+  const stats = { dropped: 0 };
+  const criteria = parseCriteria(
+    JSON.stringify({ criteria: Array.from({ length: 32 }, (_, i) => ({ text: `taskflow requirement ${i + 1}` })) }),
+    stats,
+  );
+  check("parseCriteria: retains a TaskFlow-sized 32-requirement prompt", criteria.length, 32);
+  check("parseCriteria: a 32-requirement prompt drops nothing", stats.dropped, 0);
+}
 
 // What the cap discards has to be countable, or `unverified === 0` reads as
 // full coverage over a prompt whose later requirements were never audited.
@@ -111,13 +123,13 @@ check(
     JSON.stringify({ criteria: Array.from({ length: 40 }, (_, i) => ({ text: `req ${i}` })) }),
     stats,
   );
-  check("parseCriteria: the cap reports how many it dropped", stats.dropped, 22);
+  check("parseCriteria: the cap reports how many it dropped", stats.dropped, 4);
 }
 
 {
   const stats = { dropped: 0 };
   parseCriteria(
-    JSON.stringify({ criteria: Array.from({ length: 18 }, (_, i) => ({ text: `req ${i}` })) }),
+    JSON.stringify({ criteria: Array.from({ length: 36 }, (_, i) => ({ text: `req ${i}` })) }),
     stats,
   );
   check("parseCriteria: exactly at the cap drops nothing", stats.dropped, 0);
@@ -136,7 +148,7 @@ check(
   parseCriteria(
     JSON.stringify({
       criteria: [
-        ...Array.from({ length: 18 }, (_, i) => ({ text: `req ${i}` })),
+        ...Array.from({ length: 36 }, (_, i) => ({ text: `req ${i}` })),
         { text: "   " },
         { text: 7 },
         { text: "REQ 0" },

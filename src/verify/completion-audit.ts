@@ -42,9 +42,11 @@ import type {
  * claims and a user hears the second as the first.
  */
 
-/** Cap on extracted criteria. A prompt yielding more than this is being
- *  over-decomposed into assertions too fine to audit one by one. */
-const MAX_CRITERIA = 18;
+/** Maximum requirements checked in one independent audit dispatch. Thirty-six
+ *  covers realistic multi-feature product prompts such as TaskFlow while
+ *  keeping the audit payload/output bounded. Beyond this, the dropped count
+ *  remains fail-closed and the build is reported incomplete. */
+const MAX_CRITERIA = 36;
 
 /** Budget for each of the two dispatches. The extractor writes a short JSON
  *  object; the auditor reads code and writes one. Generous, and present only so
