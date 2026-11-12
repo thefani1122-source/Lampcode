@@ -195,7 +195,30 @@ export function shouldPlan(opts: {
  * fails to parse would leave long builds unplanned with nothing in the log
  * saying why.
  */
-export function parsePlan(raw: string): BuildPlan | null {
+export type ParsePlanOptions = {
+  /** Require meaningful product decisions, not only a proposed file list. */
+  requireApproach?: boolean;
+  /** New apps need a full blueprint; an edit only needs a concise change plan. */
+  requireBlueprint?: boolean;
+};
+
+const REQUIRED_BLUEPRINT_SECTIONS = [
+  "screens:",
+  "journeys:",
+  "data:",
+  "first run:",
+  "visual:",
+  "verification:",
+] as const;
+
+export function hasCompleteProductBlueprint(approach: string[]): boolean {
+  const normalized = approach.join("\n").toLowerCase();
+  return approach.length >= REQUIRED_BLUEPRINT_SECTIONS.length &&
+    REQUIRED_BLUEPRINT_SECTIONS.every((section) => normalized.includes(section)) &&
+    approach.every((item) => item.trim().length >= 18);
+}
+
+export function parsePlan(raw: string, options: ParsePlanOptions = {}): BuildPlan | null {
   const text = raw.trim();
   if (text.length === 0) return null;
 
@@ -242,6 +265,9 @@ export function parsePlan(raw: string): BuildPlan | null {
   const approach = Array.isArray(obj["approach"])
     ? obj["approach"].filter((x): x is string => typeof x === "string" && x.trim() !== "")
     : [];
+
+  if (options.requireApproach && approach.length === 0) return null;
+  if (options.requireBlueprint && !hasCompleteProductBlueprint(approach)) return null;
 
   const outOfScope = Array.isArray(obj["outOfScope"])
     ? obj["outOfScope"].filter((x): x is string => typeof x === "string" && x.trim() !== "")
@@ -348,7 +374,14 @@ export async function planBuild(opts: {
     "- Visual direction: choose a product-appropriate visual identity, palette, typography, spacing scale, page shell, navigation, card/table/chart hierarchy and reusable component patterns. Avoid a generic unstyled shell.",
     "- Responsive behavior: state how navigation, grids, tables, forms and sidebars adapt to mobile and desktop.",
     "- Verification: list the observable result for each main journey and screen so the finished preview can be checked against the user's request.",
-    "Put concise decisions in the approach array. A file list by itself is not a complete plan.",
+    "The approach array is REQUIRED. Use exactly these six labelled entries so every build has an auditable blueprint:",
+    "- SCREENS: name each view/route and its major visible sections.",
+    "- JOURNEYS: describe the primary user flows from action to visible result.",
+    "- DATA: identify entities, source of truth, persistence and derived metrics.",
+    "- FIRST RUN: describe populated preview versus real-backend empty/loading/error states; never seed fake rows into a real database.",
+    "- VISUAL: define the product-specific hierarchy, navigation, responsive layout and visual direction.",
+    "- VERIFICATION: state observable outcomes that prove each screen and primary journey works.",
+    "For an edit, keep the approach scoped to the requested change but still provide at least one substantive approach entry. A file list alone is never a valid plan.",
   );
 
   if (opts.shape) {
@@ -379,13 +412,16 @@ export async function planBuild(opts: {
       costGuard: { cumulativeUsd: 0, maxUsd: PLAN_COST_CEILING_USD },
     });
 
-    const plan = parsePlan(result.finalContent || result.content);
+    const plan = parsePlan(result.finalContent || result.content, {
+      requireApproach: true,
+      requireBlueprint: Object.keys(existing).length === 0,
+    });
     if (!plan) {
       logger.warn(
         { sessionId: opts.sessionId, contentHead: (result.finalContent || result.content).slice(0, 300) },
-        "[planner] could not parse a plan — building without one",
+        "[planner] could not validate a product blueprint — building without a trusted plan",
       );
-      return { plan: null, costUsd: result.costUsd, reason: "unparseable plan" };
+      return { plan: null, costUsd: result.costUsd, reason: "unparseable or incomplete product blueprint" };
     }
 
     logger.info(
