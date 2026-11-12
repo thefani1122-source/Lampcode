@@ -362,9 +362,13 @@ ok("non-frontend agents do not get collection workspace requirements", !shouldRe
   agentType: "planning",
 }));
 ok("a habit tracker requires a representative browser journey", shouldRequireCoreJourney(frontendPolicy));
-ok("a full-stack task tracker requires a representative browser journey", shouldRequireCoreJourney({
+ok("a full-stack task tracker does not require an automated mutating journey against a live database", !shouldRequireCoreJourney({
   ...frontendPolicy,
   taskDescription: "FULLSTACK BUILD: Build a task tracker",
+}));
+ok("an existing full-stack edit does not require an automated mutating journey", !shouldRequireCoreJourney({
+  ...frontendPolicy,
+  taskDescription: "EXISTING FULLSTACK EDIT: update task tracker",
 }));
 ok("a read-only analytics dashboard does not force a CRUD journey", !shouldRequireCoreJourney({
   ...frontendPolicy,
