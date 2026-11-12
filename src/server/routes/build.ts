@@ -1649,7 +1649,7 @@ export async function runFastBuild(
     // When a reference image is attached, prepend a pixel-fidelity requirement
     // so it surfaces prominently in the user message alongside the system-prompt
     // instruction injected by buildSystemPrompt().
-    const coreJourneyRequired = shouldRequireCoreJourney({
+    const coreJourneyRequired = agenticBuild && shouldRequireCoreJourney({
       agentType: "frontend",
       taskDescription,
       userPrompt: prompt,
