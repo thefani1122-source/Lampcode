@@ -85,7 +85,7 @@ import {
 } from "../../verify/hollow-tests.js";
 import { tallyInteractions, formatInteractionsForUser } from "../../verify/interactions.js";
 import type { StorageSnapshot } from "../../verify/storage.js";
-import { allRoutesOk, routesToVisit, shouldRequireInitialContent, shouldRequireCollectionSurface } from "../../verify/render.js";
+import { allRoutesOk, routesToVisit, shouldRequireInitialContent, shouldRequireCollectionSurface, shouldRequireCoreJourney } from "../../verify/render.js";
 import { parseJourney, MAX_JOURNEY_STEPS } from "../../verify/journey.js";
 import { formatPreviewEmailConfirmationGuidance } from "../../verify/preview-auth-guidance.js";
 import {
@@ -1649,6 +1649,12 @@ export async function runFastBuild(
     // When a reference image is attached, prepend a pixel-fidelity requirement
     // so it surfaces prominently in the user message alongside the system-prompt
     // instruction injected by buildSystemPrompt().
+    const coreJourneyRequired = shouldRequireCoreJourney({
+      agentType: "frontend",
+      taskDescription,
+      userPrompt: prompt,
+    });
+
     const effectiveRequirements = hasReferenceImage
       ? [
           "A reference screenshot/design has been provided. Extract ALL exact hex colors, font sizes, spacing, border-radius, and shadow values from it before writing any code.",
@@ -4914,6 +4920,77 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       await revalidateStaleGates();
     }
 
+    // ── Independent end-to-end journey on the final delivered files ─────────
+    // The model-authored journey is re-run after every repair so its evidence
+    // describes the exact code that will be handed to the user, not an earlier
+    // draft. This mandatory mutation journey is restricted to browser-local
+    // collection products; a live user-owned database must never receive test
+    // records merely to satisfy a build gate.
+    let journeyVerification: NonNullable<BuildOutcome["journey"]> | null = null;
+    if (coreJourneyRequired) {
+      const steps = result.journeyEvidence?.steps;
+      if (!steps || !hasSandbox(projectId) || sandboxWriteFailed) {
+        journeyVerification = {
+          required: true,
+          ran: false,
+          passed: false,
+          stepsRun: 0,
+          stepsExpected: steps?.length ?? 0,
+          reason: !steps
+            ? "the agent did not provide a browser journey"
+            : "the final preview sandbox was not available",
+        };
+      } else {
+        try {
+          const report = await runJourney(projectId, steps);
+          const expected = report.totalSteps ?? steps.length;
+          const failedStep = report.steps.find((step) => !step.ok);
+          const passed =
+            report.ran === true &&
+            report.completed !== false &&
+            report.steps.length === expected &&
+            report.steps.every((step) => step.ok) &&
+            report.consoleErrors.length === 0;
+          journeyVerification = {
+            required: true,
+            ran: report.ran,
+            passed,
+            stepsRun: report.steps.length,
+            stepsExpected: expected,
+            ...(!passed
+              ? {
+                  reason: report.reason ||
+                    (failedStep
+                      ? `step ${failedStep.step} failed: ${failedStep.detail || failedStep.did}`
+                      : report.consoleErrors.length > 0
+                        ? `the journey produced ${report.consoleErrors.length} browser console error(s)`
+                        : `only ${report.steps.length} of ${expected} journey step(s) completed`),
+                }
+              : {}),
+          };
+        } catch (err) {
+          journeyVerification = {
+            required: true,
+            ran: false,
+            passed: false,
+            stepsRun: 0,
+            stepsExpected: steps.length,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      server?.thinking(sessionId, {
+        sessionId,
+        text: journeyVerification.passed
+          ? `The final browser journey passed (${journeyVerification.stepsRun} steps).`
+          : `The final browser journey is not verified: ${journeyVerification.reason || "it did not pass"}.`,
+      });
+      console.log(
+        `[build] journey session=${sessionId} required=true ran=${journeyVerification.ran} ` +
+        `passed=${journeyVerification.passed} steps=${journeyVerification.stepsRun}/${journeyVerification.stepsExpected}`,
+      );
+    }
+
     // ── Dead code in what is actually being delivered ───────────────────────
     // Measured here rather than only when the model called find_dead_code, and
     // for the same reason build_outcome exists at all: a number nobody records
@@ -5220,6 +5297,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       ...(completionAudit
         ? { completionAudit, unverifiedCount: completionAudit.unverified }
         : {}),
+      ...(journeyVerification ? { journey: journeyVerification } : {}),
       ...(fullstackEvidence ? { fullstack: fullstackEvidence } : {}),
       ...(classification
         ? { classification: { buildType: classification.buildType, source: classification.source, reason: classification.reason } }
@@ -5270,11 +5348,12 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       wiringTally.deadHandlers + wiringTally.bareButtons + wiringTally.formsNoSubmit +
       wiringTally.deadLinks + wiringTally.missingEndpoints;
     const dataLayerIncomplete = dataLayerFindings.length > 0;
+    const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true;
     const buildIncomplete =
       gatesFailed || pageUnverified || typesUnverified ||
       result.turnsExhausted || result.budgetExhausted ||
       planningUnverified || auditIncomplete || hollowControls > 0 ||
-      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran;
+      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran || journeyIncomplete;
     if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
@@ -5350,7 +5429,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       pageFailed || typesFailed || pageUnverified || typesUnverified ||
       result.turnsExhausted || result.budgetExhausted ||
       planningUnverified || auditIncomplete || hollowControls > 0 ||
-      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran
+      dataLayerIncomplete || stillStale.length > 0 || postBuildOverran || journeyIncomplete
     ) {
       closingLines.push("Before anything else — this build is NOT finished:");
       if (pageFailed) {
@@ -5414,6 +5493,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       if (dataLayerIncomplete) {
         closingLines.push(
           `• The data layer still has ${dataLayerFindings.length} unresolved issue(s). Do not rely on saves or records until those are fixed.`,
+        );
+      }
+      if (journeyIncomplete && journeyVerification) {
+        closingLines.push(
+          `• The main user workflow was not proven end to end: ${journeyVerification.reason || "the final browser journey did not pass"}.`,
         );
       }
       closingLines.push("Continue the build to finish the remaining work before publishing.");
@@ -5532,6 +5616,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           budgetExhausted: outcome.budgetExhausted === true,
           wiring: wiringTally,
           wiringRepaired,
+          journey: journeyVerification ?? undefined,
           schemaApply,
           audit: completionAudit
             ? { criteria: completionAudit.criteria, verdicts: completionAudit.verdicts }
