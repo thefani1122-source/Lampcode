@@ -894,6 +894,8 @@ export interface ToolExecutionContext {
   toolCallId?: string | undefined;
   /** Whether this frontend build is expected to show first-run sample content. Real backend apps may legitimately begin with no rows. */
   requireInitialContent?: boolean | undefined;
+  /** Collection products need a substantive workspace even when real data is empty. */
+  requireCollectionSurface?: boolean | undefined;
   /** Required by the agentic build tools — identifies the live sandbox. */
   projectId?: string | undefined;
   /** The project's existing files on a follow-up edit, as build.ts already
