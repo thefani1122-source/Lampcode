@@ -1850,18 +1850,21 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("product-ui-design");
   }
 
-  // These two files are Supabase-specific (the so-called database-rls skill
-  // contains Supabase SQL/RLS, not generic database guidance). Only inject them
-  // for a new Supabase full-stack build with positive database/auth intent.
-  // Never infer this from raw provider words: "without Supabase" and "persist
-  // in localStorage" must not teach the frontend agent to create a database.
-  // MongoDB and existing-project builds keep their own provider contract.
+  // Database security is useful across providers, but the generic skill must
+  // stay provider-neutral. Supabase policy syntax is a separate skill and may
+  // only be injected when this build is actually using the Supabase path.
+  // Raw excluded terms ("without Supabase") and browser-local persistence must
+  // never cause either database skill to leak into a frontend-only build.
   const requestSignals = readSignals(prompt);
-  const needsSupabaseRls =
-    opts?.buildType === "fullstack" &&
+  const hasDatabaseSecurityIntent =
+    Boolean(opts?.buildType && opts.buildType !== "frontend") &&
     (hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem);
-  if (needsSupabaseRls) {
+  if (hasDatabaseSecurityIntent) {
     skillsToLoad.add("database-rls");
+  }
+  const needsSupabaseRls =
+    opts?.buildType === "fullstack" && hasDatabaseSecurityIntent;
+  if (needsSupabaseRls) {
     skillsToLoad.add("supabase-rls");
   }
 
