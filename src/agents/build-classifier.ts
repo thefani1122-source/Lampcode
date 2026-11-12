@@ -134,15 +134,35 @@ const AUTH_AS_UI_RE =
   /\b(?:login|signin|sign[- ]in|sign[- ]up|signup|register(?:ation)?|password|auth)\b[- ]?\w*\s+(?:form|page|screen|ui|modal|dialog|layout|mockup|mock[- ]up|design|flow|wireframe)\b/i;
 
 /**
- * Strip explicit negations before looking for server words.
- * "no backend" contains "backend", so a bare match read an instruction NOT to
- * build one as an instruction to build one.
+ * Terms which can imply a server when the user actually named them as things
+ * NOT to use. Keep this list broader than SERVER_THING_RE: it also consumes
+ * common negative-only phrases ("external APIs", "MCP integrations") so a
+ * comma-separated exclusion list cannot leave a later provider name looking
+ * like a positive architecture request.
+ */
+const NEGATED_SERVER_TERM =
+  "(?:external[ -]apis?|third[ -]party[ -]apis?|backend|server|database|db|apis?|accounts?|login|auth\\w*|" +
+  "supabase|mongodb|mongo|postgresql|postgres|sqlite|mysql|planetscale|neon|firebase|firestore|dynamodb|redis|graphql|" +
+  "hono|express|fastapi|django|rails|stripe|paddle|lemon[ -]squeezy|oauth|sso|jwt|mcp(?:[ -](?:servers?|integrations?|tools?))?)";
+
+const NEGATED_SERVER_LIST =
+  `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)${NEGATED_SERVER_TERM})*`;
+
+const NEGATED_SERVER_PHRASE_RE = new RegExp(
+  String.raw`\\b(?:no|without|avoid|never|do\\s+not|don['’]t|does\\s+not|doesn['’]t|not)\\s+` +
+    String.raw`(?:(?:a|an|the|any)\\s+)?` +
+    String.raw`(?:(?:need(?:ed|ing)?(?:\\s+for)?|want|use|using|create|install|integrate|configure|connect(?:ed)?(?:\\s+to)?|rely\\s+on)\\s+)?` +
+    String.raw`(?:(?:a|an|the|any)\\s+)?(?:${NEGATED_SERVER_LIST})\\b`,
+  "gi",
+);
+
+/**
+ * Remove only explicit negative mentions before evaluating positive server,
+ * auth, multi-person and provider signals. This preserves real mixed requests:
+ * "Use Supabase, but do not use MongoDB" still selects Supabase.
  */
 function deNegate(prompt: string): string {
-  return prompt.replace(
-    /\b(?:no|without(?:\s+an?)?|not?\s+need(?:ing)?(?:\s+an?)?|don'?t\s+(?:need|want|use))\s+(?:a\s+)?(?:backend|server|database|api|db|accounts?|login|auth\w*)\b/gi,
-    " ",
-  );
+  return prompt.replace(NEGATED_SERVER_PHRASE_RE, " ");
 }
 
 export type DeterministicSignals = {
@@ -174,7 +194,7 @@ export function readSignals(prompt: string): DeterministicSignals {
     authSystem: AUTH_SYSTEM_RE.test(deNegated) && !AUTH_AS_UI_RE.test(text),
     multiPerson: MULTI_PERSON_RE.test(deNegated),
     crossDevice: CROSS_DEVICE_RE.test(deNegated),
-    mentionsMongo: /\bmongo(?:db)?\b/i.test(text),
+    mentionsMongo: /\bmongo(?:db)?\b/i.test(deNegated),
   };
 }
 
