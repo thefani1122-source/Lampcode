@@ -16,6 +16,7 @@ import {
   INITIAL_EMPTY_STATE_RE,
   shouldRequireInitialContent,
   shouldRequireCollectionSurface,
+  shouldRequireCoreJourney,
 } from "../src/verify/render.js";
 import type { RenderReport, RouteRender } from "../src/verify/render.js";
 
@@ -357,6 +358,23 @@ ok("explicit wireframes do not get application-workspace requirements", !shouldR
   userPrompt: "Build a blank wireframe only for a task tracker",
 }));
 ok("non-frontend agents do not get collection workspace requirements", !shouldRequireCollectionSurface({
+  ...frontendPolicy,
+  agentType: "planning",
+}));
+ok("a habit tracker requires a representative browser journey", shouldRequireCoreJourney(frontendPolicy));
+ok("a full-stack task tracker requires a representative browser journey", shouldRequireCoreJourney({
+  ...frontendPolicy,
+  taskDescription: "FULLSTACK BUILD: Build a task tracker",
+}));
+ok("a read-only analytics dashboard does not force a CRUD journey", !shouldRequireCoreJourney({
+  ...frontendPolicy,
+  userPrompt: "Build a read-only analytics dashboard",
+}));
+ok("a wireframe does not require a browser journey", !shouldRequireCoreJourney({
+  ...frontendPolicy,
+  userPrompt: "Build a blank wireframe only for a task tracker",
+}));
+ok("non-frontend agents do not require browser journeys", !shouldRequireCoreJourney({
   ...frontendPolicy,
   agentType: "planning",
 }));
