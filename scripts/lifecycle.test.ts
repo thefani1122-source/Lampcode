@@ -255,7 +255,9 @@ check(
 // The row has to agree with the gates, not with the model's summary.
 check(
   "a failing gate is not recorded as success",
-  /const buildIncomplete =\s*gatesFailed \|\| pageUnverified \|\| typesUnverified/.test(build) &&
+  /const buildIncomplete =\s*gatesFailed/.test(build) &&
+    build.includes("planningUnverified || auditIncomplete || hollowControls > 0") &&
+    build.includes("dataLayerIncomplete || stillStale.length > 0 || postBuildOverran") &&
     build.includes('status: buildIncomplete ? "completed" : "success"'),
 );
 check(
@@ -266,6 +268,30 @@ check(
 check(
   "turn and budget exhaustion also make the build incomplete",
   build.includes("result.turnsExhausted || result.budgetExhausted"),
+);
+check(
+  "unresolved or unavailable completion audits cannot be recorded as success",
+  build.includes("const auditUnavailable = shouldAudit() && completionAudit === null") &&
+    build.includes("const auditIncomplete = auditUnavailable || auditUnresolvedCount > 0"),
+);
+check(
+  "a missing product blueprint keeps the build partial",
+  build.includes("let planningUnverified = false") &&
+    build.includes("planningUnverified || auditIncomplete"),
+);
+check(
+  "hollow controls and unresolved data-layer issues keep the build partial",
+  build.includes("const hollowControls =") &&
+    build.includes("const dataLayerIncomplete = dataLayerFindings.length > 0"),
+);
+check(
+  "stale gates and post-build timeouts keep the build partial",
+  build.includes("stillStale.length > 0 || postBuildOverran"),
+);
+check(
+  "the final message explains incomplete requirements instead of only logging them",
+  build.includes("Product completeness is not proven") &&
+    build.includes("I could not extract and independently audit"),
 );
 check(
   "the original hard-failure condition remains explicit",
