@@ -1,5 +1,5 @@
 import { runJourney } from "../../preview/e2b-service.js";
-import { formatJourney, parseJourney } from "../../verify/journey.js";
+import { formatJourney, hasJourneyForCurrentCode, parseJourney } from "../../verify/journey.js";
 import type { ToolHandler } from "./registry.js";
 import type { ToolExecutionContext } from "../tools.js";
 
@@ -24,6 +24,16 @@ export const browserInteractHandler: ToolHandler = async (
 
   const parsed = parseJourney(args["steps"]);
   if ("error" in parsed) return `Error: ${parsed.error}`;
+
+  const previous = ctx.journeyEvidence?.value ?? null;
+  const currentWriteCount = ctx.writeCounter?.value ?? 0;
+  if (previous && hasJourneyForCurrentCode(previous, currentWriteCount)) {
+    return [
+      "A browser journey has already run against this unchanged file revision. Repeating it is blocked to avoid spending another browser/model round on identical code.",
+      "Use the previous report below. If a step failed, inspect and repair the application first; a new journey is allowed after a file write.",
+      formatJourney(previous.report),
+    ].join("\n\n");
+  }
 
   const report = await runJourney(projectId, parsed.steps);
   if (ctx.journeyEvidence) {

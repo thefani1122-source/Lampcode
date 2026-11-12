@@ -474,7 +474,9 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
     name: "browser_interact",
     description:
       "Drive the running app the way a person would, in one browser session, and get every step " +
-      "back separately.\n" +
+      "back separately. Put the COMPLETE user journey in ONE call (up to 20 steps); do not split " +
+      "each click/type/expect into separate tool calls. The same journey is not run again until " +
+      "you have changed project files.\n" +
       "This is the only way to check that a FEATURE works. check_page asks whether a page " +
       "rendered; this asks whether adding an item, reloading, and finding it still there " +
       "actually happens. Use it on the thing the user asked for, once you believe it is " +
