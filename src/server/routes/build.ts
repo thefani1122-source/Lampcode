@@ -5616,7 +5616,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           budgetExhausted: outcome.budgetExhausted === true,
           wiring: wiringTally,
           wiringRepaired,
-          journey: journeyVerification ?? undefined,
+          ...(journeyVerification ? { journey: journeyVerification } : {}),
           schemaApply,
           audit: completionAudit
             ? { criteria: completionAudit.criteria, verdicts: completionAudit.verdicts }
