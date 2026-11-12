@@ -293,6 +293,30 @@ check(
   build.includes("const coreJourneyRequired = shouldRequireCoreJourney") &&
     build.includes("const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true"),
 );
+const dispatcher = readFileSync("src/agents/dispatcher.ts", "utf8");
+const journeyHandler = readFileSync("src/agents/tools/browser-interact.ts", "utf8");
+const plannerPrompt = readFileSync("src/agents/prompt-builder.ts", "utf8");
+check(
+  "the dispatcher preserves model-authored journey steps for the final gate",
+  dispatcher.includes("journeyEvidence.value ? { journeyEvidence: journeyEvidence.value }") &&
+    dispatcher.includes("journeyEvidence,"),
+);
+check(
+  "browser_interact records the actual report and validated steps",
+  journeyHandler.includes("ctx.journeyEvidence.value =") &&
+    journeyHandler.includes("steps: parsed.steps") &&
+    journeyHandler.includes("report,"),
+);
+check(
+  "the build prompt requires a browser journey for browser-local collection workflows",
+  plannerPrompt.includes("call browser_interact exactly once") &&
+    plannerPrompt.includes("request promises persistence reload and assert the record remains"),
+);
+check(
+  "the build prompt forbids creating test records in live user-owned databases",
+  plannerPrompt.includes("NEVER create, update or delete real user") &&
+    plannerPrompt.includes("only for a read-only journey"),
+);
 check(
   "the model's journey is re-run against the final delivered files after repairs",
   build.includes("const steps = result.journeyEvidence?.steps") &&
