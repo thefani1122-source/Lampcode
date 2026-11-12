@@ -55,6 +55,14 @@ export interface ChecksInput {
     missingEndpoints: number;
   };
   wiringRepaired?: number;
+  journey?: {
+    required: boolean;
+    ran: boolean;
+    passed: boolean;
+    stepsRun: number;
+    stepsExpected: number;
+    reason?: string;
+  };
   schemaApply?: { ran: boolean; ok: boolean; error?: string } | null;
   audit?: { criteria: AcceptanceCriterion[]; verdicts: CriterionVerdict[] } | null;
   auditRepaired?: number;
@@ -118,6 +126,20 @@ export function buildChecksCard(input: ChecksInput): ChecksCard {
             detail: `${hollow} ${hollow === 1 ? "control does" : "controls do"} nothing yet`,
           },
     );
+  }
+
+  if (input.journey?.required) {
+    const journey = input.journey;
+    rows.push({
+      id: "journey",
+      label: "A main user workflow works end to end",
+      status: journey.passed ? "pass" : journey.ran ? "fail" : "warn",
+      detail: journey.passed
+        ? `${journey.stepsRun} steps completed in the browser`
+        : journey.reason || (journey.ran
+          ? `journey failed: ${journey.stepsRun} of ${journey.stepsExpected} steps completed`
+          : "the required browser journey was not run"),
+    });
   }
 
   const schema = input.schemaApply;
