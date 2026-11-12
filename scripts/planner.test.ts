@@ -490,6 +490,26 @@ check(
 
 // Integration guard: the exact same trusted shape must reach the planning call
 // and the generation dispatch, even when planning returned null.
+const plannerSource = readFileSync("src/agents/build-planner.ts", "utf8");
+check(
+  "the actual planner call requires an approach for every planned build",
+  plannerSource.includes("requireApproach: true"),
+  true,
+);
+check(
+  "new apps require all six labelled product-blueprint decisions",
+  plannerSource.includes("requireBlueprint: Object.keys(existing).length === 0") &&
+    plannerSource.includes("REQUIRED_BLUEPRINT_SECTIONS"),
+  true,
+);
+const promptBuilderSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
+check(
+  "the planning prompt explicitly asks for all six labels",
+  ["SCREENS:", "JOURNEYS:", "DATA:", "FIRST RUN:", "VISUAL:", "VERIFICATION:"]
+    .every((label) => promptBuilderSource.includes(label)),
+  true,
+);
+
 const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
 check(
   "planBuild receives the authoritative planningShape",
