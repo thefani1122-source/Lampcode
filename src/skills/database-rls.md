@@ -1,100 +1,63 @@
 ---
 name: database-rls
-description: Supabase RLS pattern — CREATE TABLE + ENABLE ROW LEVEL SECURITY + GRANT + CREATE POLICY, the separate user_roles table convention, and common RLS mistakes to avoid.
+description: Provider-neutral database security guidance — ownership, tenant isolation, least privilege, safe queries, authorization boundaries, and tests for SQL and NoSQL data stores.
 ---
 
-# Database & RLS Rules — Supabase
+# Database Security & Data Isolation
 
-## RLS (Row Level Security) — Always Required
+These rules apply to SQL and NoSQL databases. They describe security properties, not a vendor-specific schema. Use the configured provider's native authorization and query mechanisms; never assume Supabase, `auth.uid()`, PostgreSQL syntax, or a particular ORM unless the project actually uses it.
 
-Every table MUST have:
-1. CREATE TABLE with user_id column
-2. ALTER TABLE ENABLE ROW LEVEL SECURITY
-3. GRANT statements (always after CREATE)
-4. CREATE POLICY for each operation needed
+## 1. Establish the authorization boundary
 
-## The Pattern (never deviate)
-```sql
--- Step 1: Create table
-CREATE TABLE table_name (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid REFERENCES auth.users(id) NOT NULL,
-  -- your columns here
-  created_at timestamptz DEFAULT now()
-);
+- Authenticate the caller before accessing private data.
+- Authorize every read, create, update, and delete at the object/record level. Hiding a button or route is not authorization.
+- Derive the acting user and tenant from the verified server-side session/token. Never trust a client-supplied `userId`, `ownerId`, `role`, or `tenantId` as proof of access.
+- Scope every query to the authenticated principal and, for multi-tenant systems, to a verified membership in the tenant.
+- Deny by default when identity, ownership, membership, or role cannot be established.
+- Keep privileged credentials and service keys on the server. Never bundle them into browser code or expose them in logs.
 
--- Step 2: Enable RLS (always)
-ALTER TABLE table_name ENABLE ROW LEVEL SECURITY;
+## 2. SQL databases
 
--- Step 3: Grants (always — often forgotten)
-GRANT SELECT, INSERT, UPDATE, DELETE
-  ON table_name TO authenticated;
-GRANT ALL ON table_name TO service_role;
+- Where the provider supports row-level security, enable it on tables containing private or tenant-owned records and add policies for each required operation.
+- Enforce ownership in the database as well as in the API when the provider supports it; do not rely on frontend filtering.
+- Use parameterized queries or the ORM's parameter binding. Never concatenate untrusted values into SQL.
+- Use foreign keys and unique constraints for invariants the database can enforce.
+- Apply least-privilege grants: the application role should receive only the operations it needs.
+- Add indexes for ownership and tenant columns used by authorization filters.
+- For providers without native row-level security, enforce the same isolation in the trusted server/data-access layer.
 
--- Step 4: Policies
-CREATE POLICY "users_own_rows" ON table_name
-  FOR ALL USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
-```
+## 3. Document and key-value databases
 
-## User Roles — Correct Pattern
-NEVER store roles in profiles table directly.
-Use a separate roles system:
+- Include ownership and tenant constraints in every query that reads or mutates private documents.
+- For updates and deletes, combine the record identifier with the verified owner/tenant predicate; do not fetch by identifier and mutate without an authorization check.
+- Set ownership fields from the authenticated server-side context when creating records.
+- Validate document shape and allowed fields. Prevent mass assignment of owner, tenant, role, and billing fields.
+- Use the provider's native access controls and least-privilege credentials. Do not assume that an application-level filter alone protects direct database access.
+- Add indexes for frequently used ownership/tenant predicates and apply transaction or conditional-write semantics where concurrent updates matter.
 
-```sql
--- WRONG:
-CREATE TABLE profiles (
-  id uuid PRIMARY KEY,
-  role text DEFAULT 'user'  -- ← never do this
-);
+## 4. API and application boundaries
 
--- CORRECT:
-CREATE TABLE user_roles (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid REFERENCES auth.users(id) UNIQUE,
-  role text NOT NULL DEFAULT 'user',
-  created_at timestamptz DEFAULT now()
-);
-ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
-GRANT ALL ON user_roles TO authenticated;
-GRANT ALL ON user_roles TO service_role;
+- Keep authorization in a shared server/data-access boundary so every route uses the same checks.
+- Separate authentication (who is calling) from authorization (what that caller may do).
+- Validate input on the server and allowlist fields that callers may create or update.
+- Return non-revealing errors for records the caller cannot access; do not leak whether another tenant's record exists.
+- Never silently fall back from a real database to localStorage, hard-coded data, or an in-memory stand-in when a connection fails. Report the failure instead.
 
--- Use security definer function for role check:
-CREATE OR REPLACE FUNCTION get_user_role(uid uuid)
-RETURNS text
-LANGUAGE sql SECURITY DEFINER
-AS $$
-  SELECT role FROM user_roles WHERE user_id = uid
-$$;
-```
+## 5. Security tests required for private data
 
-## Multi-tenant Apps
-When multiple user types exist (customer + admin):
-```sql
--- Each data table has user_id
--- Admin policies use the role function:
-CREATE POLICY "admins_see_all" ON orders
-  FOR SELECT USING (
-    get_user_role(auth.uid()) = 'admin'
-    OR auth.uid() = user_id
-  );
-```
+Test the real persistence/authorization boundary, not only helper functions:
 
-## TypeScript Types
-Always generate matching types:
-```typescript
-// src/db/types.ts
-export interface TableName {
-  id: string
-  user_id: string
-  created_at: string
-  // your fields
-}
-```
+1. An unauthenticated caller cannot read or mutate protected records.
+2. User A cannot read, update, or delete User B's records by guessing an identifier.
+3. A member of Tenant A cannot access Tenant B's records.
+4. A caller cannot assign themselves an elevated role or another user's ownership.
+5. Each supported create/read/update/delete operation enforces the same ownership rule.
+6. A database or authorization failure does not return a successful empty-data response that looks like a valid empty state.
 
-## Most Common RLS Mistakes
-1. Forgot GRANT → authenticated user gets "permission denied"
-2. Forgot ENABLE ROW LEVEL SECURITY → all data exposed
-3. policy WITH CHECK missing → INSERT works, but shouldn't
-4. Role in profiles table → security definer function needed
-5. service_role grant missing → backend API can't write data
+Use an isolated test database or test tenant. Never mutate a live user's records to prove isolation.
+
+## 6. Provider-specific rules
+
+- For Supabase/PostgreSQL Auth, load and follow the dedicated `supabase-rls` skill for exact SQL, grants, and policy syntax.
+- For MongoDB/Mongoose, use the project's existing schema, indexes, connection handling, and query conventions; do not add PostgreSQL RLS statements.
+- For an existing project, inspect and preserve its actual provider and authorization model before proposing migrations.

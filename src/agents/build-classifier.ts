@@ -143,10 +143,10 @@ const AUTH_AS_UI_RE =
 const NEGATED_SERVER_TERM =
   "(?:external[ -]apis?|third[ -]party[ -]apis?|backend|server|database|db|apis?|accounts?|login|auth\\w*|" +
   "supabase|mongodb|mongo|postgresql|postgres|sqlite|mysql|planetscale|neon|firebase|firestore|dynamodb|redis|graphql|" +
-  "hono|express|fastapi|django|rails|stripe|paddle|lemon[ -]squeezy|oauth|sso|jwt|mcp(?:[ -](?:servers?|integrations?|tools?))?)";
+  "MONGODB_URI|mongoose|hono|express|fastapi|django|rails|stripe|paddle|lemon[ -]squeezy|oauth|sso|jwt|mcp(?:[ -](?:servers?|integrations?|tools?))?)";
 
 const NEGATED_SERVER_LIST =
-  `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)${NEGATED_SERVER_TERM})*`;
+  `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)(?:(?:a|an|the|any)\\s+)?${NEGATED_SERVER_TERM})*`;
 
 const NEGATED_SERVER_PHRASE_RE = new RegExp(
   String.raw`\b(?:no|without|avoid|never|do\s+not|don['’]t|does\s+not|doesn['’]t|not)\s+` +
@@ -164,6 +164,25 @@ const NEGATED_SERVER_PHRASE_RE = new RegExp(
  */
 function deNegate(prompt: string): string {
   return prompt.replace(NEGATED_SERVER_PHRASE_RE, " ");
+}
+
+/**
+ * A database provider explicitly requested by the user, after removing
+ * negated mentions. Generic words like "persist", "table", and "CRUD" are
+ * deliberately excluded: browser-local apps use those too.
+ */
+const POSITIVE_DATABASE_REQUEST_RE =
+  /\b(?:database|databases|db|supabase|mongodb|mongo|postgresql|postgres|sqlite|mysql|planetscale|neon|firebase|firestore|dynamodb|redis)\b/i;
+
+export function hasPositiveDatabaseRequirement(prompt: string): boolean {
+  return POSITIVE_DATABASE_REQUEST_RE.test(deNegate(typeof prompt === "string" ? prompt : ""));
+}
+
+/** Keep the legacy positive Mongo URI/ODM signals, but strip them from
+ * explicit negative phrases before selecting a Mongo-specific build path. */
+export function hasPositiveMongoRequirement(prompt: string): boolean {
+  const request = deNegate(typeof prompt === "string" ? prompt : "");
+  return /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(request);
 }
 
 export type DeterministicSignals = {

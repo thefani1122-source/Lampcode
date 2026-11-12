@@ -3,6 +3,7 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
+import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -1625,13 +1626,7 @@ export function getReactFrameworkRules(): string {
 }
 
 /** True when the prompt implies user accounts, login, OAuth, or session handling. */
-export function needsAuth(prompt: string): boolean {
-  return /\b(auth|login|log[- ]in|signin|sign[- ]in|sign[- ]up|signup|register|logout|log[- ]out|oauth|jwt|session|password|credential|account|user account|user profile|admin panel|authentication|authorization)\b/i.test(
-    prompt,
-  );
-}
-
-// Skill files may open with `---\nname: x\ndescription: y\n---\n` frontmatter.
+export // Skill files may open with `---\nname: x\ndescription: y\n---\n` frontmatter.
 // Anchored at the absolute start of the string (no `m` flag) so it can never
 // match a `---` divider used mid-body (animation-expert.md has one).
 const SKILL_FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -1808,6 +1803,30 @@ async function buildPipManifest(): Promise<string> {
   return pipManifestCache;
 }
 
+export type PromptBuildType = "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
+
+/**
+ * The build task prefix determines whether the frontend agent is doing a new
+ * browser build, a new Hono build, or an edit to an existing full-stack app.
+ * MongoDB is detected from the same negation-aware signals as classification,
+ * so a sentence such as "do not use MongoDB" cannot switch providers.
+ */
+export function inferPromptBuildType(
+  agentType: AgentTaskType,
+  description: string,
+): PromptBuildType | undefined {
+  const isFullstackBuildDescription =
+    description.startsWith("FULLSTACK BUILD:") ||
+    description.startsWith("FULLSTACK AUTH BUILD:");
+  const isExistingFullstackEdit = description.startsWith("EXISTING FULLSTACK EDIT:");
+  const isMongoBuildDescription = hasPositiveMongoRequirement(description);
+
+  if (agentType !== "frontend") return undefined;
+  if (isExistingFullstackEdit) return "fullstack-existing";
+  if (!isFullstackBuildDescription) return "frontend";
+  return isMongoBuildDescription ? "fullstack-mongodb" : "fullstack";
+}
+
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
@@ -1831,18 +1850,22 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("product-ui-design");
   }
 
-  // DB/RLS skills — only when the prompt implies a database or auth
-  if (
-    opts?.buildType &&
-    (needsAuth(prompt) ||
-      /\b(database|supabase|postgres|postgresql|sql|sqlite|mysql|mongodb|table|schema|crud|persist|persistence)\b/i.test(prompt))
-  ) {
+  // Database security is useful across providers, but the generic skill must
+  // stay provider-neutral. Supabase policy syntax is a separate skill and may
+  // only be injected when this build is actually using the Supabase path.
+  // Raw excluded terms ("without Supabase") and browser-local persistence must
+  // never cause either database skill to leak into a frontend-only build.
+  const requestSignals = readSignals(prompt);
+  const hasDatabaseSecurityIntent =
+    Boolean(opts?.buildType && opts.buildType !== "frontend") &&
+    (hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem);
+  if (hasDatabaseSecurityIntent) {
     skillsToLoad.add("database-rls");
-    // Supabase-specific guidance must not leak into MongoDB builds or
-    // existing projects whose provider is governed by their current code.
-    if (opts.buildType === "fullstack") {
-      skillsToLoad.add("supabase-rls");
-    }
+  }
+  const needsSupabaseRls =
+    opts?.buildType === "fullstack" && hasDatabaseSecurityIntent;
+  if (needsSupabaseRls) {
+    skillsToLoad.add("supabase-rls");
   }
 
   // FIRECRAWL — only when scraping/crawling requested
@@ -1905,28 +1928,10 @@ export class PromptBuilder {
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
   ): Promise<BuiltPrompt> {
-    // Detect build type from the task description prefix so the right
-    // build-type skill (frontend-sandbox vs fullstack-hono) gets injected.
-    const isFullstackBuildDescription =
-      task.description.startsWith("FULLSTACK BUILD:") ||
-      task.description.startsWith("FULLSTACK AUTH BUILD:");
-    const isExistingFullstackEdit =
-      task.description.startsWith("EXISTING FULLSTACK EDIT:");
-    const isMongoBuildDescription =
-      /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(task.description);
-    const buildType:
-      | "frontend"
-      | "fullstack"
-      | "fullstack-mongodb"
-     
-      | "fullstack-existing"
-      | undefined = agentType === "frontend"
-        ? isExistingFullstackEdit
-          ? "fullstack-existing"
-          : isFullstackBuildDescription
-            ? isMongoBuildDescription ? "fullstack-mongodb" : "fullstack"
-            : "frontend"
-        : undefined;
+    // Detect the build mode using the same negation-aware signals as the
+    // architecture classifier. A negative MongoDB mention must not select its
+    // provider-specific generation path.
+    const buildType = inferPromptBuildType(agentType, task.description);
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
