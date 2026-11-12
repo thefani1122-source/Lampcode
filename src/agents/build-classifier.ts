@@ -149,10 +149,10 @@ const NEGATED_SERVER_LIST =
   `${NEGATED_SERVER_TERM}(?:\\s*(?:,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+)${NEGATED_SERVER_TERM})*`;
 
 const NEGATED_SERVER_PHRASE_RE = new RegExp(
-  String.raw`\\b(?:no|without|avoid|never|do\\s+not|don['’]t|does\\s+not|doesn['’]t|not)\\s+` +
-    String.raw`(?:(?:a|an|the|any)\\s+)?` +
-    String.raw`(?:(?:need(?:ed|ing)?(?:\\s+for)?|want|use|using|create|install|integrate|configure|connect(?:ed)?(?:\\s+to)?|rely\\s+on)\\s+)?` +
-    String.raw`(?:(?:a|an|the|any)\\s+)?(?:${NEGATED_SERVER_LIST})\\b`,
+  String.raw`\b(?:no|without|avoid|never|do\s+not|don['’]t|does\s+not|doesn['’]t|not)\s+` +
+    String.raw`(?:(?:a|an|the|any)\s+)?` +
+    String.raw`(?:(?:need(?:ed|ing)?(?:\s+for)?|want|use|using|create|install|integrate|configure|connect(?:ed)?(?:\s+to)?|rely\s+on)\s+)?` +
+    String.raw`(?:(?:a|an|the|any)\s+)?` +
   "gi",
 );
 
