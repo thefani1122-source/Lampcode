@@ -178,6 +178,13 @@ export function hasPositiveDatabaseRequirement(prompt: string): boolean {
   return POSITIVE_DATABASE_REQUEST_RE.test(deNegate(typeof prompt === "string" ? prompt : ""));
 }
 
+/** Keep the legacy positive Mongo URI/ODM signals, but strip them from
+ * explicit negative phrases before selecting a Mongo-specific build path. */
+export function hasPositiveMongoRequirement(prompt: string): boolean {
+  const request = deNegate(typeof prompt === "string" ? prompt : "");
+  return /\\bmongodb\\b|MONGODB_URI|\\bmongoose\\b/i.test(request);
+}
+
 export type DeterministicSignals = {
   /** The user NAMED a browser store — localStorage, IndexedDB, "no backend".
    *  Their own instruction, not an inference about their intent. */
