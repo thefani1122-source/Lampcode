@@ -309,8 +309,9 @@ check(
 );
 check(
   "the build prompt requires a browser journey for browser-local collection workflows",
-  plannerPrompt.includes("call browser_interact exactly once") &&
-    plannerPrompt.includes("request promises persistence reload and assert the record remains"),
+  plannerPrompt.includes('"call " +') &&
+    plannerPrompt.includes('"browser_interact exactly once after the final page and wiring checks.') &&
+    plannerPrompt.includes('"request promises persistence reload and assert the record remains.'),
 );
 check(
   "the build prompt forbids creating test records in live user-owned databases",
