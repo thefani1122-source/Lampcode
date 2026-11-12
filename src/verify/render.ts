@@ -196,7 +196,7 @@ export function shouldRequireCollectionSurface(opts: {
 }
 
 const CORE_JOURNEY_PROMPT_RE =
-  /\\b(?:habits?|tasks?|to[ -]?do|trackers?|kanban|calendars?|schedulers?|shift planners?|rosters?|crm|inventory|expenses?|budgets?|invoices?|orders?|products?|customers?|clients?|contacts?|projects?|employees?|staff|bookings?|events?|transactions?|subscriptions?)\\b/i;
+  /\b(?:habits?|tasks?|to[ -]?do|trackers?|kanban|calendars?|schedulers?|shift planners?|rosters?|crm|inventory|expenses?|budgets?|invoices?|orders?|products?|customers?|clients?|contacts?|projects?|employees?|staff|bookings?|events?|transactions?|subscriptions?)\b/i;
 
 /** Products with a primary create/update/complete workflow need a real browser journey, not click-only evidence. */
 export function shouldRequireCoreJourney(opts: {
