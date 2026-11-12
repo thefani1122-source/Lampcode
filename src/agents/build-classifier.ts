@@ -182,7 +182,7 @@ export function hasPositiveDatabaseRequirement(prompt: string): boolean {
  * explicit negative phrases before selecting a Mongo-specific build path. */
 export function hasPositiveMongoRequirement(prompt: string): boolean {
   const request = deNegate(typeof prompt === "string" ? prompt : "");
-  return /\\bmongodb\\b|MONGODB_URI|\\bmongoose\\b/i.test(request);
+  return /\bmongodb\b|MONGODB_URI|\bmongoose\b/i.test(request);
 }
 
 export type DeterministicSignals = {
