@@ -192,7 +192,7 @@ const shellOnly = parseRenderReport(line({
     blank: false,
     errors: [],
     text: "Habit Tracker New Habit",
-    contentIssue: "The collection product is only a shell: the primary workspace has 34 text characters and no meaningful content groups.",
+    contentIssue: "The collection product is only a shell: the primary workspace has 34 text characters, 0 semantic content blocks, 0 meaningful content groups, and 1 heading. Build the actual dashboard/list/table/progress surface and a useful empty-data state. Do not invent rows in a real database.",
   }],
   unreachable: [],
 }));
