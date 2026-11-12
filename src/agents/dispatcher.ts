@@ -45,7 +45,7 @@ import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
-import { shouldRequireInitialContent, shouldRequireCollectionSurface, shouldRequireCoreJourney } from "../verify/render.js";
+import { shouldRequireInitialContent, shouldRequireCollectionSurface } from "../verify/render.js";
 import type { RenderReport } from "../verify/render.js";
 import type { JourneyReport, JourneyStep } from "../verify/journey.js";
 import type { Checkpoint } from "../verify/checkpoints.js";
