@@ -5,6 +5,7 @@
  * second specification. These cases ensure product nouns do not silently add
  * domain features, while the narrow, product-agnostic preview-data policy stays.
  */
+import { readFileSync } from "node:fs";
 import { expandUserPrompt } from "../src/agents/prompt-builder.js";
 
 let failures = 0;
@@ -54,6 +55,11 @@ check(
 check(
   "the generic collection preview policy remains available",
   habitExpanded.includes("5–8 realistic domain-specific sample records"),
+);
+const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
+check(
+  "full-stack build prompts reuse the same first-run data contract",
+  buildRouteSource.includes("return `${prefix}\\n${expandUserPrompt(prompt)}`;"),
 );
 check(
   "the generic seed policy still respects explicitly empty first launches",
