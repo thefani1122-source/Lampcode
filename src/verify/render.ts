@@ -205,6 +205,9 @@ export function shouldRequireCoreJourney(opts: {
   userPrompt?: string | undefined;
 }): boolean {
   if (opts.agentType !== "frontend") return false;
+  // browser_interact can create/complete records. Never make that a mandatory
+  // side effect against a live user-owned database without an isolated test tenant.
+  if (/^(?:FULLSTACK BUILD:|FULLSTACK AUTH BUILD:|EXISTING FULLSTACK EDIT:)/i.test(opts.taskDescription)) return false;
   const request = opts.userPrompt ?? opts.taskDescription;
   return CORE_JOURNEY_PROMPT_RE.test(request) &&
     !COLLECTION_SURFACE_EXEMPT_RE.test(request);
