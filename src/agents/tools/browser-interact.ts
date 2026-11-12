@@ -27,7 +27,7 @@ export const browserInteractHandler: ToolHandler = async (
 
   const previous = ctx.journeyEvidence?.value ?? null;
   const currentWriteCount = ctx.writeCounter?.value ?? 0;
-  if (hasJourneyForCurrentCode(previous, currentWriteCount)) {
+  if (previous && hasJourneyForCurrentCode(previous, currentWriteCount)) {
     return [
       "A browser journey has already run against this unchanged file revision. Repeating it is blocked to avoid spending another browser/model round on identical code.",
       "Use the previous report below. If a step failed, inspect and repair the application first; a new journey is allowed after a file write.",
