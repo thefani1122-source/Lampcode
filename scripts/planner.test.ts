@@ -589,8 +589,52 @@ async function runPromptModeChecks(): Promise<void> {
     "fullstack",
   );
   check(
-    "Supabase full-stack projects retain the fullstack-hono skill",
+    "Supabase full-stack projects retain the Hono skill for the React/Vite Hono runtime",
     supabaseSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+
+  const nextSkills = await loadRelevantSkillsForPrompt(
+    "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
+    "fullstack",
+  );
+  check(
+    "Next.js builds do not receive the React/Hono architecture skill",
+    !nextSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  const tanstackSkills = await loadRelevantSkillsForPrompt(
+    "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
+    "fullstack",
+  );
+  check(
+    "TanStack builds do not receive the React/Hono architecture skill",
+    !tanstackSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  const pythonSkills = await loadRelevantSkillsForPrompt(
+    "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
+    "fullstack",
+  );
+  check(
+    "FastAPI builds do not receive the React/Hono architecture skill",
+    !pythonSkills.includes("## Skill: fullstack-hono"),
+    true,
+  );
+  const frontendSkills = await loadRelevantSkillsForPrompt(
+    "Build a single-user task tracker.",
+    "frontend",
+  );
+  check(
+    "browser-only frontend builds receive the current E2B runtime rules, not obsolete Sandpack restrictions",
+    frontendSkills.includes("real browser preview") &&
+      !frontendSkills.includes("no fetch/localStorage/Node APIs") &&
+      !frontendSkills.includes("localStorage, sessionStorage → React state"),
+    true,
+  );
+  check(
+    "E2B frontend skill permits browser storage when it is the selected persistence architecture",
+    frontendSkills.includes("localStorage"),
     true,
   );
 
@@ -610,7 +654,8 @@ async function runPromptModeChecks(): Promise<void> {
   check(
     "new full-stack builds retain their required scaffolding and provider instructions",
     newSupabaseBuild.systemPrompt.includes("GENERATE THESE FILES IN THIS EXACT ORDER") &&
-      newSupabaseBuild.systemPrompt.includes("DATABASE: Supabase"),
+      newSupabaseBuild.systemPrompt.includes("DATABASE: Supabase") &&
+      newSupabaseBuild.systemPrompt.includes("Never turn a database/API failure into a successful empty result"),
     true,
   );
 

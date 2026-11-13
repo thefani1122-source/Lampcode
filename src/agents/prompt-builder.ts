@@ -920,12 +920,14 @@ if token limit hits mid-generation, DB and server files must already be complete
 3. \`\`\`filename:src/server/app.ts — the Hono app, and NOTHING that listens.
    EXACT shape:
      import { Hono } from 'hono'
-     import { cors } from 'hono/cors'
      import { api } from './routes/api.js'
      const app = new Hono()
-     app.use('/*', cors())
      app.route('/api', api)
      export default app
+   The E2B preview serves the frontend and API through one same-origin URL
+   using the Vite /api proxy, so permissive CORS is not needed. Add CORS only
+   when a real deployment intentionally uses a separate API origin, and then
+   restrict it to configured trusted origins.
    WHY the app is separate from the thing that starts it: this file must be
    importable WITHOUT a server starting as a side effect, so the very same app
    can also be served as a deployed function. If serve() lived here, importing
@@ -942,23 +944,38 @@ if token limit hits mid-generation, DB and server files must already be complete
 5. \`\`\`filename:src/server/routes/api.ts — ALL API routes on a Hono router.
    Read/write data with the DB CLIENT defined in the DATABASE section below
    (Supabase OR MongoDB — exactly the one specified there; never mix two DBs).
-   ALWAYS handle errors so the server never crashes (return [] / an error json,
-   never throw). Shape:
+   Validate request bodies with Zod and handle failures with safe status codes.
+   Never turn a database/API failure into a successful empty result: an empty
+   array is valid only when the query succeeded and returned no rows. Shape:
      import { Hono } from 'hono'
+     import { z } from 'zod'
      // ...import the DB client per the DATABASE section...
      export const api = new Hono()
      api.get('/riders', async (c) => {
-       try { /* read via the DB client */ return c.json(rows ?? []) }
-       catch { return c.json([], 200) }   // not set up yet → empty, don't crash
+       try {
+         const rows = await /* read via the DB client */
+         return c.json(rows ?? [])
+       } catch (err) {
+         console.error('GET /riders failed', err)
+         return c.json({ error: 'Unable to load riders' }, 500)
+       }
      })
      api.post('/riders', async (c) => {
-       const body = await c.req.json().catch(() => ({}))
-       try { /* insert via the DB client */ return c.json(created, 201) }
-       catch (e) { return c.json({ error: String(e) }, 400) }
+       const parsed = z.object({ name: z.string().min(1) }).safeParse(await c.req.json())
+       if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
+       try {
+         const created = await /* insert via the DB client using parsed.data */
+         return c.json(created, 201)
+       } catch (err) {
+         console.error('POST /riders failed', err)
+         return c.json({ error: 'Unable to create rider' }, 500)
+       }
      })
    Add every route the app needs (orders, webhooks, etc.) in this same style.
-   For Stripe webhooks: a route like api.post('/webhooks/stripe', ...) that
-   reads the raw body — keep it defensive (try/catch, 200 by default).
+   Log diagnostic details server-side only; never return stack traces, SQL
+   errors or secrets to the browser. A Stripe webhook must verify the
+   signature and return a non-2xx response when verification/processing fails;
+   never acknowledge a failed webhook with HTTP 200.
 
 6. \`\`\`filename:src/lib/api.ts — typed frontend fetch wrappers. EVERY call goes
    through API_BASE, so the app keeps working once it is built and served
@@ -977,11 +994,13 @@ if token limit hits mid-generation, DB and server files must already be complete
      }
      export async function getRiders(): Promise<Rider[]> {
        const r = await fetch(API_BASE + '/api/riders', { headers: await authHeaders() })
-       if (!r.ok) return []; return r.json()
+        if (!r.ok) throw new Error('Unable to load riders')
+        return r.json()
      }
-     export async function createRider(input: Partial<Rider>): Promise<Rider | null> {
+      export async function createRider(input: Partial<Rider>): Promise<Rider>
        const r = await fetch(API_BASE + '/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(input) })
-       return r.ok ? r.json() : null
+        if (!r.ok) throw new Error('Unable to create rider')
+        return r.json()
      }
    WHY API_BASE and not a bare '/api/...': the preview works only because the
    Vite DEV SERVER proxies /api to the backend on :3001. A production build has
@@ -1058,11 +1077,10 @@ Generate INSTEAD:
    exactly \`app\`. All routes under /api. Use the supabase Python client; handle
    errors so the server never crashes on startup. EXACT shape:
      import os
-     from fastapi import FastAPI, Request
-     from fastapi.middleware.cors import CORSMiddleware
+      from fastapi import FastAPI, Request, HTTPException
      from supabase import create_client
      app = FastAPI()
-     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+     # E2B preview uses a same-origin Vite /api proxy; do not add wildcard CORS.
      # ONE CLIENT PER REQUEST, carrying the caller's token. A module-level
      # client is anonymous: auth.uid() is NULL inside every RLS policy, so
      # owner-scoped reads return nothing and the app looks empty forever.
@@ -1079,8 +1097,8 @@ Generate INSTEAD:
      def list_riders(req: Request):          # req is REQUIRED — it carries the token
          try:
              return (db_for(req).table("riders").select("*").order("created_at", desc=True).execute()).data or []
-         except Exception:
-             return []
+         except Exception as exc:
+             raise HTTPException(status_code=500, detail="Unable to load riders") from exc
 
      @app.post("/api/riders")
      async def create_rider(req: Request):
@@ -1088,8 +1106,8 @@ Generate INSTEAD:
          try:
              res = db_for(req).table("riders").insert(body).execute()
              return (res.data or [None])[0]
-         except Exception as e:
-             return {"error": str(e)}
+         except Exception as exc:
+             raise HTTPException(status_code=500, detail="Unable to create rider") from exc
    Add every route the app needs in this same defensive style.
 
 2. \`\`\`filename:requirements.txt — list: fastapi, uvicorn, supabase
@@ -1466,7 +1484,7 @@ const AGENT_BUILD_INSTRUCTION = "";
 
 const ANIMATION_DEFAULT_INSTRUCTION = `
 
-ANIMATION SYSTEM — Lampcode E2B template has these pre-installed: Framer Motion, GSAP, Lenis, tsParticles, AOS, Three.js, @react-three/fiber, @splinetool/react-spline. Use them correctly:
+ANIMATION SYSTEM — LampCode E2B template has these pre-installed: Motion, GSAP, Lenis, TSParticles React, AOS, Three.js, @react-three/fiber, @react-three/drei, and @splinetool/react-spline. Use only libraries relevant to the requested experience; do not add animation to a product that should remain calm or static:
 
 ━━ SIMPLE TRANSITIONS (Tailwind — always prefer these first) ━━
 - Hover scale: className="transition-transform duration-200 hover:scale-105"
@@ -1478,8 +1496,8 @@ ANIMATION SYSTEM — Lampcode E2B template has these pre-installed: Framer Motio
 - Pulse skeleton: className="animate-pulse bg-muted rounded"
 - Spin loader: className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"
 
-━━ FRAMER MOTION (for interactive + complex animations) ━━
-import { motion, AnimatePresence } from "framer-motion"
+━━ MOTION (for interactive + complex animations) ━━
+import { motion, AnimatePresence } from "motion/react"
 
 Entrance:
 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}>
@@ -1557,8 +1575,9 @@ useEffect(() => {
 }, [])
 
 ━━ PARTICLES (for hero backgrounds) ━━
-import Particles from "tsparticles"
-// Use preset: "links" | "stars" | "snow" | "confetti"
+Use the installed @tsparticles/react component with the @tsparticles/slim
+engine. Follow that package's initialization API; do not import from the
+non-installed tsparticles package.
 
 ━━ AOS (simple scroll animations via CSS classes) ━━
 import AOS from "aos"
@@ -1841,8 +1860,14 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  // BUILD-TYPE SKILLS — wire opts.buildType (previously dropped silently)
-  if (opts?.buildType === "fullstack") {
+  // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
+  // actually start. "fullstack" is not synonymous with Hono: Next.js and
+  // TanStack use their own server runtimes, while FastAPI replaces Hono.
+  if (
+    opts?.buildType === "fullstack" &&
+    detectFullstackFramework(prompt) === "react" &&
+    !PYTHON_BACKEND_RE.test(prompt)
+  ) {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
@@ -1909,7 +1934,7 @@ async function loadSkillsForPrompt(
 
 /**
  * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
- * because follow-up edits are almost always on frontend (Sandpack) apps —
+because follow-up edits are usually frontend React/Vite apps in the E2B runtime —
  * this ensures the frontend-sandbox skill is injected on the stream path.
  */
 export async function loadRelevantSkillsForPrompt(
