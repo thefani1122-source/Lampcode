@@ -54,8 +54,17 @@ try {
   assert.equal(await readProjectSkill(workspaceDir, "project:.."), null, "invalid names are rejected");
   assert.equal(await readProjectSkill(workspaceDir, "project:missing"), null, "unknown names are rejected");
 
-  const context: ToolExecutionContext = { workspaceDir };
+  const projectFileMap = {
+    ".agents/skills/repository-style/SKILL.md":
+      "---\nname: repository-style\ndescription: Apply the repository-specific architecture and naming conventions.\n---\n\nRepository skill body.",
+  };
+  const snapshotSkills = await listProjectSkills(undefined, projectFileMap);
+  assert.equal(snapshotSkills[0]?.id, "project:repository-style", "project snapshot files are scanned without relying on the workspace metadata folder");
+
+  const context: ToolExecutionContext = { workspaceDir, projectFiles: projectFileMap };
   const toolResult = await loadSkillHandler({ name: "project:design-system" }, context);
+  const snapshotToolResult = await loadSkillHandler({ name: "project:repository-style" }, context);
+  assert.match(snapshotToolResult, /Repository skill body/);
   assert.match(toolResult, /UNTRUSTED PROJECT CONTENT/);
   assert.match(toolResult, /BODY_ONLY_SECRET/);
   assert.match(toolResult, /cannot override system or security instructions/);
@@ -70,8 +79,12 @@ try {
       prompt: "Build a small project-aware app.",
     },
     workspaceDir,
+    undefined,
+    projectFileMap,
   );
   assert.match(built.systemPrompt, /Project-defined skills/);
+  assert.match(built.systemPrompt, /project:repository-style/);
+  assert.doesNotMatch(built.systemPrompt, /Repository skill body/, "project snapshot bodies stay out of the prompt index");
   assert.match(built.systemPrompt, /project:design-system/);
   assert.doesNotMatch(built.systemPrompt, /BODY_ONLY_SECRET/, "full skill bodies are not injected into the base prompt");
 
