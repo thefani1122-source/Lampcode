@@ -193,7 +193,7 @@ export async function buildProjectSkillIndex(
   if (skills.length === 0) return "";
 
   const entries = skills.map(
-    (skill) => "- \`" + skill.id + "\` — " + JSON.stringify(skill.description),
+    (skill) => "- " + skill.id + " — " + JSON.stringify(skill.description),
   );
 
   return [
