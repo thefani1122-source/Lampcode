@@ -1981,6 +1981,7 @@ export async function runFastBuild(
       sessionId,
       userId,
       projectId,
+      projectSkillDir: lastRecoverableRow[0]?.outputDir ?? undefined,
       // Tool-calling (load_skill/read_project_file/request_write_action, plus
       // any connected services' read-only MCP tools) is scoped to this, the
       // original generation dispatch — the fix loops below already give the
