@@ -544,7 +544,7 @@ export class AgentDispatcher {
         userId: userId ?? "anonymous",
         mode: "fast",
         prompt: task.description,
-      }, workspaceDir, contextFiles);
+      }, workspaceDir, contextFiles, options.projectFiles);
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker
@@ -958,6 +958,7 @@ export class AgentDispatcher {
           contextFiles,
           sessionId,
           workspaceDir,
+          projectFiles: options.projectFiles,
           writeMcpRegistry: writeProxyRegistry,
           readMcpRegistry,
           writeDenied,
@@ -971,7 +972,6 @@ export class AgentDispatcher {
                 deletedFiles,
                 checkpoints,
                 onLog: options.onSandboxLog,
-                projectFiles: options.projectFiles,
                 gateResults,
                 lastRender,
                 journeyEvidence,
