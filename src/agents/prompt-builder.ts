@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { buildProjectSkillIndex } from "./project-skills.js";
 import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
@@ -1830,7 +1831,10 @@ export function inferPromptBuildType(
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
 async function loadSkillsForPrompt(
   prompt: string,
-  opts?: { buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" },
+  opts?: {
+    buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
+    workspaceDir?: string | undefined;
+  },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
@@ -1897,7 +1901,8 @@ async function loadSkillsForPrompt(
     }
   }
 
-  return skillContents.join("");
+  const projectSkillIndex = await buildProjectSkillIndex(opts?.workspaceDir);
+  return [projectSkillIndex, skillContents.join("")].filter(Boolean).join("\n");
 }
 
 /**
@@ -1939,7 +1944,7 @@ export class PromptBuilder {
       // and the query prompt promises not to generate code.
       agentType === "query"
         ? Promise.resolve("")
-        : this.loadRelevantSkills(context.prompt, buildType),
+        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
     const rawSystemPrompt = skillsBlock
@@ -2614,8 +2619,9 @@ export class PromptBuilder {
   private async loadRelevantSkills(
     prompt: string,
     buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing",
+    workspaceDir?: string,
   ): Promise<string> {
-    return loadSkillsForPrompt(prompt, buildType ? { buildType } : undefined);
+    return loadSkillsForPrompt(prompt, { ...(buildType ? { buildType } : {}), workspaceDir });
   }
 }
 
