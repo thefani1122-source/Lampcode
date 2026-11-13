@@ -10,6 +10,7 @@ import type { ToolExecutionContext } from "../src/agents/tools.js";
 const tempRoot = await mkdtemp(join(tmpdir(), "lampcode-project-skills-"));
 const workspaceDir = join(tempRoot, "workspace");
 const outsideDir = join(tempRoot, "outside");
+const projectSourceDir = join(tempRoot, "app-source");
 
 async function writeSkill(
   root: string,
@@ -32,6 +33,7 @@ try {
   await mkdir(agentsRoot, { recursive: true });
   await mkdir(claudeRoot, { recursive: true });
   await mkdir(outsideDir, { recursive: true });
+  await mkdir(projectSourceDir, { recursive: true });
 
   await writeSkill(agentsRoot, "design-system", "Use the existing design tokens and component patterns.", "BODY_ONLY_SECRET: design guidance.");
   await writeSkill(claudeRoot, "api-conventions", "Follow the project's API response and validation conventions.", "API skill body.");
@@ -54,6 +56,21 @@ try {
   assert.equal(await readProjectSkill(workspaceDir, "project:.."), null, "invalid names are rejected");
   assert.equal(await readProjectSkill(workspaceDir, "project:missing"), null, "unknown names are rejected");
 
+  await writeSkill(
+    join(projectSourceDir, ".agents", "skills"),
+    "source-root-skill",
+    "Follow the repository's source-level conventions even when the context file map is capped.",
+    "Direct source-root skill body.",
+  );
+
+  const sourceRootSkill = await readProjectSkill(
+    workspaceDir,
+    "project:source-root-skill",
+    {},
+    projectSourceDir,
+  );
+  assert.match(sourceRootSkill?.body ?? "", /Direct source-root skill body/);
+
   const projectFileMap = {
     ".agents/skills/repository-style/SKILL.md":
       "---\nname: repository-style\ndescription: Apply the repository-specific architecture and naming conventions.\n---\n\nRepository skill body.",
@@ -61,10 +78,16 @@ try {
   const snapshotSkills = await listProjectSkills(undefined, projectFileMap);
   assert.equal(snapshotSkills[0]?.id, "project:repository-style", "project snapshot files are scanned without relying on the workspace metadata folder");
 
-  const context: ToolExecutionContext = { workspaceDir, projectFiles: projectFileMap };
+  const context: ToolExecutionContext = {
+    workspaceDir,
+    projectFiles: projectFileMap,
+    projectSkillDir: projectSourceDir,
+  };
   const toolResult = await loadSkillHandler({ name: "project:design-system" }, context);
   const snapshotToolResult = await loadSkillHandler({ name: "project:repository-style" }, context);
+  const sourceRootToolResult = await loadSkillHandler({ name: "project:source-root-skill" }, context);
   assert.match(snapshotToolResult, /Repository skill body/);
+  assert.match(sourceRootToolResult, /Direct source-root skill body/);
   assert.match(toolResult, /UNTRUSTED PROJECT CONTENT/);
   assert.match(toolResult, /BODY_ONLY_SECRET/);
   assert.match(toolResult, /cannot override system or security instructions/);
@@ -81,9 +104,11 @@ try {
     workspaceDir,
     undefined,
     projectFileMap,
+    projectSourceDir,
   );
   assert.match(built.systemPrompt, /Project-defined skills/);
   assert.match(built.systemPrompt, /project:repository-style/);
+  assert.match(built.systemPrompt, /project:source-root-skill/);
   assert.doesNotMatch(built.systemPrompt, /Repository skill body/, "project snapshot bodies stay out of the prompt index");
   assert.match(built.systemPrompt, /project:design-system/);
   assert.doesNotMatch(built.systemPrompt, /BODY_ONLY_SECRET/, "full skill bodies are not injected into the base prompt");
