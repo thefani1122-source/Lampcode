@@ -957,6 +957,7 @@ export class AgentDispatcher {
         const result = await executeTool(tc.name, tc.arguments, {
           contextFiles,
           sessionId,
+          workspaceDir,
           writeMcpRegistry: writeProxyRegistry,
           readMcpRegistry,
           writeDenied,
