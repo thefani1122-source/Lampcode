@@ -87,6 +87,7 @@ function projectSkillFromContent(
 export async function listProjectSkills(
   workspaceDir?: string,
   projectFiles?: Record<string, string>,
+  projectSkillDir?: string,
 ): Promise<ProjectSkill[]> {
   const skills: ProjectSkill[] = [];
   const seenNames = new Set<string>();
@@ -117,65 +118,71 @@ export async function listProjectSkills(
     seenNames.add(candidate.name);
   }
 
-  // Some projects keep their project guidance in the persistent project
-  // workspace rather than the generated source-file snapshot.
-  if (workspaceDir) {
-    let projectRoot: string | null = null;
+  // Scan the actual app source directory first. This is separate from the
+  // prompt's loaded file map because that map has a 60KB context cap and may
+  // omit project guidance files near the end of a large repository. The
+  // persistent workspace is a second fallback for project-level instructions.
+  const diskRoots = [projectSkillDir, workspaceDir].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  for (const diskRoot of diskRoots) {
+    if (skills.length >= MAX_PROJECT_SKILLS) break;
+
+    let projectRoot: string;
     try {
-      projectRoot = await realpath(workspaceDir);
+      projectRoot = await realpath(diskRoot);
     } catch {
-      projectRoot = null;
+      continue;
     }
 
-    if (projectRoot) {
-      for (const relativeRoot of SKILL_ROOTS) {
+    for (const relativeRoot of SKILL_ROOTS) {
+      if (skills.length >= MAX_PROJECT_SKILLS) break;
+
+      let rootPath: string;
+      try {
+        rootPath = await realpath(resolve(projectRoot, relativeRoot));
+        if (!isWithinDirectory(projectRoot, rootPath)) continue;
+      } catch {
+        continue;
+      }
+
+      let entries;
+      try {
+        entries = await readdir(rootPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
         if (skills.length >= MAX_PROJECT_SKILLS) break;
-
-        let rootPath: string;
-        try {
-          rootPath = await realpath(resolve(projectRoot, relativeRoot));
-          if (!isWithinDirectory(projectRoot, rootPath)) continue;
-        } catch {
+        if (!entry.isDirectory() || !SKILL_NAME_RE.test(entry.name) || seenNames.has(entry.name)) {
           continue;
         }
 
-        let entries;
         try {
-          entries = await readdir(rootPath, { withFileTypes: true });
+          const skillDir = await realpath(join(rootPath, entry.name));
+          if (!isWithinDirectory(rootPath, skillDir)) continue;
+
+          const candidateFile = join(skillDir, "SKILL.md");
+          const fileInfo = await lstat(candidateFile);
+          if (!fileInfo.isFile() || fileInfo.size <= 0 || fileInfo.size > MAX_SKILL_BYTES) continue;
+
+          const filePath = await realpath(candidateFile);
+          if (!isWithinDirectory(skillDir, filePath)) continue;
+
+          const raw = await readFile(filePath, "utf-8");
+          if (Buffer.byteLength(raw, "utf8") > MAX_SKILL_BYTES) continue;
+          const skill = projectSkillFromContent(entry.name, raw, {
+            filePath,
+            sourceRoot: relativeRoot,
+          });
+          if (!skill) continue;
+
+          skills.push(skill);
+          seenNames.add(entry.name);
         } catch {
-          continue;
-        }
-
-        for (const entry of entries) {
-          if (skills.length >= MAX_PROJECT_SKILLS) break;
-          if (!entry.isDirectory() || !SKILL_NAME_RE.test(entry.name) || seenNames.has(entry.name)) {
-            continue;
-          }
-
-          try {
-            const skillDir = await realpath(join(rootPath, entry.name));
-            if (!isWithinDirectory(rootPath, skillDir)) continue;
-
-            const candidateFile = join(skillDir, "SKILL.md");
-            const fileInfo = await lstat(candidateFile);
-            if (!fileInfo.isFile() || fileInfo.size <= 0 || fileInfo.size > MAX_SKILL_BYTES) continue;
-
-            const filePath = await realpath(candidateFile);
-            if (!isWithinDirectory(skillDir, filePath)) continue;
-
-            const raw = await readFile(filePath, "utf-8");
-            if (Buffer.byteLength(raw, "utf8") > MAX_SKILL_BYTES) continue;
-            const skill = projectSkillFromContent(entry.name, raw, {
-              filePath,
-              sourceRoot: relativeRoot,
-            });
-            if (!skill) continue;
-
-            skills.push(skill);
-            seenNames.add(entry.name);
-          } catch {
-            // A missing, unreadable, oversized or unsafe skill is ignored.
-          }
+          // A missing, unreadable, oversized or unsafe skill is ignored.
         }
       }
     }
@@ -188,8 +195,9 @@ export async function listProjectSkills(
 export async function buildProjectSkillIndex(
   workspaceDir?: string,
   projectFiles?: Record<string, string>,
+  projectSkillDir?: string,
 ): Promise<string> {
-  const skills = await listProjectSkills(workspaceDir, projectFiles);
+  const skills = await listProjectSkills(workspaceDir, projectFiles, projectSkillDir);
   if (skills.length === 0) return "";
 
   const entries = skills.map(
@@ -214,12 +222,13 @@ export async function readProjectSkill(
   workspaceDir: string | undefined,
   identifier: string,
   projectFiles?: Record<string, string>,
+  projectSkillDir?: string,
 ): Promise<{ name: string; body: string } | null> {
   if (!identifier.startsWith(PROJECT_SKILL_PREFIX)) return null;
   const name = identifier.slice(PROJECT_SKILL_PREFIX.length);
   if (!SKILL_NAME_RE.test(name)) return null;
 
-  const skill = (await listProjectSkills(workspaceDir, projectFiles)).find(
+  const skill = (await listProjectSkills(workspaceDir, projectFiles, projectSkillDir)).find(
     (candidate) => candidate.id === identifier,
   );
   if (!skill) return null;
