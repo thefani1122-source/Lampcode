@@ -18,7 +18,7 @@ description: Follow this project's component, layout, and visual-design conventi
 Describe the patterns the agent should follow when this skill is relevant.
 ```
 
-During a code-agent dispatch, LampCode finds skills in the current loaded project-file snapshot and in the persistent project workspace. The loaded project snapshot takes precedence over the disk fallback. Only the skill identifier and description are added to the prompt; the full document is loaded only when the agent calls `load_skill` using the exact indexed identifier, such as `project:frontend-design`.
+During a code-agent dispatch, LampCode finds skills in the current loaded project-file snapshot, the actual app source directory, and the persistent project workspace. The loaded project snapshot takes precedence over disk discovery; the app source directory is scanned separately so the normal 60 KiB edit-context cap cannot hide a skill. Only the skill identifier and description are added to the prompt; the full document is loaded only when the agent calls `load_skill` using the exact indexed identifier, such as `project:frontend-design`.
 
 ## Boundaries
 
