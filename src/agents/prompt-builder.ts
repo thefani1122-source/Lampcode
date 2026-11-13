@@ -1841,8 +1841,14 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  // BUILD-TYPE SKILLS — wire opts.buildType (previously dropped silently)
-  if (opts?.buildType === "fullstack") {
+  // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
+  // actually start. "fullstack" is not synonymous with Hono: Next.js and
+  // TanStack use their own server runtimes, while FastAPI replaces Hono.
+  if (
+    opts?.buildType === "fullstack" &&
+    detectFullstackFramework(prompt) === "react" &&
+    !PYTHON_BACKEND_RE.test(prompt)
+  ) {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
