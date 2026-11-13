@@ -23,6 +23,8 @@ export interface ProjectSkill {
   sourceContent?: string;
   /** Root that was validated for an on-disk skill. */
   sourceRoot?: string;
+  /** Canonical project root used to re-check an on-disk skill before loading. */
+  sourceBaseDir?: string;
 }
 
 interface ParsedProjectSkill {
@@ -60,7 +62,7 @@ function safeDescription(value: string): string {
 function projectSkillFromContent(
   name: string,
   raw: string,
-  source: { relativePath: string } | { filePath: string; sourceRoot: string },
+  source: { relativePath: string } | { filePath: string; sourceRoot: string; sourceBaseDir: string },
 ): ProjectSkill | null {
   if (!raw || Buffer.byteLength(raw, "utf8") > MAX_SKILL_BYTES) return null;
   const parsed = parseProjectSkill(raw);
@@ -176,6 +178,7 @@ export async function listProjectSkills(
           const skill = projectSkillFromContent(entry.name, raw, {
             filePath,
             sourceRoot: relativeRoot,
+            sourceBaseDir: projectRoot,
           });
           if (!skill) continue;
 
@@ -238,10 +241,10 @@ export async function readProjectSkill(
     return body ? { name: skill.name, body } : null;
   }
 
-  if (!workspaceDir || !skill.filePath || !skill.sourceRoot) return null;
+  if (!skill.filePath || !skill.sourceRoot || !skill.sourceBaseDir) return null;
 
   try {
-    const projectRoot = await realpath(workspaceDir);
+    const projectRoot = await realpath(skill.sourceBaseDir);
     const skillRoot = await realpath(resolve(projectRoot, skill.sourceRoot));
     const filePath = await realpath(skill.filePath);
     if (!isWithinDirectory(projectRoot, skillRoot) || !isWithinDirectory(skillRoot, filePath)) return null;
