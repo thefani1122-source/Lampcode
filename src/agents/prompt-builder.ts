@@ -994,11 +994,13 @@ if token limit hits mid-generation, DB and server files must already be complete
      }
      export async function getRiders(): Promise<Rider[]> {
        const r = await fetch(API_BASE + '/api/riders', { headers: await authHeaders() })
-       if (!r.ok) throw new Error('Unable to load riders')
+        if (!r.ok) throw new Error('Unable to load riders')
+        return r.json()
      }
-     export async function createRider(input: Partial<Rider>): Promise<Rider | null> {
+      export async function createRider(input: Partial<Rider>): Promise<Rider>
        const r = await fetch(API_BASE + '/api/riders', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(input) })
-       if (!r.ok) throw new Error('Unable to create rider')
+        if (!r.ok) throw new Error('Unable to create rider')
+        return r.json()
      }
    WHY API_BASE and not a bare '/api/...': the preview works only because the
    Vite DEV SERVER proxies /api to the backend on :3001. A production build has
@@ -1075,8 +1077,7 @@ Generate INSTEAD:
    exactly \`app\`. All routes under /api. Use the supabase Python client; handle
    errors so the server never crashes on startup. EXACT shape:
      import os
-     from fastapi import FastAPI, Request
-     from fastapi import HTTPException
+      from fastapi import FastAPI, Request, HTTPException
      from supabase import create_client
      app = FastAPI()
      # E2B preview uses a same-origin Vite /api proxy; do not add wildcard CORS.
@@ -1574,7 +1575,7 @@ useEffect(() => {
 }, [])
 
 ━━ PARTICLES (for hero backgrounds) ━━
-Use the installed `@tsparticles/react` component with the `@tsparticles/slim`
+Use the installed @tsparticles/react component with the @tsparticles/slim
 engine. Follow that package's initialization API; do not import from the
 non-installed `tsparticles` package.
 
@@ -1933,7 +1934,7 @@ async function loadSkillsForPrompt(
 
 /**
  * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
- * because follow-up edits are almost always on frontend (Sandpack) apps —
+because follow-up edits are usually frontend React/Vite apps in the E2B runtime —
  * this ensures the frontend-sandbox skill is injected on the stream path.
  */
 export async function loadRelevantSkillsForPrompt(
