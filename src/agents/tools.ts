@@ -905,6 +905,8 @@ export interface ToolExecutionContext {
   projectId?: string | undefined;
   /** Project workspace root, used only to read validated project-local SKILL.md files. */
   workspaceDir?: string | undefined;
+  /** Existing application source root, scanned separately from the capped context snapshot. */
+  projectSkillDir?: string | undefined;
   /** The project's existing files on a follow-up edit, as build.ts already
    *  loaded them. read_file/list_files serve from here first, so the model can
    *  see the real project without depending on a sandbox that may still be
