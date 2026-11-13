@@ -15,7 +15,7 @@ export const loadSkillHandler: ToolHandler = async (
   const skillName = typeof args["name"] === "string" ? args["name"] : "";
 
   if (skillName.startsWith(PROJECT_SKILL_NAME_PREFIX)) {
-    const projectSkill = await readProjectSkill(ctx.workspaceDir, skillName, ctx.projectFiles);
+    const projectSkill = await readProjectSkill(ctx.workspaceDir, skillName, ctx.projectFiles, ctx.projectSkillDir);
     if (!projectSkill) {
       return (
         'Error: project skill "' + skillName + '" is unavailable. Add a valid ' +
