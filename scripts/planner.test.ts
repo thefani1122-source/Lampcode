@@ -627,7 +627,9 @@ async function runPromptModeChecks(): Promise<void> {
   );
   check(
     "browser-only frontend builds receive the current E2B runtime rules, not obsolete Sandpack restrictions",
-    frontendSkills.includes("real browser preview") && !frontendSkills.includes("Sandpack"),
+    frontendSkills.includes("real browser preview") &&
+      !frontendSkills.includes("no fetch/localStorage/Node APIs") &&
+      !frontendSkills.includes("localStorage, sessionStorage → React state"),
     true,
   );
   check(
