@@ -1834,6 +1834,7 @@ async function loadSkillsForPrompt(
   opts?: {
     buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
     workspaceDir?: string | undefined;
+    projectFiles?: Record<string, string> | undefined;
   },
 ): Promise<string> {
   const skillsToLoad = new Set<string>();
@@ -1901,7 +1902,7 @@ async function loadSkillsForPrompt(
     }
   }
 
-  const projectSkillIndex = await buildProjectSkillIndex(opts?.workspaceDir);
+  const projectSkillIndex = await buildProjectSkillIndex(opts?.workspaceDir, opts?.projectFiles);
   return [projectSkillIndex, skillContents.join("")].filter(Boolean).join("\n");
 }
 
@@ -1932,6 +1933,7 @@ export class PromptBuilder {
     context: BuildContext,
     workspaceDir?: string | undefined,
     contextFiles?: Array<{ path: string; content: string }> | undefined,
+    projectFiles?: Record<string, string> | undefined,
   ): Promise<BuiltPrompt> {
     // Detect the build mode using the same negation-aware signals as the
     // architecture classifier. A negative MongoDB mention must not select its
@@ -1944,7 +1946,7 @@ export class PromptBuilder {
       // and the query prompt promises not to generate code.
       agentType === "query"
         ? Promise.resolve("")
-        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir),
+        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
     const rawSystemPrompt = skillsBlock
@@ -2620,8 +2622,9 @@ export class PromptBuilder {
     prompt: string,
     buildType?: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing",
     workspaceDir?: string,
+    projectFiles?: Record<string, string>,
   ): Promise<string> {
-    return loadSkillsForPrompt(prompt, { ...(buildType ? { buildType } : {}), workspaceDir });
+    return loadSkillsForPrompt(prompt, { ...(buildType ? { buildType } : {}), workspaceDir, projectFiles });
   }
 }
 
