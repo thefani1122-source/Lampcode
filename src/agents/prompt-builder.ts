@@ -1577,7 +1577,7 @@ useEffect(() => {
 ━━ PARTICLES (for hero backgrounds) ━━
 Use the installed @tsparticles/react component with the @tsparticles/slim
 engine. Follow that package's initialization API; do not import from the
-non-installed `tsparticles` package.
+non-installed tsparticles package.
 
 ━━ AOS (simple scroll animations via CSS classes) ━━
 import AOS from "aos"
