@@ -151,6 +151,8 @@ export type DispatchOptions = z.infer<typeof dispatchOptionsSchema> & {
   /** The project's current files on a follow-up edit. Lets the agentic tools
    *  serve reads from memory and keep the sandbox holding the whole project. */
   projectFiles?: Record<string, string> | undefined;
+  /** Source directory for on-disk project skill discovery beyond the capped file snapshot. */
+  projectSkillDir?: string | undefined;
   /** What `deploy_app` needs, resolved by the caller. Passed through rather than
    *  looked up inside the tool module, which would pull the database and the
    *  crypto helpers into a free, credential-less test — see the field's comment
@@ -544,7 +546,7 @@ export class AgentDispatcher {
         userId: userId ?? "anonymous",
         mode: "fast",
         prompt: task.description,
-      }, workspaceDir, contextFiles, options.projectFiles);
+      }, workspaceDir, contextFiles, options.projectFiles, options.projectSkillDir);
 
     // Create DB row (don't block on failure — tracking is best-effort)
     const taskId = await this.tracker
@@ -959,6 +961,7 @@ export class AgentDispatcher {
           sessionId,
           workspaceDir,
           projectFiles: options.projectFiles,
+          projectSkillDir: options.projectSkillDir,
           writeMcpRegistry: writeProxyRegistry,
           readMcpRegistry,
           writeDenied,
