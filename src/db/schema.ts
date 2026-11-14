@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   doublePrecision,
+  index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -1217,6 +1218,6 @@ export const userSkills = pgTable(
   },
   (t) => [
     uniqueIndex("user_skills_user_slug_idx").on(t.userId, t.slug),
-    uniqueIndex("user_skills_user_updated_idx").on(t.userId, t.updatedAt),
+    index("user_skills_user_updated_idx").on(t.userId, t.updatedAt),
   ],
 );
