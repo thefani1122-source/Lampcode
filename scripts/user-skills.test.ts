@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseUserSkillDocument, USER_SKILL_MAX_BYTES } from "../src/agents/user-skills.js";
+import { parseUserSkillDocument, parseUserSkillPackage, USER_SKILL_MAX_BYTES, USER_SKILL_MAX_REFERENCE_FILE_BYTES } from "../src/agents/user-skills.js";
 
 const valid = [
   "---",
@@ -22,7 +22,44 @@ assert.equal(parsed.version, "1.2.0");
 assert.match(parsed.description, /accessible React component patterns/);
 assert.match(parsed.body, /semantic HTML/);
 assert.equal(parsed.contentHash.length, 64);
+
 assert.equal(parsed.normalizedContent, valid);
+
+const withReferences = parseUserSkillPackage(valid, {
+  "references/api/auth.md": "Check ownership and tenant membership on every protected request.",
+  "references/api/errors.md": "Return stable error codes and never expose stack traces.",
+});
+assert.equal(Object.keys(withReferences.resources).length, 2);
+assert.match(withReferences.resources["references/api/auth.md"] ?? "", /tenant membership/);
+assert.notEqual(withReferences.contentHash, parseUserSkillDocument(valid).contentHash);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "../secrets.md": "do not load" }),
+  /Unsupported skill reference path/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "references/../secrets.md": "do not load" }),
+  /Unsupported skill reference path/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "references/null.md": "bad\u0000content" }),
+  /null bytes/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "references/too-large.md": "x".repeat(USER_SKILL_MAX_REFERENCE_FILE_BYTES + 1) }),
+  /32 KiB per-file limit/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, Object.fromEntries(
+    Array.from({ length: 21 }, (_, i) => ["references/r" + i + ".md", ""]),
+  )),
+  /at most 20 reference/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, Object.fromEntries(
+    Array.from({ length: 9 }, (_, i) => ["references/r" + i + ".md", "x".repeat(30 * 1024)]),
+  )),
+  /256 KiB limit/,
+);
 
 const buildVersion = parseUserSkillDocument(
   "---\nname: semver-build\ndescription: Validate stable package versions.\nversion: 2.3.4-beta.1+build.7\n---\n\nInstructions.",
