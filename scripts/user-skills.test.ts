@@ -133,7 +133,14 @@ assert.match(skillsRouteSource, /resources: parsed\.resources/);
 assert.match(skillsRouteSource, /parsedBody\.data\.resources \?\? existing\.resources/);
 assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resources"/i);
 assert.match(skillsRouteSource, /MAX_SKILL_REQUEST_BYTES = 640 \* 1024/);
-assert.match(skillsRouteSource, /assertSkillRequestSize\(c, raw\)/);
+assert.match(skillsRouteSource, /async function readBoundedJson\(/);\nassert.match(skillsRouteSource, /new Uint8Array\(maxBytes\)/);\nassert.match(skillsRouteSource, /body\.getReader\(\)/);\nassert.doesNotMatch(skillsRouteSource, /c\.req\.json\(/, "skill API must not buffer unbounded JSON before applying its size limit");
 assert.match(skillsMigration, /"resource_paths" jsonb NOT NULL DEFAULT '\[\]'::jsonb/i);
 assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resource_paths"/i);
 assert.match(skillsRouteSource, /resourcePaths: Object\.keys\(parsed\.resources\)/);
+
+const listSkillsSource = readFileSync(join(process.cwd(), "src", "agents", "tools", "list-skills.ts"), "utf8");
+assert.match(listSkillsSource, /resourcePaths: userSkills\.resourcePaths/);
+assert.doesNotMatch(listSkillsSource, /resources: userSkills\.resources/, "skill discovery must not load all reference bodies");
+const loadSkillSource = readFileSync(join(process.cwd(), "src", "agents", "tools", "load-skill.ts"), "utf8");
+assert.match(loadSkillSource, /userSkills\.resources}->>\$\{resourcePath\}/);
+assert.match(loadSkillSource, /parseUserSkillDocument\(skill\.content\)/);
