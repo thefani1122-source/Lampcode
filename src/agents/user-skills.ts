@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
 export const USER_SKILL_MAX_BYTES = 48 * 1024;
+export const USER_SKILL_MAX_REFERENCE_FILES = 20;
+export const USER_SKILL_MAX_REFERENCE_FILE_BYTES = 32 * 1024;
+export const USER_SKILL_MAX_REFERENCE_TOTAL_BYTES = 256 * 1024;
 export const USER_SKILL_NAME_PREFIX = "library:";
 const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -12,6 +15,7 @@ export interface ParsedUserSkill {
   version: string;
   body: string;
   normalizedContent: string;
+  resources: Record<string, string>;
   contentHash: string;
 }
 
@@ -32,13 +36,58 @@ function parseScalar(value: string): string {
 }
 
 /**
- * Parse the portable Agent Skills SKILL.md entry point.
- *
- * This parser intentionally supports the small frontmatter subset LampCode
- * needs (name, description and optional version). It does not evaluate YAML,
- * templates, scripts or any content from the skill.
+ * Validate a bounded set of portable Markdown reference documents.
+ * Only references/**/*.md is persisted in this release; scripts and binary
+ * assets are intentionally unsupported and never executed.
  */
-export function parseUserSkillDocument(raw: string): ParsedUserSkill {
+function validateSkillResources(input: Record<string, string>): Record<string, string> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Skill references must be a path-to-text map.");
+  }
+
+  const entries = Object.entries(input);
+  if (entries.length > USER_SKILL_MAX_REFERENCE_FILES) {
+    throw new Error(`A skill can include at most ${USER_SKILL_MAX_REFERENCE_FILES} reference Markdown files.`);
+  }
+
+  const validated: Record<string, string> = {};
+  let totalBytes = 0;
+  for (const [path, content] of entries.sort(([a], [b]) => a.localeCompare(b))) {
+    const segments = path.split("/");
+    const validPath =
+      path.length <= 240 &&
+      /^references\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md$/i.test(path) &&
+      segments.every((segment) => segment !== "." && segment !== ".." && segment.length > 0);
+    if (!validPath) {
+      throw new Error(`Unsupported skill reference path: ${path}. Only safe references/**/*.md paths are accepted.`);
+    }
+    if (typeof content !== "string" || content.includes("\\0")) {
+      throw new Error(`Skill reference "${path}" must be plain text without null bytes.`);
+    }
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > USER_SKILL_MAX_REFERENCE_FILE_BYTES) {
+      throw new Error(`Skill reference "${path}" exceeds the 32 KiB per-file limit.`);
+    }
+    totalBytes += bytes;
+    if (totalBytes > USER_SKILL_MAX_REFERENCE_TOTAL_BYTES) {
+      throw new Error("Combined skill references exceed the 256 KiB limit.");
+    }
+    validated[path] = content;
+  }
+  return validated;
+}
+
+/**
+ * Parse a portable Agent Skills package.
+ *
+ * The package entry point is SKILL.md and optional Markdown references are
+ * stored separately so the model can retrieve them on demand. YAML, scripts
+ * and any content from the package are never evaluated.
+ */
+export function parseUserSkillPackage(
+  raw: string,
+  resources: Record<string, string> = {},
+): ParsedUserSkill {
   if (typeof raw !== "string") throw new Error("SKILL.md content must be text.");
   const normalizedContent = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
   if (!normalizedContent) throw new Error("SKILL.md is empty.");
@@ -107,6 +156,13 @@ export function parseUserSkillDocument(raw: string): ParsedUserSkill {
   const body = normalizedContent.slice(match[0].length).trim();
   if (!body) throw new Error("SKILL.md must include instructions after the frontmatter.");
 
+  const validatedResources = validateSkillResources(resources);
+  const hash = createHash("sha256").update(normalizedContent, "utf8");
+  for (const [path, content] of Object.entries(validatedResources)) {
+    hash.update("\\0" + path + "\\0" + Buffer.byteLength(content, "utf8") + "\\0");
+    hash.update(content, "utf8");
+  }
+
   return {
     name,
     slug: name,
@@ -114,6 +170,12 @@ export function parseUserSkillDocument(raw: string): ParsedUserSkill {
     version,
     body,
     normalizedContent,
-    contentHash: createHash("sha256").update(normalizedContent, "utf8").digest("hex"),
+    resources: validatedResources,
+    contentHash: hash.digest("hex"),
   };
+}
+
+/** Backward-compatible single-file parser used by existing project callers/tests. */
+export function parseUserSkillDocument(raw: string): ParsedUserSkill {
+  return parseUserSkillPackage(raw, {});
 }
