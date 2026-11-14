@@ -19,3 +19,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "user_skills_user_slug_idx"
 
 CREATE INDEX IF NOT EXISTS "user_skills_user_updated_idx"
   ON "public"."user_skills" ("user_id", "updated_at" DESC);
+-- Skill contents can include private engineering workflows and proprietary guidance.
+-- The frontend ships the Supabase anon key, so direct PostgREST access must be
+-- denied. LampCode reads/writes this table only through its authenticated API
+-- using the trusted backend DATABASE_URL; no client-facing policy is needed.
+-- Keep RLS enabled with zero policies unless a separately reviewed access path
+-- is introduced. Do not expose this table directly to browser clients.
+ALTER TABLE "public"."user_skills" ENABLE ROW LEVEL SECURITY;
