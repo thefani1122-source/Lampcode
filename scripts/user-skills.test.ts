@@ -112,3 +112,6 @@ assert.match(skillsRouteSource, /skillsRouter\.delete\("\/:id"/);
 assert.match(skillsRouteSource, /eq\(userSkills\.id, id\),\s*eq\(userSkills\.userId, userId\)/);
 assert.match(skillsRouteSource, /parsed\.slug !== existing\.slug/);
 assert.match(skillsRouteSource, /revision: sql\x60\$\{userSkills\.revision\} \+ 1\x60/);
+assert.match(skillsMigration, /"resources" jsonb NOT NULL DEFAULT '\{\}'::jsonb/i);
+assert.match(skillsRouteSource, /resources: parsed\.resources/);
+assert.match(skillsRouteSource, /parsedBody\.data\.resources \?\? existing\.resources/);
