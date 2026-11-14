@@ -24,6 +24,16 @@ const updateSkillDocumentSchema = z.object({
   skillMd: z.string().min(1).max(48 * 1024),
   resources: z.record(z.string(), z.string()).optional(),
 });
+const MAX_SKILL_REQUEST_BYTES = 48 * 1024 + 256 * 1024 + 32 * 1024;
+
+function assertSkillRequestSize(c: Parameters<Parameters<typeof skillsRouter.post>[1]>[0], raw: unknown) {
+  const declared = Number(c.req.header("content-length") ?? 0);
+  const actual = Buffer.byteLength(JSON.stringify(raw), "utf8");
+  if ((Number.isFinite(declared) && declared > MAX_SKILL_REQUEST_BYTES) || actual > MAX_SKILL_REQUEST_BYTES) {
+    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+  }
+}
+
 
 function parseSkillOrThrow(skillMd: string, resources: Record<string, string> = {}) {
   try {
@@ -104,9 +114,14 @@ skillsRouter.get("/:id", async (c) => {
 // POST /api/skills — install one standard SKILL.md file into the user's library.
 skillsRouter.post("/", async (c) => {
   const { id: userId } = c.get("authUser");
+  const declaredLength = Number(c.req.header("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
+    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+  }
   const raw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
   });
+  assertSkillRequestSize(c, raw);
   const parsedBody = createSkillSchema.safeParse(raw);
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
@@ -173,9 +188,14 @@ skillsRouter.post("/", async (c) => {
 skillsRouter.put("/:id", async (c) => {
   const { id: userId } = c.get("authUser");
   const id = c.req.param("id");
+  const declaredLength = Number(c.req.header("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
+    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+  }
   const raw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
   });
+  assertSkillRequestSize(c, raw);
   const parsedBody = updateSkillDocumentSchema.safeParse(raw);
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
