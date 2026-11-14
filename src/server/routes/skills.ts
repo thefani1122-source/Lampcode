@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { userSkills } from "../../db/schema.js";
@@ -26,7 +26,7 @@ const updateSkillDocumentSchema = z.object({
 });
 const MAX_SKILL_REQUEST_BYTES = 48 * 1024 + 256 * 1024 + 32 * 1024;
 
-function assertSkillRequestSize(c: Parameters<Parameters<typeof skillsRouter.post>[1]>[0], raw: unknown) {
+function assertSkillRequestSize(c: Context, raw: unknown) {
   const declared = Number(c.req.header("content-length") ?? 0);
   const actual = Buffer.byteLength(JSON.stringify(raw), "utf8");
   if ((Number.isFinite(declared) && declared > MAX_SKILL_REQUEST_BYTES) || actual > MAX_SKILL_REQUEST_BYTES) {
