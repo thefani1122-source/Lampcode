@@ -56,7 +56,7 @@ function validateSkillResources(input: Record<string, string>): Record<string, s
     const segments = path.split("/");
     const validPath =
       path.length <= 240 &&
-      /^references\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md$/i.test(path) &&
+      /^references\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md$/.test(path) &&
       segments.every((segment) => segment !== "." && segment !== ".." && segment.length > 0);
     if (!validPath) {
       throw new Error(`Unsupported skill reference path: ${path}. Only safe references/**/*.md paths are accepted.`);
