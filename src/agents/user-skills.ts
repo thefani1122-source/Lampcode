@@ -55,22 +55,29 @@ export function parseUserSkillDocument(raw: string): ParsedUserSkill {
   let name = "";
   let description = "";
   let version = "1.0.0";
+  const seenFields = new Set<string>();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const nameMatch = /^name:\s*(.*)$/.exec(line);
     if (nameMatch) {
+      if (seenFields.has("name")) throw new Error("SKILL.md frontmatter contains duplicate name fields.");
+      seenFields.add("name");
       name = parseScalar(nameMatch[1] ?? "");
       continue;
     }
     const versionMatch = /^version:\s*(.*)$/.exec(line);
     if (versionMatch) {
+      if (seenFields.has("version")) throw new Error("SKILL.md frontmatter contains duplicate version fields.");
+      seenFields.add("version");
       const candidate = parseScalar(versionMatch[1] ?? "");
       if (candidate) version = candidate;
       continue;
     }
     const descriptionMatch = /^description:\s*(.*)$/.exec(line);
     if (descriptionMatch) {
+      if (seenFields.has("description")) throw new Error("SKILL.md frontmatter contains duplicate description fields.");
+      seenFields.add("description");
       const first = (descriptionMatch[1] ?? "").trim();
       if (first === ">" || first === "|") {
         const descriptionLines: string[] = [];
