@@ -37,7 +37,7 @@ This repository's production migrations are applied as explicit SQL by the opera
 drizzle/0014_user_skills.sql
 ```
 
-The migration creates the `user_skills` table, indexes, the JSONB reference map, and default-deny RLS. Do not assume the application will run this migration automatically. After applying it, verify that `user_skills` reports RLS enabled and has no client-facing policies.
+The migration creates the `user_skills` table, indexes, a JSONB reference map, a separate lightweight JSONB path index, and default-deny RLS. Do not assume the application will run this migration automatically. After applying it, verify that `user_skills` reports RLS enabled and has no client-facing policies.
 
 ## API
 
@@ -48,4 +48,4 @@ The migration creates the `user_skills` table, indexes, the JSONB reference map,
 - `PATCH /api/skills/:id` — body `{ "enabled": true | false }`.
 - `DELETE /api/skills/:id` — uninstall one of the authenticated user's entries.
 
-The frontend calls these endpoints with the existing authenticated API client. The list endpoint is intentionally metadata-only; content is retrieved only when the user edits a skill or an agent explicitly loads it. The `list_skills` tool exposes reference paths but not their contents; `load_skill` accepts an optional `resource` path for lazy retrieval.
+The frontend calls these endpoints with the existing authenticated API client. The list endpoint is intentionally metadata-only; it returns reference paths but not reference bodies. Full documents are retrieved only when the user edits a skill or an agent explicitly loads the skill/reference. The agent index reads only the small `resource_paths` column, never the stored resource bodies. The `list_skills` tool exposes reference paths but not their contents; `load_skill` accepts an optional `resource` path for lazy retrieval.
