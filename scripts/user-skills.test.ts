@@ -25,7 +25,7 @@ assert.equal(parsed.contentHash.length, 64);
 assert.equal(parsed.normalizedContent, valid);
 
 const buildVersion = parseUserSkillDocument(
-  "---\\nname: semver-build\\ndescription: Validate stable package versions.\\nversion: 2.3.4-beta.1+build.7\\n---\\n\\nInstructions.",
+  "---\nname: semver-build\ndescription: Validate stable package versions.\nversion: 2.3.4-beta.1+build.7\n---\n\nInstructions.",
 );
 assert.equal(buildVersion.version, "2.3.4-beta.1+build.7");
 
@@ -41,10 +41,10 @@ const folded = parseUserSkillDocument(
 assert.equal(folded.description, "Review server routes carefully. Check validation and authorization.");
 
 assert.throws(() => parseUserSkillDocument("No YAML frontmatter"), /YAML frontmatter/);
-assert.throws(() => parseUserSkillDocument("---\\nname: duplicate\\nname: attacker\\ndescription: Invalid duplicate metadata.\\n---\\n\\nInstructions."), /duplicate name/);
-assert.throws(() => parseUserSkillDocument("---\\nname: duplicate-description\\ndescription: First description.\\ndescription: Second description.\\n---\\n\\nInstructions."), /duplicate description/);
-assert.throws(() => parseUserSkillDocument("---\\nname: duplicate-version\\ndescription: Duplicate version.\\nversion: 1.0.0\\nversion: 2.0.0\\n---\\n\\nInstructions."), /duplicate version/);
-assert.throws(() => parseUserSkillDocument("---\\nname: invalid-semver\\ndescription: Invalid semantic version.\\nversion: 01.2.3\\n---\\n\\nInstructions."), /semantic version/);
+assert.throws(() => parseUserSkillDocument("---\nname: duplicate\nname: attacker\ndescription: Invalid duplicate metadata.\n---\n\nInstructions."), /duplicate name/);
+assert.throws(() => parseUserSkillDocument("---\nname: duplicate-description\ndescription: First description.\ndescription: Second description.\n---\n\nInstructions."), /duplicate description/);
+assert.throws(() => parseUserSkillDocument("---\nname: duplicate-version\ndescription: Duplicate version.\nversion: 1.0.0\nversion: 2.0.0\n---\n\nInstructions."), /duplicate version/);
+assert.throws(() => parseUserSkillDocument("---\nname: invalid-semver\ndescription: Invalid semantic version.\nversion: 01.2.3\n---\n\nInstructions."), /semantic version/);
 assert.throws(() => parseUserSkillDocument("---\nname: missing-description\n---\n\nInstructions."), /description is required/);
 assert.throws(() => parseUserSkillDocument("---\nname: Not_Valid\ndescription: Invalid name.\n---\n\nInstructions."), /Skill name/);
 assert.throws(() => parseUserSkillDocument("---\nname: -bad\ndescription: Invalid name.\n---\n\nInstructions."), /Skill name/);
