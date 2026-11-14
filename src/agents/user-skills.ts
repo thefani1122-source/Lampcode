@@ -62,10 +62,10 @@ function validateSkillResources(input: Record<string, string>): Record<string, s
       throw new Error(`Unsupported skill reference path: ${path}. Only safe references/**/*.md paths are accepted.`);
     }
     if (typeof content !== "string" || content.includes("\u0000")) {
+      throw new Error(`Skill reference "${path}" must be plain text without null bytes.`);
+    }
     if (/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(content)) {
       throw new Error(`Skill reference "${path}" contains unsupported control characters.`);
-    }
-      throw new Error(`Skill reference "${path}" must be plain text without null bytes.`);
     }
     const bytes = Buffer.byteLength(content, "utf8");
     if (bytes > USER_SKILL_MAX_REFERENCE_FILE_BYTES) {
