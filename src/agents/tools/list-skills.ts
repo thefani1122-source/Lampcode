@@ -26,7 +26,8 @@ export const listUserSkillsHandler: ToolHandler = async (
 
   if (!rows) {
     return "Your personal Skills Library could not be queried. The server may need the user_skills database migration.";
-  }  if (rows.length === 0) {
+  }
+  if (rows.length === 0) {
     return "Your Skills Library is empty. You can import a standard SKILL.md file from the Skills section of LampCode.";
   }
 
