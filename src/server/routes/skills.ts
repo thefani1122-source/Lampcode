@@ -74,6 +74,15 @@ skillsRouter.post("/", async (c) => {
   }
   const parsed = parseSkillOrThrow(parsedBody.data.skillMd);
 
+  const userSkillRows = await db
+    .select({ id: userSkills.id })
+    .from(userSkills)
+    .where(eq(userSkills.userId, userId))
+    .limit(100);
+  if (userSkillRows.length >= 100) {
+    throw new AppError(409, "Your Skills Library is limited to 100 installed skills.", "SKILL_LIMIT_REACHED");
+  }
+
   const existing = await db
     .select({ id: userSkills.id })
     .from(userSkills)
