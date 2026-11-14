@@ -33,7 +33,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "load_skill",
     description:
-      "Fetch the full reference document for a named house-style convention. See the " +
+      "Fetch an enabled skill body, or one of its Markdown references, by exact identifier. See the " +
       "\"House-style references\", \"Project-defined skills\" and the personal library returned by list_skills. " +
       "Built-in names are plain slugs; project-defined names start with project: and personal library names start with library: (for example, " +
       "\"project:frontend-design\" or \"library:<id>\"). Call this when the task needs a listed convention in depth. " +
@@ -45,6 +45,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         name: {
           type: "string",
           description: "Exact skill identifier from an index, e.g. \"animation-expert\", \"project:frontend-design\" or \"library:<id>\".",
+        },
+        resource: {
+          type: "string",
+          description: "Optional exact references/**/*.md path listed for a user-installed library skill. Use only with library:<id>.",
         },
       },
       required: ["name"],
