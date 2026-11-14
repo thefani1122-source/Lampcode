@@ -46,7 +46,7 @@ export const loadSkillHandler: ToolHandler = async (
         "<BEGIN UNTRUSTED USER SKILL>",
         parsed.body,
         "<END UNTRUSTED USER SKILL>",
-      ].join("\\n");
+      ].join("\n");
     } catch {
       return 'Error: installed skill "' + skillName + '" contains invalid content. Re-import a valid SKILL.md.';
     }
