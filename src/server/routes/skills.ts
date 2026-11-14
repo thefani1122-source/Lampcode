@@ -62,6 +62,7 @@ skillsRouter.get("/", async (c) => {
       enabled: userSkills.enabled,
       source: userSkills.source,
       contentHash: userSkills.contentHash,
+      resourcePaths: userSkills.resourcePaths,
       createdAt: userSkills.createdAt,
       updatedAt: userSkills.updatedAt,
     })
@@ -96,6 +97,7 @@ skillsRouter.get("/:id", async (c) => {
       contentHash: userSkills.contentHash,
       content: userSkills.content,
       resources: userSkills.resources,
+      resourcePaths: userSkills.resourcePaths,
       updatedAt: userSkills.updatedAt,
     })
     .from(userSkills)
@@ -160,6 +162,7 @@ skillsRouter.post("/", async (c) => {
       revision: 1,
       content: parsed.normalizedContent,
       resources: parsed.resources,
+      resourcePaths: Object.keys(parsed.resources),
       contentHash: parsed.contentHash,
       source: "manual",
       enabled: true,
@@ -175,6 +178,7 @@ skillsRouter.post("/", async (c) => {
       version: userSkills.version,
       revision: userSkills.revision,
       enabled: userSkills.enabled,
+      resourcePaths: userSkills.resourcePaths,
     });
 
   if (!inserted[0]) {
@@ -230,6 +234,7 @@ skillsRouter.put("/:id", async (c) => {
         revision: existing.revision,
         enabled: existing.enabled,
         contentHash: parsed.contentHash,
+        resourcePaths: Object.keys(existing.resources ?? {}),
       },
       unchanged: true,
     });
@@ -243,6 +248,7 @@ skillsRouter.put("/:id", async (c) => {
       version: parsed.version,
       content: parsed.normalizedContent,
       resources: parsed.resources,
+      resourcePaths: Object.keys(parsed.resources),
       contentHash: parsed.contentHash,
       revision: sql`${userSkills.revision} + 1`,
       updatedAt: new Date(),
@@ -257,6 +263,7 @@ skillsRouter.put("/:id", async (c) => {
       revision: userSkills.revision,
       enabled: userSkills.enabled,
       contentHash: userSkills.contentHash,
+      resourcePaths: userSkills.resourcePaths,
     });
   if (!rows[0]) throw new AppError(404, "Skill not found.", "NOT_FOUND");
   return c.json({ skill: rows[0], unchanged: false });
