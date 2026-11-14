@@ -1192,3 +1192,31 @@ export const buildEventsRelations = relations(buildEvents, ({ one }) => ({
   session: one(buildSessions, { fields: [buildEvents.sessionId], references: [buildSessions.id] }),
 }));
 
+// ── User-installed Agent Skills ───────────────────────────────────────────────
+//
+// Content is stored as inert text. Skills are only exposed to the model through
+// metadata and the authenticated load_skill tool; scripts/hooks are never run.
+export const userSkills = pgTable(
+  "user_skills",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    version: text("version").notNull().default("1.0.0"),
+    revision: integer("revision").notNull().default(1),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    source: text("source").notNull().default("manual"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("user_skills_user_slug_idx").on(t.userId, t.slug),
+    uniqueIndex("user_skills_user_updated_idx").on(t.userId, t.updatedAt),
+  ],
+);
