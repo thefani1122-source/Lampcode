@@ -24,6 +24,11 @@ assert.match(parsed.body, /semantic HTML/);
 assert.equal(parsed.contentHash.length, 64);
 assert.equal(parsed.normalizedContent, valid);
 
+const buildVersion = parseUserSkillDocument(
+  "---\\nname: semver-build\\ndescription: Validate stable package versions.\\nversion: 2.3.4-beta.1+build.7\\n---\\n\\nInstructions.",
+);
+assert.equal(buildVersion.version, "2.3.4-beta.1+build.7");
+
 const quoted = parseUserSkillDocument(
   "---\r\nname: api-review\r\ndescription: 'Review API contracts: auth, validation, and errors.'\r\n---\r\n\r\nCheck ownership on every request.",
 );
@@ -36,6 +41,10 @@ const folded = parseUserSkillDocument(
 assert.equal(folded.description, "Review server routes carefully. Check validation and authorization.");
 
 assert.throws(() => parseUserSkillDocument("No YAML frontmatter"), /YAML frontmatter/);
+assert.throws(() => parseUserSkillDocument("---\\nname: duplicate\\nname: attacker\\ndescription: Invalid duplicate metadata.\\n---\\n\\nInstructions."), /duplicate name/);
+assert.throws(() => parseUserSkillDocument("---\\nname: duplicate-description\\ndescription: First description.\\ndescription: Second description.\\n---\\n\\nInstructions."), /duplicate description/);
+assert.throws(() => parseUserSkillDocument("---\\nname: duplicate-version\\ndescription: Duplicate version.\\nversion: 1.0.0\\nversion: 2.0.0\\n---\\n\\nInstructions."), /duplicate version/);
+assert.throws(() => parseUserSkillDocument("---\\nname: invalid-semver\\ndescription: Invalid semantic version.\\nversion: 01.2.3\\n---\\n\\nInstructions."), /semantic version/);
 assert.throws(() => parseUserSkillDocument("---\nname: missing-description\n---\n\nInstructions."), /description is required/);
 assert.throws(() => parseUserSkillDocument("---\nname: Not_Valid\ndescription: Invalid name.\n---\n\nInstructions."), /Skill name/);
 assert.throws(() => parseUserSkillDocument("---\nname: -bad\ndescription: Invalid name.\n---\n\nInstructions."), /Skill name/);
@@ -53,3 +62,16 @@ console.log("All user skill document validation checks passed.");
 const skillsMigration = readFileSync(join(process.cwd(), "drizzle", "0014_user_skills.sql"), "utf8");
 assert.match(skillsMigration, /ALTER TABLE\s+"public"\."user_skills"\s+ENABLE ROW LEVEL SECURITY;/i);
 assert.doesNotMatch(skillsMigration, /^\s*CREATE\s+POLICY\b/im, "user skills must remain inaccessible to browser/PostgREST roles");
+
+
+// Route-level security and lifecycle contract regression checks. These guard
+// the critical API wiring; the full behaviour still needs the authenticated
+// integration test against a provisioned database.
+const skillsRouteSource = readFileSync(join(process.cwd(), "src", "server", "routes", "skills.ts"), "utf8");
+assert.match(skillsRouteSource, /skillsRouter\.get\("\/:id"/);
+assert.match(skillsRouteSource, /skillsRouter\.put\("\/:id"/);
+assert.match(skillsRouteSource, /skillsRouter\.patch\("\/:id"/);
+assert.match(skillsRouteSource, /skillsRouter\.delete\("\/:id"/);
+assert.match(skillsRouteSource, /eq\(userSkills\.id, id\),\s*eq\(userSkills\.userId, userId\)/);
+assert.match(skillsRouteSource, /parsed\.slug !== existing\.slug/);
+assert.match(skillsRouteSource, /revision: sql\x60\$\{userSkills\.revision\} \+ 1\x60/);
