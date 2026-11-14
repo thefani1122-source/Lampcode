@@ -44,7 +44,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         name: {
           type: "string",
-          description: "Exact skill identifier from an index, e.g. \"animation-expert\", \"project:frontend-design\" or \"library:<id>\ ".replace(/\\ $/, \"\")",
+          description: "Exact skill identifier from an index, e.g. \"animation-expert\", \"project:frontend-design\" or \"library:<id>\".",
         },
       },
       required: ["name"],
