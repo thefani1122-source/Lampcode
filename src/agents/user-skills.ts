@@ -52,7 +52,7 @@ function validateSkillResources(input: Record<string, string>): Record<string, s
 
   const validated: Record<string, string> = {};
   let totalBytes = 0;
-  for (const [path, content] of entries.sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [path, content] of entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const segments = path.split("/");
     const validPath =
       path.length <= 240 &&
