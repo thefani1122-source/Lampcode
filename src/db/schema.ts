@@ -1210,6 +1210,7 @@ export const userSkills = pgTable(
     version: text("version").notNull().default("1.0.0"),
     revision: integer("revision").notNull().default(1),
     content: text("content").notNull(),
+    resources: jsonb("resources").$type<Record<string, string>>().notNull().default({}),
     contentHash: text("content_hash").notNull(),
     source: text("source").notNull().default("manual"),
     enabled: boolean("enabled").notNull().default(true),
