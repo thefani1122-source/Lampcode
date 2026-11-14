@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS "public"."user_skills" (
   "version" text NOT NULL DEFAULT '1.0.0',
   "revision" integer NOT NULL DEFAULT 1,
   "content" text NOT NULL,
+  "resources" jsonb NOT NULL DEFAULT '{}'::jsonb,
   "content_hash" text NOT NULL,
   "source" text NOT NULL DEFAULT 'manual',
   "enabled" boolean NOT NULL DEFAULT true,
