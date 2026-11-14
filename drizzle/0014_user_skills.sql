@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS "public"."user_skills" (
   "updated_at" timestamp NOT NULL DEFAULT now()
 );
 
+-- Enable default-deny immediately; no browser-facing policies are created.
+ALTER TABLE "public"."user_skills" ENABLE ROW LEVEL SECURITY;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "user_skills_user_slug_idx"
   ON "public"."user_skills" ("user_id", "slug");
 
@@ -46,4 +49,3 @@ WHERE skills."resource_paths" = '[]'::jsonb
 -- using the trusted backend DATABASE_URL; no client-facing policy is needed.
 -- Keep RLS enabled with zero policies unless a separately reviewed access path
 -- is introduced. Do not expose this table directly to browser clients.
-ALTER TABLE "public"."user_skills" ENABLE ROW LEVEL SECURITY;
