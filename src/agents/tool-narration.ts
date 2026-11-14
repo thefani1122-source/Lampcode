@@ -88,6 +88,7 @@ const PHRASES: Record<string, Phrase> = {
   shell: { past: "Ran a command", present: "Running a command" },
   fetch_reference: { past: "Read the documentation", present: "Reading the documentation" },
   web_search: { past: "Searched the web for", present: "Searching the web for", arg: "query" },
+  list_skills: { past: "Checked your Skills Library", present: "Checking your Skills Library" },
   load_skill: { past: "Loaded extra guidance", present: "Loading extra guidance" },
 
   checkpoint: { past: "Saved a checkpoint", present: "Saving a checkpoint" },
