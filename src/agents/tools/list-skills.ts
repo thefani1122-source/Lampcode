@@ -10,25 +10,23 @@ export const listUserSkillsHandler: ToolHandler = async (
 ): Promise<string> => {
   if (!ctx.userId) return "User-installed skills are unavailable because this dispatch has no authenticated user context.";
 
-  let rows;
-  try {
-    rows = await db
-      .select({
-        id: userSkills.id,
-        name: userSkills.name,
-        description: userSkills.description,
-        version: userSkills.version,
-        revision: userSkills.revision,
-      })
-      .from(userSkills)
-      .where(and(eq(userSkills.userId, ctx.userId), eq(userSkills.enabled, true)))
-      .orderBy(desc(userSkills.updatedAt))
-      .limit(100);
-  } catch {
-    return "Your personal Skills Library could not be queried. The server may need the user_skills database migration.";
-  }
+  const rows = await db
+    .select({
+      id: userSkills.id,
+      name: userSkills.name,
+      description: userSkills.description,
+      version: userSkills.version,
+      revision: userSkills.revision,
+    })
+    .from(userSkills)
+    .where(and(eq(userSkills.userId, ctx.userId), eq(userSkills.enabled, true)))
+    .orderBy(desc(userSkills.updatedAt))
+    .limit(100)
+    .catch(() => null);
 
-  if (rows.length === 0) {
+  if (!rows) {
+    return "Your personal Skills Library could not be queried. The server may need the user_skills database migration.";
+  }  if (rows.length === 0) {
     return "Your Skills Library is empty. You can import a standard SKILL.md file from the Skills section of LampCode.";
   }
 
