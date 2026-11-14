@@ -142,8 +142,12 @@ assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resource_paths"/i);
 assert.match(skillsRouteSource, /resourcePaths: Object\.keys\(parsed\.resources\)/);
 
 const listSkillsSource = readFileSync(join(process.cwd(), "src", "agents", "tools", "list-skills.ts"), "utf8");
-assert.match(listSkillsSource, /row\.description\.slice\(0, 280\)/);\nassert.doesNotMatch(listSkillsSource, /resourcePaths: userSkills\.resourcePaths/, "base discovery must not enumerate reference paths for every installed skill");
+assert.match(listSkillsSource, /row\.description\.slice\(0, 280\)/);
+assert.doesNotMatch(listSkillsSource, /resourcePaths: userSkills\.resourcePaths/, "base discovery must not enumerate reference paths for every installed skill");
 assert.doesNotMatch(listSkillsSource, /resources: userSkills\.resources/, "skill discovery must not load all reference bodies");
 const loadSkillSource = readFileSync(join(process.cwd(), "src", "agents", "tools", "load-skill.ts"), "utf8");
 assert.match(loadSkillSource, /userSkills\.resources}->>\$\{resourcePath\}/);
+assert.match(loadSkillSource, /resourcePaths: userSkills\.resourcePaths/);
+assert.match(loadSkillSource, /skill\.resourcePaths\.map\(/);
+assert.match(loadSkillSource, /parseUserSkillDocument\(skill\.content\)/);
 assert.match(loadSkillSource, /resourcePaths: userSkills\.resourcePaths/);\nassert.match(loadSkillSource, /skill\.resourcePaths\.map\(/);\nassert.match(loadSkillSource, /parseUserSkillDocument\(skill\.content\)/);
