@@ -1,4 +1,5 @@
 import { loadSkillHandler } from "./load-skill.js";
+import { listUserSkillsHandler } from "./list-skills.js";
 import { readProjectFileHandler } from "./read-project-file.js";
 import { requestWriteActionHandler } from "./request-write-action.js";
 import { checkpointHandler } from "./checkpoint.js";
@@ -47,6 +48,7 @@ export const DEFERRED_STATIC_HANDLERS = new Set(["ask_user"]);
 
 export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["load_skill", loadSkillHandler],
+  ["list_skills", listUserSkillsHandler],
   ["read_project_file", readProjectFileHandler],
   ["request_write_action", requestWriteActionHandler],
   ["checkpoint", checkpointHandler],
