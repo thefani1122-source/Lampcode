@@ -28,7 +28,8 @@ const MAX_SKILL_REQUEST_BYTES = 48 * 1024 + 256 * 1024 + 32 * 1024;
 
 function assertSkillRequestSize(c: Context, raw: unknown) {
   const declared = Number(c.req.header("content-length") ?? 0);
-  const actual = Buffer.byteLength(JSON.stringify(raw), "utf8");
+  const serialized = JSON.stringify(raw);
+  const actual = Buffer.byteLength(serialized ?? "", "utf8");
   if ((Number.isFinite(declared) && declared > MAX_SKILL_REQUEST_BYTES) || actual > MAX_SKILL_REQUEST_BYTES) {
     throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
   }
