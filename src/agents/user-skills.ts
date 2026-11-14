@@ -61,7 +61,7 @@ function validateSkillResources(input: Record<string, string>): Record<string, s
     if (!validPath) {
       throw new Error(`Unsupported skill reference path: ${path}. Only safe references/**/*.md paths are accepted.`);
     }
-    if (typeof content !== "string" || content.includes("\\0")) {
+    if (typeof content !== "string" || content.includes("\u0000")) {
       throw new Error(`Skill reference "${path}" must be plain text without null bytes.`);
     }
     const bytes = Buffer.byteLength(content, "utf8");
@@ -159,7 +159,7 @@ export function parseUserSkillPackage(
   const validatedResources = validateSkillResources(resources);
   const hash = createHash("sha256").update(normalizedContent, "utf8");
   for (const [path, content] of Object.entries(validatedResources)) {
-    hash.update("\\0" + path + "\\0" + Buffer.byteLength(content, "utf8") + "\\0");
+    hash.update("\u0000" + path + "\u0000" + Buffer.byteLength(content, "utf8") + "\u0000");
     hash.update(content, "utf8");
   }
 
