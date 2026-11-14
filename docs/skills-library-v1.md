@@ -15,7 +15,7 @@
 
 ## Supported scope and current limitations
 
-- `SKILL.md` is limited to 48 KiB. Folder imports support only text Markdown under `references/` (20 files, 32 KiB each, 256 KiB combined, 336 KiB request cap).
+- `SKILL.md` is limited to 48 KiB. Folder imports support only text Markdown under `references/` (20 files, 32 KiB each, 256 KiB combined, 640 KiB request cap).
 - ZIP archives, binary `assets/`, GitHub import, project-level activation, team scope, multi-capability plugin manifests, and marketplace publishing are not included in this release. Folder selection is supported only for the `SKILL.md` entry point and Markdown references under `references/`.
 - Skills are user-global and can be selected by builds across that user's projects when relevant and enabled.
 - The skill name is the stable agent-facing identifier and cannot be changed in place. To rename it, install a new skill with the new name and then remove the old one.
