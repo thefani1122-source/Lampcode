@@ -154,3 +154,7 @@ assert.match(loadSkillSource, /resourcePaths: userSkills\.resourcePaths/);
 assert.match(loadSkillSource, /skill\.resourcePaths\.map\(/);
 assert.match(loadSkillSource, /parseUserSkillDocument\(skill\.content\)/);
 assert.match(skillsMigration, /jsonb_object_keys\(skills\."resources"\)/i);
+assert.match(loadSkillSource, /JSON\.stringify\(skill\.resource\)/);
+assert.match(loadSkillSource, /JSON\.stringify\(parsed\.body\)/);
+assert.match(loadSkillSource, /JSON\.stringify\(projectSkill\.body\)/);
+assert.doesNotMatch(loadSkillSource, /BEGIN UNTRUSTED USER SKILL|END UNTRUSTED USER SKILL|BEGIN UNTRUSTED PROJECT SKILL|END UNTRUSTED PROJECT SKILL/);
