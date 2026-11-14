@@ -115,3 +115,6 @@ assert.match(skillsRouteSource, /revision: sql\x60\$\{userSkills\.revision\} \+ 
 assert.match(skillsMigration, /"resources" jsonb NOT NULL DEFAULT '\{\}'::jsonb/i);
 assert.match(skillsRouteSource, /resources: parsed\.resources/);
 assert.match(skillsRouteSource, /parsedBody\.data\.resources \?\? existing\.resources/);
+assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resources"/i);
+assert.match(skillsRouteSource, /MAX_SKILL_REQUEST_BYTES = 640 \* 1024/);
+assert.match(skillsRouteSource, /assertSkillRequestSize\(c, raw\)/);
