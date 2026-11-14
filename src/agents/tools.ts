@@ -20,6 +20,17 @@ const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "li
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
+    name: "list_skills",
+    description:
+      "List the enabled skills in the authenticated user's personal LampCode Skills Library. " +
+      "Use this when a task could benefit from an installed reusable workflow or specialist guide. " +
+      "The tool returns metadata only; load only a relevant entry with load_skill using its exact library: identifier.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "load_skill",
     description:
       "Fetch the full reference document for a named house-style convention. See the " +
