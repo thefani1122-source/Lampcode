@@ -32,6 +32,22 @@ const withReferences = parseUserSkillPackage(valid, {
 assert.equal(Object.keys(withReferences.resources).length, 2);
 assert.match(withReferences.resources["references/api/auth.md"] ?? "", /tenant membership/);
 assert.notEqual(withReferences.contentHash, parseUserSkillDocument(valid).contentHash);
+assert.equal(
+  withReferences.contentHash,
+  parseUserSkillPackage(valid, {
+    "references/api/errors.md": "Return stable error codes and never expose stack traces.",
+    "references/api/auth.md": "Check ownership and tenant membership on every protected request.",
+  }).contentHash,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "assets/logo.png": "not a reference" }),
+  /Unsupported skill reference path/,
+);
+assert.throws(
+  () => parseUserSkillPackage(valid, { "references/control.md": "bad\u0001content" }),
+  /unsupported control characters/,
+);
+
 assert.throws(
   () => parseUserSkillPackage(valid, { "../secrets.md": "do not load" }),
   /Unsupported skill reference path/,
