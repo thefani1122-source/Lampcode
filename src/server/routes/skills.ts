@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { userSkills } from "../../db/schema.js";
-import { parseUserSkillDocument } from "../../agents/user-skills.js";
+import { parseUserSkillPackage } from "../../agents/user-skills.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 
@@ -13,6 +13,7 @@ skillsRouter.use("/*", requireAuth);
 
 const createSkillSchema = z.object({
   skillMd: z.string().min(1).max(48 * 1024),
+  resources: z.record(z.string(), z.string()).optional(),
 });
 
 const updateSkillStateSchema = z.object({
@@ -21,11 +22,12 @@ const updateSkillStateSchema = z.object({
 
 const updateSkillDocumentSchema = z.object({
   skillMd: z.string().min(1).max(48 * 1024),
+  resources: z.record(z.string(), z.string()).optional(),
 });
 
-function parseSkillOrThrow(skillMd: string) {
+function parseSkillOrThrow(skillMd: string, resources: Record<string, string> = {}) {
   try {
-    return parseUserSkillDocument(skillMd);
+    return parseUserSkillPackage(skillMd, resources);
   } catch (error) {
     throw new AppError(
       400,
@@ -82,6 +84,7 @@ skillsRouter.get("/:id", async (c) => {
       enabled: userSkills.enabled,
       contentHash: userSkills.contentHash,
       content: userSkills.content,
+      resources: userSkills.resources,
       updatedAt: userSkills.updatedAt,
     })
     .from(userSkills)
@@ -108,7 +111,7 @@ skillsRouter.post("/", async (c) => {
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
   }
-  const parsed = parseSkillOrThrow(parsedBody.data.skillMd);
+  const parsed = parseSkillOrThrow(parsedBody.data.skillMd, parsedBody.data.resources ?? {});
 
   const userSkillRows = await db
     .select({ id: userSkills.id })
@@ -140,6 +143,7 @@ skillsRouter.post("/", async (c) => {
       version: parsed.version,
       revision: 1,
       content: parsed.normalizedContent,
+      resources: parsed.resources,
       contentHash: parsed.contentHash,
       source: "manual",
       enabled: true,
@@ -176,20 +180,20 @@ skillsRouter.put("/:id", async (c) => {
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
   }
-  const parsed = parseSkillOrThrow(parsedBody.data.skillMd);
-
   const existingRows = await db
     .select({
       slug: userSkills.slug,
       revision: userSkills.revision,
       enabled: userSkills.enabled,
       contentHash: userSkills.contentHash,
+      resources: userSkills.resources,
     })
     .from(userSkills)
     .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
     .limit(1);
   const existing = existingRows[0];
   if (!existing) throw new AppError(404, "Skill not found.", "NOT_FOUND");
+  const parsed = parseSkillOrThrow(parsedBody.data.skillMd, parsedBody.data.resources ?? existing.resources ?? {});
   if (parsed.slug !== existing.slug) {
     throw new AppError(400, "A skill's name cannot be changed after installation. Keep the original name in SKILL.md.", "SKILL_NAME_IMMUTABLE");
   }
@@ -217,6 +221,7 @@ skillsRouter.put("/:id", async (c) => {
       description: parsed.description,
       version: parsed.version,
       content: parsed.normalizedContent,
+      resources: parsed.resources,
       contentHash: parsed.contentHash,
       revision: sql`${userSkills.revision} + 1`,
       updatedAt: new Date(),
