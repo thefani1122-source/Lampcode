@@ -3,7 +3,8 @@
 ## What is included
 
 - Authenticated, user-owned Skills Library API at `/api/skills`.
-- Import one standard `SKILL.md` document (YAML frontmatter name + description).
+- Import one standard `SKILL.md` document (YAML frontmatter name + description), either as a single file or from a skill folder.
+- Store up to 20 Markdown reference files under `references/` (32 KiB per file, 256 KiB combined) separately from the skill body; the agent discovers paths and loads each reference only when needed.
 - View and edit an installed document in place; its stable name/slug cannot change.
 - Each changed document increments its revision and stores a SHA-256 content hash. Re-saving identical content is a no-op.
 - Enable/disable and uninstall entries.
@@ -14,11 +15,11 @@
 
 ## Supported scope and current limitations
 
-- Import accepts a single `SKILL.md` file up to 48 KiB.
+- `SKILL.md` is limited to 48 KiB. Folder imports support only text Markdown under `references/` (20 files, 32 KiB each, 256 KiB combined, 336 KiB request cap).
 - ZIP/folder packages, `references/`, `assets/`, GitHub import, project-level activation, team scope, multi-capability plugin manifests, and marketplace publishing are not included in this release.
 - Skills are user-global and can be selected by builds across that user's projects when relevant and enabled.
 - The skill name is the stable agent-facing identifier and cannot be changed in place. To rename it, install a new skill with the new name and then remove the old one.
-- The runtime exposes only enabled entries. The model receives descriptions first and loads a full body only when it selects that skill.
+- The runtime exposes only enabled entries. The model receives descriptions and reference paths first, then loads the skill body or a specific reference only when needed.
 - User skill contents are untrusted guidance. They cannot grant tool permissions or override platform rules.
 - CI cannot prove the production database migration has been applied; that remains an explicit deployment operation.
 
@@ -36,15 +37,15 @@ This repository's production migrations are applied as explicit SQL by the opera
 drizzle/0014_user_skills.sql
 ```
 
-The migration creates the `user_skills` table, indexes, and default-deny RLS. Do not assume the application will run this migration automatically. After applying it, verify that `user_skills` reports RLS enabled and has no client-facing policies.
+The migration creates the `user_skills` table, indexes, the JSONB reference map, and default-deny RLS. Do not assume the application will run this migration automatically. After applying it, verify that `user_skills` reports RLS enabled and has no client-facing policies.
 
 ## API
 
 - `GET /api/skills` — list the authenticated user's metadata (no document bodies).
-- `GET /api/skills/:id` — read the complete document for editing, scoped to the authenticated owner.
-- `POST /api/skills` — body `{ "skillMd": "<complete SKILL.md text>" }`.
-- `PUT /api/skills/:id` — replace the document body; name/slug must remain unchanged.
+- `GET /api/skills/:id` — read the complete document and reference map for editing, scoped to the authenticated owner.
+- `POST /api/skills` — body `{ "skillMd": "<complete SKILL.md text>", "resources": { "references/guide.md": "<Markdown text>" } }` (resources optional).
+- `PUT /api/skills/:id` — replace the document body; name/slug must remain unchanged. Omitted resources preserve the current reference map.
 - `PATCH /api/skills/:id` — body `{ "enabled": true | false }`.
 - `DELETE /api/skills/:id` — uninstall one of the authenticated user's entries.
 
-The frontend calls these endpoints with the existing authenticated API client. The list endpoint is intentionally metadata-only; content is retrieved only when the user edits a skill or an agent explicitly loads it.
+The frontend calls these endpoints with the existing authenticated API client. The list endpoint is intentionally metadata-only; content is retrieved only when the user edits a skill or an agent explicitly loads it. The `list_skills` tool exposes reference paths but not their contents; `load_skill` accepts an optional `resource` path for lazy retrieval.
