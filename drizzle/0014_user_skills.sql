@@ -19,7 +19,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS "user_skills_user_slug_idx"
   ON "public"."user_skills" ("user_id", "slug");
 
 CREATE INDEX IF NOT EXISTS "user_skills_user_updated_idx"
+
   ON "public"."user_skills" ("user_id", "updated_at" DESC);
+
+-- Also upgrade a table created from an earlier revision of this still-unreleased PR.
+ALTER TABLE "public"."user_skills"
+  ADD COLUMN IF NOT EXISTS "resources" jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- Skill contents can include private engineering workflows and proprietary guidance.
 -- The frontend ships the Supabase anon key, so direct PostgREST access must be
 -- denied. LampCode reads/writes this table only through its authenticated API
