@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS "public"."user_skills" (
   "revision" integer NOT NULL DEFAULT 1,
   "content" text NOT NULL,
   "resources" jsonb NOT NULL DEFAULT '{}'::jsonb,
+  "resource_paths" jsonb NOT NULL DEFAULT '[]'::jsonb,
   "content_hash" text NOT NULL,
   "source" text NOT NULL DEFAULT 'manual',
   "enabled" boolean NOT NULL DEFAULT true,
@@ -19,12 +20,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS "user_skills_user_slug_idx"
   ON "public"."user_skills" ("user_id", "slug");
 
 CREATE INDEX IF NOT EXISTS "user_skills_user_updated_idx"
-
   ON "public"."user_skills" ("user_id", "updated_at" DESC);
 
--- Also upgrade a table created from an earlier revision of this still-unreleased PR.
+-- Upgrade tables created from an earlier migration revision without losing installed skills.
 ALTER TABLE "public"."user_skills"
   ADD COLUMN IF NOT EXISTS "resources" jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE "public"."user_skills"
+  ADD COLUMN IF NOT EXISTS "resource_paths" jsonb NOT NULL DEFAULT '[]'::jsonb;
 -- Skill contents can include private engineering workflows and proprietary guidance.
 -- The frontend ships the Supabase anon key, so direct PostgREST access must be
 -- denied. LampCode reads/writes this table only through its authenticated API
