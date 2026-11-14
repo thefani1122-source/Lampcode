@@ -117,6 +117,7 @@ console.log("All user skill document validation checks passed.");
 // able to read it directly; only the authenticated backend API accesses it.
 const skillsMigration = readFileSync(join(process.cwd(), "drizzle", "0014_user_skills.sql"), "utf8");
 assert.match(skillsMigration, /ALTER TABLE\s+"public"\."user_skills"\s+ENABLE ROW LEVEL SECURITY;/i);
+assert.ok(skillsMigration.indexOf("ENABLE ROW LEVEL SECURITY") < skillsMigration.indexOf("UPDATE \"public\".\"user_skills\""), "RLS must be enabled before any migration data backfill");
 assert.doesNotMatch(skillsMigration, /^\s*CREATE\s+POLICY\b/im, "user skills must remain inaccessible to browser/PostgREST roles");
 
 
