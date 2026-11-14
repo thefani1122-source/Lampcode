@@ -37,7 +37,7 @@ function parseScalar(value: string): string {
 
 /**
  * Validate a bounded set of portable Markdown reference documents.
- * Only references/**/*.md is persisted in this release; scripts and binary
+ * Only Markdown files in the references/ tree are persisted in this release; scripts and binary
  * assets are intentionally unsupported and never executed.
  */
 function validateSkillResources(input: Record<string, string>): Record<string, string> {
