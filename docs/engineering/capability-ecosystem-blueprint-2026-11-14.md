@@ -21,6 +21,17 @@ The frontend has an MCP Store at src/routes/mcp.tsx in vibe-coder-suite. It owns
 
 This blueprint covers the full product direction. It is not a recommendation to ship every capability in one oversized release.
 
+## Implementation snapshot — 2026-11-14
+
+The architecture above remains a proposal. A separate first-release implementation is now being developed in two open pull requests:
+
+- Backend: [LampCode PR #35](https://github.com/thefani1122-source/Lampcode/pull/35) — user-owned Skills Library CRUD, strict `SKILL.md` validation, folder import of Markdown references, enable/disable, in-place updates, authenticated owner scoping, default-deny RLS and on-demand skill/reference loading.
+- Frontend: [vibe-coder-suite PR #10](https://github.com/thefani1122-source/vibe-coder-suite/pull/10) — Skills Library UI for import, folder import, edit/update, enable/disable, removal and recoverable loading errors.
+
+That slice is deliberately narrower than a plugin ecosystem: personal skills are user-global; folder import supports `SKILL.md` plus Markdown files under `references/` only; ZIP archives, binary assets, GitHub/catalog installation, project scope, manifests, agents, commands and marketplace publishing are not included. Imported scripts/hooks remain inert. The backend migration `drizzle/0014_user_skills.sql` must be applied explicitly before deployment.
+
+**The PRs are not merged or deployed.** CI results on their feature branches do not prove that the production migration is applied or that production API flows have been smoke-tested. Keep the architecture phases below as remaining product work, not a claim about current shipped behaviour.
+
 ## 1. Product model and terminology
 
 | Term | Meaning | Example |
