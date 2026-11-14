@@ -153,3 +153,4 @@ assert.match(loadSkillSource, /userSkills\.resources}->>\$\{resourcePath\}/);
 assert.match(loadSkillSource, /resourcePaths: userSkills\.resourcePaths/);
 assert.match(loadSkillSource, /skill\.resourcePaths\.map\(/);
 assert.match(loadSkillSource, /parseUserSkillDocument\(skill\.content\)/);
+assert.match(skillsMigration, /jsonb_object_keys\(skills\."resources"\)/i);
