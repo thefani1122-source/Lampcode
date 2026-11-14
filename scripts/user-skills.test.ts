@@ -118,3 +118,6 @@ assert.match(skillsRouteSource, /parsedBody\.data\.resources \?\? existing\.reso
 assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resources"/i);
 assert.match(skillsRouteSource, /MAX_SKILL_REQUEST_BYTES = 640 \* 1024/);
 assert.match(skillsRouteSource, /assertSkillRequestSize\(c, raw\)/);
+assert.match(skillsMigration, /"resource_paths" jsonb NOT NULL DEFAULT '\[\]'::jsonb/i);
+assert.match(skillsMigration, /ADD COLUMN IF NOT EXISTS "resource_paths"/i);
+assert.match(skillsRouteSource, /resourcePaths: Object\.keys\(parsed\.resources\)/);
