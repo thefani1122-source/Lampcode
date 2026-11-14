@@ -23,18 +23,17 @@ export const loadSkillHandler: ToolHandler = async (
     if (!ctx.userId || !/^[0-9a-f-]{36}$/i.test(id)) {
       return "Error: this user-installed skill identifier is invalid or the authenticated user context is missing.";
     }
-    let rows;
-    try {
-      rows = await db
-        .select({ name: userSkills.name, content: userSkills.content })
-        .from(userSkills)
-        .where(and(
-          eq(userSkills.id, id),
-          eq(userSkills.userId, ctx.userId),
-          eq(userSkills.enabled, true),
-        ))
-        .limit(1);
-    } catch {
+    const rows = await db
+      .select({ name: userSkills.name, content: userSkills.content })
+      .from(userSkills)
+      .where(and(
+        eq(userSkills.id, id),
+        eq(userSkills.userId, ctx.userId),
+        eq(userSkills.enabled, true),
+      ))
+      .limit(1)
+      .catch(() => null);
+    if (!rows) {
       return "Error: the personal Skills Library is unavailable. The server may need the user_skills database migration.";
     }
     const skill = rows[0];
