@@ -26,15 +26,47 @@ const updateSkillDocumentSchema = z.object({
 });
 const MAX_SKILL_REQUEST_BYTES = 640 * 1024;
 
-function assertSkillRequestSize(c: Context, raw: unknown) {
-  const declared = Number(c.req.header("content-length") ?? 0);
-  const serialized = JSON.stringify(raw);
-  const actual = Buffer.byteLength(serialized ?? "", "utf8");
-  if ((Number.isFinite(declared) && declared > MAX_SKILL_REQUEST_BYTES) || actual > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+const MAX_SKILL_STATE_REQUEST_BYTES = 4 * 1024;
+
+async function readBoundedJson(c: Context, maxBytes = MAX_SKILL_REQUEST_BYTES): Promise<unknown> {
+  const declaredLength = Number(c.req.header("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new AppError(413, "Skill request body is too large.", "SKILL_PACKAGE_TOO_LARGE");
+  }
+
+  const body = c.req.raw.body;
+  if (!body) throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
+
+  // Use one fixed-size buffer rather than retaining an array entry per transfer
+  // chunk. Chunked requests are bounded as they arrive, before JSON parsing.
+  const buffer = new Uint8Array(maxBytes);
+  let totalBytes = 0;
+  const reader = body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (totalBytes + value.byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new AppError(413, "Skill request body is too large.", "SKILL_PACKAGE_TOO_LARGE");
+      }
+      buffer.set(value, totalBytes);
+      totalBytes += value.byteLength;
+    }
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(400, "Could not read the JSON request body.", "VALIDATION_ERROR");
+  } finally {
+    reader.releaseLock();
+  }
+
+  try {
+    const json = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, totalBytes));
+    return JSON.parse(json) as unknown;
+  } catch {
+    throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
   }
 }
-
 
 function parseSkillOrThrow(skillMd: string, resources: Record<string, string> = {}) {
   try {
@@ -117,14 +149,7 @@ skillsRouter.get("/:id", async (c) => {
 // POST /api/skills — install one standard SKILL.md file into the user's library.
 skillsRouter.post("/", async (c) => {
   const { id: userId } = c.get("authUser");
-  const declaredLength = Number(c.req.header("content-length") ?? 0);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
-  }
-  const raw = await c.req.json().catch(() => {
-    throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
-  });
-  assertSkillRequestSize(c, raw);
+  const raw = await readBoundedJson(c);
   const parsedBody = createSkillSchema.safeParse(raw);
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
@@ -193,14 +218,7 @@ skillsRouter.post("/", async (c) => {
 skillsRouter.put("/:id", async (c) => {
   const { id: userId } = c.get("authUser");
   const id = c.req.param("id");
-  const declaredLength = Number(c.req.header("content-length") ?? 0);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
-  }
-  const raw = await c.req.json().catch(() => {
-    throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
-  });
-  assertSkillRequestSize(c, raw);
+  const raw = await readBoundedJson(c);
   const parsedBody = updateSkillDocumentSchema.safeParse(raw);
   if (!parsedBody.success) {
     throw new AppError(400, parsedBody.error.issues[0]?.message ?? "Invalid SKILL.md content.", "VALIDATION_ERROR");
@@ -273,9 +291,7 @@ skillsRouter.put("/:id", async (c) => {
 skillsRouter.patch("/:id", async (c) => {
   const { id: userId } = c.get("authUser");
   const id = c.req.param("id");
-  const raw = await c.req.json().catch(() => {
-    throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
-  });
+  const raw = await readBoundedJson(c, MAX_SKILL_STATE_REQUEST_BYTES);
   const parsed = updateSkillStateSchema.safeParse(raw);
   if (!parsed.success) {
     throw new AppError(400, parsed.error.issues[0]?.message ?? "Invalid skill settings.", "VALIDATION_ERROR");
