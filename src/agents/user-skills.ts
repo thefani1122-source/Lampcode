@@ -62,6 +62,9 @@ function validateSkillResources(input: Record<string, string>): Record<string, s
       throw new Error(`Unsupported skill reference path: ${path}. Only safe references/**/*.md paths are accepted.`);
     }
     if (typeof content !== "string" || content.includes("\u0000")) {
+    if (/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(content)) {
+      throw new Error(`Skill reference "${path}" contains unsupported control characters.`);
+    }
       throw new Error(`Skill reference "${path}" must be plain text without null bytes.`);
     }
     const bytes = Buffer.byteLength(content, "utf8");
@@ -95,6 +98,9 @@ export function parseUserSkillPackage(
     throw new Error("SKILL.md must be 48 KiB or smaller.");
   }
   if (normalizedContent.includes("\0")) throw new Error("SKILL.md contains a null byte.");
+  if (/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(normalizedContent)) {
+    throw new Error("SKILL.md contains unsupported control characters.");
+  }
 
   const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(normalizedContent);
   if (!match) throw new Error("SKILL.md must start with YAML frontmatter (---).");
