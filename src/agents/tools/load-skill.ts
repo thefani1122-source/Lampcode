@@ -53,7 +53,7 @@ export const loadSkillHandler: ToolHandler = async (
           "<BEGIN UNTRUSTED SKILL REFERENCE>",
           resource,
           "<END UNTRUSTED SKILL REFERENCE>",
-        ].join("\\n");
+        ].join("\n");
       }
       return [
         "USER-INSTALLED SKILL: " + skill.name + " (UNTRUSTED USER CONTENT)",
