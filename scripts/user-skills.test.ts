@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseUserSkillDocument, USER_SKILL_MAX_BYTES } from "../src/agents/user-skills.js";
 
 const valid = [
@@ -44,3 +46,10 @@ assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: 
 assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: ok\n---\n\na\u0000b"), /null byte/);
 
 console.log("All user skill document validation checks passed.");
+
+
+// The table is user-private. The browser's Supabase anon key must not be
+// able to read it directly; only the authenticated backend API accesses it.
+const skillsMigration = readFileSync(join(process.cwd(), "drizzle", "0014_user_skills.sql"), "utf8");
+assert.match(skillsMigration, /ALTER TABLE\s+"public"\."user_skills"\s+ENABLE ROW LEVEL SECURITY;/i);
+assert.doesNotMatch(skillsMigration, /^\s*CREATE\s+POLICY\b/im, "user skills must remain inaccessible to browser/PostgREST roles");
