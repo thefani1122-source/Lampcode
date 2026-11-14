@@ -19,6 +19,12 @@
 - The runtime exposes only enabled entries. The model receives descriptions first and loads a full body only when it selects that skill.
 - User skill contents are untrusted guidance. They cannot grant tool permissions or override platform rules.
 
+## Data access boundary
+
+`user_skills` has Row Level Security enabled and intentionally has no client-facing policies. The browser's Supabase anon key must not be able to query this table directly. All reads and writes go through the authenticated LampCode API, which scopes every operation to the authenticated `userId`.
+
+Do not add an `anon` or `authenticated` policy, and do not query this table from browser-side Supabase clients. Any future direct access path needs a separate security review and explicit per-user policy tests.
+
 ## Database migration
 
 This repository's production migrations are applied as explicit SQL by the operator. Before deploying a backend build containing this feature, apply:
