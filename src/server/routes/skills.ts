@@ -24,14 +24,14 @@ const updateSkillDocumentSchema = z.object({
   skillMd: z.string().min(1).max(48 * 1024),
   resources: z.record(z.string(), z.string()).optional(),
 });
-const MAX_SKILL_REQUEST_BYTES = 48 * 1024 + 256 * 1024 + 32 * 1024;
+const MAX_SKILL_REQUEST_BYTES = 640 * 1024;
 
 function assertSkillRequestSize(c: Context, raw: unknown) {
   const declared = Number(c.req.header("content-length") ?? 0);
   const serialized = JSON.stringify(raw);
   const actual = Buffer.byteLength(serialized ?? "", "utf8");
   if ((Number.isFinite(declared) && declared > MAX_SKILL_REQUEST_BYTES) || actual > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
   }
 }
 
@@ -117,7 +117,7 @@ skillsRouter.post("/", async (c) => {
   const { id: userId } = c.get("authUser");
   const declaredLength = Number(c.req.header("content-length") ?? 0);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
   }
   const raw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
@@ -191,7 +191,7 @@ skillsRouter.put("/:id", async (c) => {
   const id = c.req.param("id");
   const declaredLength = Number(c.req.header("content-length") ?? 0);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_SKILL_REQUEST_BYTES) {
-    throw new AppError(413, "Skill package request exceeds the 336 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
+    throw new AppError(413, "Skill package request exceeds the 640 KiB upload limit.", "SKILL_PACKAGE_TOO_LARGE");
   }
   const raw = await c.req.json().catch(() => {
     throw new AppError(400, "Invalid JSON body.", "VALIDATION_ERROR");
