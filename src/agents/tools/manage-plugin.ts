@@ -1,14 +1,14 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { userPlugins } from "../../db/schema.js";
-import { USER_PLUGIN_MAX_HISTORY } from "../user-plugins.js";
+import { USER_PLUGIN_MAX_HISTORY, type PluginCapabilityDescriptor } from "../user-plugins.js";
 import type { ToolHandler } from "./registry.js";
 import type { ToolExecutionContext } from "../tools.js";
 
 interface PreviousSnapshot extends Record<string, unknown> {
   name: string; description: string; publisher: string; license: string; repository: string;
   version: string; sourceCommit: string; manifest: Record<string, unknown>;
-  files: Record<string, string>; capabilities: unknown[]; contentHash: string;
+  files: Record<string, string>; capabilities: PluginCapabilityDescriptor[]; contentHash: string;
 }
 export const managePluginHandler: ToolHandler = async (args: Record<string, unknown>, ctx: ToolExecutionContext): Promise<string> => {
   const id = typeof args["plugin_id"] === "string" ? args["plugin_id"] : "";
@@ -40,7 +40,7 @@ export const managePluginHandler: ToolHandler = async (args: Record<string, unkn
     name: previous.name, description: previous.description, publisher: previous.publisher,
     license: previous.license, repository: previous.repository, version: previous.version,
     revision: sql`${userPlugins.revision} + 1`, sourceCommit: previous.sourceCommit,
-    manifest: previous.manifest, files: previous.files, capabilities: previous.capabilities,
+    manifest: previous.manifest, files: previous.files, capabilities: previous.capabilities as PluginCapabilityDescriptor[],
     contentHash: previous.contentHash, previousVersions: history.slice(0, -1).slice(-USER_PLUGIN_MAX_HISTORY),
     enabled: true, updatedAt: new Date(),
   }).where(and(eq(userPlugins.id, id), eq(userPlugins.userId, ctx.userId)))
