@@ -52,7 +52,9 @@ assert.equal(normalizeUserPluginRecordId(recordId), recordId);
 assert.equal(normalizeUserPluginRecordId("plugin:" + recordId), recordId);
 assert.equal(normalizeUserPluginRecordId("plugin:not-a-uuid"), null);
 assert.deepEqual(parsed.capabilities.filter((cap) => cap.kind === "mcp").map((cap) => cap.id).sort(), [".mcp.json#docs", ".mcp.json#search"]);
-assert.equal(parsed.contentHash.length, 64);\n\nconst tooManyServers = Object.fromEntries(Array.from({ length: 21 }, (_, i) => ["server-" + i, { command: "node", args: [] }]));
+assert.equal(parsed.contentHash.length, 64);
+
+const tooManyServers = Object.fromEntries(Array.from({ length: 21 }, (_, i) => ["server-" + i, { command: "node", args: [] }]));
 assert.throws(
   () => parseUserPluginPackage(manifest, { ...files, ".mcp.json": JSON.stringify({ mcpServers: tooManyServers }) }, "example", "frontend-toolkit"),
   /at most 20 server entries/,
