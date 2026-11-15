@@ -46,7 +46,7 @@ export function parseGitHubSkillSourceUrl(raw: string): GitHubSkillSource | null
   // rejected rather than silently normalized into a different GitHub path.
   const rawPathMatch = /^https:\/\/[^/?#]+([^?#]*)/i.exec(trimmed);
   const rawPath = rawPathMatch?.[1] ?? "";
-  if (rawPath.includes("\\\\")) return null;
+  if (rawPath.includes("\\")) return null;
   for (const segment of rawPath.split("/")) {
     let decodedSegmentValue: string;
     try {
@@ -55,7 +55,7 @@ export function parseGitHubSkillSourceUrl(raw: string): GitHubSkillSource | null
       return null;
     }
     if (
-      decodedSegmentValue.includes("\\\\") ||
+      decodedSegmentValue.includes("\\") ||
       decodedSegmentValue.split("/").some((part) => part === "." || part === "..")
     ) {
       return null;
