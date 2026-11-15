@@ -1245,7 +1245,7 @@ export const userPlugins = pgTable(
     files: jsonb("files").$type<Record<string, string>>().notNull().default({}),
     capabilities: jsonb("capabilities").$type<Array<{
       kind: "skill" | "agent" | "command" | "mcp";
-      id: string; name: string; description: string; path: string;
+      id: string; name: string; description: string; path: string; resourcePaths?: string[];
     }>>().notNull().default([]),
     previousVersions: jsonb("previous_versions").$type<Array<Record<string, unknown>>>().notNull().default([]),
     contentHash: text("content_hash").notNull(),

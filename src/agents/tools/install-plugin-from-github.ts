@@ -317,10 +317,11 @@ export const installPluginFromGitHubHandler: ToolHandler = async (
         description: existing.description,
         publisher: existing.publisher,
         license: existing.license,
-        repository: parsed.manifest["repository"] as string,
+        repository: existing.repository,
         version: existing.version,
         revision: existing.revision,
         sourceCommit: existing.sourceCommit,
+        enabled: existing.enabled,
         manifest: existing.manifest,
         files: existing.files,
         capabilities: existing.capabilities,
@@ -342,11 +343,12 @@ export const installPluginFromGitHubHandler: ToolHandler = async (
         capabilities: parsed.capabilities,
         previousVersions,
         contentHash: parsed.contentHash,
-        enabled: true,
+        enabled: existing.enabled,
         updatedAt: now,
       }).where(and(
         eq(userPlugins.id, existing.id),
         eq(userPlugins.userId, ctx.userId),
+        eq(userPlugins.revision, existing.revision),
       )).returning({ id: userPlugins.id, name: userPlugins.name, version: userPlugins.version, revision: userPlugins.revision });
       const row = updatedRows[0];
       if (!row) return "Error: the plugin changed while it was being updated. Refresh and retry.";
