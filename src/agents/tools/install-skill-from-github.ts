@@ -201,9 +201,10 @@ export const installSkillFromGitHubHandler: ToolHandler = async (
   const explicitArgPath = typeof args["skill_path"] === "string" ? args["skill_path"].trim() : undefined;
   const rawSkillPath = explicitArgPath !== undefined ? explicitArgPath : source.skillPath;
   const scopePath = rawSkillPath === undefined ? undefined : normalizeGitHubSkillPath(rawSkillPath);
-  if (rawSkillPath !== undefined && scopePath === null) {
+  if (scopePath === null) {
     return "Error: skill_path must be a safe repository-relative folder path containing a SKILL.md file.";
   }
+  const validatedScopePath: string | undefined = scopePath;
 
   try {
     const token = ctx.gitHubToken;
@@ -239,7 +240,7 @@ export const installSkillFromGitHubHandler: ToolHandler = async (
     });
 
     const regularFiles = treeEntries.filter((entry) => entry.type === "blob" && entry.mode === "100644");
-    const candidatePaths = findGitHubSkillPaths(regularFiles.map((entry) => entry.path), scopePath);
+    const candidatePaths = findGitHubSkillPaths(regularFiles.map((entry) => entry.path), validatedScopePath);
     if (candidatePaths.length === 0) {
       const hasPluginManifest = regularFiles.some((entry) =>
         entry.path === "plugin.json" || entry.path === ".claude-plugin/plugin.json",
@@ -251,7 +252,7 @@ export const installSkillFromGitHubHandler: ToolHandler = async (
     }
 
     let skillEntryPath: string;
-    if (scopePath !== undefined) {
+    if (validatedScopePath !== undefined) {
       skillEntryPath = candidatePaths[0]!;
     } else if (candidatePaths.includes("SKILL.md")) {
       skillEntryPath = "SKILL.md";

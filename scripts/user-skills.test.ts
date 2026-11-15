@@ -123,6 +123,10 @@ assert.deepEqual(rawGithubSource, { owner: "example", repo: "skills", ref: "v1",
 assert.equal(parseGitHubSkillSourceUrl("http://github.com/example/skills"), null);
 assert.equal(parseGitHubSkillSourceUrl("https://evil.example/example/skills"), null);
 assert.equal(parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/main/%2e%2e/secrets"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/main/%2E%2E/secrets"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/main/skills/%2e%2e/SKILL.md"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://user@github.com/example/skills"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://github.com:8443/example/skills"), null);
 assert.equal(normalizeGitHubSkillPath("skills/react/SKILL.md"), "skills/react");
 assert.equal(normalizeGitHubSkillPath("../secrets"), null);
 assert.deepEqual(

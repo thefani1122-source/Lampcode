@@ -40,9 +40,31 @@ function isSafeRepoPath(value: string): boolean {
 export function parseGitHubSkillSourceUrl(raw: string): GitHubSkillSource | null {
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 2_048) return null;
 
+  const trimmed = raw.trim();
+  // WHATWG URL canonicalization removes literal and percent-encoded dot
+  // segments. Inspect the original path first so traversal attempts are
+  // rejected rather than silently normalized into a different GitHub path.
+  const rawPathMatch = /^https:\/\/[^/?#]+([^?#]*)/i.exec(trimmed);
+  const rawPath = rawPathMatch?.[1] ?? "";
+  if (rawPath.includes("\\\\")) return null;
+  for (const segment of rawPath.split("/")) {
+    let decodedSegmentValue: string;
+    try {
+      decodedSegmentValue = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    if (
+      decodedSegmentValue.includes("\\\\") ||
+      decodedSegmentValue.split("/").some((part) => part === "." || part === "..")
+    ) {
+      return null;
+    }
+  }
+
   let url: URL;
   try {
-    url = new URL(raw.trim());
+    url = new URL(trimmed);
   } catch {
     return null;
   }
@@ -134,7 +156,7 @@ export function normalizeGitHubSkillPath(value: string): string | null {
 export function findGitHubSkillPaths(paths: string[], scopePath?: string): string[] {
   const safePaths = paths.filter((path) =>
     typeof path === "string" &&
-    path.endsWith("/SKILL.md") || path === "SKILL.md"
+    (path === "SKILL.md" || path.endsWith("/SKILL.md"))
   ).filter((path) => isSafeRepoPath(path));
 
   if (scopePath !== undefined) {
