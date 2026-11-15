@@ -26,7 +26,7 @@ const files = {
   "skills/react/references/checklist.md": "Check labels and keyboard navigation.",
   "agents/reviewer.md": "# Review agent\n\nReview changes for correctness and maintainability.",
   "commands/review.md": "# Review command\n\nInspect changed files and report concrete findings.",
-  ".mcp.json": JSON.stringify({ mcpServers: { docs: { command: "node", args: ["server.js"] } } }),
+  ".mcp.json": JSON.stringify({ mcpServers: { docs: { command: "node", args: ["docs.js"] }, search: { command: "node", args: ["search.js"] } } }),
   "README.md": "# Frontend Toolkit",
 };
 const parsed = parseUserPluginPackage(manifest, files, "example", "frontend-toolkit");
@@ -35,7 +35,7 @@ assert.equal(parsed.version, "1.2.0");
 assert.equal(parsed.license, "MIT");
 assert.deepEqual(parsed.capabilities.map((cap) => cap.kind).sort(), ["agent", "command", "mcp", "skill"]);
 assert.equal(parsed.capabilities.find((cap) => cap.kind === "skill")?.path, "skills/react/SKILL.md");
-assert.equal(parsed.capabilities.find((cap) => cap.kind === "mcp")?.name, "docs");
+assert.deepEqual(parsed.capabilities.filter((cap) => cap.kind === "mcp").map((cap) => cap.id).sort(), [".mcp.json#docs", ".mcp.json#search"]);
 assert.equal(parsed.contentHash.length, 64);
 
 assert.throws(

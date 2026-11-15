@@ -8,9 +8,9 @@ import type { ToolExecutionContext } from "../tools.js";
 export const loadPluginCapabilityHandler: ToolHandler = async (args: Record<string, unknown>, ctx: ToolExecutionContext): Promise<string> => {
   const id = typeof args["plugin_id"] === "string" ? args["plugin_id"] : "";
   const kind = pluginCapabilityKind(args["kind"]);
-  const path = typeof args["path"] === "string" ? args["path"] : "";
+  const capabilityId = typeof args["capability_id"] === "string" ? args["capability_id"] : "";\n  const path = typeof args["path"] === "string" ? args["path"] : "";
   if (!ctx.userId || !/^[0-9a-f-]{36}$/i.test(id)) return "Error: a valid installed plugin id and authenticated user context are required.";
-  if (!kind || !path || path.length > 240 || path.startsWith("/") || path.split("/").some((p) => !p || p === "." || p === "..")) return "Error: provide an exact capability kind and safe path from list_plugins.";
+  if (!kind || !capabilityId || capabilityId.length > 256 || !path || path.length > 240 || path.startsWith("/") || path.split("/").some((p) => !p || p === "." || p === "..")) return "Error: provide an exact capability kind and safe path from list_plugins.";
   const rows = await db.select({
     name: userPlugins.name,
     capabilityList: userPlugins.capabilities,
@@ -22,7 +22,7 @@ export const loadPluginCapabilityHandler: ToolHandler = async (args: Record<stri
   const row = rows[0];
   if (!row) return "Error: this plugin is not installed, is disabled, or does not belong to this user.";
   const caps = (Array.isArray(row.capabilityList) ? row.capabilityList : []) as PluginCapabilityDescriptor[];
-  const cap = caps.find((item) => item.kind === kind && item.path === path);
+  const cap = caps.find((item) => item.kind === kind && item.path === path && item.id === capabilityId);
   if (!cap) return "Error: the requested capability is not declared by this plugin.";
   if (row.content === null) return "Error: capability file is missing from this immutable plugin snapshot.";
   if (kind === "mcp") {

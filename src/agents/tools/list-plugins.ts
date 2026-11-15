@@ -24,7 +24,7 @@ export const listPluginsHandler: ToolHandler = async (_args: Record<string, unkn
     out.push("- plugin:" + row.id + " — " + JSON.stringify(row.name) + " v" + row.version + " (" + (row.enabled ? "enabled" : "disabled") + "; revision " + row.revision + "; commit " + row.sourceCommit.slice(0, 12) + ")");
     if (!row.enabled) { out.push("  - disabled; re-enable explicitly with manage_plugin before loading capabilities."); continue; }
     for (const cap of (Array.isArray(row.capabilities) ? row.capabilities : []) as PluginCapabilityDescriptor[]) {
-      out.push("  - " + cap.kind + ": " + JSON.stringify(cap.name) + " — " + JSON.stringify(cap.description.slice(0, 280)) + " [path: " + cap.path + "]");
+      out.push("  - " + cap.kind + ": " + JSON.stringify(cap.name) + " — " + JSON.stringify(cap.description.slice(0, 280)) + " [id: " + cap.id + "; path: " + cap.path + "]");
     }
   }
   return out.join("\n");
