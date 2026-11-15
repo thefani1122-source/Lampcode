@@ -7,7 +7,37 @@ export const USER_PLUGIN_MAX_FILE_BYTES = 64 * 1024;
 export const USER_PLUGIN_MAX_TOTAL_BYTES = 1024 * 1024;
 export const USER_PLUGIN_MAX_HISTORY = 3;
 export type PluginCapabilityKind = "skill" | "agent" | "command" | "mcp";
-export interface PluginCapabilityDescriptor { kind: PluginCapabilityKind; id: string; name: string; description: string; path: string; }
+export interface PluginCapabilityDescriptor {
+  kind: PluginCapabilityKind;
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  /** Relative references/ paths for skills; contents are loaded only on demand. */
+  resourcePaths?: string[];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Accept either the displayed plugin:<uuid> identifier or its raw database id. */
+export function normalizeUserPluginRecordId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.startsWith("plugin:") ? value.slice("plugin:".length) : value;
+  return UUID_RE.test(id) ? id : null;
+}
+
+/** Resolve a safe references file path to its package-relative storage path. */
+export function resolvePluginSkillResourcePath(skillEntryPath: string, resourcePath: string): string | null {
+  if (
+    typeof skillEntryPath !== "string" ||
+    !/^skills\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*SKILL\.md$/.test(skillEntryPath) ||
+    typeof resourcePath !== "string" ||
+    resourcePath.length > 240 ||
+    !/^references\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md$/.test(resourcePath)
+  ) return null;
+  const directory = skillEntryPath.slice(0, -"/SKILL.md".length);
+  return directory + "/" + resourcePath;
+}
 export interface ParsedUserPlugin {
   pluginId: string; name: string; description: string; version: string; publisher: string; license: string;
   manifest: Record<string, unknown>; files: Record<string, string>;
@@ -47,7 +77,7 @@ function buildSkillCapability(path: string, files: Record<string, string>): Plug
     if (filePath.startsWith(prefix)) refs["references/" + filePath.slice(prefix.length)] = body;
   }
   const parsed = parseUserSkillPackage(content, refs);
-  return { kind: "skill", id: path, name: parsed.name, description: parsed.description, path };
+  return { kind: "skill", id: path, name: parsed.name, description: parsed.description, path, resourcePaths: Object.keys(parsed.resources) };
 }
 
 export function parseUserPluginPackage(rawManifest: string, inputFiles: Record<string, string>, owner: string, repo: string): ParsedUserPlugin {
@@ -105,10 +135,22 @@ export function parseUserPluginPackage(rawManifest: string, inputFiles: Record<s
     try { json = JSON.parse(files[path] ?? ""); } catch { throw new Error("MCP server template must be valid JSON: " + path); }
     const servers = json && typeof json === "object" ? (json as Record<string, unknown>)["mcpServers"] : undefined;
     if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error("MCP template must contain an mcpServers object: " + path);
-    for (const serverName of Object.keys(servers as Record<string, unknown>).slice(0, 20)) capabilities.push({
-      kind: "mcp", id: path + "#" + serverName, name: serverName,
-      description: "Inert MCP connection template; no credentials or connection are installed.", path,
-    });
+    const serverEntries = Object.entries(servers as Record<string, unknown>);
+    if (serverEntries.length > 20) {
+      throw new Error("An MCP template can declare at most 20 server entries: " + path);
+    }
+    for (const [serverName, serverConfig] of serverEntries) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(serverName)) {
+        throw new Error("MCP server template contains an unsupported server name: " + serverName);
+      }
+      if (!serverConfig || typeof serverConfig !== "object" || Array.isArray(serverConfig)) {
+        throw new Error("MCP server configuration must be a JSON object: " + serverName);
+      }
+      capabilities.push({
+        kind: "mcp", id: path + "#" + serverName, name: serverName,
+        description: "Inert MCP connection template; no credentials or connection are installed.", path,
+      });
+    }
   }
   if (!capabilities.length) throw new Error("No supported skills, agent profiles, command workflows or MCP templates were found.");
   const manifest = {
