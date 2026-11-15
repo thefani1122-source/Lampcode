@@ -1,6 +1,6 @@
 # LampCode Capability Ecosystem Blueprint
 
-**Date:** 2026-11-14  
+**Date:** 2026-11-15  
 **Status:** Architecture proposal only; this document does not change runtime or database behaviour.  
 **Backend baseline:** main at eaf9c146e080c180d408316b79665fe8ca062fce.  
 **Frontend baseline:** thefani1122-source/vibe-coder-suite at d471a220bd2e5a98bf8bc527f3e95c4b7067fa1a.
@@ -21,16 +21,16 @@ The frontend has an MCP Store at src/routes/mcp.tsx in vibe-coder-suite. It owns
 
 This blueprint covers the full product direction. It is not a recommendation to ship every capability in one oversized release.
 
-## Implementation snapshot — 2026-11-14
+## Implementation snapshot — 2026-11-15
 
-The architecture above remains a proposal. A separate first-release implementation is now being developed in two open pull requests:
+The full Extensions architecture above remains a proposal. A narrower first release is being developed in two open pull requests:
 
-- Backend: [LampCode PR #35](https://github.com/thefani1122-source/Lampcode/pull/35) — user-owned Skills Library CRUD, strict `SKILL.md` validation, folder import of Markdown references, enable/disable, in-place updates, authenticated owner scoping, default-deny RLS and on-demand skill/reference loading.
-- Frontend: [vibe-coder-suite PR #10](https://github.com/thefani1122-source/vibe-coder-suite/pull/10) — Skills Library UI for import, folder import, edit/update, enable/disable, removal and recoverable loading errors.
+- Backend: [LampCode PR #35](https://github.com/thefani1122-source/Lampcode/pull/35) — user-owned Skills Library CRUD, strict `SKILL.md` validation, folder import of Markdown references, enable/disable, in-place updates, authenticated owner scoping, default-deny RLS and on-demand skill/reference loading. It now also includes agent-driven GitHub skill installation: a user can paste a public repository, skill-folder, or raw `SKILL.md` URL in chat and ask LampCode to download/use it, without a separate download button. Private repositories use the user's existing GitHub connection. Branches/tags are pinned to immutable commit SHAs, and the selected skill's source is recorded.
+- Frontend: [vibe-coder-suite PR #10](https://github.com/thefani1122-source/vibe-coder-suite/pull/10) — Skills Library UI for local file/folder import, edit/update, enable/disable, removal and recoverable loading errors. GitHub installation is initiated by the agent from the chat; no extra install button or marketplace UI is required.
 
-That slice is deliberately narrower than a plugin ecosystem: personal skills are user-global; folder import supports `SKILL.md` plus Markdown files under `references/` only; ZIP archives, binary assets, GitHub/catalog installation, project scope, manifests, agents, commands and marketplace publishing are not included. Imported scripts/hooks remain inert. The backend migration `drizzle/0014_user_skills.sql` must be applied explicitly before deployment.
+The delivered slice remains deliberately narrower than a general plugin ecosystem. GitHub repositories, including Claude-style plugin repositories, are treated as sources of standard Agent Skills: LampCode discovers `SKILL.md` entry points and imports only the selected skill plus supported Markdown files under its `references/` folder. Public repos work without a GitHub connection; private repos require an existing GitHub connection. ZIP archives, binary assets, package manifests as executable capabilities, independent specialist-agent packages, commands, plugin-declared MCP server processes, project/team scope, catalog publishing and marketplace lifecycle are not included. Imported third-party text is untrusted guidance; scripts/hooks remain inert and cannot grant tool permissions. The backend migration `drizzle/0014_user_skills.sql` must be applied explicitly before deployment.
 
-**The PRs are not merged or deployed.** CI results on their feature branches do not prove that the production migration is applied or that production API flows have been smoke-tested. Keep the architecture phases below as remaining product work, not a claim about current shipped behaviour.
+**The PRs are not merged or deployed.** CI on the latest backend PR head has passed typecheck, full cases, production build, dependency audit and MCP CI; this does not prove the production migration is applied or that production API flows have been smoke-tested. Keep the full plugin architecture phases below as remaining product work, not a claim about current shipped behaviour.
 
 ## 1. Product model and terminology
 
