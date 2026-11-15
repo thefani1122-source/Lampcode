@@ -1223,3 +1223,38 @@ export const userSkills = pgTable(
     index("user_skills_user_updated_idx").on(t.userId, t.updatedAt),
   ],
 );
+
+
+// User-installed declarative plugin packages. Files are immutable inert text;
+// runtime loaders expose only validated capability paths. No hooks or scripts run.
+export const userPlugins = pgTable(
+  "user_plugins",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    pluginId: text("plugin_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    version: text("version").notNull(),
+    revision: integer("revision").notNull().default(1),
+    publisher: text("publisher").notNull(),
+    license: text("license").notNull(),
+    repository: text("repository").notNull(),
+    sourceCommit: text("source_commit").notNull(),
+    manifest: jsonb("manifest").$type<Record<string, unknown>>().notNull().default({}),
+    files: jsonb("files").$type<Record<string, string>>().notNull().default({}),
+    capabilities: jsonb("capabilities").$type<Array<{
+      kind: "skill" | "agent" | "command" | "mcp";
+      id: string; name: string; description: string; path: string;
+    }>>().notNull().default([]),
+    previousVersions: jsonb("previous_versions").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    contentHash: text("content_hash").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    installedAt: timestamp("installed_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("user_plugins_user_plugin_idx").on(t.userId, t.pluginId),
+    index("user_plugins_user_updated_idx").on(t.userId, t.updatedAt),
+  ],
+);

@@ -91,6 +91,10 @@ const PHRASES: Record<string, Phrase> = {
   list_skills: { past: "Checked your Skills Library", present: "Checking your Skills Library" },
   load_skill: { past: "Loaded extra guidance", present: "Loading extra guidance" },
   install_skill_from_github: { past: "Installed a GitHub skill", present: "Installing a GitHub skill" },
+  install_plugin_from_github: { past: "Installed a GitHub plugin", present: "Installing a GitHub plugin" },
+  list_plugins: { past: "Checked your installed plugins", present: "Checking your installed plugins" },
+  load_plugin_capability: { past: "Loaded plugin guidance", present: "Loading plugin guidance" },
+  manage_plugin: { past: "Updated an installed plugin", present: "Updating an installed plugin" },
 
   checkpoint: { past: "Saved a checkpoint", present: "Saving a checkpoint" },
   revert: { past: "Rolled the files back", present: "Rolling the files back" },

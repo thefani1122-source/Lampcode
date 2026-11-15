@@ -98,6 +98,10 @@ eq("one file is not pluralised",
   narrateTool("write_files", JSON.stringify({ files: [{ path: "a" }] })).label,
   "Wrote 1 file");
 
+eq("plugin library tools have readable narration",
+  ["install_plugin_from_github", "list_plugins", "load_plugin_capability", "manage_plugin"].map((name) => narrateTool(name).label),
+  ["Installed a GitHub plugin", "Checked your installed plugins", "Loaded plugin guidance", "Updated an installed plugin"]);
+
 eq("GitHub skill installation is narrated clearly",
   [narrateTool("install_skill_from_github").label, narrateTool("install_skill_from_github").active],
   ["Installed a GitHub skill", "Installing a GitHub skill"]);
