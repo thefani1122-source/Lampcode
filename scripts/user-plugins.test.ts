@@ -29,7 +29,14 @@ const files = {
   ".mcp.json": JSON.stringify({ mcpServers: { docs: { command: "node", args: ["docs.js"] }, search: { command: "node", args: ["search.js"] } } }),
   "README.md": "# Frontend Toolkit",
 };
-const parsed = parseUserPluginPackage(manifest, files, "example", "frontend-toolkit");
+const multiMcpFiles = {
+  ...files,
+  ".mcp.json": JSON.stringify({ mcpServers: {
+    docs: { command: "node", args: ["docs.js"] },
+    search: { command: "node", args: ["search.js"] },
+  } }),
+};
+const parsed = parseUserPluginPackage(manifest, multiMcpFiles, "example", "frontend-toolkit");
 assert.equal(parsed.pluginId, "example.frontend-toolkit");
 assert.equal(parsed.version, "1.2.0");
 assert.equal(parsed.license, "MIT");
@@ -61,6 +68,9 @@ assert.match(migration, /ALTER TABLE\s+"public"\."user_plugins"\s+ENABLE ROW LEV
 assert.doesNotMatch(migration, /^\s*CREATE\s+POLICY\b/im, "plugin table must remain default-deny for browser roles");
 const schema = readFileSync("src/db/schema.ts", "utf8");
 assert.match(schema, /export const userPlugins = pgTable\(/);
+const loader = readFileSync("src/agents/tools/load-plugin-capability.ts", "utf8");
+assert.match(loader, /item.id === capabilityId/, "capability loading must select the exact declared MCP server, not the first entry in a file");
+
 const registry = readFileSync("src/agents/tools/registry.ts", "utf8");
 for (const name of ["install_plugin_from_github", "list_plugins", "load_plugin_capability", "manage_plugin"]) {
   assert.ok(registry.includes('["' + name + '"'), "missing runtime handler for " + name);
