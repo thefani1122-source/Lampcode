@@ -90,6 +90,7 @@ const PHRASES: Record<string, Phrase> = {
   web_search: { past: "Searched the web for", present: "Searching the web for", arg: "query" },
   list_skills: { past: "Checked your Skills Library", present: "Checking your Skills Library" },
   load_skill: { past: "Loaded extra guidance", present: "Loading extra guidance" },
+  install_skill_from_github: { past: "Installed a GitHub skill", present: "Installing a GitHub skill" },
 
   checkpoint: { past: "Saved a checkpoint", present: "Saving a checkpoint" },
   revert: { past: "Rolled the files back", present: "Rolling the files back" },

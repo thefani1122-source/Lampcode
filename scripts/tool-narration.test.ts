@@ -98,6 +98,10 @@ eq("one file is not pluralised",
   narrateTool("write_files", JSON.stringify({ files: [{ path: "a" }] })).label,
   "Wrote 1 file");
 
+eq("GitHub skill installation is narrated clearly",
+  [narrateTool("install_skill_from_github").label, narrateTool("install_skill_from_github").active],
+  ["Installed a GitHub skill", "Installing a GitHub skill"]);
+
 // A tool call is streamed in fragments, so the arguments are not valid JSON
 // until the last one lands.
 eq("a half-streamed argument string does not break the label",
