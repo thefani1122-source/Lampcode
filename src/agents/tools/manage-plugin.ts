@@ -24,6 +24,7 @@ export const managePluginHandler: ToolHandler = async (args: Record<string, unkn
 
   if (action === "uninstall") {
     const removed = await db.delete(userPlugins).where(and(eq(userPlugins.id, id), eq(userPlugins.userId, ctx.userId))).returning({ id: userPlugins.id });
+    if (removed[0]) logger.info({ userId: ctx.userId, pluginId: id, action }, "Plugin package uninstalled");
     return removed[0] ? "Uninstalled " + row.name + ". Its capabilities will disappear from future builds." : "Error: plugin could not be uninstalled.";
   }
   if (action === "enable" || action === "disable") {
