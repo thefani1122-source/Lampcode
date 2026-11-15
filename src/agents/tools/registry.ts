@@ -1,6 +1,10 @@
 import { loadSkillHandler } from "./load-skill.js";
 import { installSkillFromGitHubHandler } from "./install-skill-from-github.js";
 import { listUserSkillsHandler } from "./list-skills.js";
+import { installPluginFromGitHubHandler } from "./install-plugin-from-github.js";
+import { listPluginsHandler } from "./list-plugins.js";
+import { loadPluginCapabilityHandler } from "./load-plugin-capability.js";
+import { managePluginHandler } from "./manage-plugin.js";
 import { readProjectFileHandler } from "./read-project-file.js";
 import { requestWriteActionHandler } from "./request-write-action.js";
 import { checkpointHandler } from "./checkpoint.js";
@@ -49,6 +53,10 @@ export const DEFERRED_STATIC_HANDLERS = new Set(["ask_user"]);
 
 export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["install_skill_from_github", installSkillFromGitHubHandler],
+  ["install_plugin_from_github", installPluginFromGitHubHandler],
+  ["list_plugins", listPluginsHandler],
+  ["load_plugin_capability", loadPluginCapabilityHandler],
+  ["manage_plugin", managePluginHandler],
   ["load_skill", loadSkillHandler],
   ["list_skills", listUserSkillsHandler],
   ["read_project_file", readProjectFileHandler],
