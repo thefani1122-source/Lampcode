@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
+import { logger } from "../../server/logger.js";
 import { userPlugins } from "../../db/schema.js";
 import { USER_PLUGIN_MAX_HISTORY, type PluginCapabilityDescriptor } from "../user-plugins.js";
 import type { ToolHandler } from "./registry.js";

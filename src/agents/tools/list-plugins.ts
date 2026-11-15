@@ -11,7 +11,8 @@ export const listPluginsHandler: ToolHandler = async (_args: Record<string, unkn
     id: userPlugins.id, name: userPlugins.name, description: userPlugins.description,
     version: userPlugins.version, revision: userPlugins.revision, sourceCommit: userPlugins.sourceCommit,
     capabilities: userPlugins.capabilities,
-  }).from(userPlugins).where(and(eq(userPlugins.userId, ctx.userId), eq(userPlugins.enabled, true)))
+    enabled: userPlugins.enabled,
+  }).from(userPlugins).where(eq(userPlugins.userId, ctx.userId))
     .orderBy(desc(userPlugins.updatedAt)).limit(100).catch(() => null);
   if (!rows) return "The plugin library could not be queried. The server may need the user_plugins database migration.";
   if (!rows.length) return "No enabled plugins are installed. A user can ask LampCode to install a GitHub plugin repository by sharing its URL.";
@@ -20,7 +21,8 @@ export const listPluginsHandler: ToolHandler = async (_args: Record<string, unkn
     "Load only a relevant capability using load_plugin_capability. MCP server entries are inert templates and must be connected separately.",
   ];
   for (const row of rows) {
-    out.push("- plugin:" + row.id + " — " + JSON.stringify(row.name) + " v" + row.version + " (revision " + row.revision + "; commit " + row.sourceCommit.slice(0, 12) + ")");
+    out.push("- plugin:" + row.id + " — " + JSON.stringify(row.name) + " v" + row.version + " (" + (row.enabled ? "enabled" : "disabled") + "; revision " + row.revision + "; commit " + row.sourceCommit.slice(0, 12) + ")");
+    if (!row.enabled) { out.push("  - disabled; re-enable explicitly with manage_plugin before loading capabilities."); continue; }
     for (const cap of (Array.isArray(row.capabilities) ? row.capabilities : []) as PluginCapabilityDescriptor[]) {
       out.push("  - " + cap.kind + ": " + JSON.stringify(cap.name) + " — " + JSON.stringify(cap.description.slice(0, 280)) + " [path: " + cap.path + "]");
     }

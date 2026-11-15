@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
+import { logger } from "../../server/logger.js";
 import { userPlugins } from "../../db/schema.js";
 import {
   parseUserPluginPackage,
@@ -349,6 +350,7 @@ export const installPluginFromGitHubHandler: ToolHandler = async (
       )).returning({ id: userPlugins.id, name: userPlugins.name, version: userPlugins.version, revision: userPlugins.revision });
       const row = updatedRows[0];
       if (!row) return "Error: the plugin changed while it was being updated. Refresh and retry.";
+      logger.info({ userId: ctx.userId, pluginId: parsed.pluginId, revision: row.revision, sourceCommit: commitSha }, "Plugin package updated");
       return formatPluginResult(row, parsed.capabilities, sourceUrl, commitSha, true);
     }
 
@@ -376,6 +378,7 @@ export const installPluginFromGitHubHandler: ToolHandler = async (
       .returning({ id: userPlugins.id, name: userPlugins.name, version: userPlugins.version, revision: userPlugins.revision });
     const row = inserted[0];
     if (!row) return "Error: another request installed this plugin at the same time. Refresh and retry.";
+    logger.info({ userId: ctx.userId, pluginId: parsed.pluginId, revision: row.revision, sourceCommit: commitSha }, "Plugin package installed");
     return formatPluginResult(row, parsed.capabilities, sourceUrl, commitSha, false);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown GitHub plugin import error.";
