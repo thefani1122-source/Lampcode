@@ -1,4 +1,6 @@
 import { loadSkillHandler } from "./load-skill.js";
+import { installSkillFromGitHubHandler } from "./install-skill-from-github.js";
+import { listUserSkillsHandler } from "./list-skills.js";
 import { readProjectFileHandler } from "./read-project-file.js";
 import { requestWriteActionHandler } from "./request-write-action.js";
 import { checkpointHandler } from "./checkpoint.js";
@@ -46,7 +48,9 @@ export type ToolHandler = (
 export const DEFERRED_STATIC_HANDLERS = new Set(["ask_user"]);
 
 export const REGISTRY: Map<string, ToolHandler> = new Map([
+  ["install_skill_from_github", installSkillFromGitHubHandler],
   ["load_skill", loadSkillHandler],
+  ["list_skills", listUserSkillsHandler],
   ["read_project_file", readProjectFileHandler],
   ["request_write_action", requestWriteActionHandler],
   ["checkpoint", checkpointHandler],

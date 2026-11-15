@@ -28,6 +28,7 @@ import { contextRouter } from "./routes/context.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { integrationsRouter, mcpOAuthCallbackRouter } from "./routes/integrations.js";
 import { adminRouter } from "./routes/admin.js";
+import { skillsRouter } from "./routes/skills.js";
 import { createWebSocketServer } from "../websocket/server.js";
 import { killAllSandboxes } from "../preview/e2b-service.js";
 import { execFileSync } from "node:child_process";
@@ -127,6 +128,7 @@ app.route("/api/webhooks", webhooksRouter);
 app.route("/api/integrations", mcpOAuthCallbackRouter);
 app.route("/api/integrations", integrationsRouter);
 app.route("/api/admin", adminRouter);
+app.route("/api/skills", skillsRouter);
 
 // 404 handler
 app.notFound((c) =>
