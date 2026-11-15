@@ -109,7 +109,9 @@ export function parseGitHubSkillSourceUrl(raw: string): GitHubSkillSource | null
         remaining.pop();
       }
       skillPath = remaining.join("/");
-      pathIsExplicit = true;
+      // A /tree/<ref> URL points at the repository root, not a specific
+      // skill. Let the installer discover nested skills in that case.
+      pathIsExplicit = mode === "blob" || remaining.length > 0;
     }
   } else {
     // raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>/SKILL.md

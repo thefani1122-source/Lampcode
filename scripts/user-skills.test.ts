@@ -114,6 +114,8 @@ assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: 
 
 const rootGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills");
 assert.deepEqual(rootGithubSource, { owner: "example", repo: "skills" });
+const rootTreeGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/main");
+assert.deepEqual(rootTreeGithubSource, { owner: "example", repo: "skills", ref: "main" });
 const folderGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/v1/skills/react");
 assert.deepEqual(folderGithubSource, { owner: "example", repo: "skills", ref: "v1", skillPath: "skills/react" });
 const blobGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills/blob/v1/skills/react/SKILL.md");
