@@ -40,7 +40,7 @@ const parsed = parseUserPluginPackage(manifest, multiMcpFiles, "example", "front
 assert.equal(parsed.pluginId, "example.frontend-toolkit");
 assert.equal(parsed.version, "1.2.0");
 assert.equal(parsed.license, "MIT");
-assert.deepEqual(parsed.capabilities.map((cap) => cap.kind).sort(), ["agent", "command", "mcp", "skill"]);
+assert.deepEqual([...new Set(parsed.capabilities.map((cap) => cap.kind))].sort(), ["agent", "command", "mcp", "skill"]);
 assert.equal(parsed.capabilities.find((cap) => cap.kind === "skill")?.path, "skills/react/SKILL.md");
 assert.deepEqual(parsed.capabilities.filter((cap) => cap.kind === "mcp").map((cap) => cap.id).sort(), [".mcp.json#docs", ".mcp.json#search"]);
 assert.equal(parsed.contentHash.length, 64);
