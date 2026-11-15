@@ -278,6 +278,11 @@ export const installPluginFromGitHubHandler: ToolHandler = async (
 
     const existingRows = await db.select({
       id: userPlugins.id,
+      name: userPlugins.name,
+      description: userPlugins.description,
+      publisher: userPlugins.publisher,
+      license: userPlugins.license,
+      repository: userPlugins.repository,
       version: userPlugins.version,
       revision: userPlugins.revision,
       sourceCommit: userPlugins.sourceCommit,
