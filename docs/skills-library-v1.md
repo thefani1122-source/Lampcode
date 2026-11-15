@@ -16,12 +16,25 @@
 ## Supported scope and current limitations
 
 - `SKILL.md` is limited to 48 KiB. Folder imports support only text Markdown under `references/` (20 files, 32 KiB each, 256 KiB combined, 640 KiB request cap).
-- ZIP archives, binary `assets/`, GitHub import, project-level activation, team scope, multi-capability plugin manifests, and marketplace publishing are not included in this release. Folder selection is supported only for the `SKILL.md` entry point and Markdown references under `references/`.
+- ZIP archives, binary `assets/`, project-level activation, team scope, full multi-capability plugin manifests and marketplace publishing are not included in this release. GitHub import is available through the agent tool for public repositories, or private repositories when GitHub is connected. It imports only a standard `SKILL.md` and safe Markdown references under `references/`.
 - Skills are user-global and can be selected by builds across that user's projects when relevant and enabled.
 - The skill name is the stable agent-facing identifier and cannot be changed in place. To rename it, install a new skill with the new name and then remove the old one.
 - The runtime exposes only enabled entries. The model receives descriptions and reference paths first, then loads the skill body or a specific reference only when needed.
 - User skill contents are untrusted guidance. They cannot grant tool permissions or override platform rules.
 - CI cannot prove the production database migration has been applied; that remains an explicit deployment operation.
+
+## GitHub source installation (agent-driven, no extra button)
+
+When a user supplies a GitHub repository URL, a GitHub tree URL for a skill folder, or a raw GitHub `SKILL.md` URL and asks LampCode to download/use it, the agent can call `install_skill_from_github`. There is no separate download button or marketplace requirement.
+
+- Public GitHub repositories can be read without connecting GitHub. Private repositories use the user's existing GitHub connection and its token.
+- The installer resolves the requested branch/tag to a commit SHA and stores the immutable source revision with the installed skill.
+- A repository with one root or nested `SKILL.md` is installed directly. For a repository containing multiple skills (including Claude-style plugin repositories), the agent receives the candidate folders and selects the relevant one with `skill_path`.
+- Only regular non-executable `SKILL.md` and Markdown files under that skill's `references/` folder are imported. Existing file-count and byte limits still apply.
+- Imported third-party text remains untrusted model guidance. The importer never executes scripts/hooks, installs commands or specialist agents, starts MCP server processes, or grants permissions.
+- A plugin repository with no standard `SKILL.md` is not treated as an installable skill. Its executable/runtime capabilities require the future plugin lifecycle and isolated extension runner.
+
+The agent immediately receives the imported skill body for the current task; the saved skill remains available to later builds through `list_skills` and `load_skill`.
 
 ## Data access boundary
 

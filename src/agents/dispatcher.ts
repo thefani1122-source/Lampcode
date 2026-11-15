@@ -704,7 +704,7 @@ export class AgentDispatcher {
         tools: enableTools
           ? options.queryMode
             ? [
-                ...TOOL_DEFINITIONS.filter((t) => t.name === "read_project_file"),
+                ...TOOL_DEFINITIONS.filter((t) => ["read_project_file", "list_skills", "load_skill", "install_skill_from_github"].includes(t.name)),
                 ...AGENTIC_BUILD_TOOLS.filter((t) =>
                   [
                     "list_files",

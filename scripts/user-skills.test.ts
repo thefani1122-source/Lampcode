@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseUserSkillDocument, parseUserSkillPackage, USER_SKILL_MAX_BYTES, USER_SKILL_MAX_REFERENCE_FILE_BYTES } from "../src/agents/user-skills.js";
+import { findGitHubSkillPaths, normalizeGitHubSkillPath, parseGitHubSkillSourceUrl } from "../src/agents/github-skill-source.js";
 
 const valid = [
   "---",
@@ -109,6 +110,39 @@ assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: 
 assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: ok\nversion: latest\n---\n\nInstructions."), /semantic version/);
 assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: ok\n---\n\n" + "x".repeat(USER_SKILL_MAX_BYTES)), /48 KiB/);
 assert.throws(() => parseUserSkillDocument("---\nname: valid-name\ndescription: ok\n---\n\na\u0000b"), /null byte/);
+
+
+const rootGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills");
+assert.deepEqual(rootGithubSource, { owner: "example", repo: "skills" });
+const folderGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/v1/skills/react");
+assert.deepEqual(folderGithubSource, { owner: "example", repo: "skills", ref: "v1", skillPath: "skills/react" });
+const blobGithubSource = parseGitHubSkillSourceUrl("https://github.com/example/skills/blob/v1/skills/react/SKILL.md");
+assert.deepEqual(blobGithubSource, { owner: "example", repo: "skills", ref: "v1", skillPath: "skills/react" });
+const rawGithubSource = parseGitHubSkillSourceUrl("https://raw.githubusercontent.com/example/skills/v1/skills/react/SKILL.md");
+assert.deepEqual(rawGithubSource, { owner: "example", repo: "skills", ref: "v1", skillPath: "skills/react" });
+assert.equal(parseGitHubSkillSourceUrl("http://github.com/example/skills"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://evil.example/example/skills"), null);
+assert.equal(parseGitHubSkillSourceUrl("https://github.com/example/skills/tree/main/%2e%2e/secrets"), null);
+assert.equal(normalizeGitHubSkillPath("skills/react/SKILL.md"), "skills/react");
+assert.equal(normalizeGitHubSkillPath("../secrets"), null);
+assert.deepEqual(
+  findGitHubSkillPaths(["skills/zod/SKILL.md", "SKILL.md", "skills/react/SKILL.md", "../escape/SKILL.md"]),
+  ["SKILL.md", "skills/react/SKILL.md", "skills/zod/SKILL.md"],
+);
+assert.deepEqual(findGitHubSkillPaths(["skills/react/SKILL.md"], "skills/react"), ["skills/react/SKILL.md"]);
+assert.deepEqual(findGitHubSkillPaths(["skills/react/SKILL.md"], "skills/vue"), []);
+
+const githubInstallerSource = readFileSync(join(process.cwd(), "src", "agents", "tools", "install-skill-from-github.ts"), "utf8");
+assert.match(githubInstallerSource, /redirect: "error"/, "GitHub import must not follow arbitrary redirects");
+assert.match(githubInstallerSource, /ctx\.userId/, "GitHub imports must be stored under the authenticated user");
+assert.match(githubInstallerSource, /parseUserSkillPackage\(skillMd, resources\)/);
+assert.match(githubInstallerSource, /source: pinnedSource/, "installed records must retain immutable GitHub provenance");
+assert.doesNotMatch(githubInstallerSource, /child_process|execFile|spawn\(/, "downloaded plugin scripts must never be executed");
+assert.match(toolsTsPlaceholder(), /install_skill_from_github/);
+function toolsTsPlaceholder(): string {
+  return readFileSync(join(process.cwd(), "src", "agents", "tools.ts"), "utf8");
+}
+
 
 console.log("All user skill document validation checks passed.");
 
