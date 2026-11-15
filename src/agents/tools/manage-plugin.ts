@@ -18,7 +18,7 @@ export const managePluginHandler: ToolHandler = async (args: Record<string, unkn
   if (!ctx.userId || !id) return "Error: valid installed plugin id (plugin:<uuid> or <uuid>) and authenticated user context are required.";
   if (!["enable", "disable", "uninstall", "rollback"].includes(action)) return "Error: action must be enable, disable, uninstall or rollback.";
   const rows = await db.select({
-    id: userPlugins.id, name: userPlugins.name, revision: userPlugins.revision, previousVersions: userPlugins.previousVersions,
+    id: userPlugins.id, name: userPlugins.name, revision: userPlugins.revision, updatedAt: userPlugins.updatedAt, previousVersions: userPlugins.previousVersions,
   }).from(userPlugins).where(and(eq(userPlugins.id, id), eq(userPlugins.userId, ctx.userId))).limit(1);
   const row = rows[0];
   if (!row) return "Error: plugin is not installed in this user's library.";
@@ -35,6 +35,7 @@ export const managePluginHandler: ToolHandler = async (args: Record<string, unkn
         eq(userPlugins.id, id),
         eq(userPlugins.userId, ctx.userId),
         eq(userPlugins.revision, row.revision),
+        eq(userPlugins.updatedAt, row.updatedAt),
       ))
       .returning({ name: userPlugins.name, enabled: userPlugins.enabled });
     if (!updated[0]) return "Error: the plugin changed while its state was being updated. Refresh and retry.";
