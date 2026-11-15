@@ -62,3 +62,20 @@ The migration creates the `user_skills` table, indexes, a JSONB reference map, a
 - `DELETE /api/skills/:id` — uninstall one of the authenticated user's entries.
 
 The frontend calls these endpoints with the existing authenticated API client. The list endpoint is intentionally metadata-only; it returns reference paths but not reference bodies. Full documents are retrieved only when the user edits a skill or an agent explicitly loads the skill/reference. The agent index reads only the small `resource_paths` column, never the stored resource bodies. The `list_skills` tool exposes reference paths but not their contents; `load_skill` accepts an optional `resource` path for lazy retrieval.
+
+
+## Declarative GitHub plugin packages (agent-driven)
+
+Users can ask LampCode in chat to install a GitHub plugin repository. No additional download button or marketplace screen is required. Public repositories work without GitHub login; private repositories use the user's existing GitHub connection. Branches and tags are resolved to immutable commit SHAs.
+
+Supported package capabilities:
+- Standard `skills/**/SKILL.md` plus Markdown references inside each skill's `references/` folder.
+- Markdown agent profiles under `agents/`, loaded as guidance for the current task (not isolated sub-agent processes).
+- Markdown command workflows under `commands/`, loaded as task guidance.
+- `.mcp.json` or `mcp/servers.json` definitions, stored as inert templates. The user must inspect and connect them separately through Integrations.
+
+The package manager supports list, lazy capability loading, enable, disable, explicit update, uninstall and rollback to one of the last three immutable snapshots. Updates never silently replace the installed package.
+
+Scripts, hooks, binaries and arbitrary assets are never imported or executed. Package metadata/instructions are untrusted text and cannot grant tool permissions, connect accounts, expose secrets or bypass the existing MCP write-approval pipeline. Project/team scope and marketplace publishing remain later phases.
+
+Before deploying the backend, apply `drizzle/0015_user_plugins.sql` after `drizzle/0014_user_skills.sql`. The new migration enables default-deny RLS without client-facing policies.
