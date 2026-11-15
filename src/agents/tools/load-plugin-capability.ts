@@ -8,7 +8,8 @@ import type { ToolExecutionContext } from "../tools.js";
 export const loadPluginCapabilityHandler: ToolHandler = async (args: Record<string, unknown>, ctx: ToolExecutionContext): Promise<string> => {
   const id = typeof args["plugin_id"] === "string" ? args["plugin_id"] : "";
   const kind = pluginCapabilityKind(args["kind"]);
-  const capabilityId = typeof args["capability_id"] === "string" ? args["capability_id"] : "";\n  const path = typeof args["path"] === "string" ? args["path"] : "";
+  const capabilityId = typeof args["capability_id"] === "string" ? args["capability_id"] : "";
+  const path = typeof args["path"] === "string" ? args["path"] : "";
   if (!ctx.userId || !/^[0-9a-f-]{36}$/i.test(id)) return "Error: a valid installed plugin id and authenticated user context are required.";
   if (!kind || !capabilityId || capabilityId.length > 256 || !path || path.length > 240 || path.startsWith("/") || path.split("/").some((p) => !p || p === "." || p === "..")) return "Error: provide an exact capability kind and safe path from list_plugins.";
   const rows = await db.select({
