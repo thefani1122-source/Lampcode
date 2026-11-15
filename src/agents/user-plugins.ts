@@ -26,14 +26,14 @@ export function normalizeUserPluginRecordId(value: unknown): string | null {
   return UUID_RE.test(id) ? id : null;
 }
 
-/** Resolve an exact references/**/*.md path to its package-relative file path. */
+/** Resolve a safe references file path to its package-relative storage path. */
 export function resolvePluginSkillResourcePath(skillEntryPath: string, resourcePath: string): string | null {
   if (
     typeof skillEntryPath !== "string" ||
-    !/^skills\\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\\/)*SKILL\\.md$/.test(skillEntryPath) ||
+    !/^skills\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*SKILL\.md$/.test(skillEntryPath) ||
     typeof resourcePath !== "string" ||
     resourcePath.length > 240 ||
-    !/^references\\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\\/)*[A-Za-z0-9][A-Za-z0-9._-]*\\.md$/.test(resourcePath)
+    !/^references\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.md$/.test(resourcePath)
   ) return null;
   const directory = skillEntryPath.slice(0, -"/SKILL.md".length);
   return directory + "/" + resourcePath;
