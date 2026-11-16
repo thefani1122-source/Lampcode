@@ -141,28 +141,64 @@ async function runTests(): Promise<void> {
     }
   }
 
+  console.log("\n── 4b. Dynamic MCP Read-Only Disclosure ──");
+  {
+    const dynamicReadTool = {
+      name: "linear__list_issues",
+      description: "List issues from the connected Linear workspace",
+      input_schema: { type: "object" as const, properties: {} },
+    };
+    const dynamicWriteTool = {
+      name: "linear__create_issue",
+      description: "Create an issue",
+      input_schema: { type: "object" as const, properties: {} },
+    };
+    const disclosed = ToolDisclosure.filterForTask(
+      [...TOOL_DEFINITIONS, ...AGENTIC_BUILD_TOOLS, dynamicReadTool, dynamicWriteTool],
+      "code_review_query",
+      [dynamicReadTool.name],
+    );
+    ok("trusted dynamically classified MCP read tool is available", disclosed.some((tool) => tool.name === dynamicReadTool.name));
+    ok("dynamic MCP write tool remains blocked", !disclosed.some((tool) => tool.name === dynamicWriteTool.name));
+    ok("review_code is available in query mode", disclosed.some((tool) => tool.name === "review_code"));
+    ok("read_project_file is available in query mode", disclosed.some((tool) => tool.name === "read_project_file"));
+  }
+
   console.log("\n── 5. Safe Context Compaction ──");
   {
     const messages: ConversationMessage[] = [
       { role: "system", content: "You are LampCode." },
       { role: "user", content: "Build a habit tracker app with accounts." },
-      { role: "assistant", content: "I will read existing files first." },
-      { role: "user", content: "[tool_result read_file: lots of content ...]".repeat(1000) },
-      { role: "assistant", content: "I will check project structure." },
-      { role: "user", content: "[tool_result list_files: file list ...]".repeat(1000) },
-      { role: "assistant", content: "Now writing App.tsx." },
-      { role: "user", content: "Active error: missing dependency 'lucide-react'." },
+      { role: "assistant", content: [
+        { type: "tool_use", id: "tool_old_1", name: "read_file", input: { path: "src/App.tsx" } },
+      ] },
+      { role: "user", content: [
+        { type: "tool_result", tool_use_id: "tool_old_1", content: ("export function App() {\\n  // important structure\\n  return <main>Habit tracker</main>;\\n  error: none\\n").repeat(180) },
+      ] },
+      { role: "assistant", content: [
+        { type: "tool_use", id: "tool_recent_1", name: "list_files", input: {} },
+      ] },
+      { role: "user", content: [
+        { type: "tool_result", tool_use_id: "tool_recent_1", content: "src/App.tsx\\nsrc/components/Tracker.tsx" },
+        { type: "text", text: "Active error: missing dependency 'lucide-react'." },
+      ] },
     ];
 
     const tokensBefore = ContextCompactor.estimateTokens(messages);
     ok("initial messages exceed 2000 tokens", tokensBefore > 2000);
+    ok("input tool_use/tool_result pairing is valid", ContextCompactor.hasValidToolPairs(messages));
 
     const compacted = ContextCompactor.compact(messages, 1000, 1);
     ok("compactor triggered compaction", compacted.didCompact);
     ok("compacted message count is smaller", compacted.compactedMessages.length < messages.length);
     ok("system message preserved", compacted.compactedMessages[0]?.role === "system");
     ok("original user prompt preserved", (compacted.compactedMessages[1]?.content as string).includes("Build a habit tracker"));
-    ok("latest error preserved in suffix", (compacted.compactedMessages[compacted.compactedMessages.length - 1]?.content as string).includes("Active error"));
+    const oldResult = compacted.compactedMessages[3]?.content;
+    const recentResult = compacted.compactedMessages[5]?.content;
+    ok("old tool result is compacted rather than dropped", Array.isArray(oldResult) && String(oldResult[0]?.type === "tool_result" ? oldResult[0].content : "").includes("compacted"));
+    ok("recent tool result remains intact", Array.isArray(recentResult) && recentResult[0]?.type === "tool_result" && recentResult[0].content === "src/App.tsx\\nsrc/components/Tracker.tsx");
+    ok("tool protocol remains valid after compaction", compacted.protocolValid && ContextCompactor.hasValidToolPairs(compacted.compactedMessages));
+    ok("compaction reduces context size", compacted.tokensAfter < compacted.tokensBefore);
   }
 
   console.log(`\n========================================`);
