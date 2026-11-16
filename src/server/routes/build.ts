@@ -19,6 +19,8 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
+import { ContextOrchestrator } from "../../context/orchestrator.js";
+import { ProjectIndex } from "../../context/project-index.js";
 import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
@@ -1287,6 +1289,37 @@ export async function runFastBuild(
       }
     }
 
+    // Apply task-aware relevance scoring AFTER the existing high-precision
+    // follow-up selector. This only limits prompt context; projectFiles still
+    // contains the entire project for tool reads, writes and persistence.
+    if (hasExistingCode && !isFeatureAddition) {
+      const taskContext = ContextOrchestrator.classifyTask(
+        prompt,
+        existingFiles,
+        fullstackEditMode ? "fullstack" : undefined,
+      );
+      const contextBudget = ContextOrchestrator.getBudgetForTask(taskContext.category).projectFiles;
+      const indexedContext = ProjectIndex.selectFilesForTask(
+        contextFiles,
+        taskContext.category,
+        prompt,
+        contextBudget,
+      );
+      contextFiles = indexedContext.selectedFiles;
+      logger.info(
+        {
+          sessionId,
+          category: taskContext.category,
+          confidence: taskContext.confidence,
+          selectedFiles: indexedContext.selectedPaths,
+          omittedFiles: indexedContext.omittedPaths.length,
+          tokens: indexedContext.totalTokens,
+          budget: contextBudget,
+        },
+        "Task-aware project context selected",
+      );
+    }
+
     // ── Full-stack detection (new builds only) ────────────────────────────
     // Edits and follow-ups keep their existing flows untouched; only a fresh
     // build with no prior code can be promoted to a full-stack generation.
@@ -1999,6 +2032,7 @@ export async function runFastBuild(
       // Only on an edit — on a new build there is no prior project, and an
       // empty map would make list_files fall through to the sandbox anyway.
       ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
+      ...(hasExistingCode && contextFiles ? { contextFiles: Object.entries(contextFiles).map(([path, content]) => ({ path, content })) } : {}),
       onSandboxLog: (line: string) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,

@@ -37,6 +37,9 @@ import {
   type WriteProxyRegistry,
 } from "./mcp-tool-classifier.js";
 import { capMcpTools } from "./mcp-relevance.js";
+import { ToolDisclosure } from "./tool-disclosure.js";
+import { ContextCompactor } from "./context-compactor.js";
+import { EngineeringMemoryManager, type ChangeType, type VerificationStatus } from "../context/engineering-memory.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import { config } from "../server/config.js";
@@ -571,7 +574,7 @@ export class AgentDispatcher {
       userContent = blocks;
     }
 
-    const messages: ChatMessage[] = [
+    let messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ];
@@ -697,38 +700,37 @@ export class AgentDispatcher {
     const checkpoints = new Map<string, Checkpoint>();
 
     for (let round = 1; round <= maxRounds; round++) {
+      if (round > 2 && messages.length > 6) {
+        const compacted = ContextCompactor.compact(messages, 48_000);
+        if (compacted.didCompact) {
+          logger.info(
+            { sessionId, round, tokensBefore: compacted.tokensBefore, tokensAfter: compacted.tokensAfter },
+            "Context compacted before dispatch",
+          );
+          messages = compacted.compactedMessages;
+          if (compacted.tokensAfter > 48_000) {
+            logger.warn(
+              { sessionId, tokensBefore: compacted.tokensBefore, tokensAfter: compacted.tokensAfter },
+              "Context remains above the compaction target because the immutable prompt and latest tool round were retained",
+            );
+          }
+        }
+      }
       roundsUsed = round;
       emitEvent({ type: "turn/start", round });
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
           ? options.queryMode
-            ? [
-                ...TOOL_DEFINITIONS.filter((t) => ["read_project_file", "list_skills", "load_skill", "install_skill_from_github", "list_plugins", "load_plugin_capability", "install_plugin_from_github", "manage_plugin"].includes(t.name)),
-                ...AGENTIC_BUILD_TOOLS.filter((t) =>
-                  [
-                    "list_files",
-                    "read_file",
-                    "search_code",
-                    "code_intel",
-                    "impact_analysis",
-                    "review_code",
-                    "web_search",
-                    "integrations_status",
-                    "github_query",
-                    "vercel_query",
-                    "vercel_write",
-                    "shopify_query",
-                    "wordpress_query",
-                    "twilio_query",
-                    "sendgrid_query",
-                    "mailchimp_query",
-                    "netlify_query",
-                    "supabase_query",
-                  ].includes(t.name),
-                ),
-                ...readToolDefs,
-              ]
+            ? ToolDisclosure.filterForTask(
+                [
+                  ...TOOL_DEFINITIONS,
+                  ...AGENTIC_BUILD_TOOLS,
+                  ...readToolDefs,
+                ],
+                "code_review_query",
+                readToolDefs.map((tool) => tool.name),
+              )
             : [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
           : undefined,
       };
@@ -1122,6 +1124,83 @@ export class AgentDispatcher {
     await writeFile(outputPath, fullContent, "utf-8").catch((err) => {
       console.error("[dispatcher] Failed to persist full tool-loop transcript:", err);
     });
+
+    // Capture actual project changes once per agentic build. The record is
+    // based on changed paths and gate evidence; it never invents a root cause
+    // or marks an unchecked build as verified. Memory persistence is best-effort
+    // and must never turn a usable build into a failed build.
+    const changedMemoryPaths = [
+      ...Object.entries(generatedFiles)
+        .filter(([path, content]) => options.projectFiles?.[path] !== content)
+        .map(([path]) => path),
+      ...[...deletedFiles].filter((path) => Boolean(options.projectFiles?.[path])),
+    ].slice(0, 100);
+    if (agenticBuild && userId && projectId && changedMemoryPaths.length > 0) {
+      const requestText = options.userPrompt?.trim() || task.description;
+      const lowerRequest = requestText.toLowerCase();
+      const changeType: ChangeType = /\b(fix|bug|crash|error|repair)\b/.test(lowerRequest)
+        ? "bugfix"
+        : /\b(refactor|reorganize|cleanup|clean up)\b/.test(lowerRequest)
+          ? "refactor"
+          : /\b(schema|architecture|database design|migration)\b/.test(lowerRequest)
+            ? "architecture"
+            : /\b(dependency|package|upgrade|install)\b/.test(lowerRequest)
+              ? "dependency"
+              : "feature";
+      const gateEntries = [
+        ["page", gateResults.checkPage],
+        ["types", gateResults.checkTypes],
+        ["tests", gateResults.checkTests],
+      ] as const;
+      const gateSummary = gateEntries.map(([name, status]) => `${name}=${status ?? "not_run"}`).join("; ");
+      const gateFailures = gateEntries.filter(([, status]) => status === "fail" || status === "unavailable");
+      const staleEvidence =
+        (gateResults.writesAfterCheckPage ?? 0) > 0 ||
+        (gateResults.writesAfterCheckTypes ?? 0) > 0 ||
+        (gateResults.writesAfterCheckTests ?? 0) > 0;
+      const fullyVerified =
+        gateResults.checkPage === "pass" &&
+        gateResults.checkTypes === "pass" &&
+        gateResults.checkTests === "pass" &&
+        !staleEvidence &&
+        !turnsExhausted &&
+        !budgetExhausted;
+      const hasSomeEvidence = gateEntries.some(([, status]) => status === "pass");
+      const verificationStatus: VerificationStatus = fullyVerified
+        ? "verified"
+        : hasSomeEvidence || gateFailures.length > 0 || staleEvidence || turnsExhausted || budgetExhausted
+          ? "partially_verified"
+          : "unverified";
+      const deletedMemoryPaths = [...deletedFiles].filter((path) => Boolean(options.projectFiles?.[path]));
+      const implementationSummary =
+        `Changed ${changedMemoryPaths.length - deletedMemoryPaths.length} file(s)` +
+        (deletedMemoryPaths.length ? `; deleted ${deletedMemoryPaths.length} file(s)` : "") +
+        `: ${changedMemoryPaths.join(", ")}`;
+      try {
+        await EngineeringMemoryManager.recordDecision({
+          projectId,
+          buildSessionId: sessionId,
+          changeType,
+          userRequirement: requestText.slice(0, 12_000),
+          observedFailure: gateFailures.length
+            ? `Verification findings: ${gateFailures.map(([name, status]) => `${name}=${status}`).join(", ")}`
+            : null,
+          // A root cause is intentionally omitted unless a dedicated verified
+          // diagnosis was captured; the manager stores "unknown" otherwise.
+          rationale: "Automatically captured from dispatcher execution; no separate design rationale was emitted.",
+          decision: "Applied requested project changes through the existing build workflow.",
+          implementation: implementationSummary,
+          affectedFiles: changedMemoryPaths,
+          verificationResult: `${gateSummary}; stale_evidence=${staleEvidence}; turns_exhausted=${turnsExhausted}; budget_exhausted=${budgetExhausted}`,
+          verificationStatus,
+          confidence: fullyVerified ? "high" : "low",
+          provenance: "dispatcher_auto_capture",
+          tags: ["auto-captured", changeType, verificationStatus],
+        });
+      } catch (err) {
+        logger.warn({ err, projectId, sessionId }, "Engineering memory capture failed; build result is unchanged");
+      }
+    }
 
     // Bill against the model that actually served this dispatch. `model` is the
     // Anthropic tier name, which the Modal path never uses, so costing with it

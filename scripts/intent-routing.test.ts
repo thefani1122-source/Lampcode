@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { classifyPromptIntent } from "../src/agents/prompt-intent.js";
 import type { AgentDispatcher } from "../src/agents/dispatcher.js";
+import { QUERY_MODE_READONLY_TOOL_NAMES } from "../src/agents/tool-disclosure.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -19,16 +20,17 @@ check("intent router has no keyword-regex decision variables", /const\s+is(?:Exp
 check("intent router dispatches to the model", intentSource.includes("opts.dispatcher.dispatch({"), true);
 check("intent model is explicitly given no tools", intentSource.includes("enableTools: false"), true);
 
-// Query mode must never expose file mutation, shell, or deployment tools.
+// Query mode policy is tested at the policy boundary, not by relying on a
+// particular source-code layout inside dispatcher.ts.
 const dispatcherSource = readFileSync("src/agents/dispatcher.ts", "utf8");
-const queryModeBlock = dispatcherSource.match(/options\.queryMode\s*\?\s*\[([\s\S]*?)\]\s*:\s*\[\.\.\.TOOL_DEFINITIONS/);
-check("dispatcher retains isolated queryMode tool list", Boolean(queryModeBlock), true);
-const queryBlock = queryModeBlock?.[1] ?? "";
-for (const forbidden of ["write_files", "edit_file", "delete_file", "shell", "deploy_app"]) {
-  check(`queryMode excludes ${forbidden}`, queryBlock.includes(`"${forbidden}"`), false);
+const disclosureSource = readFileSync("src/agents/tool-disclosure.ts", "utf8");
+check("dispatcher delegates query filtering to ToolDisclosure", dispatcherSource.includes("ToolDisclosure.filterForTask("), true);
+check("query allowlist is explicit and exported", disclosureSource.includes("QUERY_MODE_READONLY_TOOL_NAMES"), true);
+for (const forbidden of ["write_files", "edit_file", "delete_file", "shell", "deploy_app", "vercel_write", "install_plugin_from_github", "manage_plugin"]) {
+  check(`queryMode excludes ${forbidden}`, QUERY_MODE_READONLY_TOOL_NAMES.has(forbidden), false);
 }
-for (const required of ["list_files", "read_file", "search_code", "review_code", "web_search", "github_query", "vercel_query"]) {
-  check(`queryMode includes ${required}`, queryBlock.includes(`"${required}"`), true);
+for (const required of ["list_files", "read_file", "read_project_file", "search_code", "review_code", "web_search", "github_query", "vercel_query"]) {
+  check(`queryMode includes ${required}`, QUERY_MODE_READONLY_TOOL_NAMES.has(required), true);
 }
 
 function mockDispatcher(response: Record<string, unknown>): AgentDispatcher {
