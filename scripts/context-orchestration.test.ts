@@ -190,7 +190,7 @@ async function runTests(): Promise<void> {
 
     const compacted = ContextCompactor.compact(messages, 1000, 1);
     ok("compactor triggered compaction", compacted.didCompact);
-    ok("compacted message count is smaller", compacted.compactedMessages.length < messages.length);
+    ok("message count is stable so all tool calls/results remain present", compacted.compactedMessages.length === messages.length);
     ok("system message preserved", compacted.compactedMessages[0]?.role === "system");
     ok("original user prompt preserved", (compacted.compactedMessages[1]?.content as string).includes("Build a habit tracker"));
     const oldResult = compacted.compactedMessages[3]?.content;
@@ -198,7 +198,13 @@ async function runTests(): Promise<void> {
     ok("old tool result is compacted rather than dropped", Array.isArray(oldResult) && String(oldResult[0]?.type === "tool_result" ? oldResult[0].content : "").includes("compacted"));
     ok("recent tool result remains intact", Array.isArray(recentResult) && recentResult[0]?.type === "tool_result" && recentResult[0].content === "src/App.tsx\\nsrc/components/Tracker.tsx");
     ok("tool protocol remains valid after compaction", compacted.protocolValid && ContextCompactor.hasValidToolPairs(compacted.compactedMessages));
+    ok("active error label is preserved", Array.isArray(recentResult) && recentResult.some((block) => block.type === "text" && block.text.includes("Active error")));
     ok("compaction reduces context size", compacted.tokensAfter < compacted.tokensBefore);
+    const malformed: ConversationMessage[] = [
+      { role: "assistant", content: [{ type: "tool_use", id: "missing-result", name: "read_file", input: {} }] },
+    ];
+    const refused = ContextCompactor.compact(malformed, 1, 1);
+    ok("malformed tool history is left untouched", !refused.didCompact && !refused.protocolValid);
   }
 
   console.log(`\n========================================`);
