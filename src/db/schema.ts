@@ -1258,3 +1258,35 @@ export const userPlugins = pgTable(
     index("user_plugins_user_updated_idx").on(t.userId, t.updatedAt),
   ],
 );
+
+// Persistent structured engineering decisions and architectural memory
+export const engineeringDecisions = pgTable(
+  "engineering_decisions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    buildSessionId: text("build_session_id"),
+    changeType: text("change_type").notNull(),
+    userRequirement: text("user_requirement").notNull(),
+    observedFailure: text("observed_failure"),
+    rootCause: text("root_cause"),
+    rationale: text("rationale").notNull(),
+    decision: text("decision").notNull(),
+    implementation: text("implementation").notNull(),
+    affectedFiles: jsonb("affected_files").$type<string[]>().notNull().default([]),
+    affectedSymbols: jsonb("affected_symbols").$type<string[]>().notNull().default([]),
+    diffSummary: text("diff_summary"),
+    verificationResult: text("verification_result"),
+    verificationStatus: text("verification_status").notNull().default("unverified"),
+    confidence: text("confidence").notNull().default("medium"),
+    provenance: text("provenance").notNull().default("agent_execution"),
+    supersededBy: text("superseded_by"),
+    supersedes: jsonb("supersedes").$type<string[]>().notNull().default([]),
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("engineering_decisions_project_idx").on(t.projectId),
+    index("engineering_decisions_project_created_idx").on(t.projectId, t.createdAt),
+  ],
+);

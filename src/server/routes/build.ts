@@ -1999,6 +1999,7 @@ export async function runFastBuild(
       // Only on an edit — on a new build there is no prior project, and an
       // empty map would make list_files fall through to the sandbox anyway.
       ...(hasExistingCode ? { projectFiles: existingFiles } : {}),
+      ...(hasExistingCode && contextFiles ? { contextFiles: Object.entries(contextFiles).map(([path, content]) => ({ path, content })) } : {}),
       onSandboxLog: (line: string) =>
         server?.emitToRoom(sessionId, "build:preview_log", { sessionId, line }),
       mcpServers,

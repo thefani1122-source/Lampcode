@@ -37,6 +37,8 @@ import {
   type WriteProxyRegistry,
 } from "./mcp-tool-classifier.js";
 import { capMcpTools } from "./mcp-relevance.js";
+import { ToolDisclosure } from "./tool-disclosure.js";
+import { ContextCompactor } from "./context-compactor.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import { config } from "../server/config.js";
@@ -571,7 +573,7 @@ export class AgentDispatcher {
       userContent = blocks;
     }
 
-    const messages: ChatMessage[] = [
+    let messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ];
@@ -697,38 +699,30 @@ export class AgentDispatcher {
     const checkpoints = new Map<string, Checkpoint>();
 
     for (let round = 1; round <= maxRounds; round++) {
+      if (round > 2 && messages.length > 6) {
+        const compacted = ContextCompactor.compact(messages as any, 48_000);
+        if (compacted.didCompact) {
+          logger.info(
+            { sessionId, round, tokensBefore: compacted.tokensBefore, tokensAfter: compacted.tokensAfter },
+            "Context compacted before dispatch",
+          );
+          messages = compacted.compactedMessages as ChatMessage[];
+        }
+      }
       roundsUsed = round;
       emitEvent({ type: "turn/start", round });
       const gatewayRequest = {
         model, messages, maxTokens, thinkingBudget,
         tools: enableTools
           ? options.queryMode
-            ? [
-                ...TOOL_DEFINITIONS.filter((t) => ["read_project_file", "list_skills", "load_skill", "install_skill_from_github", "list_plugins", "load_plugin_capability", "install_plugin_from_github", "manage_plugin"].includes(t.name)),
-                ...AGENTIC_BUILD_TOOLS.filter((t) =>
-                  [
-                    "list_files",
-                    "read_file",
-                    "search_code",
-                    "code_intel",
-                    "impact_analysis",
-                    "review_code",
-                    "web_search",
-                    "integrations_status",
-                    "github_query",
-                    "vercel_query",
-                    "vercel_write",
-                    "shopify_query",
-                    "wordpress_query",
-                    "twilio_query",
-                    "sendgrid_query",
-                    "mailchimp_query",
-                    "netlify_query",
-                    "supabase_query",
-                  ].includes(t.name),
-                ),
-                ...readToolDefs,
-              ]
+            ? ToolDisclosure.filterForTask(
+                [
+                  ...TOOL_DEFINITIONS,
+                  ...AGENTIC_BUILD_TOOLS,
+                  ...readToolDefs,
+                ],
+                "code_review_query",
+              )
             : [...TOOL_DEFINITIONS, ...writeProxyDefs, ...readToolDefs, ...(agenticBuild ? AGENTIC_BUILD_TOOLS : [])]
           : undefined,
       };

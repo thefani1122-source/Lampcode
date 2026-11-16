@@ -22,6 +22,7 @@ interface BuildContext {
   projectMemory?: string | null;
 }
 import { logger } from "../server/logger.js";
+import { ContextOrchestrator } from "../context/orchestrator.js";
 
 // ── Token budget ──────────────────────────────────────────────────────────────
 
@@ -1976,9 +1977,10 @@ export class PromptBuilder {
         : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
     ]);
+    const precedenceContract = ContextOrchestrator.formatPrecedenceContract();
     const rawSystemPrompt = skillsBlock
-      ? `${baseSystemPrompt}\n\n${skillsBlock}`
-      : baseSystemPrompt;
+      ? `${precedenceContract}\n\n${baseSystemPrompt}\n\n${skillsBlock}`
+      : `${precedenceContract}\n\n${baseSystemPrompt}`;
 
     // The system prompt gets its own ceiling: projectMemory/projectManifest make
     // it grow with project size, and without a cap it silently eats the user

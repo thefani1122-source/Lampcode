@@ -7,6 +7,11 @@ import { loadPluginCapabilityHandler } from "./load-plugin-capability.js";
 import { managePluginHandler } from "./manage-plugin.js";
 import { readProjectFileHandler } from "./read-project-file.js";
 import { requestWriteActionHandler } from "./request-write-action.js";
+import {
+  searchEngineeringDecisionsHandler,
+  getEngineeringDecisionHandler,
+  getSymbolHistoryHandler,
+} from "./engineering-memory.js";
 import { checkpointHandler } from "./checkpoint.js";
 import { revertHandler } from "./revert.js";
 import { diffSinceHandler } from "./diff-since.js";
@@ -58,6 +63,9 @@ export const REGISTRY: Map<string, ToolHandler> = new Map([
   ["load_plugin_capability", loadPluginCapabilityHandler],
   ["manage_plugin", managePluginHandler],
   ["load_skill", loadSkillHandler],
+  ["search_engineering_decisions", searchEngineeringDecisionsHandler],
+  ["get_engineering_decision", getEngineeringDecisionHandler],
+  ["get_symbol_history", getSymbolHistoryHandler],
   ["list_skills", listUserSkillsHandler],
   ["read_project_file", readProjectFileHandler],
   ["request_write_action", requestWriteActionHandler],

@@ -152,6 +152,44 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["service", "description"],
     },
   },
+  {
+    name: "search_engineering_decisions",
+    description: "Search historical engineering decisions and bug fixes for the current project by keyword, file path, symbol, or tag. Returns compact metadata.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query or keyword" },
+        change_type: { type: "string", enum: ["feature", "bugfix", "refactor", "architecture", "config", "dependency"] },
+        file_path: { type: "string", description: "Filter by affected file path" },
+        symbol: { type: "string", description: "Filter by affected function, component, or symbol name" },
+        tag: { type: "string", description: "Filter by tag" },
+        limit: { type: "number", description: "Maximum records to return (1-10)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_engineering_decision",
+    description: "Retrieve a specific historical engineering decision record in full detail by its decision ID.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Decision ID (e.g. dec_...)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "get_symbol_history",
+    description: "Retrieve past changes, root cause rationales, and fixes affecting a specific file path or symbol name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "File path or symbol name to inspect history for" },
+      },
+      required: ["target"],
+    },
+  },
 ];
 
 // ── Agentic build tools ─────────────────────────────────────────────────────
