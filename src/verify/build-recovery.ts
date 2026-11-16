@@ -27,15 +27,15 @@ export function mergePersistedBuildFiles(
     if (
       !path ||
       path.startsWith("/") ||
-      path.startsWith("\\\\") ||
-      path.includes("\\0")
+      path.startsWith("\\") ||
+      path.includes("\0")
     ) return false;
 
-    const segments = path.replace(/\\\\/g, "/").split("/");
+    const segments = path.replace(/\\/g, "/").split("/");
     if (segments.some((segment) => segment === "." || segment === "..")) return false;
 
     // Supabase stores the private preview thumbnail in the same bucket.
-    return !segments[0]?.startsWith(".preview");
+    return segments[0] !== ".preview";
   };
 
   const merged = new Map<string, string>();
