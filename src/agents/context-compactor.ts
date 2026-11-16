@@ -67,21 +67,34 @@ export class ContextCompactor {
 
   /** Every tool_use id must have exactly one tool_result, and vice versa. */
   static hasValidToolPairs(messages: ConversationMessage[]): boolean {
-    const calls = new Map<string, number>();
-    const results = new Map<string, number>();
-    for (const message of messages) {
-      if (!isBlockArray(message.content)) continue;
+    const calls = new Map<string, { count: number; messageIndex: number }>();
+    const results = new Map<string, { count: number; messageIndex: number }>();
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      const message = messages[messageIndex];
+      if (!message || !isBlockArray(message.content)) continue;
       for (const block of message.content) {
-        if (block.type === "tool_use") calls.set(block.id, (calls.get(block.id) ?? 0) + 1);
-        if (block.type === "tool_result") results.set(block.tool_use_id, (results.get(block.tool_use_id) ?? 0) + 1);
+        if (block.type === "tool_use") {
+          if (message.role !== "assistant") return false;
+          const current = calls.get(block.id) ?? { count: 0, messageIndex };
+          calls.set(block.id, { count: current.count + 1, messageIndex });
+        }
+        if (block.type === "tool_result") {
+          if (message.role !== "user") return false;
+          const current = results.get(block.tool_use_id) ?? { count: 0, messageIndex };
+          results.set(block.tool_use_id, { count: current.count + 1, messageIndex });
+        }
       }
     }
     if (calls.size !== results.size) return false;
-    for (const [id, count] of calls) {
-      if (count !== 1 || results.get(id) !== 1) return false;
+    for (const [id, call] of calls) {
+      const result = results.get(id);
+      // Anthropic requires the user tool_result turn immediately after the
+      // assistant turn that contains the matching tool_use block(s).
+      if (call.count !== 1 || !result || result.count !== 1 || result.messageIndex !== call.messageIndex + 1) return false;
     }
-    for (const [id, count] of results) {
-      if (count !== 1 || calls.get(id) !== 1) return false;
+    for (const [id, result] of results) {
+      const call = calls.get(id);
+      if (result.count !== 1 || !call || call.count !== 1 || result.messageIndex !== call.messageIndex + 1) return false;
     }
     return true;
   }
