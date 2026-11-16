@@ -19,6 +19,8 @@ import {
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
 import { getDispatcher } from "../../agents/dispatcher.js";
+import { ContextOrchestrator } from "../../context/orchestrator.js";
+import { ProjectIndex } from "../../context/project-index.js";
 import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
@@ -1285,6 +1287,37 @@ export async function runFastBuild(
           console.log(`[build] smart context: ${Object.keys(contextFiles).length}/${Object.keys(existingFiles).length} files → LLM (tokenOnlyEdit=${isTokenOnlyEdit})`);
         }
       }
+    }
+
+    // Apply task-aware relevance scoring AFTER the existing high-precision
+    // follow-up selector. This only limits prompt context; projectFiles still
+    // contains the entire project for tool reads, writes and persistence.
+    if (hasExistingCode && !isFeatureAddition) {
+      const taskContext = ContextOrchestrator.classifyTask(
+        prompt,
+        existingFiles,
+        fullstackEditMode ? "fullstack" : undefined,
+      );
+      const contextBudget = ContextOrchestrator.getBudgetForTask(taskContext.category).projectFiles;
+      const indexedContext = ProjectIndex.selectFilesForTask(
+        contextFiles,
+        taskContext.category,
+        prompt,
+        contextBudget,
+      );
+      contextFiles = indexedContext.selectedFiles;
+      logger.info(
+        {
+          sessionId,
+          category: taskContext.category,
+          confidence: taskContext.confidence,
+          selectedFiles: indexedContext.selectedPaths,
+          omittedFiles: indexedContext.omittedPaths.length,
+          tokens: indexedContext.totalTokens,
+          budget: contextBudget,
+        },
+        "Task-aware project context selected",
+      );
     }
 
     // ── Full-stack detection (new builds only) ────────────────────────────
