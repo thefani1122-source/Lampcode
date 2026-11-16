@@ -80,7 +80,7 @@ async function runTests(): Promise<void> {
     const dec1 = await EngineeringMemoryManager.recordDecision({
       projectId: projA,
       changeType: "bugfix",
-      userRequirement: "Fix auth token leak with sk_live_secret1234567890abcdef",
+      userRequirement: "Fix auth token leak with sk_live_secret1234567890abcdef github_pat_123456789012345678901234567890 password=supersecret postgres://admin:db-password@db.example.com/app Bearer abc.def.ghi",
       observedFailure: "Token leaked in headers",
       rootCause: "Unredacted Bearer header",
       rationale: "Redact token before passing to client",
@@ -95,6 +95,10 @@ async function runTests(): Promise<void> {
     ok("decision record created with ID", dec1.id.startsWith("dec_"));
     ok("secrets are redacted from user requirement", !dec1.userRequirement.includes("sk_live_secret"));
     ok("user requirement contains redacted placeholder", dec1.userRequirement.includes("[REDACTED_SECRET]"));
+    ok("GitHub tokens are redacted", !dec1.userRequirement.includes("github_pat_"));
+    ok("password assignments are redacted", !dec1.userRequirement.includes("supersecret"));
+    ok("database URL passwords are redacted", !dec1.userRequirement.includes("db-password"));
+    ok("Bearer credentials are redacted", !dec1.userRequirement.includes("abc.def.ghi"));
 
     // Project scoping test
     const foundA = await EngineeringMemoryManager.getDecision(dec1.id, projA);
@@ -205,6 +209,11 @@ async function runTests(): Promise<void> {
     ];
     const refused = ContextCompactor.compact(malformed, 1, 1);
     ok("malformed tool history is left untouched", !refused.didCompact && !refused.protocolValid);
+    const outOfOrder: ConversationMessage[] = [
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "late-call", content: "result" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "late-call", name: "read_file", input: {} }] },
+    ];
+    ok("out-of-order tool pairs are rejected", !ContextCompactor.hasValidToolPairs(outOfOrder));
   }
 
   console.log(`\n========================================`);
