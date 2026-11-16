@@ -2221,7 +2221,14 @@ export async function runFastBuild(
     // and applies successful deletions last. Only adopt it when the expected
     // framework entry point is present and non-empty; helper-only partial
     // snapshots must still fail the entry-point gate.
-    if (agenticBuild && !hasExistingCode) {
+    const currentEntryPoint = parsedFiles.find((file) => file.path === expectedEntryPoint);
+    const currentEntryPointMissing =
+      !currentEntryPoint || isEffectivelyEmpty(currentEntryPoint.code);
+    if (
+      agenticBuild &&
+      !hasExistingCode &&
+      (currentEntryPointMissing || result.turnsExhausted || result.budgetExhausted)
+    ) {
       try {
         const persistedFiles = await downloadProjectFiles(projectId);
         const reconciledFiles = mergePersistedBuildFiles(
