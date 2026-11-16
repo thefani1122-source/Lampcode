@@ -194,8 +194,8 @@ export class EngineeringMemoryManager {
     this.cacheRecord(record);
     const projectCache = this.memoryStore.get(params.projectId);
 
-    // If supersedes, update local cache
-    if (record.supersedes.length > 0) {
+    // If supersedes, update local cache when the project is still retained.
+    if (record.supersedes.length > 0 && projectCache) {
       for (const supId of record.supersedes) {
         const old = projectCache.get(supId);
         if (old) old.supersededBy = id;
