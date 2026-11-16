@@ -62,7 +62,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
-import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
+import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint, mergePersistedBuildFiles } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
 import { classifyBuild } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../../agents/build-planner.js";
@@ -2177,13 +2177,19 @@ export async function runFastBuild(
       parsedFiles = parseFilesFromContent(result.content);
     }
 
+    // The expected entry point is framework-specific. Keep this available for
+    // reconciliation as well as the strict validation below.
+    const expectedEntryPoint =
+      fullstackFramework === "nextjs"   ? "app/page.tsx" :
+      fullstackFramework === "tanstack" ? "app/routes/index.tsx" :
+      "src/App.tsx";
+
     // ── Pure action-only response ────────────────────────────────────────────
     // The model used a connected service's MCP tool, or declined a write
     // action via request_write_action, and produced no file fences — this was
     // never trying to build an app. Deliver it as a completion here, before
-    // the fix-agent retry and entry-point checks below (both of which assume
-    // "no files" means a failed generation, which would be wrong here) and
-    // before the sandbox/fix-loop pipeline this function runs afterward.
+    // any project-storage reconciliation so an unrelated pre-existing file
+    // cannot turn an action-only response into a build.
     if (parsedFiles.length === 0 && (result.mcpToolCalls.length > 0 || result.requestedWriteAction)) {
       logger.info(
         {
@@ -2203,6 +2209,47 @@ export async function runFastBuild(
         summary: result.content || "Done.",
       });
       return;
+    }
+
+    // New agentic builds can use several dispatches while each write is
+    // persisted immediately. In that case result.generatedFiles describes only
+    // the final dispatch, not necessarily the whole app. Reconcile it with the
+    // project-scoped Storage snapshot before requiring an entry point.
+    //
+    // The Storage snapshot is a recovery source, not an authority over newer
+    // in-memory writes: mergePersistedBuildFiles gives current files priority
+    // and applies successful deletions last. Only adopt it when the expected
+    // framework entry point is present and non-empty; helper-only partial
+    // snapshots must still fail the entry-point gate.
+    if (agenticBuild && !hasExistingCode) {
+      try {
+        const persistedFiles = await downloadProjectFiles(projectId);
+        const reconciledFiles = mergePersistedBuildFiles(
+          parsedFiles,
+          persistedFiles,
+          result.deletedFiles,
+        );
+        const reconciledMap = Object.fromEntries(
+          reconciledFiles.map((file) => [file.path, file.code]),
+        );
+        const recoveredEntryPoint = reconciledMap[expectedEntryPoint];
+        if (typeof recoveredEntryPoint === "string" && !isEffectivelyEmpty(recoveredEntryPoint)) {
+          const currentPaths = new Set(parsedFiles.map((file) => file.path));
+          const recoveredPaths = reconciledFiles
+            .filter((file) => !currentPaths.has(file.path))
+            .map((file) => file.path);
+          parsedFiles = reconciledFiles;
+          logger.info(
+            { sessionId, projectId, recoveredCount: recoveredPaths.length, recoveredPaths },
+            "Reconciled persisted project files before entry-point validation",
+          );
+        }
+      } catch (recoveryErr) {
+        logger.warn(
+          { sessionId, projectId, recoveryErr },
+          "Could not reconcile persisted project files before entry-point validation",
+        );
+      }
     }
 
     // Auto-trigger fix agent if frontend produced no structured file output.
@@ -2264,10 +2311,6 @@ export async function runFastBuild(
     // report "success" with a fake "could not be extracted" component. For a
     // brand-new build (no existing code to fall back on), a missing entry point
     // means the generation genuinely failed: warn the client and abort.
-    const expectedEntryPoint =
-      fullstackFramework === "nextjs"   ? "app/page.tsx" :
-      fullstackFramework === "tanstack" ? "app/routes/index.tsx" :
-      "src/App.tsx";
     if (!hasExistingCode && !parsedFiles.some((f) => f.path === expectedEntryPoint)) {
       // Say which of the two actually happened. A cut-off response and a model
       // that genuinely produced nothing usable look identical from here, but
