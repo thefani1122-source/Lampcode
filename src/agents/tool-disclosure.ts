@@ -15,6 +15,7 @@ export const QUERY_MODE_READONLY_TOOL_NAMES = new Set([
   "read_project_file",
   "list_files",
   "search_code",
+  "review_code",
   "code_intel",
   "impact_analysis",
   "fetch_reference",
@@ -44,9 +45,18 @@ export class ToolDisclosure {
   /**
    * Filter tool definitions progressively according to the task type.
    */
-  static filterForTask(tools: ToolDefinition[], category: TaskCategory): ToolDefinition[] {
+  static filterForTask(
+    tools: ToolDefinition[],
+    category: TaskCategory,
+    trustedReadOnlyToolNames: Iterable<string> = [],
+  ): ToolDefinition[] {
     if (category === "code_review_query") {
-      return tools.filter((tool) => QUERY_MODE_READONLY_TOOL_NAMES.has(tool.name));
+      // Dynamic MCP definitions are accepted only when the MCP classifier has
+      // already put them in the dedicated read-only registry. Never infer
+      // safety from a tool name or a model-provided annotation here.
+      const allowed = new Set(QUERY_MODE_READONLY_TOOL_NAMES);
+      for (const name of trustedReadOnlyToolNames) allowed.add(name);
+      return tools.filter((tool) => allowed.has(tool.name));
     }
 
     // For all build tasks, retain write and audit tools
