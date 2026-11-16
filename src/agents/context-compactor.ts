@@ -1,17 +1,14 @@
 /**
  * Safe Context Compactor
  *
- * Implements controlled compaction of long-running build turns before context exhaustion.
- * Preserves system prefix, original user request, latest code changes, active plan,
- * and unresolved errors. Guarantees tool-call / tool-result protocol pairing validity.
+ * Compacts old tool output without deleting conversational turns. Every
+ * assistant tool_use block and its matching user tool_result remain present,
+ * so provider message protocols are preserved. The original system prompt and
+ * first user request are never modified.
  */
+import type { ChatMessage, MessageContentBlock } from "./model-gateway.js";
 
-export interface ConversationMessage {
-  role: "system" | "user" | "assistant";
-  content: string | unknown[];
-  tool_call_id?: string;
-  name?: string;
-}
+export type ConversationMessage = ChatMessage;
 
 export interface CompactionResult {
   compactedMessages: ConversationMessage[];
@@ -19,120 +16,164 @@ export interface CompactionResult {
   tokensAfter: number;
   compactedCount: number;
   didCompact: boolean;
+  protocolValid: boolean;
 }
 
 const CHARS_PER_TOKEN = 4;
+const DEFAULT_OLD_RESULT_CHARS = 1_800;
+const EMERGENCY_RESULT_CHARS = 900;
+
+function isBlockArray(content: ChatMessage["content"]): content is MessageContentBlock[] {
+  return Array.isArray(content);
+}
+
+function compactText(value: string, maxChars: number, toolName: string): string {
+  if (value.length <= maxChars) return value;
+  const marker = `\n[… ${value.length - maxChars} characters compacted; use the original tool again for full detail …]\n`;
+  const headChars = Math.floor(maxChars * 0.34);
+  const tailChars = Math.floor(maxChars * 0.24);
+  const middleBudget = Math.max(0, maxChars - headChars - tailChars - marker.length);
+  const head = value.slice(0, headChars);
+  const tail = value.slice(-tailChars);
+  const importantPattern = /(error|exception|failed|failure|warning|success|created|updated|deleted|changed|verified|unverified|src\/|\.tsx?\b|\.sql\b|export\s+(?:default\s+)?(?:class|function|const|type|interface)|function\s+|class\s+|interface\s+|type\s+)/i;
+  const candidates = value.split(/\r?\n/).filter((line) => importantPattern.test(line));
+  const selected: string[] = [];
+  let used = 0;
+  for (const line of candidates) {
+    const next = (selected.length ? 1 : 0) + line.length;
+    if (used + next > middleBudget) continue;
+    selected.push(line);
+    used += next;
+    if (selected.length >= 36) break;
+  }
+  const middle = selected.length ? selected.join("\n") : "";
+  const note = `\n[… earlier ${toolName || "tool"} output compacted …]\n`;
+  const result = [head, note, middle, marker, tail].filter(Boolean).join("\n");
+  return result.length <= maxChars + note.length + marker.length
+    ? result
+    : result.slice(0, maxChars + note.length + marker.length);
+}
 
 export class ContextCompactor {
-  /**
-   * Estimate token count of a message array including text and structured blocks.
-   */
   static estimateTokens(messages: ConversationMessage[]): number {
     let chars = 0;
     for (const msg of messages) {
-      if (typeof msg.content === "string") {
-        chars += msg.content.length;
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          chars += JSON.stringify(block).length;
-        }
-      }
+      chars += typeof msg.content === "string"
+        ? msg.content.length
+        : JSON.stringify(msg.content).length;
     }
     return Math.ceil(chars / CHARS_PER_TOKEN);
   }
 
-  /**
-   * Compact conversation history if token estimate exceeds the trigger budget.
-   * Preserves:
-   * 1. System messages
-   * 2. The initial user request and constraints
-   * 3. The most recent N messages (including active errors and latest code changes)
-   * 4. Full tool_use <-> tool_result pairing invariant
-   */
+  /** Every tool_use id must have exactly one tool_result, and vice versa. */
+  static hasValidToolPairs(messages: ConversationMessage[]): boolean {
+    const calls = new Map<string, number>();
+    const results = new Map<string, number>();
+    for (const message of messages) {
+      if (!isBlockArray(message.content)) continue;
+      for (const block of message.content) {
+        if (block.type === "tool_use") calls.set(block.id, (calls.get(block.id) ?? 0) + 1);
+        if (block.type === "tool_result") results.set(block.tool_use_id, (results.get(block.tool_use_id) ?? 0) + 1);
+      }
+    }
+    if (calls.size !== results.size) return false;
+    for (const [id, count] of calls) {
+      if (count !== 1 || results.get(id) !== 1) return false;
+    }
+    for (const [id, count] of results) {
+      if (count !== 1 || calls.get(id) !== 1) return false;
+    }
+    return true;
+  }
+
   static compact(
     messages: ConversationMessage[],
     maxTokens: number = 48_000,
     keepRecentRounds: number = 4,
   ): CompactionResult {
     const tokensBefore = this.estimateTokens(messages);
-    if (tokensBefore <= maxTokens || messages.length <= 4) {
-      return {
-        compactedMessages: messages,
-        tokensBefore,
-        tokensAfter: tokensBefore,
-        compactedCount: 0,
-        didCompact: false,
-      };
-    }
+    const protocolValid = this.hasValidToolPairs(messages);
+    const unchanged = (): CompactionResult => ({
+      compactedMessages: messages,
+      tokensBefore,
+      tokensAfter: tokensBefore,
+      compactedCount: 0,
+      didCompact: false,
+      protocolValid,
+    });
 
-    // Separate invariant prefix (system message and initial user prompt)
-    const prefix: ConversationMessage[] = [];
-    let startIndex = 0;
+    if (tokensBefore <= maxTokens || messages.length <= 4 || !protocolValid) return unchanged();
 
+    const toolNames = new Map<string, string>();
+    const resultMessageIndexes: number[] = [];
     for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg) continue;
-      if (msg.role === "system") {
-        prefix.push(msg);
-        startIndex = i + 1;
-      } else if (msg.role === "user" && prefix.filter((m) => m.role === "user").length === 0) {
-        prefix.push(msg);
-        startIndex = i + 1;
-        break;
+      const message = messages[i];
+      if (!message || !isBlockArray(message.content)) continue;
+      if (message.role === "assistant") {
+        for (const block of message.content) {
+          if (block.type === "tool_use") toolNames.set(block.id, block.name);
+        }
+      } else if (message.role === "user" && message.content.some((b) => b.type === "tool_result")) {
+        resultMessageIndexes.push(i);
       }
     }
 
-    // Recent window that must stay uncompacted
-    const recentIndex = Math.max(startIndex, messages.length - keepRecentRounds * 2);
-    const middle = messages.slice(startIndex, recentIndex);
-    const suffix = messages.slice(recentIndex);
-
-    if (middle.length === 0) {
-      return {
-        compactedMessages: messages,
-        tokensBefore,
-        tokensAfter: tokensBefore,
-        compactedCount: 0,
-        didCompact: false,
-      };
-    }
-
-    // Summarize older intermediate read-only tool results while maintaining protocol invariants
-    const summaryLines: string[] = [];
-    let readCount = 0;
-    let editCount = 0;
-
-    for (const msg of middle) {
-      const contentStr = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-      if (contentStr.includes("read_file") || contentStr.includes("search_code") || contentStr.includes("list_files")) {
-        readCount++;
-      } else if (contentStr.includes("write_files") || contentStr.includes("edit_file")) {
-        editCount++;
-      }
-    }
-
-    if (readCount > 0) summaryLines.push(`- Reviewed ${readCount} project files and references.`);
-    if (editCount > 0) summaryLines.push(`- Applied ${editCount} file modifications in earlier turns.`);
-
-    const summaryMessage: ConversationMessage = {
-      role: "user",
-      content: `[CONTEXT COMPACTION SUMMARY: ${middle.length} earlier turns compacted]\n${summaryLines.join("\n")}\n[End earlier turns summary]`,
+    const keepCount = Math.max(1, Math.min(keepRecentRounds, resultMessageIndexes.length));
+    const recentIndexes = new Set(resultMessageIndexes.slice(-keepCount));
+    const compactMessage = (message: ConversationMessage, index: number, limit: number): ConversationMessage => {
+      if (!isBlockArray(message.content) || message.role !== "user" || recentIndexes.has(index)) return message;
+      let changed = false;
+      const content = message.content.map((block) => {
+        if (block.type === "tool_result") {
+          const compacted = compactText(block.content, limit, toolNames.get(block.tool_use_id) ?? "tool");
+          if (compacted !== block.content) changed = true;
+          return { ...block, content: compacted };
+        }
+        // Old screenshots are costly binary payloads; preserve their textual
+        // label and tool result, but replace the image itself with a reminder.
+        if (block.type === "image") {
+          changed = true;
+          return { type: "text" as const, text: "[Earlier screenshot omitted during context compaction; call look_at_page again if visual evidence is needed.]" };
+        }
+        return block;
+      });
+      return changed ? { ...message, content } : message;
     };
 
-    const assistantAck: ConversationMessage = {
-      role: "assistant",
-      content: "Understood. Preserving earlier build actions, active code changes, and continuing with the remaining tasks.",
-    };
+    let compactedMessages = messages.map((message, index) => compactMessage(message, index, DEFAULT_OLD_RESULT_CHARS));
+    let tokensAfter = this.estimateTokens(compactedMessages);
 
-    const compactedMessages = [...prefix, summaryMessage, assistantAck, ...suffix];
-    const tokensAfter = this.estimateTokens(compactedMessages);
+    // If the older rounds are not enough to get under budget, compact recent
+    // tool results except the latest one. The latest complete tool round is
+    // deliberately left intact so the agent retains its immediate working state.
+    if (tokensAfter > maxTokens && resultMessageIndexes.length > 1) {
+      const latestIndex = resultMessageIndexes[resultMessageIndexes.length - 1];
+      const priorRecent = new Set(resultMessageIndexes.slice(0, -1));
+      compactedMessages = compactedMessages.map((message, index) => {
+        if (!priorRecent.has(index) || index === latestIndex || !isBlockArray(message.content) || message.role !== "user") return message;
+        let changed = false;
+        const content = message.content.map((block) => {
+          if (block.type !== "tool_result") return block;
+          const compacted = compactText(block.content, EMERGENCY_RESULT_CHARS, toolNames.get(block.tool_use_id) ?? "tool");
+          if (compacted !== block.content) changed = true;
+          return { ...block, content: compacted };
+        });
+        return changed ? { ...message, content } : message;
+      });
+      tokensAfter = this.estimateTokens(compactedMessages);
+    }
+
+    const didCompact = tokensAfter < tokensBefore;
+    const outputProtocolValid = this.hasValidToolPairs(compactedMessages);
+    if (!outputProtocolValid) return unchanged();
 
     return {
       compactedMessages,
       tokensBefore,
       tokensAfter,
-      compactedCount: middle.length,
-      didCompact: true,
+      compactedCount: didCompact ? resultMessageIndexes.filter((i) => !recentIndexes.has(i)).length : 0,
+      didCompact,
+      protocolValid: outputProtocolValid,
     };
   }
 }
