@@ -301,7 +301,11 @@ expectValue(
 );
 expectValue(
   "a negative MongoDB provider mention does not select MongoDB",
-  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not u// The judgement path must use its own narrow persona, never the acceptance
+  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not use MongoDB or mongoose."),
+  false,
+);
+
+// The judgement path must use its own narrow persona, never the acceptance
 // persona whose JSON schema represents app requirements rather than architecture.
 {
   let dispatched: Record<string, unknown> | undefined;
@@ -336,10 +340,6 @@ expectValue(
 
 const promptBuilderSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
 expectValue("build_classifier has its own application-architecture persona", promptBuilderSource.includes("You are LampCode's application architecture classifier"), true);
-
-se MongoDB or mongoose."),
-  false,
-);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
