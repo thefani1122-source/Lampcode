@@ -1105,9 +1105,10 @@ export async function runFastBuild(
       // Cloudflare, Sentry, Vercel) had no read tools in chat at all.
       const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
       const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
-      // Relevant only — a generic "what's connected" prompt matches no
-      // category, which is fine: integrations_status is the authoritative
-      // answer there and needs no servers.
+      // Discover every connected server. The model chooses which advertised
+      // tool to call; keyword matching must not hide a capability before it
+      // has seen the request. Read/write permission classification remains
+      // inside the MCP tool classifier, independently of this discovery step.
       const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
       let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
       if (vercelDeployToken) {
@@ -1863,16 +1864,16 @@ export async function runFastBuild(
     // writes still go through the approval-gated proxies — so the guard would
     // now only be hiding the servers the user deliberately connected.
     //
-    // Attach only user servers relevant to this prompt; internal web tools are
-    // shared local tools for both gateways.
-    const { kept: relevantUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
+    // Attach every connected user server. Tool definitions are bounded later
+    // by capMcpTools, but the server itself is not hidden by prompt keywords.
+    const { kept: connectedUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
     if (droppedMcp.length > 0) {
       console.log(
-        `[build] mcp relevance project=${projectId} kept=[${relevantUserMcp.map((s) => s.slug).join(",")}] ` +
+        `[build] mcp relevance project=${projectId} kept=[${connectedUserMcp.map((s) => s.slug).join(",")}] ` +
         `dropped=[${droppedMcp.join(",")}]`,
       );
     }
-    const mcpServers = [...relevantUserMcp, ...internalMcpServers];
+    const mcpServers = [...connectedUserMcp, ...internalMcpServers];
 
     // ── What deploy_app needs, if the user connected Vercel ──────────────────
     // Lifted from the servers already resolved above rather than read again:
