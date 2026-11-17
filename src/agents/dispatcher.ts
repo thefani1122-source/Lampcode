@@ -19,6 +19,7 @@ import { buildGithubWriteRegistry, GITHUB_WRITE_DEFS } from "./tools/github-writ
 import { buildVercelWriteRegistry, VERCEL_WRITE_DEFS } from "./tools/vercel-writes.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
+import { parseProjectBuildHandoff, REQUEST_PROJECT_BUILD_TOOL_NAME } from "./build-handoff.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
 import { visionSupported } from "./vision.js";
 import type { BuildEvent } from "../verify/outcome-projection.js";
@@ -966,17 +967,13 @@ export class AgentDispatcher {
         const filesBefore = new Map(Object.entries(generatedFiles));
         const deletedBefore = new Set(deletedFiles);
         let result: string;
-        if (options.queryMode && tc.name === "request_project_build") {
-          let parsed: unknown;
-          try { parsed = JSON.parse(tc.arguments || "{}"); } catch { parsed = null; }
-          const handoff = z.object({
-            reason: z.string().trim().min(1).max(600),
-          }).safeParse(parsed);
-          if (!handoff.success) {
-            result = "Error: provide a short reason explaining why the original request requires project workspace execution.";
+        if (options.queryMode && tc.name === REQUEST_PROJECT_BUILD_TOOL_NAME) {
+          const handoff = parseProjectBuildHandoff(tc.arguments);
+          if (!handoff.ok) {
+            result = `Error: ${handoff.error}`;
           } else {
             requestedBuild = true;
-            requestedBuildReason = handoff.data.reason;
+            requestedBuildReason = handoff.reason;
             result = "Workspace handoff accepted. No files or external services were changed by this control tool. LampCode will now continue with the original user request in the project workspace workflow.";
           }
         } else {
