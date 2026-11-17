@@ -38,14 +38,20 @@ export function capMcpTools(
 
   const words = new Set(wordsOf(prompt));
   const scored = defs.map((d, i) => {
-    const parts = d.name.toLowerCase().split(/[^a-z]+/).filter((p) => p.length >= 3);
-    const hits = parts.reduce((n, p) => n + (words.has(p) ? 1 : 0), 0);
+    const nameParts = wordsOf(d.name);
+    const descriptionParts = wordsOf(d.description);
+    const nameHits = nameParts.reduce((n, p) => n + (words.has(p) ? 1 : 0), 0);
+    const descriptionHits = descriptionParts.reduce((n, p) => n + (words.has(p) ? 1 : 0), 0);
+    // Tool descriptions often explain the capability more accurately than an
+    // opaque provider-specific name. Prefer name matches, but use the
+    // server-authored (credential-redacted) description as a second signal.
+    const score = nameHits * 4 + descriptionHits;
     // `i` keeps the order stable among equal scores, so the same request
     // produces the same tool list twice — a list that reshuffles between
     // rounds would invalidate the model's own cache of what it can call.
-    return { d, hits, i };
+    return { d, score, i };
   });
-  scored.sort((a, b) => b.hits - a.hits || a.i - b.i);
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
 
   return { kept: scored.slice(0, max).map((s) => s.d), omitted: defs.length - max };
 }
