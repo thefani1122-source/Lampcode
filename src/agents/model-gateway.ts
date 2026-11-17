@@ -8,6 +8,7 @@ import { logger } from "../server/logger.js";
 // Bare first-party model IDs — token-tracker.ts keys its pricing table on
 // these same bare names.
 export const MODEL_TIERS = {
+  build_classifier: ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   planning:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   // The two completion-audit passes. Neither writes code: one reads the user's
   // prompt, the other reads the finished project and reports what is not
