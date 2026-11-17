@@ -292,15 +292,15 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
   {
     name: "write_files",
     description:
-      "Write files into the project's live preview sandbox. Use this instead of printing " +
-      "code in your reply — files only exist once written.\n" +
-      "Each file's `content` REPLACES THAT FILE ENTIRELY. There is no merging, patching or " +
-      "appending: whatever you send becomes the whole file, and anything you leave out is " +
-      "gone. To change one line of a file, send the complete file with that line changed — " +
-      "never send only the changed part.\n" +
-      "Files you do not write are untouched. Call it as many times as you need; a later " +
-      "write to the same path replaces the earlier one. After writing, verify with " +
-      "check_page before you finish.\n" +
+      "Write complete files into the project's live preview sandbox. Use this for NEW files " +
+      "or an intentional FULL-FILE rewrite where most of the file is genuinely changing.\n" +
+      "Each file's `content` REPLACES THAT FILE ENTIRELY. Never send a fragment, partial " +
+      "component, half-function or only the changed lines: the supplied content becomes the " +
+      "whole file. For a small change to an existing file, read it first and use edit_file " +
+      "with an exact, unique old_string/new_string replacement instead.\n" +
+      "Files you do not write are untouched. A later write to the same path replaces the " +
+      "earlier one. After changing files, run the relevant verification tools and re-run any " +
+      "checks invalidated by later writes.\n" +
       "Some files belong to the project template and cannot be written — src/styles.css, " +
       "package.json, vite.config.ts, tsconfig.json, index.html. For custom CSS (keyframes, " +
       "animations, anything styles.css doesn't cover) create your OWN stylesheet, e.g. " +
