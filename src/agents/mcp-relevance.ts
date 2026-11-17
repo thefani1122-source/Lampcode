@@ -38,7 +38,10 @@ export function capMcpTools(
 
   const words = new Set(wordsOf(prompt));
   const scored = defs.map((d, i) => {
-    const nameParts = wordsOf(d.name);
+    // Provider tool names commonly use `server__verb_object`; underscores
+    // are separators here, not part of one token, otherwise "create deployment"
+    // never matches "vercel__create_deployment".
+    const nameParts = d.name.toLowerCase().split(/[^a-z0-9]+/).filter((part) => part.length >= 3);
     const descriptionParts = wordsOf(d.description);
     const nameHits = nameParts.reduce((n, p) => n + (words.has(p) ? 1 : 0), 0);
     const descriptionHits = descriptionParts.reduce((n, p) => n + (words.has(p) ? 1 : 0), 0);
