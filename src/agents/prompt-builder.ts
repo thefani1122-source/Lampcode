@@ -1678,7 +1678,7 @@ export function parseSkillFrontmatter(raw: string, fallbackName: string): Parsed
   };
 }
 
-// All skill filenames (without .md) — used to build the always-visible index.
+// All skill filenames (without .md) — used to build the on-demand index.
 // Kept as an explicit list rather than a directory scan so the index has a
 // stable, reviewable order. Exported so tools.ts's load_skill executor can
 // allowlist-check a model-supplied name before touching the filesystem.
