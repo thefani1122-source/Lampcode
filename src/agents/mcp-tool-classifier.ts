@@ -389,7 +389,8 @@ export function buildWriteProxyDefinitions(
           ? `[Requires explicit user approval — POSSIBLY IRREVERSIBLE] `
           : `[Requires user approval] `) +
         `Execute ${t.toolName} on the ${t.serverSlug} connected service. ` +
-        `You will be paused until the user approves or denies this action.` +
+        (t.description?.trim() ? `\n\nServer description: ${t.description.trim()}` : "") +
+        `\n\nYou will be paused until the user approves or denies this action.` +
         (tier === "strong-approval"
           ? ` ${describeTier(tier)} Say what it will do and why before you call it.`
           : ""),
