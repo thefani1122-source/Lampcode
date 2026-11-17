@@ -954,60 +954,14 @@ export async function runFastBuild(
     `[build] provider=${provider} (mode=${config.LLM_PROVIDER_MODE}) session=${sessionId}`,
   );
 
-  // Mark project building + session started (moved from handler hot-path)
-  await Promise.all([
-    db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId)),
-    db.update(buildSessions).set({ startedAt: new Date(), phase: 1 }).where(eq(buildSessions.id, sessionId)),
-  ]);
+  // Start the interaction session. Do not mark the project as building yet:
+  // the conversational assistant may answer this request without activating
+  // the workspace/build workflow.
+  await db
+    .update(buildSessions)
+    .set({ startedAt: new Date() })
+    .where(eq(buildSessions.id, sessionId));
 
-  // ── Emit agent_start ──────────────────────────────────────────────────────
-  // Use the actual tier-1 frontend model rather than a hardcoded name so the
-  // displayed model stays in sync with MODEL_TIERS.
-  const frontendModel =
-    provider === "modal"
-      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
-      : tierModel("frontend", 1);
-  server?.agentStart(sessionId, {
-    taskId: sessionId,
-    sessionId,
-    agentType: "frontend",
-    taskName: `Fast Build — Frontend (${frontendModel})`,
-    model: frontendModel,
-    tier: 1,
-    timestamp: new Date().toISOString(),
-  });
-
-  // ── Unsupported runtime guard ─────────────────────────────────────────────
-  // The instant Sandpack preview runs Node.js only — but fullstack builds also
-  // get an E2B cloud sandbox preview (a real Linux VM) that can run any backend
-  // runtime. So only block Python/PHP/Ruby/Go requests when E2B isn't configured
-  // or the prompt won't even produce a backend (nothing would run the code).
-  const e2bCanRunNonNodeBackend = Boolean(config.E2B_API_KEY) && needsBackend(prompt);
-  if (isUnsupportedBackendRuntime(prompt) && !e2bCanRunNonNodeBackend) {
-    const redirectMsg =
-      "WebContainers support Node.js only. I can build your backend in Hono.js " +
-      "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
-      "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
-    server?.thinking(sessionId, { text: redirectMsg, sessionId });
-    const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
-    server?.buildFailed(sessionId, {
-      sessionId,
-      phase: "BUILD",
-      reason: redirectMsg,
-      logs: "",
-      timestamp: new Date().toISOString(),
-    });
-    await Promise.all([
-      db.update(buildSessions)
-        .set({ status: "failed", error: reason, completedAt: new Date() })
-        .where(eq(buildSessions.id, sessionId)),
-      db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-    ]);
-    // Nothing to refund — no dispatch ran before this rejection, so no real
-    // usage was incurred (usage is deducted per-dispatch, not pre-charged).
-    console.log(`[build] unsupported runtime request rejected, no usage incurred: ${prompt.slice(0, 80)}`);
-    return;
-  }
 
   try {
     // ── Load the latest recoverable project source, not only successful builds ──
@@ -1164,6 +1118,63 @@ export async function runFastBuild(
       sessionId,
       text: "Activating the project workspace and continuing with your original request...",
     });
+
+    // Build-specific state and runtime guards begin only after the model asks
+    // for the workspace. Normal questions/research never enter these branches.
+    await Promise.all([
+      db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId)),
+      db.update(buildSessions).set({ phase: 1 }).where(eq(buildSessions.id, sessionId)),
+    ]);
+
+  // ── Emit agent_start ──────────────────────────────────────────────────────
+  // Use the actual tier-1 frontend model rather than a hardcoded name so the
+  // displayed model stays in sync with MODEL_TIERS.
+  const frontendModel =
+    provider === "modal"
+      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
+      : tierModel("frontend", 1);
+  server?.agentStart(sessionId, {
+    taskId: sessionId,
+    sessionId,
+    agentType: "frontend",
+    taskName: `Fast Build — Frontend (${frontendModel})`,
+    model: frontendModel,
+    tier: 1,
+    timestamp: new Date().toISOString(),
+  });
+
+  // ── Unsupported runtime guard ─────────────────────────────────────────────
+  // The instant Sandpack preview runs Node.js only — but fullstack builds also
+  // get an E2B cloud sandbox preview (a real Linux VM) that can run any backend
+  // runtime. So only block Python/PHP/Ruby/Go requests when E2B isn't configured
+  // or the prompt won't even produce a backend (nothing would run the code).
+  const e2bCanRunNonNodeBackend = Boolean(config.E2B_API_KEY) && needsBackend(prompt);
+  if (isUnsupportedBackendRuntime(prompt) && !e2bCanRunNonNodeBackend) {
+    const redirectMsg =
+      "WebContainers support Node.js only. I can build your backend in Hono.js " +
+      "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
+      "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
+    server?.thinking(sessionId, { text: redirectMsg, sessionId });
+    const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
+    server?.buildFailed(sessionId, {
+      sessionId,
+      phase: "BUILD",
+      reason: redirectMsg,
+      logs: "",
+      timestamp: new Date().toISOString(),
+    });
+    await Promise.all([
+      db.update(buildSessions)
+        .set({ status: "failed", error: reason, completedAt: new Date() })
+        .where(eq(buildSessions.id, sessionId)),
+      db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+    ]);
+    // Nothing to refund — no dispatch ran before this rejection, so no real
+    // usage was incurred (usage is deducted per-dispatch, not pre-charged).
+    console.log(`[build] unsupported runtime request rejected, no usage incurred: ${prompt.slice(0, 80)}`);
+    return;
+  }
+
 
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.
