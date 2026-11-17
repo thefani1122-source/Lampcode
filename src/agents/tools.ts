@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describeTier } from "../mcp/tiers.js";
 import { logger } from "../server/logger.js";
 import type { ToolDefinition } from "./model-gateway.js";
+import { REQUEST_PROJECT_BUILD_TOOL_NAME } from "./build-handoff.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
@@ -23,7 +24,7 @@ const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "li
 // queryMode still exposes only read tools plus this single routing signal.
 export const QUERY_HANDOFF_TOOLS: ToolDefinition[] = [
   {
-    name: "request_project_build",
+    name: REQUEST_PROJECT_BUILD_TOOL_NAME,
     description:
       "Hand the ORIGINAL user request to LampCode's project workspace/build workflow. " +
       "Call this only when the user explicitly wants LampCode to create, edit, fix, refactor, delete or deploy project code/files. " +
