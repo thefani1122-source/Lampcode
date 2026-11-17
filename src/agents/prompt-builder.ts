@@ -1722,7 +1722,7 @@ async function buildSkillIndex(): Promise<string> {
     ? "\n\n## House-style references\n" +
       "These conventions exist in this codebase. Apply what's relevant from your " +
       "own knowledge of the tools/patterns named — the full reference text loads " +
-      "on demand through load_skill; choose by semantic relevance, not keyword matching:\n" +
+      "automatically when your task matches it:\n" +
       lines.join("\n")
     : "";
   return skillIndexCache;
@@ -1958,7 +1958,7 @@ export class PromptBuilder {
         ? Promise.resolve("")
         : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
-      // The index is useful only when load_skill is actually available this turn.
+      // Show the skill catalogue only when the load_skill tool is available.
       agentType !== "query" && task.toolsEnabled === true ? buildSkillIndex() : Promise.resolve(""),
     ]);
     const precedenceContract = ContextOrchestrator.formatPrecedenceContract();
@@ -1972,10 +1972,6 @@ export class PromptBuilder {
       ? `${precedenceContract}\n\n${referenceBoundary}\n\n${referenceMaterial}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemPrompt}`
       : `${precedenceContract}\n\n${baseSystemPrompt}`;
 
-    const rawSystemPrompt = skillsBlock
-      ? `${precedenceContract}\n\n${baseSystemPrompt}\n\n${skillsBlock}`
-      : `${precedenceContract}\n\n${baseSystemPrompt}`;
-
     // Keep both load-bearing ends of the compiled prompt when its hard ceiling is reached.
     let systemPrompt = rawSystemPrompt;
     if (rawSystemPrompt.length > MAX_SYSTEM_PROMPT_CHARS) {
@@ -1985,7 +1981,6 @@ export class PromptBuilder {
       );
       systemPrompt = this.compactSystemPrompt(rawSystemPrompt, MAX_SYSTEM_PROMPT_CHARS);
     }
-
     const taskBlock = this.buildTaskBlock(task, context);
 
     const userBudget = Math.max(
@@ -2603,11 +2598,10 @@ export class PromptBuilder {
   }
 
   /**
-  /**
-   * Compact an oversized system prompt by removing only its middle section.
-   * The leading security/precedence rules and trailing live agent/tool contract
-   * remain visible. Dynamic reference material is placed before the base prompt
-   * so the base prompt tail remains the final instruction block.
+   * Compact oversized system prompts by removing only middle guidance.
+   * The security/precedence head and final live agent/tool contract are preserved.
+   * Reference material is placed before the base prompt so it cannot become the
+   * final instruction block and is the first material lost to compaction.
    */
   private compactSystemPrompt(text: string, maxChars: number): string {
     if (maxChars <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
@@ -2628,6 +2622,7 @@ export class PromptBuilder {
     return safeHead + marker + safeTail;
   }
 
+  /**
    * Truncate keeping the TAIL. Used when the end of the text is load-bearing —
    * the task block's USER REQUEST and INSTRUCTION lines must survive.
    */
