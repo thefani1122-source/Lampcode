@@ -2,94 +2,20 @@ import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ToolDefinition } from "./model-gateway.js";
 
 /**
- * Which connected MCP servers this build actually needs, and a ceiling on how
- * many of their tools ride along.
+ * Every connected MCP server is discovered for every assistant turn.
  *
- * MEASURED 2026-10-17, build cbd7099d. A plain "build me a full-stack app"
- * request was sent **283 tool definitions every round** — 21 GitHub writes, 95
- * Vercel writes, 28 GitHub reads, 130 Vercel reads — with the fourteen tools
- * that actually build an app (`write_files`, `edit_file`, `check_page` …) last
- * in the list. On round 5 the gateway returned nothing at all:
- *
- *     [stream] loop done: totalChunks=2 contentChunks=0 fullContentLen=0
- *
- * which CLAUDE.md names as ZERO events parsed. One second later the build died
- * with "The AI did not produce a valid src/App.tsx". The model never got to
- * write the one file the build required.
- *
- * This is new. Only GitHub was connected until 2026-10-16, when Vercel was
- * added — and Vercel alone brings ~225 tools. The cost shows up twice: in the
- * context that crowds out the work, and in the input tokens of every round.
- *
- * CLAUDE.md already held the principle, applied to the wrong half: Firecrawl
- * and Exa are deliberately kept off this gateway because "each costs a
- * discovery round trip plus its full tool list in every round's context". That
- * reasoning was never extended to the servers a user connects.
- *
- * WHAT THIS IS NOT. `build.ts` carries a comment saying the old upfront keyword
- * gate was removed so "the model decides that itself once these are attached".
- * That gate decided whether to FETCH, and fetching is a cheap local query. This
- * decides what to ATTACH to a dispatch, which is neither cheap nor local, and
- * it only ever removes servers that nothing in the request points at. A build
- * that mentions deploying, a repo, a push or a provider by name keeps
- * everything it mentioned.
- *
- * The safety net that makes this comfortable: `deploy_app` is a NATIVE tool
- * using the Vercel token directly, not MCP. Dropping the Vercel MCP server from
- * an unrelated build removes nothing the build could have used.
+ * Server selection by keyword used to hide capabilities before the model had
+ * a chance to understand the task. The model now chooses among discovered tool
+ * definitions. Security classification remains a separate permission boundary,
+ * and capMcpTools keeps the provider request within a bounded tool budget.
  */
+export function serversForPrompt(
+  _prompt: string,
+  servers: ActiveMcpServer[],
+): { kept: ActiveMcpServer[]; dropped: string[] } {
+  return { kept: [...servers], dropped: [] };
+}
 
-/** Words that mean a category of server is genuinely in play. */
-const CATEGORY_HINTS: Record<string, RegExp> = {
-  deploy:
-    /\b(deploy|deploys|deploying|deployment|redeploy|rollback|host|hosting|go\s*live|production|ship\s+it|publish)\b/i,
-  repo: /\b(github|repo|repos|repository|git|push|commit|commits|branch|pull\s*request|prs?)\b/i,
-  automation: /\b(n8n|zapier|make\.com|automation|automate|workflow|webhook|cron)\b/i,
-  cms: /\b(wordpress|shopify|cms|storefront|e-?commerce)\b/i,
-  design: /\b(stitch|stich|google\s*stitch|google\s*stich|framer|design|design\s*file|mockup|wireframe|ui\s*kit|prototype)\b/i,
-  tracker: /\b(linear|jira|sentry|issue\s*tracker|bug\s*report)\b/i,
-  payment: /\b(stripe|payment|payments|pay|checkout|billing|invoice|subscription|subscriptions|pricing|charge)\b/i,
-  content: /\b(notion|wiki|doc|docs|documentation|note|notes|knowledge)\b/i,
-  database: /\b(supabase|postgres|sql|db|database|table|tables|schema|migration|mongo|mongodb)\b/i,
-};
-
-/** Which category each known server belongs to. Unknown slugs match by name. */
-const SERVER_CATEGORY: Record<string, keyof typeof CATEGORY_HINTS> = {
-  vercel: "deploy",
-  netlify: "deploy",
-  railway: "deploy",
-  cloudflare: "deploy",
-  render: "deploy",
-  github: "repo",
-  gitlab: "repo",
-  n8n: "automation",
-  zapier: "automation",
-  make: "automation",
-  wordpress: "cms",
-  shopify: "cms",
-  stitch: "design",
-  "google-stitch": "design",
-  googlestitch: "design",
-  stich: "design",
-  "google-stich": "design",
-  googlestich: "design",
-  linear: "tracker",
-  sentry: "tracker",
-  jira: "tracker",
-  stripe: "payment",
-  notion: "content",
-  supabase: "database",
-  mongodb: "database",
-};
-
-/**
- * Ceiling on MCP tool definitions per dispatch, across every kept server.
- *
- * Even one relevant server can be enormous — Vercel's ~225 would re-create the
- * failure above on its own, on exactly the deploy build that asked for it. The
- * cap keeps the tools whose NAMES the request points at first, then fills, and
- * reports what it left out rather than silently shortening the list.
- */
 export const MAX_MCP_TOOLS = 80;
 
 function wordsOf(prompt: string): string[] {
