@@ -548,7 +548,8 @@ export class AgentDispatcher {
         projectId: projectId ?? "unknown",
         userId: userId ?? "anonymous",
         mode: "fast",
-        prompt: task.description,
+        // Preserve the raw user request separately from generated task metadata.
+        prompt: options.userPrompt ?? task.description,
       }, workspaceDir, contextFiles, options.projectFiles, options.projectSkillDir);
 
     // Create DB row (don't block on failure — tracking is best-effort)
