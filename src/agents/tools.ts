@@ -18,6 +18,31 @@ const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "li
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
 
+// Model-invoked control handoff from the conversational assistant to the
+// project workspace pipeline. It performs no file or external write itself;
+// queryMode still exposes only read tools plus this single routing signal.
+export const QUERY_HANDOFF_TOOLS: ToolDefinition[] = [
+  {
+    name: "request_project_build",
+    description:
+      "Hand the ORIGINAL user request to LampCode's project workspace/build workflow. " +
+      "Call this only when the user explicitly wants LampCode to create, edit, fix, refactor, delete or deploy project code/files. " +
+      "Do NOT call it for explanations, code snippets in chat, research, read-only project inspection or bug reports that do not ask you to change anything. " +
+      "This tool does not modify files or call external services; it only asks the host to activate the project workflow. " +
+      "The workspace agent will receive the original user message and the appropriate project tools. External writes/deploys remain subject to their own approval/intent rules.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Briefly explain why the user's explicit request requires project workspace execution.",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+];
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "install_plugin_from_github",
