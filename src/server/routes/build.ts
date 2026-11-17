@@ -1800,10 +1800,9 @@ export async function runFastBuild(
       })
       .catch((err) => logger.warn({ sessionId, err }, "Could not show the threat model in chat"));
 
-    // Fetched unconditionally now — there's no upfront keyword gate deciding
-    // whether this build might need a connected service; the model decides
-    // that itself once these are attached to the dispatch. Cheap (single DB
-    // query + decrypt per row, no network calls) even when empty.
+    // All connected user services were resolved before the conversational
+    // assistant. This build workflow reuses the same capability set rather
+    // than performing another connection lookup or filtering by prompt words.
     // Connected MCP servers were resolved before the conversational
     // assistant call and are reused here. Avoid a second DB/decryption pass.
     // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
@@ -1901,12 +1900,10 @@ export async function runFastBuild(
       console.log(`[build] threats in-prompt session=${sessionId} count=${threatsForBuild.length}`);
     }
 
-    // The intent classifier routes informational asks to the query path, but
-    // when one slips through as a build (misclassification or classifier
-    // failure → build fallback) the model used to grab a web tool (Firecrawl/
-    // Exa) for the user's own repos and then fail src/App.tsx generation. This
-    // block gives the generation model the same routing rule the query prompt
-    // has.
+    // The conversational assistant normally answers read-only account queries
+    // before this point. Keep the same private-data routing rule here as a
+    // defence-in-depth invariant: a workspace handoff is not permission to
+    // generate an app when the user only asked to inspect their connected data.
     const connectedDataRule =
       `\n\nCONNECTED-SERVICES ROUTING:\n` +
       `If the user's request only asks to list, show, check or inspect data from their OWN connected accounts — GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, WordPress, Twilio, SendGrid, Mailchimp — do NOT generate or modify any app files for it.\n` +
