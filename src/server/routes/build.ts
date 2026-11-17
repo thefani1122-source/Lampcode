@@ -46,7 +46,6 @@ import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, checkRender, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
-import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables, schemaRepairInstruction, undeclaredTables } from "../../verify/data-layer.js";
@@ -1063,111 +1062,67 @@ export async function runFastBuild(
     // whose complete source tree was saved before its verification gate failed.
     const preserveExistingFiles = hasExistingCode;
 
-    // ── Check if prompt is a conversational query / service inspection ──
-    const promptIntent = await classifyPromptIntent(prompt, {
-      dispatcher: getDispatcher(),
+    // Every user message first reaches the conversational assistant unchanged.
+    // It can answer, inspect the project/services with read-only tools, or call
+    // request_project_build to ask the host to activate the workspace workflow.
+    // There is no separate regex/intent-classifier gate before the assistant.
+    server?.thinking(sessionId, {
+      sessionId,
+      text: "Reading your request and checking whether workspace tools are needed...",
+    });
+
+    const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
+    const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
+    const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
+    const vercelTeamId = vercelDeployToken
+      ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
+      : undefined;
+    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+    const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
+    // Connected server discovery is complete before the model chooses tools.
+    // Read/write permissions are still classified server-side in the dispatcher.
+    const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
+
+    let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
+    if (vercelDeployToken) {
+      const named = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .catch(() => []);
+      deployCtx = {
+        vercelToken: vercelDeployToken,
+        ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
+        projectName: named[0]?.name ?? "lampcode-app",
+      };
+    }
+
+    const queryDispatchResult = await getDispatcher().dispatch({
+      agentType: "query",
+      usageCategory: "build",
+      provider,
+      task: {
+        description: prompt,
+        outputFormat: "markdown",
+      },
       sessionId,
       userId,
       projectId,
-      provider,
+      enableTools: true,
+      queryMode: true,
+      agenticBuild: false,
+      userPrompt: prompt,
+      projectFiles: existingFiles,
+      gitHubToken: gitHubToken ?? undefined,
+      serviceCredentials: restCreds,
+      deploy: deployCtx,
+      mcpServers: queryMcpServers,
+      connectedServices,
+      costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
     });
 
-    if (promptIntent.type === "query") {
-      logger.info(
-        { sessionId, projectId, category: promptIntent.queryCategory, reason: promptIntent.reason, prompt: prompt.slice(0, 80) },
-        "[build] User query/inspection detected — answering directly in chat without preview build",
-      );
-
-      server?.thinking(sessionId, {
-        sessionId,
-        text: promptIntent.queryCategory === "service_check"
-          ? "Checking connected services and tools..."
-          : promptIntent.queryCategory === "code_question"
-            ? "Inspecting project code..."
-            : promptIntent.queryCategory === "research"
-              ? "Researching information..."
-              : "Thinking...",
-      });
-
-      const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
-      const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
-      const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
-      // The token alone is not enough: team-scoped Vercel OAuth tokens 403
-      // every call that omits teamId. Resolve it once here so the query tool
-      // never has to guess.
-      const vercelTeamId = vercelDeployToken
-        ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
-        : undefined;
-      // Connected services reach the query chat too. Without these the model
-      // answered "which tools are connected" from its prompt alone and invented
-      // the list (2026-11-04: GitHub connected, everything else "not
-      // connected"), and OAuth-only providers (Linear, Notion, Railway,
-      // Cloudflare, Sentry, Vercel) had no read tools in chat at all.
-      const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
-      const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
-      // Discover every connected server. The model chooses which advertised
-      // tool to call; keyword matching must not hide a capability before it
-      // has seen the request. Read/write permission classification remains
-      // inside the MCP tool classifier, independently of this discovery step.
-      const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
-      let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
-      if (vercelDeployToken) {
-        const named = await db
-          .select({ name: projects.name })
-          .from(projects)
-          .where(eq(projects.id, projectId))
-          .limit(1)
-          .catch(() => []);
-        deployCtx = {
-          vercelToken: vercelDeployToken,
-          ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
-          projectName: named[0]?.name ?? "lampcode-app",
-        };
-      }
-
-      // User-connected MCP servers ARE attached here now (filtered by
-      // relevance, internal scrapers excluded). The original rule stands for
-      // the scrapers: Firecrawl/Exa cannot answer a question about the user's
-      // private account data, and 2026-11-04 measured a model that missed the
-      // routing rule burning rounds on Firecrawl calls that each failed auth.
-      // What changed: the local *_query tools alone left OAuth-only providers
-      // (Linear, Notion, Railway, Cloudflare, Sentry) with no read tools in
-      // chat at all, so their connected data was unreachable from queries.
-
-      // The query system prompt (SYSTEM_PROMPTS.query in prompt-builder.ts)
-      // carries the persona and answer rules now, so this user message only
-      // carries the per-turn pieces: the user's message and the tool list.
-      // Send the original user request verbatim. Native tool schemas carry
-      // capability details; duplicating them here only changes the request.
-      const queryTaskDescription = prompt;
-
-      const queryDispatchResult = await getDispatcher().dispatch({
-        agentType: "query",
-        usageCategory: "build",
-        provider,
-        task: {
-          description: queryTaskDescription,
-          outputFormat: "markdown",
-        },
-        sessionId,
-        userId,
-        projectId,
-        enableTools: true,
-        queryMode: true,
-        agenticBuild: false,
-        userPrompt: prompt,
-        projectFiles: existingFiles,
-        gitHubToken: gitHubToken ?? undefined,
-        serviceCredentials: restCreds,
-        deploy: deployCtx,
-        mcpServers: queryMcpServers,
-        connectedServices,
-        costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
-      });
-
-      // Never a bare "Done." — that implied a success the user could not see.
-      // With an empty reply the honest answer is that the checks ran but the
-      // written answer did not come out.
+    if (!queryDispatchResult.requestedBuild) {
       const replyContent =
         queryDispatchResult.finalContent ||
         queryDispatchResult.content ||
@@ -1185,10 +1140,7 @@ export async function runFastBuild(
 
       await db
         .update(buildSessions)
-        .set({
-          status: "success",
-          completedAt: new Date(),
-        })
+        .set({ status: "success", completedAt: new Date() })
         .where(eq(buildSessions.id, sessionId));
 
       await db
@@ -1198,6 +1150,20 @@ export async function runFastBuild(
 
       return;
     }
+
+    logger.info(
+      {
+        sessionId,
+        projectId,
+        reason: queryDispatchResult.requestedBuildReason,
+        prompt: prompt.slice(0, 80),
+      },
+      "[build] Conversational assistant requested the project workspace workflow",
+    );
+    server?.thinking(sessionId, {
+      sessionId,
+      text: "Activating the project workspace and continuing with your original request...",
+    });
 
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.
