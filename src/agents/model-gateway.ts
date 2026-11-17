@@ -8,6 +8,9 @@ import { logger } from "../server/logger.js";
 // Bare first-party model IDs — token-tracker.ts keys its pricing table on
 // these same bare names.
 export const MODEL_TIERS = {
+  // Lightweight semantic router. It has its own concise prompt and never reuses
+  // the acceptance/audit personas or any tools.
+  intent:     ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   planning:   ["claude-sonnet-5", "claude-sonnet-4-6"] as const,
   // The two completion-audit passes. Neither writes code: one reads the user's
   // prompt, the other reads the finished project and reports what is not
@@ -81,8 +84,9 @@ export interface ChatMessage {
   content: string | MessageContentBlock[];
 }
 
-// Anthropic tool-definition shape — kept minimal since only
-// load_skill/read_project_file exist today.
+// Native function-tool definition shared by all supported model gateways.
+ // The model chooses calls from these descriptions and schemas; the runtime
+ // independently validates permissions and executes each call.
 export interface ToolDefinition {
   name: string;
   description: string;
