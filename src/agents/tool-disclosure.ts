@@ -39,6 +39,10 @@ export const QUERY_MODE_READONLY_TOOL_NAMES = new Set([
   "load_skill",
   "list_plugins",
   "load_plugin_capability",
+  // This control signal activates the build workflow but performs no write.
+  // Actual file/service mutations remain absent from queryMode and are only
+  // exposed after the main model explicitly requests a workspace handoff.
+  "request_project_build",
 ]);
 
 export class ToolDisclosure {
