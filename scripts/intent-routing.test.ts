@@ -1,4 +1,4 @@
-/** Regression coverage for model-first intent routing and query-mode isolation. */
+/** Regression coverage for semantic intent routing and query-mode isolation. */
 import { readFileSync } from "node:fs";
 import { classifyPromptIntent } from "../src/agents/prompt-intent.js";
 import type { AgentDispatcher } from "../src/agents/dispatcher.js";
@@ -14,14 +14,14 @@ function check(name: string, got: unknown, want: unknown): void {
   console.log("✘ " + name + "\n    got:  " + JSON.stringify(got) + "\n    want: " + JSON.stringify(want));
 }
 
-// Ensure every request reaches the intent model before semantic classification.
 const intentSource = readFileSync("src/agents/prompt-intent.ts", "utf8");
-check("intent router has no keyword-regex decision variables", /const\s+is(?:ExplicitBuild|ServiceCheck|CodeQuestion|Research|Greeting)\s*=\s*\//.test(intentSource), false);
-check("intent router dispatches to the model", intentSource.includes("opts.dispatcher.dispatch({"), true);
-check("intent model is explicitly given no tools", intentSource.includes("enableTools: false"), true);
+check("intent routing contains no deterministic keyword backstop", !intentSource.includes("deterministicQueryBackstop"), true);
+check("intent router dispatches to the dedicated intent role", intentSource.includes('agentType: "intent"'), true);
+check("intent model receives no tools", intentSource.includes("enableTools: false"), true);
+check("intent model failure never defaults to a build", intentSource.includes('type: "query",\n    queryCategory: "general",\n    reason: "I could not reliably classify'), true);
 
-// Query mode policy is tested at the policy boundary, not by relying on a
-// particular source-code layout inside dispatcher.ts.
+// Query mode remains a server-enforced read-only capability set. The model
+// chooses among the offered tools, but it cannot turn a question into writes.
 const dispatcherSource = readFileSync("src/agents/dispatcher.ts", "utf8");
 const disclosureSource = readFileSync("src/agents/tool-disclosure.ts", "utf8");
 check("dispatcher delegates query filtering to ToolDisclosure", dispatcherSource.includes("ToolDisclosure.filterForTask("), true);
@@ -36,8 +36,10 @@ for (const required of ["list_files", "read_file", "read_project_file", "search_
 function mockDispatcher(response: Record<string, unknown>): AgentDispatcher {
   return {
     dispatch: async (options: Record<string, unknown>) => {
-      // The classification call must not include tools or credentials that enable side effects.
+      check("classifier uses its dedicated intent persona", options["agentType"], "intent");
       check("classifier model call does not enable tools", options["enableTools"] ?? false, false);
+      const task = options["task"] as Record<string, unknown>;
+      check("classifier receives the original message verbatim", String(task["description"]).includes("USER MESSAGE (verbatim):\n"), true);
       return { finalContent: JSON.stringify(response), content: JSON.stringify(response) } as never;
     },
   } as unknown as AgentDispatcher;
@@ -56,6 +58,12 @@ const review = await classifyPromptIntent("review this code and find any bugs", 
 });
 check("code review follows model query decision", review.type, "query");
 
+const snippet = await classifyPromptIntent("show me a small TypeScript example of a debounce function", {
+  ...ctx,
+  dispatcher: mockDispatcher({ intent: "query", category: "code_question", reason: "code example request" }),
+});
+check("code examples remain a query rather than a project build", snippet.type, "query");
+
 const build = await classifyPromptIntent("build me a calorie tracker", {
   ...ctx,
   dispatcher: mockDispatcher({ intent: "build", category: "build", reason: "app creation" }),
@@ -65,64 +73,43 @@ check("app creation follows model build decision", build.type, "build");
 const empty = await classifyPromptIntent("   ");
 check("empty prompt has safe query classification", empty.type, "query");
 
-// The deterministic backstop only fires when the classifier is unavailable.
-const backstopListing = await classifyPromptIntent(
-  "thefani1122-source/Lampcode ke open issues list karo",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("classifier-unavailable listing prompt falls back to query", backstopListing.type, "query");
+const unavailable = await classifyPromptIntent("build me a calorie tracker");
+check("missing classifier capability takes the non-mutating route", unavailable.type, "query");
 
-const backstopBuild = await classifyPromptIntent(
-  "build me a calorie tracker",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("classifier-unavailable build prompt stays build", backstopBuild.type, "build");
-
-const serviceWordBuild = await classifyPromptIntent(
-  "add github issues integration to my app",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("code-change prompt mentioning a service stays build", serviceWordBuild.type, "build");
-
+let attempts = 0;
 const throwingDispatcher = {
   dispatch: async () => {
+    attempts++;
     throw new Error("classifier down");
   },
 } as unknown as AgentDispatcher;
-const afterFailure = await classifyPromptIntent("meri vercel deployments dikhao", {
+const afterFailure = await classifyPromptIntent("fix the login form validation error", {
   ...ctx,
   dispatcher: throwingDispatcher,
 });
-check("failed classification sends listing prompts to query", afterFailure.type, "query");
-const afterFailureBuild = await classifyPromptIntent("fix the login form validation error", {
-  ...ctx,
-  dispatcher: throwingDispatcher,
-});
-check("failed classification keeps real builds on the build path", afterFailureBuild.type, "build");
+check("failed classification retries twice", attempts, 2);
+check("failed classification does not start a build by default", afterFailure.type, "query");
 
 if (failures) {
   console.error(`\n${failures} test(s) failed.`);
   process.exit(1);
 }
-console.log("\nAll model-first intent routing and query-mode isolation tests passed.");
-
+console.log("\nAll semantic intent routing and query-mode isolation tests passed.");
 
 // ── End-to-End Route Lifecycle Guarantees for Query vs Build ───────────────
 const buildSrc = readFileSync("src/server/routes/build.ts", "utf-8");
-
-// Locate the query handler inside runFastBuild
 const queryMatch = buildSrc.match(/if\s*\(promptIntent\.type === "query"\)\s*\{([\s\S]*?)return;\s*\}/);
 check("build route has an explicit query execution branch that returns early", Boolean(queryMatch), true);
 
 const queryBody = queryMatch?.[1] ?? "";
-
-check("query branch does NOT call createPreviewSandbox", queryBody.includes("createPreviewSandbox("), false);
-check("query branch does NOT call writeFilesToSandbox", queryBody.includes("writeFilesToSandbox("), false);
+check("query branch does NOT create a preview sandbox", queryBody.includes("createPreviewSandbox("), false);
+check("query branch does NOT write project files", queryBody.includes("writeFilesToSandbox("), false);
 check("query branch does NOT invoke repair or fix loops", queryBody.includes("fixPreviewErrors(") || queryBody.includes("findDeadCodeHandler("), false);
 check("query branch does NOT invoke E2B runtime backend verification", queryBody.includes("e2bCanRunNonNodeBackend"), false);
-
 check("query branch completes with previewUrl set to null", queryBody.includes("previewUrl: null"), true);
 check("query branch completes with files set to empty object", queryBody.includes("files: {}"), true);
 check("query branch completes with totalFiles 0", queryBody.includes("totalFiles: 0"), true);
 check("query branch updates session status to success", queryBody.includes('status: "success"'), true);
 check("query branch resets project status to live", queryBody.includes('status: "live"'), true);
+check("query message is the exact original user prompt", buildSrc.includes("const queryTaskDescription = prompt;"), true);
+check("query message no longer duplicates a hand-written tool catalogue", !buildSrc.includes("AVAILABLE INSPECTION TOOLS"), true);
