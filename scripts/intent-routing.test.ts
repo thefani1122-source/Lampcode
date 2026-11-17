@@ -39,7 +39,8 @@ function mockDispatcher(response: Record<string, unknown>): AgentDispatcher {
       check("classifier uses its dedicated intent persona", options["agentType"], "intent");
       check("classifier model call does not enable tools", options["enableTools"] ?? false, false);
       const task = options["task"] as Record<string, unknown>;
-      check("classifier receives the original message verbatim", String(task["description"]).includes("USER MESSAGE (verbatim):\n"), true);
+      check("classifier receives the original message in a separate userPrompt field", typeof options["userPrompt"] === "string" && String(options["userPrompt"]).length > 0, true);
+      check("classifier task description contains no rewritten copy of the request", !String(task["description"]).includes("USER MESSAGE (verbatim):"), true);
       return { finalContent: JSON.stringify(response), content: JSON.stringify(response) } as never;
     },
   } as unknown as AgentDispatcher;
