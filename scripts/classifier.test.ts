@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Cases for classifyBuild. Run by `npm test`.
  *
@@ -300,7 +301,43 @@ expectValue(
 );
 expectValue(
   "a negative MongoDB provider mention does not select MongoDB",
-  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not use MongoDB or mongoose."),
+  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not u// The judgement path must use its own narrow persona, never the acceptance
+// persona whose JSON schema represents app requirements rather than architecture.
+{
+  let dispatched: Record<string, unknown> | undefined;
+  const fakeDispatcher = {
+    dispatch: async (options: Record<string, unknown>) => {
+      dispatched = options;
+      const response = JSON.stringify({
+        needsServer: true,
+        needsSignIn: false,
+        why: "The user's saved reading progress must sync across devices.",
+      });
+      return { content: response, finalContent: response };
+    },
+  } as never;
+
+  const rawRequest = "Build a reading tracker with saved progress that syncs to my phone and laptop.";
+  const classified = await classifyBuild(rawRequest, {
+    dispatcher: fakeDispatcher,
+    sessionId: "00000000-0000-4000-8000-000000000042",
+    userId: "user-classifier-test",
+    projectId: "project-classifier-test",
+    provider: "anthropic",
+  });
+
+  expectValue("ambiguous architecture judgement uses the dedicated build_classifier role", dispatched?.["agentType"], "build_classifier");
+  expectValue("architecture classifier receives the original request separately", dispatched?.["userPrompt"], rawRequest);
+  expectValue("architecture classifier does not receive tools", dispatched?.["enableTools"], false);
+  expectValue("architecture classifier task wrapper does not rewrite the request", (dispatched?.["task"] as Record<string, unknown>)?.["description"], "Decide whether the original user request requires a server/database and real sign-in.");
+  expectValue("model architecture decision is parsed into fullstack mode", classified.buildType, "fullstack");
+  expectValue("model architecture decision is recorded as model-sourced", classified.source, "model");
+}
+
+const promptBuilderSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
+expectValue("build_classifier has its own application-architecture persona", promptBuilderSource.includes("You are LampCode's application architecture classifier"), true);
+
+se MongoDB or mongoose."),
   false,
 );
 
