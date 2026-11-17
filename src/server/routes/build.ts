@@ -1136,32 +1136,9 @@ export async function runFastBuild(
       // The query system prompt (SYSTEM_PROMPTS.query in prompt-builder.ts)
       // carries the persona and answer rules now, so this user message only
       // carries the per-turn pieces: the user's message and the tool list.
-      const queryTaskDescription =
-        `USER MESSAGE: ${prompt}
-
-` +
-        `AVAILABLE INSPECTION TOOLS:
-` +
-        `- github_query: READ-ONLY GitHub lookups: repositories (list_repos, get_repo), branches (list_branches), commits (list_commits), issues (list_issues, get_issue, search_issues), pull requests (list_pull_requests, get_pull_request, get_pull_request_files, get_pull_request_status - CI status), code search (search_code), file contents (get_file_contents), CI runs (list_workflow_runs, get_workflow_run_jobs, get_job_logs). GitHub writes are separate tools (github_write, github_merge) that ask the user first.
-` +
-        `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
-` +
-        `- integrations_status: Report which services are ACTUALLY connected right now. Call this whenever the user asks what is connected, which tools exist, or which services are available — answer ONLY from its result, never from this prompt.
-` +
-        `- shopify_query / wordpress_query / twilio_query / sendgrid_query / mailchimp_query: Inspect the user's connected Shopify store, WordPress site, Twilio account, SendGrid account, or Mailchimp account (each takes an "action" like list_products, list_posts, list_messages, list_templates, list_campaigns).
-` +
-        `- read_file: Read a specific file from the project.
-` +
-        `- list_files: List files currently in the project.
-` +
-        `- search_code: Search for terms/code across the project files.
-` +
-        `- review_code: Review code quality or check for bugs.
-` +
-        `- web_search: Search the web for documentation, library details, or technical facts.
-
-` +
-        `Answer the user's message now. Call the matching tool BEFORE making any claim about connected services, deployments or project files, and answer ONLY from real tool results.`;
+      // Send the original user request verbatim. Native tool schemas carry
+      // capability details; duplicating them here only changes the request.
+      const queryTaskDescription = prompt;
 
       const queryDispatchResult = await getDispatcher().dispatch({
         agentType: "query",
