@@ -2387,7 +2387,8 @@ export class PromptBuilder {
     const securityContract = SECURITY_AWARE_CODE_AGENTS.has(agentType)
       ? `${SECURE_GENERATION_CONTRACT}\n\n`
       : "";
-    // Keep the live sandbox/tool contract last so it overrides earlier legacy output-format guidance.\n    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
+    // Keep the live sandbox/tool contract last so it overrides earlier legacy output-format guidance.
+    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
   }
 
   private async buildContextBlock(
