@@ -57,12 +57,13 @@ export async function classifyPromptIntent(
         usageCategory: "build",
         provider: opts.provider ?? "modal",
         task: {
-          description: `${INTENT_CLASSIFY_INSTRUCTION}\n\nUSER MESSAGE (verbatim):\n${prompt}`,
+          description: "Classify the original user request according to the intent schema in your system instructions. Do not change or expand its scope.",
           outputFormat: "json",
         },
         sessionId: opts.sessionId,
         userId: opts.userId,
         projectId: opts.projectId,
+        userPrompt: prompt,
         enableTools: false,
         costGuard: { cumulativeUsd: 0, maxUsd: 0.05 },
       });
