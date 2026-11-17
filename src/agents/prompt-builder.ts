@@ -91,7 +91,7 @@ export const SECURE_GENERATION_CONTRACT = [
   "- Do not add unnecessary login or collect unnecessary personal data. Match controls to the actual product and user requirements.",
   "- Verify security-sensitive behavior with relevant tests. If it cannot be implemented or verified, report that limitation plainly.",
   "- For apps involving accounts, private data, APIs, databases, uploads, payments, tenants or external integrations, load the detailed `secure-generation` skill when useful.",
-].join("\\n");
+].join("\n");
 
 // Short invariants shared by every model role, including conversational
 // queries and specialist reviewers. Detailed code/security implementation
