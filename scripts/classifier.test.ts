@@ -235,9 +235,9 @@ expectValue(
   false,
 );
 expectValue(
-  "frontend localStorage builds still receive frontend sandbox guidance",
+  "frontend localStorage builds do not auto-inject the full frontend sandbox skill body",
   frontendSkills.includes("## Skill: frontend-sandbox"),
-  true,
+  false,
 );
 
 const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database.";
@@ -250,21 +250,21 @@ expectValue(
 
 const supabaseSkills = await loadRelevantSkillsForPrompt("Build a full-stack app that stores user data in Supabase and authenticates each user.", "fullstack");
 expectValue(
-  "a Supabase full-stack app still receives its database RLS skill",
+  "a Supabase full-stack app does not auto-inject the full database RLS skill body",
   supabaseSkills.includes("## Skill: database-rls"),
-  true,
+  false,
 );
 expectValue(
-  "a Supabase full-stack app still receives its provider-specific RLS skill",
+  "a Supabase full-stack app does not auto-inject the full provider-specific RLS skill body",
   supabaseSkills.includes("## Skill: supabase-rls"),
-  true,
+  false,
 );
 
 const mongoSkills = await loadRelevantSkillsForPrompt("Build an API backed by MongoDB.", "fullstack-mongodb");
 expectValue(
-  "MongoDB builds receive provider-neutral database security guidance",
+  "MongoDB builds do not auto-inject the full provider-neutral database security skill body",
   mongoSkills.includes("## Skill: database-rls"),
-  true,
+  false,
 );
 expectValue(
   "MongoDB builds do not receive Supabase-specific RLS rules",
