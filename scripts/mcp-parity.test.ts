@@ -14,8 +14,7 @@ ok("dispatcher never sends remote MCP connector definitions to Anthropic", !disp
 ok("Anthropic gateway exposes only its standard local tool stream", !gateway.includes("beta.messages.create") && !gateway.includes("mcp_servers") && !gateway.includes("streamWithMcp"));
 ok(
   "one combined relevance cap is applied across local read and approval-gated write tools in workspace mode",
-  dispatcher.includes("? readTools.toolDefs") &&
-    dispatcher.includes(": [...writeProxies.toolDefs, ...readTools.toolDefs]") &&
+  /const offeredMcpDefinitions = options\.queryMode\s*\?\s*readTools\.toolDefs\s*:\s*\[\.\.\.writeProxies\.toolDefs, \.\.\.readTools\.toolDefs\]/.test(dispatcher) &&
     dispatcher.includes("const cappedMcp = capMcpTools(options.userPrompt ?? \"\", offeredMcpDefinitions)") &&
     dispatcher.includes("writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name))") &&
     dispatcher.includes("readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name))"),
@@ -23,8 +22,8 @@ ok(
 ok(
   "read-only query mode budgets only the read tools it can actually expose",
   dispatcher.includes("const offeredMcpDefinitions = options.queryMode") &&
-    dispatcher.includes("? readTools.toolDefs") &&
-    dispatcher.includes("writeProxyDefs = options.queryMode") && dispatcher.includes("? []"),
+    /const offeredMcpDefinitions = options\.queryMode\s*\?\s*readTools\.toolDefs/.test(dispatcher) &&
+    /writeProxyDefs = options\.queryMode\s*\?\s*\[\]/.test(dispatcher),
 );
 
 if (failures) process.exit(1);
