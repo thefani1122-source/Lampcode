@@ -25,6 +25,7 @@ import type { BuildEvent } from "../verify/outcome-projection.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import {
   TOOL_DEFINITIONS,
+  QUERY_HANDOFF_TOOLS,
   AGENTIC_BUILD_TOOLS,
   executeTool,
   type GateOutcome,
@@ -198,6 +199,10 @@ export interface DispatchResult {
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** MCP tool calls actually executed (server-side, already resolved) this dispatch. */
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>;
+  /** True when the conversational model explicitly requested a workspace/build handoff. */
+  requestedBuild: boolean;
+  /** Short model-supplied reason for the workspace handoff, when requested. */
+  requestedBuildReason?: string | undefined;
   /** True if the model called request_write_action — a write/destructive
    *  action was needed but isn't available yet. Lets the caller distinguish
    *  "declined a write action" from "generation genuinely produced nothing". */
@@ -642,6 +647,8 @@ export class AgentDispatcher {
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
     let requestedWriteAction = false;
+    let requestedBuild = false;
+    let requestedBuildReason: string | undefined;
     let loopCostUsd = 0;
     let lastStopReason: string | undefined;
     let roundsUsed = 0;
@@ -724,6 +731,7 @@ export class AgentDispatcher {
             ? ToolDisclosure.filterForTask(
                 [
                   ...TOOL_DEFINITIONS,
+                  ...QUERY_HANDOFF_TOOLS,
                   ...AGENTIC_BUILD_TOOLS,
                   ...readToolDefs,
                 ],
@@ -957,7 +965,22 @@ export class AgentDispatcher {
         // identity is enough and nothing large is duplicated per tool call.
         const filesBefore = new Map(Object.entries(generatedFiles));
         const deletedBefore = new Set(deletedFiles);
-        const result = await executeTool(tc.name, tc.arguments, {
+        let result: string;
+        if (options.queryMode && tc.name === "request_project_build") {
+          let parsed: unknown;
+          try { parsed = JSON.parse(tc.arguments || "{}"); } catch { parsed = null; }
+          const handoff = z.object({
+            reason: z.string().trim().min(1).max(600),
+          }).safeParse(parsed);
+          if (!handoff.success) {
+            result = "Error: provide a short reason explaining why the original request requires project workspace execution.";
+          } else {
+            requestedBuild = true;
+            requestedBuildReason = handoff.data.reason;
+            result = "Workspace handoff accepted. No files or external services were changed by this control tool. LampCode will now continue with the original user request in the project workspace workflow.";
+          }
+        } else {
+          result = await executeTool(tc.name, tc.arguments, {
           contextFiles,
           sessionId,
           workspaceDir,
@@ -1003,9 +1026,10 @@ export class AgentDispatcher {
                 ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),
-        }).catch(
-          (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+          }).catch(
+            (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         emitEvent({ type: "tool/result", name: tc.name, ok: !result.startsWith("Error:"), round });
 
         // A gate's verdict, at the moment it was given.
@@ -1114,6 +1138,10 @@ export class AgentDispatcher {
       }
 
       messages.push({ role: "user", content: resultBlocks });
+      // The model explicitly requested the workspace transition. Do not keep
+      // asking a read-only assistant to act as the builder; return control to
+      // the host, which activates the sandbox and starts the build dispatch.
+      if (requestedBuild) break;
     }
 
     // Persist the full multi-round transcript at this dispatch's canonical
@@ -1259,6 +1287,8 @@ export class AgentDispatcher {
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
       requestedWriteAction,
+      requestedBuild,
+      ...(requestedBuildReason ? { requestedBuildReason } : {}),
       stopReason: lastStopReason,
       generatedFiles,
       outputPath,
