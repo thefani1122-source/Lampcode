@@ -462,10 +462,17 @@ export class AgentDispatcher {
       const readTools = buildReadToolDefinitions(report, mcpServers);
       readMcpRegistry = readTools.registry;
       if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
-      const allMcpDefinitions = [...writeProxies.toolDefs, ...readTools.toolDefs];
-      const cappedMcp = capMcpTools(options.userPrompt ?? "", allMcpDefinitions);
+      // In read-only query mode, write proxies are never exposed, so they
+      // must not consume the read-tool budget. In workspace/build mode, cap
+      // the combined read + approval-gated write definitions once.
+      const offeredMcpDefinitions = options.queryMode
+        ? readTools.toolDefs
+        : [...writeProxies.toolDefs, ...readTools.toolDefs];
+      const cappedMcp = capMcpTools(options.userPrompt ?? "", offeredMcpDefinitions);
       const offeredNames = new Set(cappedMcp.kept.map((tool) => tool.name));
-      writeProxyDefs = writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name));
+      writeProxyDefs = options.queryMode
+        ? []
+        : writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name));
       readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name));
       mcpToolsOmitted += cappedMcp.omitted;
       logger.info(
