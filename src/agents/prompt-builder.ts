@@ -163,13 +163,13 @@ Return ONLY this JSON object:
 
 ## PLAN THE REAL WORKFLOW
 - Identify the primary user journey and the visible outcome the request requires.
-- For a NEW app, the `approach` array MUST contain all six sections below using these exact labels. Keep each decision concise and specific to the request; state "not applicable" only when it genuinely is.
-  - `SCREENS:` the routes/screens the user actually requested or that are essential to the requested workflow
-  - `JOURNEYS:` the primary user actions and observable outcomes
-  - `DATA:` the required entities, source of truth, persistence and access model
-  - `FIRST RUN:` initial/empty/unconfigured experience, including only data the user asked for or clearly labelled sample data
-  - `VISUAL:` product-specific design direction and key hierarchy, respecting any supplied reference or explicit style
-  - `VERIFICATION:` concrete checks that demonstrate the requested journeys work
+- For a NEW app, the approach array MUST contain all six sections below using these exact labels. Keep each decision concise and specific to the request; state "not applicable" only when it genuinely is.
+  - SCREENS: the routes/screens the user actually requested or that are essential to the requested workflow
+  - JOURNEYS: the primary user actions and observable outcomes
+  - DATA: the required entities, source of truth, persistence and access model
+  - FIRST RUN: initial/empty/unconfigured experience, including only data the user asked for or clearly labelled sample data
+  - VISUAL: product-specific design direction and key hierarchy, respecting any supplied reference or explicit style
+  - VERIFICATION: concrete checks that demonstrate the requested journeys work
 - Do not invent screens, login, roles, entities, analytics or sample records merely to fill a section. The label may say "not required" with a brief reason.
 - For an EXISTING-project edit, a short scoped approach is enough; do not fabricate the other five sections just to satisfy a new-app blueprint.
 - Identify only the data and persistence needed for that journey. Do not add a database where browser-local state is sufficient, and do not replace a real backend with localStorage or sample data.
