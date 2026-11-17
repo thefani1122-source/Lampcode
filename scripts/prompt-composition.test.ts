@@ -44,7 +44,7 @@ check("ordinary builds remain under the configured system budget", ordinaryPromp
 const prompt = await builder.build(
   "frontend",
   {
-    description: "Build a small task tracker and scrape a reference website with Firecrawl.",
+    description: "Build a small task tracker, scrape a reference site with Firecrawl, research competitors with Exa, and include an autonomous multi-agent workflow using CrewAI and LangGraph.",
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
@@ -54,7 +54,7 @@ const prompt = await builder.build(
     projectId: "prompt-composition-test",
     userId: "prompt-composition-test",
     mode: "fast",
-    prompt: "Build a small task tracker and scrape a reference website with Firecrawl.",
+    prompt: "Build a small task tracker, scrape a reference site with Firecrawl, research competitors with Exa, and include an autonomous multi-agent workflow using CrewAI and LangGraph.",
   },
   undefined,
   undefined,
@@ -77,7 +77,7 @@ check("the on-demand load_skill tool is described when tools are enabled", syste
 check("Firecrawl remains discoverable in the skill index", /- firecrawl:/.test(system));
 check("Firecrawl full body is not eagerly injected by a keyword regex", !system.includes("## Skill: firecrawl"));
 check("Exa full body is not eagerly injected by a keyword regex", !system.includes("## Skill: exa"));
-check("agent-framework skills are available on demand, not eagerly injected", !system.includes("## Skill: crewai") && !system.includes("## Skill: langgraph"));
+check("agent-framework skills are available on demand, not eagerly injected", !system.includes("## Skill: crewai") && !system.includes("## Skill: langgraph") && !system.includes("## Skill: agent-architecture"));
 
 if (failures > 0) {
   console.error(`\n${failures} prompt-composition test(s) failed.`);
