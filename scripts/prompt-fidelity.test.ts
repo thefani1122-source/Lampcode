@@ -55,21 +55,24 @@ const query = await builder.build(
 check("normal query assistant allows code examples in chat", query.systemPrompt.includes("provide snippets or complete examples in chat"));
 check("normal query assistant no longer bans all code output", !query.systemPrompt.includes("never write app code"));
 
-const intent = await builder.build(
-  "intent",
+const fixAgent = await builder.build(
+  "fix",
   {
-    description: "Classify the user's latest message.",
-    outputFormat: "json",
+    description: "Fix the requested bug in the existing code.",
+    outputFormat: "code",
+    toolsEnabled: true,
   },
   {
     projectId: "prompt-fidelity-project",
     userId: "prompt-fidelity-user",
     mode: "fast",
-    prompt: "Classify the user's latest message.",
+    prompt: "Fix the requested bug in the existing code.",
   },
 );
-check("intent role gets a dedicated short classification prompt", intent.systemPrompt.includes("You classify the user's latest message"));
-check("intent role is not polluted by frontend product instructions", !intent.systemPrompt.includes("PRODUCT UI DESIGN CONTRACT"));
+check("tool-enabled code agents receive concise always-on security invariants", fixAgent.systemPrompt.includes("SECURITY INVARIANTS"));
+check("tool-enabled code agents receive skill metadata", fixAgent.systemPrompt.includes("engineering-quality"));
+check("detailed engineering skill body is not automatically injected", !fixAgent.systemPrompt.includes("# Engineering Quality"));
+check("detailed secure-generation skill body is available on demand, not always injected", !fixAgent.systemPrompt.includes("# Secure Generation"));
 
 if (failures > 0) {
   console.error(`\n${failures} prompt-fidelity check(s) failed.`);
