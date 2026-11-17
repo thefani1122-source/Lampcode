@@ -1759,7 +1759,7 @@ export class PromptBuilder {
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
       // Query chat never loads skills: they are code-generation conventions,
       // and the query prompt promises not to generate code.
-      agentType === "query"
+      agentType === "query" || agentType === "intent"
         ? Promise.resolve("")
         : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
