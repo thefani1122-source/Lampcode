@@ -25,6 +25,7 @@ const prompt = await new PromptBuilder().build(
   "frontend",
   {
     description: "Build a small task tracker and scrape a reference website with Firecrawl.",
+    outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
     projectMemory: "EXISTING PROJECT MEMORY — keep this context.\n".repeat(5_000),
