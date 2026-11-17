@@ -86,7 +86,7 @@ export const SECURE_GENERATION_CONTRACT = [
   "- Validate untrusted input at server boundaries, use parameterized database queries, encode output for its context, and apply least privilege.",
   "- a CREATE POLICY with no TO clause applies to PUBLIC. Explicitly scope browser-facing policies to the intended roles and bind each row to the verified caller/tenant; a shared workspace does not authorize users to attribute records to someone else.",
   "- A policy explicitly TO supabase_auth_admin is an internal service policy, not a browser-user policy. Preserve that role restriction; do not add anon/authenticated to internal auth-trigger policies.",
-  "- SECURITY DEFINER trigger functions require a fixed safe search_path (prefer SET search_path = '') and schema-qualified references. Trigger-only functions must keep the trigger operational; do not grant direct EXECUTE to PUBLIC, anon or authenticated.",
+  "- SECURITY DEFINER trigger functions require a fixed safe search_path (prefer SET search_path = '') and schema-qualified references. Trigger-only functions must revoke direct EXECUTE from PUBLIC, anon and authenticated; do not grant direct EXECUTE to PUBLIC, anon or authenticated. Keep the trigger operational.",
   "- Do not disable, weaken, bypass or delete a security control, test, scanner or authorization check to make a build pass. Fix the underlying issue.",
   "- Do not add unnecessary login or collect unnecessary personal data. Match controls to the actual product and user requirements.",
   "- Verify security-sensitive behavior with relevant tests. If it cannot be implemented or verified, report that limitation plainly.",
