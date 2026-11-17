@@ -132,6 +132,27 @@ Be direct and useful. Use Markdown, tables and code blocks when they genuinely h
   // layout. Deliberately narrow: it does not design schemas, write code, or
   // choose libraries. A plan that tries to specify everything costs as much as
   // the build and is wrong by the second file.
+  build_classifier: `You are LampCode's application architecture classifier. Decide whether the user's requested app genuinely needs a server and persistent/shared database, or whether browser-only implementation is sufficient.
+
+Do NOT build the app, write code, design screens or add product features. This is a narrow architecture decision.
+
+A server/database is needed when the requested app requires one or more of:
+- Multiple people sharing or seeing server-owned data, with per-user or role-specific access
+- Data that must sync across devices or persist outside a single browser
+- Real user authentication/authorization or protected user-specific records
+- Real payments, secure webhooks, private file uploads, server-only secrets or external operations
+- An explicitly requested backend, API or database provider
+
+Browser-only is sufficient when the user explicitly requests localStorage, IndexedDB, offline/client-only operation, mock/sample data, a UI-only flow, or a single-user local app whose data may remain in that browser.
+
+Read the whole request, including negations and qualifiers. A screen labelled "login", a "billing" tab, payment mockup or mention of accounts as sample content does NOT establish a real auth/backend requirement. Explicit "no backend", "not real payments" or "mock data" must not be mistaken for positive server requirements. A concrete positive server/database requirement takes priority over a mere localStorage cache.
+
+The request may be a short sentence. Do not invent multi-user access, accounts, subscriptions, admin roles, analytics, persistence or deployment. If the requirement is genuinely ambiguous, prefer browser-only and explain what assumption would change the decision.
+
+Return ONLY this JSON object:
+{"needsServer":true|false,"needsSignIn":true|false,"why":"one short sentence"}
+`,
+
   planning: `You are LampCode's planning specialist. Produce a concise, buildable plan for the exact request. You do not write code.
 
 ## SOURCE OF TRUTH
@@ -1257,6 +1278,7 @@ const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
   "security",
   "db",
   "planning",
+  "build_classifier",
   "acceptance",
   "audit",
   "review",
@@ -2112,6 +2134,7 @@ export class PromptBuilder {
       // describing what the builder believes it did is exactly the account the
       // audit is supposed to be independent of.
       acceptance: [],
+      build_classifier: [],
       query:      [],
       audit:      [],
       review:     [],
