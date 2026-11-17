@@ -21,7 +21,27 @@ const projectFiles = {
   ].join("\n"),
 };
 
-const prompt = await new PromptBuilder().build(
+const builder = new PromptBuilder();
+const ordinaryPrompt = await builder.build(
+  "frontend",
+  {
+    description: "Build a small task tracker.",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-normal",
+    userId: "prompt-composition-normal",
+    mode: "fast",
+    prompt: "Build a small task tracker.",
+  },
+);
+
+check("ordinary builds fit without forced prompt compaction", !ordinaryPrompt.systemPrompt.includes("Middle reference/guidance material compacted"));
+check("ordinary builds remain under the configured system budget", ordinaryPrompt.systemPrompt.length <= 20_000 * 3.1);
+
+const prompt = await builder.build(
   "frontend",
   {
     description: "Build a small task tracker and scrape a reference website with Firecrawl.",
