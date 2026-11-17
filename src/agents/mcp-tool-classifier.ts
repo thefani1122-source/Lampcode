@@ -59,7 +59,9 @@ export interface ClassifiedTool {
   toolName: string;
   allowed: boolean;
   reason: "annotation-read-only" | "annotation-destructive" | "capability-read-only" | "name-pattern-match" | "name-pattern-no-match" | "discovery-failed";
-  /** Raw inputSchema from MCP listTools — stored for write-proxy ToolDefinition generation. */
+  /** Original server-provided description, with connection secrets redacted. */
+  description?: string | undefined;
+  /** Raw inputSchema from MCP listTools — stored for ToolDefinition generation. */
   inputSchema?: Record<string, unknown> | undefined;
 }
 
@@ -154,25 +156,28 @@ async function discoverServerTools(
     return safeTools.map((tool): ClassifiedTool => {
       const annotations = tool.annotations as { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined;
       const inputSchema = redactDiscoveredValue(tool.inputSchema, secrets) as Record<string, unknown> | undefined;
+      const descriptionValue = redactDiscoveredValue(tool.description ?? "", secrets);
+      const description = typeof descriptionValue === "string" ? descriptionValue.trim() : "";
       if (annotations?.destructiveHint === true || annotations?.readOnlyHint === false) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: false, reason: "annotation-destructive", inputSchema };
+        return { serverSlug: server.slug, toolName: tool.name, allowed: false, reason: "annotation-destructive", description, inputSchema };
       }
       const capability = mapTool(server.slug, tool.name);
       const capabilityIsRead = capability !== null && (capability.endsWith(".read") || capability === "db.query");
       if (capabilityIsRead && !destructiveByName(tool.name)) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", inputSchema };
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "capability-read-only", description, inputSchema };
       }
       // A remote provider's readOnlyHint is untrusted metadata. Do not use it
       // by itself as permission to execute without approval; only app-owned
       // capability mappings or conservative name checks can establish a read.
       if (READ_VERB_RE.test(tool.name) && !destructiveByName(tool.name)) {
-        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", inputSchema };
+        return { serverSlug: server.slug, toolName: tool.name, allowed: true, reason: "name-pattern-match", description, inputSchema };
       }
       return {
         serverSlug: server.slug,
         toolName: tool.name,
         allowed: false,
         reason: destructiveByName(tool.name) ? "annotation-destructive" : "name-pattern-no-match",
+        description,
         inputSchema,
       };
     });
@@ -288,7 +293,10 @@ export function buildReadToolDefinitions(
     });
     toolDefs.push({
       name: toolName,
-      description: `Read-only. Run ${t.toolName} on the connected ${t.serverSlug} service.`,
+      description: [
+        `Read-only tool on the connected ${t.serverSlug} service. Original tool: ${t.toolName}.`,
+        t.description?.trim(),
+      ].filter(Boolean).join("\n\n"),
       input_schema: {
         type: "object",
         ...(t.inputSchema ?? {}),
