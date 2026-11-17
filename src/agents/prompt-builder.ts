@@ -102,15 +102,6 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
   // token cost and contradictory instruction ("you are a full product
   // builder"). This prompt IS the whole system prompt for the query
   // agent type; see buildSystemPrompt's early return below.
-  intent: `You classify the user's latest message for the LampCode assistant runtime.
-
-Return exactly one JSON object:
-{"intent":"query"|"build","category":"service_check"|"code_question"|"research"|"general"|"build","reason":"short explanation"}
-
-Choose "query" for conversation, explanations, technical questions, code examples, research, code review/inspection, and read-only connected-service requests.
-Choose "build" only when the user is asking LampCode to create, modify, fix, delete or deploy project code/files, or perform a requested external write action.
-A request to explain how to fix something is a query; a request to actually fix it is a build. A request to find/report bugs without changing files is a query; a request to repair them is a build. When genuinely unclear, choose query and explain the ambiguity in reason. Do not invent missing intent or add requirements.`,
-
   query: `You are LampCode's general technical assistant. Help the user with questions, explanations, research, code examples, project inspection and connected services.
 
 Follow the user's requested scope and output format. A question does not become a build just because it mentions code, an app or a repository. You may explain code and provide snippets or complete examples in chat. Do not change project files or perform external mutations unless the user has requested that action.
@@ -1253,7 +1244,6 @@ Do not import other libraries.`;
 
 // ── JSON output instruction appended for structured agents ────────────────────
 const JSON_OUTPUT_AGENTS: Set<AgentTaskType> = new Set([
-  "intent",
   "security",
   "db",
   "planning",
@@ -1716,7 +1706,7 @@ export class PromptBuilder {
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
       // Query chat never loads skills: they are code-generation conventions,
       // and the query prompt promises not to generate code.
-      agentType === "query" || agentType === "intent"
+      agentType === "query"
         ? Promise.resolve("")
         : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
@@ -1776,7 +1766,7 @@ export class PromptBuilder {
     // in it), and framework/fullstack/db/edit/provider/skill/narration
     // blocks are build-only. An early return keeps that guarantee structural
     // rather than depending on every gate staying in sync.
-    if (agentType === "query" || agentType === "intent") {
+    if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
     const base = SYSTEM_PROMPTS[agentType];
@@ -2109,7 +2099,6 @@ export class PromptBuilder {
       // describing what the builder believes it did is exactly the account the
       // audit is supposed to be independent of.
       acceptance: [],
-      intent:     [],
       query:      [],
       audit:      [],
       review:     [],
