@@ -1026,12 +1026,15 @@ export async function runFastBuild(
     });
 
     const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
+    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
     const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
-    const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
+    const vercelMcp = userMcpServers.find((server) => server.slug === "vercel");
+    const vercelDeployToken = vercelMcp
+      ? await getUserVercelDeployToken(userId).catch(() => null)
+      : null;
     const vercelTeamId = vercelDeployToken
       ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
       : undefined;
-    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
     const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
     // Connected server discovery is complete before the model chooses tools.
     // Read/write permissions are still classified server-side in the dispatcher.
@@ -1801,25 +1804,11 @@ export async function runFastBuild(
     // whether this build might need a connected service; the model decides
     // that itself once these are attached to the dispatch. Cheap (single DB
     // query + decrypt per row, no network calls) even when empty.
-    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+    // Connected MCP servers were resolved before the conversational
+    // assistant call and are reused here. Avoid a second DB/decryption pass.
     // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
-    // mcp-action-agent.ts always included them for the same reason: a reference
-    // URL in the prompt shouldn't require a user to have connected anything.
-    // They still go through the same read-only classification as everything
-    // else below, not special-cased as trusted.
-    //
-    // Internal providers use the same locally executed MCP tool path as
-    // user-connected servers, independent of the model gateway.
-    // Exa is gated behind EXA_API_KEY exactly like Firecrawl: an MCP server
-    // attached with no authToken fails the client's auth resolution on every
-    // single call ("Could not resolve authentication method"), so offering it
-    // keyless only teaches the model to burn rounds on a tool that can never
-    // work.
-    // They attach only when the prompt actually contains a URL to scrape.
-    // A build with no reference URL never sees them: the local web_search tool
-    // already covers documentation lookups, and offering the scrapers on every
-    // build is exactly what let the model reach for them on connected-data
-    // prompts the intent router mis-sent to the build path (2026-11-04).
+    // they attach only when the request includes a URL and still pass through
+    // the same server-side read/write classification as user-connected tools.
     const promptHasUrl = /https?:\/\/\S+/.test(prompt);
     const internalMcpServers = [
       ...(promptHasUrl && config.FIRECRAWL_API_KEY
@@ -1872,22 +1861,10 @@ export async function runFastBuild(
     // different credential from the MCP one, so it is read as its own thing.
     // REST-only providers carry their credentials the same way: resolved here
     // and passed down so the *_query tools can answer with real data.
-    const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
-
-    // The build-path model gets the same authoritative connection summary the
-    // query chat gets, so "what's connected" answered inside a build reports
-    // the database's truth instead of the prompt's provider list.
-    const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
-
-    const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
-    const vercelDeployToken = vercelMcp
-      ? await getUserVercelDeployToken(userId).catch(() => null)
-      : null;
-    const vercelTeamId = vercelDeployToken
-      ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
-      : undefined;
-    let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
-    if (vercelDeployToken) {
+    // The same credentials and connection summary used by the conversational
+    // assistant are already resolved above. Reuse them for the generation tools.
+    // The project name is loaded only when a Vercel deploy token exists.
+    if (vercelDeployToken && !deployCtx) {
       const named = await db
         .select({ name: projects.name })
         .from(projects)
