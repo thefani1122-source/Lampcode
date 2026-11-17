@@ -14,7 +14,8 @@
 
 import { shouldPlan, parsePlan, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../src/agents/build-planner.js";
 import { readFileSync } from "node:fs";
-import { PromptBuilder, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
+import { PromptBuilder } from "../src/agents/prompt-builder.js";
+import { executeTool } from "../src/agents/tools.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -562,79 +563,91 @@ check(
 
 async function runPromptModeChecks(): Promise<void> {
   const builder = new PromptBuilder();
-  const mongoSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to this MongoDB app.",
-    "fullstack-mongodb",
+  const skillIndexProbe = await builder.build(
+    "query",
+    {
+      description: "Explain a React app that uses Supabase and E2B.",
+      outputFormat: "markdown",
+      toolsEnabled: true,
+    },
+    {
+      projectId: "planner-skill-index-probe",
+      userId: "planner-skill-index-probe",
+      mode: "fast",
+      prompt: "Explain a React app that uses Supabase and E2B.",
+    },
   );
+
+  const skillNames = [
+    "database-rls",
+    "supabase-rls",
+    "fullstack-hono",
+    "frontend-sandbox",
+    "react-production",
+    "product-ui-design",
+    "engineering-quality",
+    "secure-generation",
+  ];
+  for (const skillName of skillNames) {
+    check(
+      `the model can discover the ${skillName} skill by metadata`,
+      skillIndexProbe.systemPrompt.includes(`- ${skillName}:`),
+      true,
+    );
+  }
   check(
-    "MongoDB full-stack projects do not receive the Supabase-specific Hono skill",
-    !mongoSkills.includes("## Skill: fullstack-hono"),
+    "the skill index describes itself as metadata only",
+    skillIndexProbe.systemPrompt.includes("their bodies are NOT injected automatically"),
     true,
   );
   check(
-    "MongoDB security requests retain generic database guidance but skip Supabase RLS guidance",
-    mongoSkills.includes("## Skill: database-rls") &&
-      !mongoSkills.includes("## Skill: supabase-rls"),
+    "the metadata index does not inject the full Hono implementation guide",
+    !skillIndexProbe.systemPrompt.includes("# Full-stack Build — React + Vite + Hono"),
     true,
   );
   check(
-    "MongoDB full-stack projects still receive core production and product UI skills",
-    mongoSkills.includes("## Skill: react-production") &&
-      mongoSkills.includes("## Skill: product-ui-design"),
+    "the metadata index does not inject the full database security guide",
+    !skillIndexProbe.systemPrompt.includes("# Database Security & Data Isolation"),
     true,
   );
 
-  const supabaseSkills = await loadRelevantSkillsForPrompt(
-    "Build a Supabase-backed task app.",
-    "fullstack",
+  const mongoGuidance = await executeTool(
+    "load_skill",
+    JSON.stringify({ name: "database-rls" }),
+    {} as never,
   );
   check(
-    "Supabase full-stack projects retain the Hono skill for the React/Vite Hono runtime",
-    supabaseSkills.includes("## Skill: fullstack-hono"),
+    "the model can explicitly load provider-neutral SQL and NoSQL security guidance",
+    mongoGuidance.includes("Document and key-value databases") &&
+      mongoGuidance.includes("do not assume Supabase"),
     true,
   );
 
-  const nextSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
-    "fullstack",
+  const honoGuidance = await executeTool(
+    "load_skill",
+    JSON.stringify({ name: "fullstack-hono" }),
+    {} as never,
   );
   check(
-    "Next.js builds do not receive the React/Hono architecture skill",
-    !nextSkills.includes("## Skill: fullstack-hono"),
+    "the Hono skill is explicit-loadable and scoped to React/Vite + Hono",
+    honoGuidance.includes("This reference applies ONLY when the authoritative build context selects the React/Vite frontend with a Hono/Node backend"),
     true,
   );
-  const tanstackSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
-    "fullstack",
+
+  const frontendGuidance = await executeTool(
+    "load_skill",
+    JSON.stringify({ name: "frontend-sandbox" }),
+    {} as never,
   );
   check(
-    "TanStack builds do not receive the React/Hono architecture skill",
-    !tanstackSkills.includes("## Skill: fullstack-hono"),
-    true,
-  );
-  const pythonSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
-    "fullstack",
-  );
-  check(
-    "FastAPI builds do not receive the React/Hono architecture skill",
-    !pythonSkills.includes("## Skill: fullstack-hono"),
-    true,
-  );
-  const frontendSkills = await loadRelevantSkillsForPrompt(
-    "Build a single-user task tracker.",
-    "frontend",
-  );
-  check(
-    "browser-only frontend builds receive the current E2B runtime rules, not obsolete Sandpack restrictions",
-    frontendSkills.includes("real browser preview") &&
-      !frontendSkills.includes("no fetch/localStorage/Node APIs") &&
-      !frontendSkills.includes("localStorage, sessionStorage → React state"),
+    "the E2B runtime skill records real browser preview capabilities",
+    frontendGuidance.includes("persistent E2B Linux sandbox using Vite") &&
+      frontendGuidance.includes("real browser preview"),
     true,
   );
   check(
-    "E2B frontend skill permits browser storage when it is the selected persistence architecture",
-    frontendSkills.includes("localStorage"),
+    "the E2B runtime skill permits localStorage when browser storage is the selected architecture",
+    frontendGuidance.includes("Use `localStorage` or IndexedDB when the user asks for browser-local persistence"),
     true,
   );
 
@@ -679,12 +692,14 @@ async function runPromptModeChecks(): Promise<void> {
   check(
     "full-stack edit prompt still includes the edit-mode preservation contract",
     built.systemPrompt.includes("EDIT MODE — You are modifying an existing app") &&
-      built.systemPrompt.includes("Preserve all working functionality and state management"),
+      built.systemPrompt.includes("Preserve the existing architecture, design system and working behavior unless the current user request explicitly asks to change them."),
     true,
   );
   check(
     "agentic full-stack edits use complete-file writes rather than pipeline surgical markers",
-    built.systemPrompt.includes("write_files replaces each file ENTIRELY") &&
+    built.systemPrompt.includes("TARGETED EDITS — inspect the current file before changing it") &&
+      built.systemPrompt.includes("use edit_file with an exact, unique old_string/new_string replacement") &&
+      built.systemPrompt.includes("write_files only for a new file or an intentional whole-file rewrite") &&
       !built.systemPrompt.includes("SURGICAL EDITS — use for small, targeted changes"),
     true,
   );
@@ -730,21 +745,9 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
 
-  const unknownProviderSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to the existing app.",
-    "fullstack-existing",
-  );
-  check(
-    "existing projects skip the Supabase-only full-stack scaffolding skill",
-    !unknownProviderSkills.includes("## Skill: fullstack-hono"),
-    true,
-  );
-  check(
-    "existing-project security edits keep generic DB rules without assuming Supabase RLS",
-    unknownProviderSkills.includes("## Skill: database-rls") &&
-      !unknownProviderSkills.includes("## Skill: supabase-rls"),
-    true,
-  );
+  // Detailed skills are on-demand. An unknown existing provider must retain
+  // its own architecture context and may explicitly load provider-neutral
+  // security guidance, but the Supabase-specific body is not auto-injected.
   const unknownProviderBuild = await builder.build(
     "frontend",
     {
@@ -766,7 +769,9 @@ async function runPromptModeChecks(): Promise<void> {
   check(
     "unknown existing database providers do not silently receive Supabase DB instructions",
     !unknownProviderBuild.systemPrompt.includes("DATABASE: Supabase") &&
-      !unknownProviderBuild.systemPrompt.includes("DATABASE: MongoDB"),
+      !unknownProviderBuild.systemPrompt.includes("DATABASE: MongoDB") &&
+      !unknownProviderBuild.systemPrompt.includes("# Supabase Row Level Security Patterns") &&
+      !unknownProviderBuild.systemPrompt.includes("# Database Security & Data Isolation"),
     true,
   );
 }
