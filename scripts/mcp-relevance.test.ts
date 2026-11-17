@@ -93,6 +93,24 @@ check("the same list keeps its order", capMcpTools("anything", defs(10, "github"
 }
 
 {
+  // MCP tool names can be opaque provider identifiers; use the real tool
+  // description as a second relevance signal when the name is not expressive.
+  const list: ToolDefinition[] = [
+    ...defs(MAX_MCP_TOOLS, "generic"),
+    {
+      name: "provider__action_73",
+      description: "Create an invoice and charge a customer's payment method",
+      input_schema: { type: "object" },
+    },
+  ];
+  const r = capMcpTools("create an invoice and charge the customer", list);
+  ok(
+    "a tool whose use case matches the request survives even when its name does not",
+    r.kept.some((d) => d.name === "provider__action_73"),
+  );
+}
+
+{
   // Stability matters: a list that reshuffles between rounds invalidates the
   // model's own sense of what it can call.
   const list = defs(200, "vercel");
