@@ -1,128 +1,94 @@
-/** Regression coverage for model-first intent routing and query-mode isolation. */
+/** Model-led assistant handoff and query-mode capability isolation. */
 import { readFileSync } from "node:fs";
-import { classifyPromptIntent } from "../src/agents/prompt-intent.js";
-import type { AgentDispatcher } from "../src/agents/dispatcher.js";
+import {
+  parseProjectBuildHandoff,
+  REQUEST_PROJECT_BUILD_TOOL_NAME,
+} from "../src/agents/build-handoff.js";
 import { QUERY_MODE_READONLY_TOOL_NAMES } from "../src/agents/tool-disclosure.js";
 
 let failures = 0;
-function check(name: string, got: unknown, want: unknown): void {
-  if (JSON.stringify(got) === JSON.stringify(want)) {
+function check(name: string, condition: boolean): void;
+function check(name: string, got: unknown, want: unknown): void;
+function check(name: string, got: unknown, want?: unknown): void {
+  const passed = arguments.length === 2 ? got === true : JSON.stringify(got) === JSON.stringify(want);
+  if (passed) {
     console.log("✔ " + name);
-    return;
+  } else {
+    failures++;
+    console.log("✘ " + name + "\n    got:  " + JSON.stringify(got) + "\n    want: " + JSON.stringify(want));
   }
-  failures++;
-  console.log("✘ " + name + "\n    got:  " + JSON.stringify(got) + "\n    want: " + JSON.stringify(want));
 }
 
-// Ensure every request reaches the intent model before semantic classification.
-const intentSource = readFileSync("src/agents/prompt-intent.ts", "utf8");
-check("intent router has no keyword-regex decision variables", /const\s+is(?:ExplicitBuild|ServiceCheck|CodeQuestion|Research|Greeting)\s*=\s*\//.test(intentSource), false);
-check("intent router dispatches to the model", intentSource.includes("opts.dispatcher.dispatch({"), true);
-check("intent model is explicitly given no tools", intentSource.includes("enableTools: false"), true);
+const valid = parseProjectBuildHandoff(JSON.stringify({ reason: "The user explicitly asked to fix the login flow." }));
+check("valid model handoff is accepted", valid.ok, true);
+check("valid handoff reason is preserved", valid.ok ? valid.reason : "", "The user explicitly asked to fix the login flow.");
+check("malformed JSON is rejected", parseProjectBuildHandoff("{").ok, false);
+check("missing reason is rejected", parseProjectBuildHandoff(JSON.stringify({})).ok, false);
+check("empty reason is rejected", parseProjectBuildHandoff(JSON.stringify({ reason: "   " })).ok, false);
+check("oversized reason is rejected", parseProjectBuildHandoff(JSON.stringify({ reason: "x".repeat(601) })).ok, false);
+check("handoff tool has a stable name", REQUEST_PROJECT_BUILD_TOOL_NAME, "request_project_build");
 
-// Query mode policy is tested at the policy boundary, not by relying on a
-// particular source-code layout inside dispatcher.ts.
+// Query mode receives read-only project/service tools plus ONE control signal.
+// That signal only transfers control; it cannot mutate project files or services.
+check("query mode includes the non-writing workspace handoff signal", QUERY_MODE_READONLY_TOOL_NAMES.has("request_project_build"), true);
+for (const forbidden of [
+  "write_files",
+  "edit_file",
+  "delete_file",
+  "checkpoint",
+  "revert",
+  "deploy_app",
+  "manage_plugin",
+  "install_plugin_from_github",
+]) {
+  check(`query mode excludes direct mutation capability: ${forbidden}`, QUERY_MODE_READONLY_TOOL_NAMES.has(forbidden), false);
+}
+for (const allowed of [
+  "list_files",
+  "read_file",
+  "read_project_file",
+  "search_code",
+  "review_code",
+  "web_search",
+  "github_query",
+  "vercel_query",
+  "load_skill",
+]) {
+  check(`query mode includes safe capability: ${allowed}`, QUERY_MODE_READONLY_TOOL_NAMES.has(allowed), true);
+}
+
 const dispatcherSource = readFileSync("src/agents/dispatcher.ts", "utf8");
-const disclosureSource = readFileSync("src/agents/tool-disclosure.ts", "utf8");
-check("dispatcher delegates query filtering to ToolDisclosure", dispatcherSource.includes("ToolDisclosure.filterForTask("), true);
-check("query allowlist is explicit and exported", disclosureSource.includes("QUERY_MODE_READONLY_TOOL_NAMES"), true);
-for (const forbidden of ["write_files", "edit_file", "delete_file", "shell", "deploy_app", "vercel_write", "install_plugin_from_github", "manage_plugin"]) {
-  check(`queryMode excludes ${forbidden}`, QUERY_MODE_READONLY_TOOL_NAMES.has(forbidden), false);
-}
-for (const required of ["list_files", "read_file", "read_project_file", "search_code", "review_code", "web_search", "github_query", "vercel_query"]) {
-  check(`queryMode includes ${required}`, QUERY_MODE_READONLY_TOOL_NAMES.has(required), true);
-}
+check("dispatcher supplies a separate workspace handoff tool in query mode", dispatcherSource.includes("...QUERY_HANDOFF_TOOLS"));
+check("query dispatch does not expose agentic build tools", !/options\.queryMode[\s\S]*?\? ToolDisclosure\.filterForTask\([\s\S]*?\.\.\.AGENTIC_BUILD_TOOLS/.test(dispatcherSource));
+check("dispatcher validates the handoff instead of executing it as a normal tool", dispatcherSource.includes("parseProjectBuildHandoff(tc.arguments)"));
+check("dispatcher only accepts the handoff from query mode", dispatcherSource.includes("options.queryMode && tc.name === REQUEST_PROJECT_BUILD_TOOL_NAME"));
+check("dispatch result reports requestedBuild", dispatcherSource.includes("requestedBuild,"));
+check("dispatcher returns control after a valid handoff", dispatcherSource.includes("if (requestedBuild) break;"));
 
-function mockDispatcher(response: Record<string, unknown>): AgentDispatcher {
-  return {
-    dispatch: async (options: Record<string, unknown>) => {
-      // The classification call must not include tools or credentials that enable side effects.
-      check("classifier model call does not enable tools", options["enableTools"] ?? false, false);
-      return { finalContent: JSON.stringify(response), content: JSON.stringify(response) } as never;
-    },
-  } as unknown as AgentDispatcher;
-}
+const toolsSource = readFileSync("src/agents/tools.ts", "utf8");
+check("handoff is declared separately from ordinary tools", toolsSource.includes("export const QUERY_HANDOFF_TOOLS"));
+check("handoff description says it does not modify files or services", toolsSource.includes("does not modify files or external services itself"));
 
-const ctx = { sessionId: "s", userId: "u", projectId: "p" };
-const service = await classifyPromptIntent("checks my github repos kon kon si repos hain github pe", {
-  ...ctx,
-  dispatcher: mockDispatcher({ intent: "query", category: "service_check", reason: "service inspection" }),
-});
-check("Roman Urdu GitHub question follows model query decision", service.type, "query");
+const promptSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
+check("query assistant can give code snippets in chat", promptSource.includes("provide snippets or complete examples in chat"));
+check("query assistant knows when to request workspace execution", promptSource.includes("call the request_project_build tool"));
+check("query assistant does not ban all code output", !promptSource.includes("never write app code"));
+check("dedicated intent persona has been removed", !promptSource.includes("You classify the user's latest message"));
+check("dedicated intent model role has been removed from the model catalogue", !readFileSync("src/agents/model-gateway.ts", "utf8").includes("intent:"));
 
-const review = await classifyPromptIntent("review this code and find any bugs", {
-  ...ctx,
-  dispatcher: mockDispatcher({ intent: "query", category: "code_question", reason: "review request" }),
-});
-check("code review follows model query decision", review.type, "query");
-
-const build = await classifyPromptIntent("build me a calorie tracker", {
-  ...ctx,
-  dispatcher: mockDispatcher({ intent: "build", category: "build", reason: "app creation" }),
-});
-check("app creation follows model build decision", build.type, "build");
-
-const empty = await classifyPromptIntent("   ");
-check("empty prompt has safe query classification", empty.type, "query");
-
-// The deterministic backstop only fires when the classifier is unavailable.
-const backstopListing = await classifyPromptIntent(
-  "thefani1122-source/Lampcode ke open issues list karo",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("classifier-unavailable listing prompt falls back to query", backstopListing.type, "query");
-
-const backstopBuild = await classifyPromptIntent(
-  "build me a calorie tracker",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("classifier-unavailable build prompt stays build", backstopBuild.type, "build");
-
-const serviceWordBuild = await classifyPromptIntent(
-  "add github issues integration to my app",
-  {} as Parameters<typeof classifyPromptIntent>[1],
-);
-check("code-change prompt mentioning a service stays build", serviceWordBuild.type, "build");
-
-const throwingDispatcher = {
-  dispatch: async () => {
-    throw new Error("classifier down");
-  },
-} as unknown as AgentDispatcher;
-const afterFailure = await classifyPromptIntent("meri vercel deployments dikhao", {
-  ...ctx,
-  dispatcher: throwingDispatcher,
-});
-check("failed classification sends listing prompts to query", afterFailure.type, "query");
-const afterFailureBuild = await classifyPromptIntent("fix the login form validation error", {
-  ...ctx,
-  dispatcher: throwingDispatcher,
-});
-check("failed classification keeps real builds on the build path", afterFailureBuild.type, "build");
+const routeSource = readFileSync("src/server/routes/build.ts", "utf8");
+check("build route no longer calls a separate intent classifier", !routeSource.includes("classifyPromptIntent"));
+check("every request first reaches the conversational assistant", routeSource.includes('agentType: "query"'));
+check("assistant receives the original prompt as its task text", routeSource.includes("description: prompt,"));
+check("a normal answer completes without activating the workspace", routeSource.includes("if (!queryDispatchResult.requestedBuild)"));
+check("only a model-requested handoff continues into build setup", routeSource.includes("if (!queryDispatchResult.requestedBuild)"));
+check("the unsupported-runtime guard runs only after the model handoff", routeSource.indexOf("if (!queryDispatchResult.requestedBuild)") < routeSource.indexOf("Unsupported runtime guard"));
+check("the project is not marked building before the conversational assistant responds", routeSource.indexOf('agentType: "query"') < routeSource.indexOf('set({ status: "building" })'));
+check("normal chat does not force the project lifecycle state to live", !routeSource.includes('set({ status: "live" }).where(eq(projects.id, projectId))') || routeSource.indexOf('set({ status: "live" }).where(eq(projects.id, projectId))') > routeSource.indexOf("if (!queryDispatchResult.requestedBuild)"));
+check("build handoff keeps the original request for later build dispatch", routeSource.includes("userPrompt: prompt,"));
 
 if (failures) {
-  console.error(`\n${failures} test(s) failed.`);
+  console.error(`\n${failures} model-led handoff test(s) failed.`);
   process.exit(1);
 }
-console.log("\nAll model-first intent routing and query-mode isolation tests passed.");
-
-
-// ── End-to-End Route Lifecycle Guarantees for Query vs Build ───────────────
-const buildSrc = readFileSync("src/server/routes/build.ts", "utf-8");
-
-// Locate the query handler inside runFastBuild
-const queryMatch = buildSrc.match(/if\s*\(promptIntent\.type === "query"\)\s*\{([\s\S]*?)return;\s*\}/);
-check("build route has an explicit query execution branch that returns early", Boolean(queryMatch), true);
-
-const queryBody = queryMatch?.[1] ?? "";
-
-check("query branch does NOT call createPreviewSandbox", queryBody.includes("createPreviewSandbox("), false);
-check("query branch does NOT call writeFilesToSandbox", queryBody.includes("writeFilesToSandbox("), false);
-check("query branch does NOT invoke repair or fix loops", queryBody.includes("fixPreviewErrors(") || queryBody.includes("findDeadCodeHandler("), false);
-check("query branch does NOT invoke E2B runtime backend verification", queryBody.includes("e2bCanRunNonNodeBackend"), false);
-
-check("query branch completes with previewUrl set to null", queryBody.includes("previewUrl: null"), true);
-check("query branch completes with files set to empty object", queryBody.includes("files: {}"), true);
-check("query branch completes with totalFiles 0", queryBody.includes("totalFiles: 0"), true);
-check("query branch updates session status to success", queryBody.includes('status: "success"'), true);
-check("query branch resets project status to live", queryBody.includes('status: "live"'), true);
+console.log("\nAll model-led assistant handoff and query-mode isolation tests passed.");

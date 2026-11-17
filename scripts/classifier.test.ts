@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Cases for classifyBuild. Run by `npm test`.
  *
@@ -234,9 +235,9 @@ expectValue(
   false,
 );
 expectValue(
-  "frontend localStorage builds still receive frontend sandbox guidance",
+  "frontend localStorage builds do not auto-inject the full frontend sandbox skill body",
   frontendSkills.includes("## Skill: frontend-sandbox"),
-  true,
+  false,
 );
 
 const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database.";
@@ -249,21 +250,21 @@ expectValue(
 
 const supabaseSkills = await loadRelevantSkillsForPrompt("Build a full-stack app that stores user data in Supabase and authenticates each user.", "fullstack");
 expectValue(
-  "a Supabase full-stack app still receives its database RLS skill",
+  "a Supabase full-stack app does not auto-inject the full database RLS skill body",
   supabaseSkills.includes("## Skill: database-rls"),
-  true,
+  false,
 );
 expectValue(
-  "a Supabase full-stack app still receives its provider-specific RLS skill",
+  "a Supabase full-stack app does not auto-inject the full provider-specific RLS skill body",
   supabaseSkills.includes("## Skill: supabase-rls"),
-  true,
+  false,
 );
 
 const mongoSkills = await loadRelevantSkillsForPrompt("Build an API backed by MongoDB.", "fullstack-mongodb");
 expectValue(
-  "MongoDB builds receive provider-neutral database security guidance",
+  "MongoDB builds do not auto-inject the full provider-neutral database security skill body",
   mongoSkills.includes("## Skill: database-rls"),
-  true,
+  false,
 );
 expectValue(
   "MongoDB builds do not receive Supabase-specific RLS rules",
@@ -303,6 +304,42 @@ expectValue(
   hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not use MongoDB or mongoose."),
   false,
 );
+
+// The judgement path must use its own narrow persona, never the acceptance
+// persona whose JSON schema represents app requirements rather than architecture.
+{
+  let dispatched: Record<string, unknown> | undefined;
+  const fakeDispatcher = {
+    dispatch: async (options: Record<string, unknown>) => {
+      dispatched = options;
+      const response = JSON.stringify({
+        needsServer: true,
+        needsSignIn: false,
+        why: "The user's saved reading progress must sync across devices.",
+      });
+      return { content: response, finalContent: response };
+    },
+  } as never;
+
+  const rawRequest = "Build a reading tracker with saved progress that syncs to my phone and laptop.";
+  const classified = await classifyBuild(rawRequest, {
+    dispatcher: fakeDispatcher,
+    sessionId: "00000000-0000-4000-8000-000000000042",
+    userId: "user-classifier-test",
+    projectId: "project-classifier-test",
+    provider: "anthropic",
+  });
+
+  expectValue("ambiguous architecture judgement uses the dedicated build_classifier role", dispatched?.["agentType"], "build_classifier");
+  expectValue("architecture classifier receives the original request separately", dispatched?.["userPrompt"], rawRequest);
+  expectValue("architecture classifier does not receive tools", dispatched?.["enableTools"], false);
+  expectValue("architecture classifier task wrapper does not rewrite the request", (dispatched?.["task"] as Record<string, unknown>)?.["description"], "Decide whether the original user request requires a server/database and real sign-in.");
+  expectValue("model architecture decision is parsed into fullstack mode", classified.buildType, "fullstack");
+  expectValue("model architecture decision is recorded as model-sourced", classified.source, "model");
+}
+
+const promptBuilderSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
+expectValue("build_classifier has its own application-architecture persona", promptBuilderSource.includes("You are LampCode's application architecture classifier"), true);
 
 console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

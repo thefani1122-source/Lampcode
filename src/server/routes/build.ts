@@ -46,7 +46,6 @@ import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
 import { capturePreviewScreenshot, captureStorage, checkInteractions, checkRender, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
-import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
 import { config } from "../config.js";
 import { declaredTables, fakePersistence, findDataLayerGaps, formatDataLayerForUser, formatDataLayerGaps, queriedTables, schemaRepairInstruction, undeclaredTables } from "../../verify/data-layer.js";
@@ -955,60 +954,14 @@ export async function runFastBuild(
     `[build] provider=${provider} (mode=${config.LLM_PROVIDER_MODE}) session=${sessionId}`,
   );
 
-  // Mark project building + session started (moved from handler hot-path)
-  await Promise.all([
-    db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId)),
-    db.update(buildSessions).set({ startedAt: new Date(), phase: 1 }).where(eq(buildSessions.id, sessionId)),
-  ]);
+  // Start the interaction session. Do not mark the project as building yet:
+  // the conversational assistant may answer this request without activating
+  // the workspace/build workflow.
+  await db
+    .update(buildSessions)
+    .set({ startedAt: new Date() })
+    .where(eq(buildSessions.id, sessionId));
 
-  // ── Emit agent_start ──────────────────────────────────────────────────────
-  // Use the actual tier-1 frontend model rather than a hardcoded name so the
-  // displayed model stays in sync with MODEL_TIERS.
-  const frontendModel =
-    provider === "modal"
-      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
-      : tierModel("frontend", 1);
-  server?.agentStart(sessionId, {
-    taskId: sessionId,
-    sessionId,
-    agentType: "frontend",
-    taskName: `Fast Build — Frontend (${frontendModel})`,
-    model: frontendModel,
-    tier: 1,
-    timestamp: new Date().toISOString(),
-  });
-
-  // ── Unsupported runtime guard ─────────────────────────────────────────────
-  // The instant Sandpack preview runs Node.js only — but fullstack builds also
-  // get an E2B cloud sandbox preview (a real Linux VM) that can run any backend
-  // runtime. So only block Python/PHP/Ruby/Go requests when E2B isn't configured
-  // or the prompt won't even produce a backend (nothing would run the code).
-  const e2bCanRunNonNodeBackend = Boolean(config.E2B_API_KEY) && needsBackend(prompt);
-  if (isUnsupportedBackendRuntime(prompt) && !e2bCanRunNonNodeBackend) {
-    const redirectMsg =
-      "WebContainers support Node.js only. I can build your backend in Hono.js " +
-      "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
-      "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
-    server?.thinking(sessionId, { text: redirectMsg, sessionId });
-    const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
-    server?.buildFailed(sessionId, {
-      sessionId,
-      phase: "BUILD",
-      reason: redirectMsg,
-      logs: "",
-      timestamp: new Date().toISOString(),
-    });
-    await Promise.all([
-      db.update(buildSessions)
-        .set({ status: "failed", error: reason, completedAt: new Date() })
-        .where(eq(buildSessions.id, sessionId)),
-      db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
-    ]);
-    // Nothing to refund — no dispatch ran before this rejection, so no real
-    // usage was incurred (usage is deducted per-dispatch, not pre-charged).
-    console.log(`[build] unsupported runtime request rejected, no usage incurred: ${prompt.slice(0, 80)}`);
-    return;
-  }
 
   try {
     // ── Load the latest recoverable project source, not only successful builds ──
@@ -1063,133 +1016,70 @@ export async function runFastBuild(
     // whose complete source tree was saved before its verification gate failed.
     const preserveExistingFiles = hasExistingCode;
 
-    // ── Check if prompt is a conversational query / service inspection ──
-    const promptIntent = await classifyPromptIntent(prompt, {
-      dispatcher: getDispatcher(),
+    // Every user message first reaches the conversational assistant unchanged.
+    // It can answer, inspect the project/services with read-only tools, or call
+    // request_project_build to ask the host to activate the workspace workflow.
+    // There is no separate regex/intent-classifier gate before the assistant.
+    server?.thinking(sessionId, {
+      sessionId,
+      text: "Reading your request and checking whether workspace tools are needed...",
+    });
+
+    const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
+    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+    const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
+    const vercelMcp = userMcpServers.find((server) => server.slug === "vercel");
+    const vercelDeployToken = vercelMcp
+      ? await getUserVercelDeployToken(userId).catch(() => null)
+      : null;
+    const vercelTeamId = vercelDeployToken
+      ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
+      : undefined;
+    const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
+    // Connected server discovery is complete before the model chooses tools.
+    // Read/write permissions are still classified server-side in the dispatcher.
+    const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
+
+    let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
+    if (vercelDeployToken) {
+      const named = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .catch(() => []);
+      deployCtx = {
+        vercelToken: vercelDeployToken,
+        ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
+        projectName: named[0]?.name ?? "lampcode-app",
+      };
+    }
+
+    const queryDispatchResult = await getDispatcher().dispatch({
+      agentType: "query",
+      usageCategory: "build",
+      provider,
+      task: {
+        description: prompt,
+        outputFormat: "markdown",
+      },
       sessionId,
       userId,
       projectId,
-      provider,
+      enableTools: true,
+      queryMode: true,
+      agenticBuild: false,
+      userPrompt: prompt,
+      projectFiles: existingFiles,
+      gitHubToken: gitHubToken ?? undefined,
+      serviceCredentials: restCreds,
+      deploy: deployCtx,
+      mcpServers: queryMcpServers,
+      connectedServices,
+      costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
     });
 
-    if (promptIntent.type === "query") {
-      logger.info(
-        { sessionId, projectId, category: promptIntent.queryCategory, reason: promptIntent.reason, prompt: prompt.slice(0, 80) },
-        "[build] User query/inspection detected — answering directly in chat without preview build",
-      );
-
-      server?.thinking(sessionId, {
-        sessionId,
-        text: promptIntent.queryCategory === "service_check"
-          ? "Checking connected services and tools..."
-          : promptIntent.queryCategory === "code_question"
-            ? "Inspecting project code..."
-            : promptIntent.queryCategory === "research"
-              ? "Researching information..."
-              : "Thinking...",
-      });
-
-      const gitHubToken = await getUserGitHubToken(userId).catch(() => null);
-      const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
-      const vercelDeployToken = await getUserVercelDeployToken(userId).catch(() => null);
-      // The token alone is not enough: team-scoped Vercel OAuth tokens 403
-      // every call that omits teamId. Resolve it once here so the query tool
-      // never has to guess.
-      const vercelTeamId = vercelDeployToken
-        ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
-        : undefined;
-      // Connected services reach the query chat too. Without these the model
-      // answered "which tools are connected" from its prompt alone and invented
-      // the list (2026-11-04: GitHub connected, everything else "not
-      // connected"), and OAuth-only providers (Linear, Notion, Railway,
-      // Cloudflare, Sentry, Vercel) had no read tools in chat at all.
-      const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
-      const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
-      // Relevant only — a generic "what's connected" prompt matches no
-      // category, which is fine: integrations_status is the authoritative
-      // answer there and needs no servers.
-      const { kept: queryMcpServers } = serversForPrompt(prompt, userMcpServers);
-      let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
-      if (vercelDeployToken) {
-        const named = await db
-          .select({ name: projects.name })
-          .from(projects)
-          .where(eq(projects.id, projectId))
-          .limit(1)
-          .catch(() => []);
-        deployCtx = {
-          vercelToken: vercelDeployToken,
-          ...(vercelTeamId ? { teamId: vercelTeamId } : {}),
-          projectName: named[0]?.name ?? "lampcode-app",
-        };
-      }
-
-      // User-connected MCP servers ARE attached here now (filtered by
-      // relevance, internal scrapers excluded). The original rule stands for
-      // the scrapers: Firecrawl/Exa cannot answer a question about the user's
-      // private account data, and 2026-11-04 measured a model that missed the
-      // routing rule burning rounds on Firecrawl calls that each failed auth.
-      // What changed: the local *_query tools alone left OAuth-only providers
-      // (Linear, Notion, Railway, Cloudflare, Sentry) with no read tools in
-      // chat at all, so their connected data was unreachable from queries.
-
-      // The query system prompt (SYSTEM_PROMPTS.query in prompt-builder.ts)
-      // carries the persona and answer rules now, so this user message only
-      // carries the per-turn pieces: the user's message and the tool list.
-      const queryTaskDescription =
-        `USER MESSAGE: ${prompt}
-
-` +
-        `AVAILABLE INSPECTION TOOLS:
-` +
-        `- github_query: READ-ONLY GitHub lookups: repositories (list_repos, get_repo), branches (list_branches), commits (list_commits), issues (list_issues, get_issue, search_issues), pull requests (list_pull_requests, get_pull_request, get_pull_request_files, get_pull_request_status - CI status), code search (search_code), file contents (get_file_contents), CI runs (list_workflow_runs, get_workflow_run_jobs, get_job_logs). GitHub writes are separate tools (github_write, github_merge) that ask the user first.
-` +
-        `- vercel_query: Query connected Vercel account to list deployments (action: "list_deployments") or projects.
-` +
-        `- integrations_status: Report which services are ACTUALLY connected right now. Call this whenever the user asks what is connected, which tools exist, or which services are available — answer ONLY from its result, never from this prompt.
-` +
-        `- shopify_query / wordpress_query / twilio_query / sendgrid_query / mailchimp_query: Inspect the user's connected Shopify store, WordPress site, Twilio account, SendGrid account, or Mailchimp account (each takes an "action" like list_products, list_posts, list_messages, list_templates, list_campaigns).
-` +
-        `- read_file: Read a specific file from the project.
-` +
-        `- list_files: List files currently in the project.
-` +
-        `- search_code: Search for terms/code across the project files.
-` +
-        `- review_code: Review code quality or check for bugs.
-` +
-        `- web_search: Search the web for documentation, library details, or technical facts.
-
-` +
-        `Answer the user's message now. Call the matching tool BEFORE making any claim about connected services, deployments or project files, and answer ONLY from real tool results.`;
-
-      const queryDispatchResult = await getDispatcher().dispatch({
-        agentType: "query",
-        usageCategory: "build",
-        provider,
-        task: {
-          description: queryTaskDescription,
-          outputFormat: "markdown",
-        },
-        sessionId,
-        userId,
-        projectId,
-        enableTools: true,
-        queryMode: true,
-        agenticBuild: false,
-        userPrompt: prompt,
-        projectFiles: existingFiles,
-        gitHubToken: gitHubToken ?? undefined,
-        serviceCredentials: restCreds,
-        deploy: deployCtx,
-        mcpServers: queryMcpServers,
-        connectedServices,
-        costGuard: { cumulativeUsd: 0, maxUsd: 0.10 },
-      });
-
-      // Never a bare "Done." — that implied a success the user could not see.
-      // With an empty reply the honest answer is that the checks ran but the
-      // written answer did not come out.
+    if (!queryDispatchResult.requestedBuild) {
       const replyContent =
         queryDispatchResult.finalContent ||
         queryDispatchResult.content ||
@@ -1207,19 +1097,83 @@ export async function runFastBuild(
 
       await db
         .update(buildSessions)
-        .set({
-          status: "success",
-          completedAt: new Date(),
-        })
+        .set({ status: "success", completedAt: new Date() })
         .where(eq(buildSessions.id, sessionId));
 
-      await db
-        .update(projects)
-        .set({ status: "live" })
-        .where(eq(projects.id, projectId));
-
+      // A conversational reply does not change the project's lifecycle status.
       return;
     }
+
+    logger.info(
+      {
+        sessionId,
+        projectId,
+        reason: queryDispatchResult.requestedBuildReason,
+        prompt: prompt.slice(0, 80),
+      },
+      "[build] Conversational assistant requested the project workspace workflow",
+    );
+    server?.thinking(sessionId, {
+      sessionId,
+      text: "Activating the project workspace and continuing with your original request...",
+    });
+
+    // Build-specific state and runtime guards begin only after the model asks
+    // for the workspace. Normal questions/research never enter these branches.
+    await Promise.all([
+      db.update(projects).set({ status: "building" }).where(eq(projects.id, projectId)),
+      db.update(buildSessions).set({ phase: 1 }).where(eq(buildSessions.id, sessionId)),
+    ]);
+
+  // ── Emit agent_start ──────────────────────────────────────────────────────
+  // Use the actual tier-1 frontend model rather than a hardcoded name so the
+  // displayed model stays in sync with MODEL_TIERS.
+  const frontendModel =
+    provider === "modal"
+      ? (config.LLM_MODEL_NAME ?? config.MODAL_MODEL_NAME ?? tierModel("frontend", 1))
+      : tierModel("frontend", 1);
+  server?.agentStart(sessionId, {
+    taskId: sessionId,
+    sessionId,
+    agentType: "frontend",
+    taskName: `Fast Build — Frontend (${frontendModel})`,
+    model: frontendModel,
+    tier: 1,
+    timestamp: new Date().toISOString(),
+  });
+
+  // ── Unsupported runtime guard ─────────────────────────────────────────────
+  // The instant Sandpack preview runs Node.js only — but fullstack builds also
+  // get an E2B cloud sandbox preview (a real Linux VM) that can run any backend
+  // runtime. So only block Python/PHP/Ruby/Go requests when E2B isn't configured
+  // or the prompt won't even produce a backend (nothing would run the code).
+  const e2bCanRunNonNodeBackend = Boolean(config.E2B_API_KEY) && needsBackend(prompt);
+  if (isUnsupportedBackendRuntime(prompt) && !e2bCanRunNonNodeBackend) {
+    const redirectMsg =
+      "WebContainers support Node.js only. I can build your backend in Hono.js " +
+      "with the same API structure. For Python/PHP/Ruby, use \"Download + Deploy\" " +
+      "mode instead.\n\nWould you like me to continue with a Node.js (Hono.js) backend?";
+    server?.thinking(sessionId, { text: redirectMsg, sessionId });
+    const reason = "Unsupported backend runtime requested. WebContainers run Node.js only.";
+    server?.buildFailed(sessionId, {
+      sessionId,
+      phase: "BUILD",
+      reason: redirectMsg,
+      logs: "",
+      timestamp: new Date().toISOString(),
+    });
+    await Promise.all([
+      db.update(buildSessions)
+        .set({ status: "failed", error: reason, completedAt: new Date() })
+        .where(eq(buildSessions.id, sessionId)),
+      db.update(projects).set({ status: "failed" }).where(eq(projects.id, projectId)),
+    ]);
+    // Nothing to refund — no dispatch ran before this rejection, so no real
+    // usage was incurred (usage is deducted per-dispatch, not pre-charged).
+    console.log(`[build] unsupported runtime request rejected, no usage incurred: ${prompt.slice(0, 80)}`);
+    return;
+  }
+
 
     // Start classifier concurrently with follow-up file selection below —
     // only needed for fresh builds; edits keep their existing detection path.
@@ -1846,29 +1800,14 @@ export async function runFastBuild(
       })
       .catch((err) => logger.warn({ sessionId, err }, "Could not show the threat model in chat"));
 
-    // Fetched unconditionally now — there's no upfront keyword gate deciding
-    // whether this build might need a connected service; the model decides
-    // that itself once these are attached to the dispatch. Cheap (single DB
-    // query + decrypt per row, no network calls) even when empty.
-    const userMcpServers = await getConnectedMcpServers(userId).catch(() => []);
+    // All connected user services were resolved before the conversational
+    // assistant. This build workflow reuses the same capability set rather
+    // than performing another connection lookup or filtering by prompt words.
+    // Connected MCP servers were resolved before the conversational
+    // assistant call and are reused here. Avoid a second DB/decryption pass.
     // Firecrawl/Exa are platform-level (env-var-gated, not user-connected) —
-    // mcp-action-agent.ts always included them for the same reason: a reference
-    // URL in the prompt shouldn't require a user to have connected anything.
-    // They still go through the same read-only classification as everything
-    // else below, not special-cased as trusted.
-    //
-    // Internal providers use the same locally executed MCP tool path as
-    // user-connected servers, independent of the model gateway.
-    // Exa is gated behind EXA_API_KEY exactly like Firecrawl: an MCP server
-    // attached with no authToken fails the client's auth resolution on every
-    // single call ("Could not resolve authentication method"), so offering it
-    // keyless only teaches the model to burn rounds on a tool that can never
-    // work.
-    // They attach only when the prompt actually contains a URL to scrape.
-    // A build with no reference URL never sees them: the local web_search tool
-    // already covers documentation lookups, and offering the scrapers on every
-    // build is exactly what let the model reach for them on connected-data
-    // prompts the intent router mis-sent to the build path (2026-11-04).
+    // they attach only when the request includes a URL and still pass through
+    // the same server-side read/write classification as user-connected tools.
     const promptHasUrl = /https?:\/\/\S+/.test(prompt);
     const internalMcpServers = [
       ...(promptHasUrl && config.FIRECRAWL_API_KEY
@@ -1886,16 +1825,16 @@ export async function runFastBuild(
     // writes still go through the approval-gated proxies — so the guard would
     // now only be hiding the servers the user deliberately connected.
     //
-    // Attach only user servers relevant to this prompt; internal web tools are
-    // shared local tools for both gateways.
-    const { kept: relevantUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
+    // Attach every connected user server. Tool definitions are bounded later
+    // by capMcpTools, but the server itself is not hidden by prompt keywords.
+    const { kept: connectedUserMcp, dropped: droppedMcp } = serversForPrompt(prompt, userMcpServers);
     if (droppedMcp.length > 0) {
       console.log(
-        `[build] mcp relevance project=${projectId} kept=[${relevantUserMcp.map((s) => s.slug).join(",")}] ` +
+        `[build] mcp relevance project=${projectId} kept=[${connectedUserMcp.map((s) => s.slug).join(",")}] ` +
         `dropped=[${droppedMcp.join(",")}]`,
       );
     }
-    const mcpServers = [...relevantUserMcp, ...internalMcpServers];
+    const mcpServers = [...connectedUserMcp, ...internalMcpServers];
 
     // ── What deploy_app needs, if the user connected Vercel ──────────────────
     // Lifted from the servers already resolved above rather than read again:
@@ -1921,22 +1860,10 @@ export async function runFastBuild(
     // different credential from the MCP one, so it is read as its own thing.
     // REST-only providers carry their credentials the same way: resolved here
     // and passed down so the *_query tools can answer with real data.
-    const restCreds = await getRestProviderCredentials(userId).catch(() => ({}));
-
-    // The build-path model gets the same authoritative connection summary the
-    // query chat gets, so "what's connected" answered inside a build reports
-    // the database's truth instead of the prompt's provider list.
-    const connectedServices = await getConnectedServicesSummary(userId).catch(() => []);
-
-    const vercelMcp = userMcpServers.find((s) => s.slug === "vercel");
-    const vercelDeployToken = vercelMcp
-      ? await getUserVercelDeployToken(userId).catch(() => null)
-      : null;
-    const vercelTeamId = vercelDeployToken
-      ? await getUserVercelTeamId(vercelDeployToken).catch(() => undefined)
-      : undefined;
-    let deployCtx: { vercelToken: string; teamId?: string; projectName: string } | undefined;
-    if (vercelDeployToken) {
+    // The same credentials and connection summary used by the conversational
+    // assistant are already resolved above. Reuse them for the generation tools.
+    // The project name is loaded only when a Vercel deploy token exists.
+    if (vercelDeployToken && !deployCtx) {
       const named = await db
         .select({ name: projects.name })
         .from(projects)
@@ -1973,12 +1900,10 @@ export async function runFastBuild(
       console.log(`[build] threats in-prompt session=${sessionId} count=${threatsForBuild.length}`);
     }
 
-    // The intent classifier routes informational asks to the query path, but
-    // when one slips through as a build (misclassification or classifier
-    // failure → build fallback) the model used to grab a web tool (Firecrawl/
-    // Exa) for the user's own repos and then fail src/App.tsx generation. This
-    // block gives the generation model the same routing rule the query prompt
-    // has.
+    // The conversational assistant normally answers read-only account queries
+    // before this point. Keep the same private-data routing rule here as a
+    // defence-in-depth invariant: a workspace handoff is not permission to
+    // generate an app when the user only asked to inspect their connected data.
     const connectedDataRule =
       `\n\nCONNECTED-SERVICES ROUTING:\n` +
       `If the user's request only asks to list, show, check or inspect data from their OWN connected accounts — GitHub repositories, issues, pull requests, CI runs, Vercel deployments, Shopify store, WordPress, Twilio, SendGrid, Mailchimp — do NOT generate or modify any app files for it.\n` +

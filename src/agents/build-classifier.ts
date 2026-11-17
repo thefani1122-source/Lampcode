@@ -315,13 +315,18 @@ export async function classifyBuild(
   if (opts?.dispatcher && opts.sessionId && opts.userId && opts.projectId) {
     try {
       const result = await opts.dispatcher.dispatch({
-        agentType: "acceptance",
+        agentType: "build_classifier",
         usageCategory: "build",
         provider: opts.provider ?? "modal",
-        task: { description: `${CLASSIFY_INSTRUCTION}\n\nThe request:\n${prompt}`, outputFormat: "json" },
+        task: {
+          description: "Decide whether the original user request requires a server/database and real sign-in.",
+          outputFormat: "json",
+        },
         sessionId: opts.sessionId,
         userId: opts.userId,
         projectId: opts.projectId,
+        userPrompt: prompt,
+        enableTools: false,
         costGuard: { cumulativeUsd: 0, maxUsd: 0.05 },
       });
       const parsed = parseClassification(result.finalContent || result.content);

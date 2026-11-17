@@ -37,46 +37,26 @@ const srv = (slug: string) =>
 const ALL = [srv("github"), srv("vercel"), srv("n8n"), srv("wordpress")];
 const keptSlugs = (p: string) => serversForPrompt(p, ALL).kept.map((s) => (s as { slug: string }).slug);
 
-// ── the failure, pinned ──────────────────────────────────────────────────────
-
-// The exact request shape that produced the 283-tool round. Nothing in it
-// points at a connected service, so nothing should ride along.
 check(
-  "a plain app build attaches no MCP server at all",
-  keptSlugs("Build a complete, working issue tracker with login and a dashboard"),
+  "all connected servers are available to model-side tool selection on an ordinary app request",
+  keptSlugs("Build a complete working issue tracker with login and a dashboard").sort(),
+  ["github", "n8n", "vercel", "wordpress"],
+);
+check(
+  "all connected servers are available for a plain technical question",
+  keptSlugs("Explain how React server components work").sort(),
+  ["github", "n8n", "vercel", "wordpress"],
+);
+check(
+  "all connected servers are available for an explicitly named service request",
+  keptSlugs("Create a repository and deploy to Vercel").sort(),
+  ["github", "n8n", "vercel", "wordpress"],
+);
+check(
+  "server discovery does not silently drop connected capabilities",
+  serversForPrompt("anything", ALL).dropped,
   [],
 );
-
-check(
-  "and the dropped list says which ones, for the log",
-  serversForPrompt("Build a todo app", ALL).dropped,
-  ["github", "vercel", "n8n", "wordpress"],
-);
-
-// ── the opposite mistake, pinned harder ──────────────────────────────────────
-
-ok("naming a server keeps it", keptSlugs("deploy this to vercel").includes("vercel"));
-ok("'push to github' keeps github", keptSlugs("push this to github").includes("github"));
-ok("'create a repo' keeps github", keptSlugs("create a repo for this project").includes("github"));
-ok("'commit' keeps github", keptSlugs("commit the changes").includes("github"));
-ok("'deploy it' keeps every deploy server", keptSlugs("deploy it").includes("vercel"));
-ok("'go live' counts as deploying", keptSlugs("make it go live").includes("vercel"));
-ok("an automation request keeps n8n", keptSlugs("add an automation workflow").includes("n8n"));
-ok("a wordpress request keeps wordpress", keptSlugs("sync posts to wordpress").includes("wordpress"));
-ok("a stitch request keeps google-stitch", serversForPrompt("make a design with google stitch", [srv("google-stitch")]).kept.length === 1);
-ok("a stitch typo request keeps google-stitch", serversForPrompt("mujhe google stich ka use kr k shoe site banao", [srv("google-stitch")]).kept.length === 1);
-
-// The whole point: a request that wants both gets both, and still drops what
-// it never mentioned.
-check(
-  "a repo + deploy request keeps exactly those two",
-  keptSlugs("create a github repo, push the code, and deploy to vercel").sort(),
-  ["github", "vercel"],
-);
-
-// A word that merely CONTAINS a hint must not trigger it. "prepublish" is a
-// real word in a package.json conversation and means nothing about deploying.
-ok("'prepublished' does not count as publish", !keptSlugs("the prepublished draft").includes("vercel"));
 
 // ── the ceiling ──────────────────────────────────────────────────────────────
 
@@ -109,6 +89,24 @@ check("the same list keeps its order", capMcpTools("anything", defs(10, "github"
   ok(
     "a tool the request names survives the cut",
     r.kept.some((d) => d.name === "vercel__create_deployment"),
+  );
+}
+
+{
+  // MCP tool names can be opaque provider identifiers; use the real tool
+  // description as a second relevance signal when the name is not expressive.
+  const list: ToolDefinition[] = [
+    ...defs(MAX_MCP_TOOLS, "generic"),
+    {
+      name: "provider__action_73",
+      description: "Create an invoice and charge a customer's payment method",
+      input_schema: { type: "object" },
+    },
+  ];
+  const r = capMcpTools("create an invoice and charge the customer", list);
+  ok(
+    "a tool whose use case matches the request survives even when its name does not",
+    r.kept.some((d) => d.name === "provider__action_73"),
   );
 }
 

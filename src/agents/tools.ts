@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describeTier } from "../mcp/tiers.js";
 import { logger } from "../server/logger.js";
 import type { ToolDefinition } from "./model-gateway.js";
+import { REQUEST_PROJECT_BUILD_TOOL_NAME } from "./build-handoff.js";
 import { createPendingApproval, resolveApproval, APPROVAL_TIMEOUT_MS } from "./pending-approvals.js";
 import { getWebSocketServer } from "../websocket/server.js";
 import type { WriteProxyRegistry } from "./mcp-tool-classifier.js";
@@ -17,6 +18,31 @@ import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
 const SANDBOX_REQUIRED = new Set(["delete_file", "write_files", "edit_file", "list_files", "read_file", "fetch_reference", "read_logs", "check_page", "run_tests", "check_types", "look_at_page", "shell", "browser_interact"]);
 
 // ── Tool definitions (Anthropic tool-use shape) ─────────────────────────────
+
+// Model-invoked control handoff from the conversational assistant to the
+// project workspace pipeline. It performs no file or external write itself;
+// queryMode still exposes only read tools plus this single routing signal.
+export const QUERY_HANDOFF_TOOLS: ToolDefinition[] = [
+  {
+    name: REQUEST_PROJECT_BUILD_TOOL_NAME,
+    description:
+      "Hand the ORIGINAL user request to LampCode's project workspace/build workflow. " +
+      "Call this only when the user explicitly wants LampCode to create, edit, fix, refactor, delete or deploy project code/files. " +
+      "Do NOT call it for explanations, code snippets in chat, research, read-only project inspection or bug reports that do not ask you to change anything. " +
+      "This tool does not modify files or call external services; it only asks the host to activate the project workflow. " +
+      "The workspace agent will receive the original user message and the appropriate project tools. External writes/deploys remain subject to their own approval/intent rules.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Briefly explain why the user's explicit request requires project workspace execution.",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+];
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -292,15 +318,15 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
   {
     name: "write_files",
     description:
-      "Write files into the project's live preview sandbox. Use this instead of printing " +
-      "code in your reply — files only exist once written.\n" +
-      "Each file's `content` REPLACES THAT FILE ENTIRELY. There is no merging, patching or " +
-      "appending: whatever you send becomes the whole file, and anything you leave out is " +
-      "gone. To change one line of a file, send the complete file with that line changed — " +
-      "never send only the changed part.\n" +
-      "Files you do not write are untouched. Call it as many times as you need; a later " +
-      "write to the same path replaces the earlier one. After writing, verify with " +
-      "check_page before you finish.\n" +
+      "Write complete files into the project's live preview sandbox. Use this for NEW files " +
+      "or an intentional FULL-FILE rewrite where most of the file is genuinely changing.\n" +
+      "Each file's `content` REPLACES THAT FILE ENTIRELY. Never send a fragment, partial " +
+      "component, half-function or only the changed lines: the supplied content becomes the " +
+      "whole file. For a small change to an existing file, read it first and use edit_file " +
+      "with an exact, unique old_string/new_string replacement instead.\n" +
+      "Files you do not write are untouched. A later write to the same path replaces the " +
+      "earlier one. After changing files, run the relevant verification tools and re-run any " +
+      "checks invalidated by later writes.\n" +
       "Some files belong to the project template and cannot be written — src/styles.css, " +
       "package.json, vite.config.ts, tsconfig.json, index.html. For custom CSS (keyframes, " +
       "animations, anything styles.css doesn't cover) create your OWN stylesheet, e.g. " +

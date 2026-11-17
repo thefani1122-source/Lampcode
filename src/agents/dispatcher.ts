@@ -19,12 +19,14 @@ import { buildGithubWriteRegistry, GITHUB_WRITE_DEFS } from "./tools/github-writ
 import { buildVercelWriteRegistry, VERCEL_WRITE_DEFS } from "./tools/vercel-writes.js";
 import { TokenTracker } from "./token-tracker.js";
 import { PromptBuilder, type TaskInput } from "./prompt-builder.js";
+import { parseProjectBuildHandoff, REQUEST_PROJECT_BUILD_TOOL_NAME } from "./build-handoff.js";
 import { PSEUDO_TOOL_CORRECTION } from "./pseudo-tools.js";
 import { visionSupported } from "./vision.js";
 import type { BuildEvent } from "../verify/outcome-projection.js";
 import { handleAgentStream, type StreamChunk as HandlerStreamChunk, type StreamResult } from "./stream-handler.js";
 import {
   TOOL_DEFINITIONS,
+  QUERY_HANDOFF_TOOLS,
   AGENTIC_BUILD_TOOLS,
   executeTool,
   type GateOutcome,
@@ -198,6 +200,10 @@ export interface DispatchResult {
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   /** MCP tool calls actually executed (server-side, already resolved) this dispatch. */
   mcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }>;
+  /** True when the conversational model explicitly requested a workspace/build handoff. */
+  requestedBuild: boolean;
+  /** Short model-supplied reason for the workspace handoff, when requested. */
+  requestedBuildReason?: string | undefined;
   /** True if the model called request_write_action — a write/destructive
    *  action was needed but isn't available yet. Lets the caller distinguish
    *  "declined a write action" from "generation genuinely produced nothing". */
@@ -449,21 +455,26 @@ export class AgentDispatcher {
       }
       const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
       writeProxyRegistry = writeProxies.registry;
-      // The registry keeps EVERY tool; only the definitions sent to the model
-      // are capped. A tool trimmed from this round's list is still executable
-      // if the model names it from an earlier round, which is the difference
-      // between "not offered right now" and "gone".
-      const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
-      writeProxyDefs = cappedWrites.kept;
-      mcpToolsOmitted += cappedWrites.omitted;
-      // Both model providers receive the same local function tools. Lampcode
-      // executes reads locally and gates every write before it reaches a server.
+      // Both model providers receive the same locally executed read tools and
+      // approval-gated write proxies. Keep all discovered tools in their
+      // execution registries, but apply ONE shared definition budget across
+      // both sets so a large server cannot double the cap.
       const readTools = buildReadToolDefinitions(report, mcpServers);
       readMcpRegistry = readTools.registry;
       if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
-      const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
-      readToolDefs = cappedReads.kept;
-      mcpToolsOmitted += cappedReads.omitted;
+      // In read-only query mode, write proxies are never exposed, so they
+      // must not consume the read-tool budget. In workspace/build mode, cap
+      // the combined read + approval-gated write definitions once.
+      const offeredMcpDefinitions = options.queryMode
+        ? readTools.toolDefs
+        : [...writeProxies.toolDefs, ...readTools.toolDefs];
+      const cappedMcp = capMcpTools(options.userPrompt ?? "", offeredMcpDefinitions);
+      const offeredNames = new Set(cappedMcp.kept.map((tool) => tool.name));
+      writeProxyDefs = options.queryMode
+        ? []
+        : writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name));
+      readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name));
+      mcpToolsOmitted += cappedMcp.omitted;
       logger.info(
         {
           sessionId,
@@ -548,7 +559,8 @@ export class AgentDispatcher {
         projectId: projectId ?? "unknown",
         userId: userId ?? "anonymous",
         mode: "fast",
-        prompt: task.description,
+        // Preserve the raw user request separately from generated task metadata.
+        prompt: options.userPrompt ?? task.description,
       }, workspaceDir, contextFiles, options.projectFiles, options.projectSkillDir);
 
     // Create DB row (don't block on failure — tracking is best-effort)
@@ -643,6 +655,8 @@ export class AgentDispatcher {
     const allToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     const allMcpToolCalls: Array<{ id: string; name: string; serverName: string; isError: boolean }> = [];
     let requestedWriteAction = false;
+    let requestedBuild = false;
+    let requestedBuildReason: string | undefined;
     let loopCostUsd = 0;
     let lastStopReason: string | undefined;
     let roundsUsed = 0;
@@ -725,7 +739,7 @@ export class AgentDispatcher {
             ? ToolDisclosure.filterForTask(
                 [
                   ...TOOL_DEFINITIONS,
-                  ...AGENTIC_BUILD_TOOLS,
+                  ...QUERY_HANDOFF_TOOLS,
                   ...readToolDefs,
                 ],
                 "code_review_query",
@@ -958,7 +972,18 @@ export class AgentDispatcher {
         // identity is enough and nothing large is duplicated per tool call.
         const filesBefore = new Map(Object.entries(generatedFiles));
         const deletedBefore = new Set(deletedFiles);
-        const result = await executeTool(tc.name, tc.arguments, {
+        let result: string;
+        if (options.queryMode && tc.name === REQUEST_PROJECT_BUILD_TOOL_NAME) {
+          const handoff = parseProjectBuildHandoff(tc.arguments);
+          if (!handoff.ok) {
+            result = `Error: ${handoff.error}`;
+          } else {
+            requestedBuild = true;
+            requestedBuildReason = handoff.reason;
+            result = "Workspace handoff accepted. No files or external services were changed by this control tool. LampCode will now continue with the original user request in the project workspace workflow.";
+          }
+        } else {
+          result = await executeTool(tc.name, tc.arguments, {
           contextFiles,
           sessionId,
           workspaceDir,
@@ -1004,9 +1029,10 @@ export class AgentDispatcher {
                 ...(options.deploy === undefined ? {} : { deploy: options.deploy }),
               }
             : {}),
-        }).catch(
-          (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+          }).catch(
+            (err) => `Error: tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         emitEvent({ type: "tool/result", name: tc.name, ok: !result.startsWith("Error:"), round });
 
         // A gate's verdict, at the moment it was given.
@@ -1115,6 +1141,10 @@ export class AgentDispatcher {
       }
 
       messages.push({ role: "user", content: resultBlocks });
+      // The model explicitly requested the workspace transition. Do not keep
+      // asking a read-only assistant to act as the builder; return control to
+      // the host, which activates the sandbox and starts the build dispatch.
+      if (requestedBuild) break;
     }
 
     // Persist the full multi-round transcript at this dispatch's canonical
@@ -1260,6 +1290,8 @@ export class AgentDispatcher {
       toolCalls: allToolCalls,
       mcpToolCalls: allMcpToolCalls,
       requestedWriteAction,
+      requestedBuild,
+      ...(requestedBuildReason ? { requestedBuildReason } : {}),
       stopReason: lastStopReason,
       generatedFiles,
       outputPath,

@@ -54,12 +54,13 @@ const t = (
   allowed: boolean,
   reason: ClassifiedTool["reason"],
   inputSchema?: Record<string, unknown>,
-): ClassifiedTool => ({ serverSlug, toolName, allowed, reason, inputSchema });
+  description?: string,
+): ClassifiedTool => ({ serverSlug, toolName, allowed, reason, inputSchema, description });
 
 const REPORT: ClassifiedTool[] = [
-  t("github", "list_issues", true, "annotation-read-only", { properties: { repo: { type: "string" } } }),
+  t("github", "list_issues", true, "annotation-read-only", { properties: { repo: { type: "string" } } }, "List issues in a repository, with state and label filters."),
   t("github", "get_file_contents", true, "name-pattern-match"),
-  t("github", "create_issue", false, "annotation-destructive", { properties: { title: { type: "string" } } }),
+  t("github", "create_issue", false, "annotation-destructive", { properties: { title: { type: "string" } } }, "Create a new issue in the selected repository."),
   t("github", "merge_pull_request", false, "name-pattern-no-match"),
   t("railway", "list_deployments", true, "annotation-read-only"),
   t("railway", "restart_service", false, "annotation-destructive"),
@@ -165,6 +166,22 @@ check(
   "the server's own input schema is carried through",
   read.toolDefs.find((d) => d.name === "github__list_issues")?.input_schema,
   { type: "object", properties: { repo: { type: "string" } } },
+);
+
+check(
+  "the original MCP read-tool use case reaches the model",
+  read.toolDefs.find((d) => d.name === "github__list_issues")?.description,
+  "Read-only tool on the connected github service. Original tool: list_issues.\n\nList issues in a repository, with state and label filters.",
+);
+check(
+  "the original MCP write-tool use case reaches the model behind approval",
+  write.toolDefs.find((d) => d.name === "github__create_issue")?.description?.includes("Create a new issue in the selected repository."),
+  true,
+);
+check(
+  "MCP write description still tells the model approval is required",
+  write.toolDefs.find((d) => d.name === "github__create_issue")?.description?.includes("paused until the user approves or denies"),
+  true,
 );
 
 check(
