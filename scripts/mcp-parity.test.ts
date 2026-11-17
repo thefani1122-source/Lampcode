@@ -12,7 +12,13 @@ ok("both model providers use the same local read definitions", dispatcher.includ
 ok("write proxies remain approval-gated in the shared dispatcher", dispatcher.includes("buildWriteProxyDefinitions(report, mcpServers)") && dispatcher.includes("writeMcpRegistry: writeProxyRegistry"));
 ok("dispatcher never sends remote MCP connector definitions to Anthropic", !dispatcher.includes("mcp_servers:") && !dispatcher.includes("mcpToolsets"));
 ok("Anthropic gateway exposes only its standard local tool stream", !gateway.includes("beta.messages.create") && !gateway.includes("mcp_servers") && !gateway.includes("streamWithMcp"));
-ok("relevance cap remains on both local read and write tool sets", (dispatcher.match(/capMcpTools\(/g) ?? []).length >= 2);
+ok(
+  "one combined relevance cap is applied across local read and approval-gated write tools",
+  dispatcher.includes("const allMcpDefinitions = [...writeProxies.toolDefs, ...readTools.toolDefs]") &&
+    dispatcher.includes("const cappedMcp = capMcpTools(options.userPrompt ?? \"\", allMcpDefinitions)") &&
+    dispatcher.includes("writeProxyDefs = writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name))") &&
+    dispatcher.includes("readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name))"),
+);
 
 if (failures) process.exit(1);
 console.log("All MCP provider-parity cases passed.");
