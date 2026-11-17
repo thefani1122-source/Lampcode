@@ -449,21 +449,19 @@ export class AgentDispatcher {
       }
       const writeProxies = buildWriteProxyDefinitions(report, mcpServers);
       writeProxyRegistry = writeProxies.registry;
-      // The registry keeps EVERY tool; only the definitions sent to the model
-      // are capped. A tool trimmed from this round's list is still executable
-      // if the model names it from an earlier round, which is the difference
-      // between "not offered right now" and "gone".
-      const cappedWrites = capMcpTools(options.userPrompt ?? "", writeProxies.toolDefs);
-      writeProxyDefs = cappedWrites.kept;
-      mcpToolsOmitted += cappedWrites.omitted;
-      // Both model providers receive the same local function tools. Lampcode
-      // executes reads locally and gates every write before it reaches a server.
+      // Both model providers receive the same locally executed read tools and
+      // approval-gated write proxies. Keep all discovered tools in their
+      // execution registries, but apply ONE shared definition budget across
+      // both sets so a large server cannot double the cap.
       const readTools = buildReadToolDefinitions(report, mcpServers);
       readMcpRegistry = readTools.registry;
       if (readTools.escalated.length > 0) mcpEscalated.push(...readTools.escalated);
-      const cappedReads = capMcpTools(options.userPrompt ?? "", readTools.toolDefs);
-      readToolDefs = cappedReads.kept;
-      mcpToolsOmitted += cappedReads.omitted;
+      const allMcpDefinitions = [...writeProxies.toolDefs, ...readTools.toolDefs];
+      const cappedMcp = capMcpTools(options.userPrompt ?? "", allMcpDefinitions);
+      const offeredNames = new Set(cappedMcp.kept.map((tool) => tool.name));
+      writeProxyDefs = writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name));
+      readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name));
+      mcpToolsOmitted += cappedMcp.omitted;
       logger.info(
         {
           sessionId,
