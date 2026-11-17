@@ -1097,11 +1097,7 @@ export async function runFastBuild(
         .set({ status: "success", completedAt: new Date() })
         .where(eq(buildSessions.id, sessionId));
 
-      await db
-        .update(projects)
-        .set({ status: "live" })
-        .where(eq(projects.id, projectId));
-
+      // A conversational reply does not change the project's lifecycle status.
       return;
     }
 
