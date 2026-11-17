@@ -733,7 +733,6 @@ export class AgentDispatcher {
                 [
                   ...TOOL_DEFINITIONS,
                   ...QUERY_HANDOFF_TOOLS,
-                  ...AGENTIC_BUILD_TOOLS,
                   ...readToolDefs,
                 ],
                 "code_review_query",
