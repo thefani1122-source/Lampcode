@@ -78,6 +78,9 @@ check("every request first reaches the conversational assistant", routeSource.in
 check("assistant receives the original prompt as its task text", routeSource.includes("description: prompt,"));
 check("a normal answer completes without activating the workspace", routeSource.includes("if (!queryDispatchResult.requestedBuild)"));
 check("only a model-requested handoff continues into build setup", routeSource.includes("if (!queryDispatchResult.requestedBuild)"));
+check("the unsupported-runtime guard runs only after the model handoff", routeSource.indexOf("if (!queryDispatchResult.requestedBuild)") < routeSource.indexOf("Unsupported runtime guard"));
+check("the project is not marked building before the conversational assistant responds", routeSource.indexOf('agentType: "query"') < routeSource.indexOf('set({ status: "building" })'));
+check("normal chat does not force the project lifecycle state to live", !routeSource.includes('set({ status: "live" }).where(eq(projects.id, projectId))') || routeSource.indexOf('set({ status: "live" }).where(eq(projects.id, projectId))') > routeSource.indexOf("if (!queryDispatchResult.requestedBuild)"));
 check("build handoff keeps the original request for later build dispatch", routeSource.includes("userPrompt: prompt,"));
 
 if (failures) {
