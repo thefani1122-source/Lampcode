@@ -19,6 +19,12 @@ ok(
     dispatcher.includes("writeProxyDefs = writeProxies.toolDefs.filter((tool) => offeredNames.has(tool.name))") &&
     dispatcher.includes("readToolDefs = readTools.toolDefs.filter((tool) => offeredNames.has(tool.name))"),
 );
+ok(
+  "read-only query mode budgets only the read tools it can actually expose",
+  dispatcher.includes("const offeredMcpDefinitions = options.queryMode") &&
+    dispatcher.includes("? readTools.toolDefs") &&
+    dispatcher.includes("writeProxyDefs = options.queryMode ? []"),
+);
 
 if (failures) process.exit(1);
 console.log("All MCP provider-parity cases passed.");
