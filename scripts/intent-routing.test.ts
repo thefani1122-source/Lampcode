@@ -59,6 +59,7 @@ for (const allowed of [
 
 const dispatcherSource = readFileSync("src/agents/dispatcher.ts", "utf8");
 check("dispatcher supplies a separate workspace handoff tool in query mode", dispatcherSource.includes("...QUERY_HANDOFF_TOOLS"));
+check("query dispatch does not expose agentic build tools", !/options\.queryMode[\s\S]*?\? ToolDisclosure\.filterForTask\([\s\S]*?\.\.\.AGENTIC_BUILD_TOOLS/.test(dispatcherSource));
 check("dispatcher validates the handoff instead of executing it as a normal tool", dispatcherSource.includes("parseProjectBuildHandoff(tc.arguments)"));
 check("dispatcher only accepts the handoff from query mode", dispatcherSource.includes("options.queryMode && tc.name === REQUEST_PROJECT_BUILD_TOOL_NAME"));
 check("dispatch result reports requestedBuild", dispatcherSource.includes("requestedBuild,"));
@@ -70,7 +71,7 @@ check("handoff description says it does not modify files or services", toolsSour
 
 const promptSource = readFileSync("src/agents/prompt-builder.ts", "utf8");
 check("query assistant can give code snippets in chat", promptSource.includes("provide snippets or complete examples in chat"));
-check("query assistant knows when to request workspace execution", promptSource.includes("call `request_project_build`"));
+check("query assistant knows when to request workspace execution", promptSource.includes("call the request_project_build tool"));
 check("query assistant does not ban all code output", !promptSource.includes("never write app code"));
 check("dedicated intent persona has been removed", !promptSource.includes("You classify the user's latest message"));
 check("dedicated intent model role has been removed from the model catalogue", !readFileSync("src/agents/model-gateway.ts", "utf8").includes("intent:"));
