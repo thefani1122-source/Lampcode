@@ -1704,8 +1704,9 @@ export class PromptBuilder {
 
     const [baseSystemPrompt, skillsBlock, contextBlock] = await Promise.all([
       Promise.resolve(this.buildSystemPrompt(agentType, task)),
-      // Query chat never loads skills: they are code-generation conventions,
-      // and the query prompt promises not to generate code.
+      // General chat does not automatically load project-specific skills.
+      // The model can still request a listed skill when its description/tool
+      // schema makes that useful; detailed skill bodies are never forced in.
       agentType === "query"
         ? Promise.resolve("")
         : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
@@ -1760,12 +1761,10 @@ export class PromptBuilder {
   // ── Private ──────────────────────────────────────────────────────────────────
 
   private async buildSystemPrompt(agentType: AgentTaskType, task: TaskInput): Promise<string> {
-    // The query chat gets its full answer from SYSTEM_PROMPTS.query and
-    // deliberately reuses NONE of the build machinery below: the security
-    // contract is already gated by SECURITY_AWARE_CODE_AGENTS (query is not
-    // in it), and framework/fullstack/db/edit/provider/skill/narration
-    // blocks are build-only. An early return keeps that guarantee structural
-    // rather than depending on every gate staying in sync.
+    // The conversational assistant gets a compact, task-neutral prompt. It
+    // does not receive build-only framework/database/edit instructions; its
+    // native read tools and the workspace-handoff control let the model decide
+    // whether the original request needs a project build.
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
