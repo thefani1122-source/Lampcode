@@ -1721,8 +1721,8 @@ async function buildSkillIndex(): Promise<string> {
   skillIndexCache = lines.length > 0
     ? "\n\n## House-style references\n" +
       "These conventions exist in this codebase. Apply what's relevant from your " +
-      "own knowledge of the tools/patterns named — the full reference text loads " +
-      "automatically when your task matches it:\n" +
+      "own knowledge of the tools/patterns named. Use load_skill to retrieve full " +
+      "reference text when relevant; selection is semantic, not keyword-based:\n" +
       lines.join("\n")
     : "";
   return skillIndexCache;
