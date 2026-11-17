@@ -1967,7 +1967,7 @@ export class PromptBuilder {
     // missing-files retry). Appended last, inside baseSystemPrompt, so it never
     // touches skillContents/SKILLS_BLOCK_MARKER — it's part of the cache-split's
     // base segment, not the variable skills segment.
-    const skillIndex = agentType === "frontend" ? await buildSkillIndex() : "";
+    const skillIndex = task.toolsEnabled === true && SECURITY_AWARE_CODE_AGENTS.has(agentType) ? await buildSkillIndex() : "";
 
     // agenticInstruction goes LAST, after skillIndex. It countermands the fence
     // format that everything before it teaches at length, so it has to be the
