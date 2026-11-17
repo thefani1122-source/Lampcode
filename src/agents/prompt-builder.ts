@@ -1694,14 +1694,8 @@ export const ALL_SKILL_NAMES = [
 let skillIndexCache: string | null = null;
 
 /**
- * Always-visible, one-line-per-skill index appended to the base (cacheable)
- * system prompt — never the variable skills block. Keyword gates can't
- * anticipate every real phrasing a user might use ("luxury agency landing
- * page" doesn't contain "animation"), so this gives the model ambient
- * awareness that these conventions exist even when a skill's full body isn't
- * gate-loaded this build. It doesn't depend on matching the user's exact
- * words the way the gates do — the model applies what's relevant from its
- * own knowledge of the tools/patterns named in each one-line description.
+ * Metadata-only catalogue shown to tool-enabled code agents.
+ * The model selects skills semantically and loads full bodies through load_skill.
  */
 async function buildSkillIndex(): Promise<string> {
   if (skillIndexCache !== null) return skillIndexCache;
@@ -2393,7 +2387,7 @@ export class PromptBuilder {
     const securityContract = SECURITY_AWARE_CODE_AGENTS.has(agentType)
       ? `${SECURE_GENERATION_CONTRACT}\n\n`
       : "";
-    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
+    // Keep the live sandbox/tool contract last so it overrides earlier legacy output-format guidance.\n    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
   }
 
   private async buildContextBlock(
