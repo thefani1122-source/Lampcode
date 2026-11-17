@@ -171,7 +171,7 @@ check(
 check(
   "the original MCP read-tool use case reaches the model",
   read.toolDefs.find((d) => d.name === "github__list_issues")?.description,
-  "Read-only tool on the connected github service. Original tool: list_issues.\\n\\nList issues in a repository, with state and label filters.",
+  "Read-only tool on the connected github service. Original tool: list_issues.\n\nList issues in a repository, with state and label filters.",
 );
 check(
   "the original MCP write-tool use case reaches the model behind approval",
