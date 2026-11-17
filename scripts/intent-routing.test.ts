@@ -7,8 +7,11 @@ import {
 import { QUERY_MODE_READONLY_TOOL_NAMES } from "../src/agents/tool-disclosure.js";
 
 let failures = 0;
-function check(name: string, got: unknown, want: unknown): void {
-  if (JSON.stringify(got) === JSON.stringify(want)) {
+function check(name: string, condition: boolean): void;
+function check(name: string, got: unknown, want: unknown): void;
+function check(name: string, got: unknown, want?: unknown): void {
+  const passed = arguments.length === 2 ? got === true : JSON.stringify(got) === JSON.stringify(want);
+  if (passed) {
     console.log("✔ " + name);
   } else {
     failures++;
