@@ -619,7 +619,7 @@ async function runPromptModeChecks(): Promise<void> {
   check(
     "the model can explicitly load provider-neutral SQL and NoSQL security guidance",
     mongoGuidance.includes("Document and key-value databases") &&
-      mongoGuidance.includes("do not assume Supabase"),
+      mongoGuidance.includes("never assume Supabase"),
     true,
   );
 
