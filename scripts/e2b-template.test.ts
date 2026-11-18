@@ -15,7 +15,7 @@ import {
   ubuntuTemplate,
   createUbuntuBaseTemplate,
 } from '../e2b-template/template.js'
-import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
+import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
 
 // Existing production Node 20 image stays unchanged and remains Vite.
 assert.match(dockerfile, /^FROM node:20-slim/m)
@@ -82,5 +82,7 @@ assert.ok(!nextPkg.dependencies.three, 'Three.js should be installed only when t
 assert.match(NEXT_QUERY_CLIENT_TS, /export function createQueryClient\(\)/)
 assert.match(NEXT_PROVIDERS_TS, /useState\(\(\) => createQueryClient\(\)\)/)
 assert.ok(!NEXT_PROVIDERS_TS.includes("import { queryClient }"))
+assert.ok(NEXT_VITEST_CONFIG.includes("import.meta.url"), 'Vitest alias resolves correctly in the ESM project')
+assert.ok(!NEXT_VITEST_CONFIG.includes('__dirname'), 'Vitest config does not rely on CommonJS globals')
 
 console.log('E2B Ubuntu Vite + Next.js template contract tests passed.')
