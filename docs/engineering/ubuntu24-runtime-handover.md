@@ -229,7 +229,7 @@ Only after staging canaries succeed should the same two selectors be updated in 
 
 ## 9. Verification state on this branch
 
-Latest reviewed branch head at the time of this handover: `17761ae61baef0e2e4606121b5f8b2dbdb9fa5a3`.
+Implementation and dependency changes were validated on the PR branch; the latest completed functional/MCP runs also include the documentation-only handover commits (18 Nov 2026). See [CI run #44345813812](https://github.com/thefani1122-source/Lampcode/actions/runs/44345813812) and [MCP CI run #44345815037](https://github.com/thefani1122-source/Lampcode/actions/runs/44345815037).
 
 - `npm ci`: passed.
 - TypeScript typecheck: passed.
