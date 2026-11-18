@@ -61,3 +61,7 @@ The manual GitHub Actions workflow can run the same process after adding `E2B_AP
 Do not alter production configuration during the POC. After both candidates are live-verified, set `E2B_TEMPLATE_ID=lampcode-vite-ubuntu24` and `NEXTJS_TEMPLATE_ID=lampcode-nextjs-ubuntu24` only in a staging backend. Run real Vite+Hono, Vite+FastAPI and Next.js canaries. Then promote the same selectors to production.
 
 Rollback: restore `E2B_TEMPLATE_ID=lampcode-vite` and keep `NEXTJS_TEMPLATE_ID` unset. No migrations or user-project conversions are required; projects keep their framework metadata and stored files.
+
+## Full architecture and operations handover
+
+See [LampCode Ubuntu 24.04 Runtime — Architecture & Operations Handover](../docs/engineering/ubuntu24-runtime-handover.md) for the full request-to-preview/deploy flow, runtime boundaries, environment variables, staging sequence, rollback steps and current verification state.
