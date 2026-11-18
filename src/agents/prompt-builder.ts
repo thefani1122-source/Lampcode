@@ -1749,10 +1749,11 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("frontend-sandbox");
   }
   if (opts?.buildType === "fullstack" && selectedFramework === "nextjs") skillsToLoad.add("nextjs-production");
-  if (/\b(?:crew\s*ai|crewai)\b/i.test(prompt)) skillsToLoad.add("crewai");
-  if (/\b(?:langgraph|langchain)\b/i.test(prompt)) skillsToLoad.add("langgraph");
-  if (/\b(?:ai agent|agentic|multi[- ]agent|agent orchestration|agent framework)\b/i.test(prompt)) skillsToLoad.add("agent-architecture");
-  if (/\b(?:animation|animated|motion|gsap|three\.js|webgl|3d scene|spline|parallax|scroll reveal)\b/i.test(prompt)) skillsToLoad.add("animation-expert");
+  // Optional specialist guidance is deliberately NOT injected by keyword
+  // matching. The metadata-only catalogue is always available to tool-enabled
+  // builds; the model decides semantically whether to call load_skill. This
+  // avoids carrying large CrewAI/LangGraph/animation references through every
+  // prompt merely because a provider name appears in the request.
 
   // Core implementation AND product-design skills — always for any frontend/fullstack build.
   // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
