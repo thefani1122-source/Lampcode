@@ -19,7 +19,7 @@ import { Template } from 'e2b'
 // which parser E2B uses), and needs no COPY build-context. base64's alphabet
 // has no shell metacharacters, so the content can't break the command.
 
-const PKG_JSON = `{
+export const VITE_PKG_JSON = `{
   "name": "lampcode-app",
   "private": true,
   "type": "module",
@@ -57,7 +57,7 @@ const PKG_JSON = `{
     "zod": "^3.23.8",
     "mongoose": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -411,7 +411,7 @@ const TOOLS_PKG_JSON = JSON.stringify(
 // reuse the same Playwright/Chromium evidence tools, while only Vite receives
 // Vite-specific config and entry-point files.
 export const COMMON_VITE_SCAFFOLD_COMMANDS = [
-  writeFileCommand('/home/user/app/package.json', PKG_JSON),
+  writeFileCommand('/home/user/app/package.json', VITE_PKG_JSON),
   writeFileCommand('/home/user/app/vite.config.ts', VITE_CONFIG),
   writeFileCommand('/home/user/app/vitest.config.ts', VITEST_CONFIG),
   writeFileCommand('/home/user/app/vitest.setup.ts', VITEST_SETUP),

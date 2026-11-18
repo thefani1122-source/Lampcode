@@ -11,6 +11,7 @@ import {
   UBUNTU_BASE_IMAGE,
   UBUNTU_TEMPLATE_ENVS,
   dockerfile,
+  VITE_PKG_JSON,
   ubuntuTemplate,
   createUbuntuBaseTemplate,
 } from '../e2b-template/template.js'
@@ -49,10 +50,9 @@ assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.arm64))
 assert.ok(NODE_INSTALL_COMMAND.includes('test "$(node --version)" = "v22.23.5"'))
 
 // Large animation/3D packages are no longer baked into every Vite user project.
-const vitePkg = JSON.parse(dockerfile.slice(dockerfile.indexOf('') /* contract below uses source constants */) || '{}')
-const viteSource = COMMON_SCAFFOLD_COMMANDS.join('\n')
+const vitePkg = JSON.parse(VITE_PKG_JSON) as { dependencies: Record<string, string> }
 for (const optional of ['@react-three/fiber', '@react-three/drei', '@splinetool/react-spline', 'gsap', 'motion', 'three', 'lenis']) {
-  assert.ok(!viteSource.includes(optional), `optional package ${optional} must not be in the always-installed scaffold`)
+  assert.ok(!(optional in vitePkg.dependencies), `optional package ${optional} must not be in the always-installed scaffold`)
 }
 
 // QA tools are shared; framework-specific scaffolds are separate.
