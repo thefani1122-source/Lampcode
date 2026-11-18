@@ -13,6 +13,9 @@ import {
 
 // Production remains on the known-good Debian image until live E2B and staged canaries pass.
 assert.match(dockerfile, /^FROM node:20-slim/m)
+assert.ok(dockerfile.startsWith('FROM node:20-slim\\n'))
+assert.ok(dockerfile.includes('\\nRUN '), 'legacy Dockerfile instructions must be newline-separated')
+assert.ok(!dockerfile.includes('\\\\n'), 'legacy Dockerfile must not contain literal backslash-n sequences')
 assert.ok(dockerfile.includes('pip3 install --no-cache-dir --break-system-packages'))
 
 // Constructing the builder in this import also verifies the pinned E2B SDK
@@ -26,6 +29,7 @@ assert.ok(UBUNTU_APT_PACKAGES.includes('xz-utils'))
 assert.equal(NODE_VERSION, '22.23.5')
 assert.match(NODE_INSTALL_COMMAND, /fromUbuntuImage|node-v22\\.23\\.5-linux-/)
 assert.ok(NODE_INSTALL_COMMAND.includes('sha256sum -c -'))
+assert.ok(NODE_INSTALL_COMMAND.includes('${NODE_ARCH}'), 'architecture must expand inside the sandbox shell, not TypeScript')
 assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.amd64))
 assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.arm64))
 assert.ok(NODE_INSTALL_COMMAND.includes('test "$(node --version)" = "v22.23.5"'))

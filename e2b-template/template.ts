@@ -521,8 +521,8 @@ case "$(dpkg --print-architecture)" in
   arm64) NODE_ARCH=arm64; NODE_SHA256=${NODE_SHA256_BY_ARCH.arm64} ;;
   *) echo "Unsupported architecture for pinned Node.js ${NODE_VERSION}" >&2; exit 1 ;;
 esac
-NODE_ARCHIVE="/tmp/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
-curl -fsSLo "$NODE_ARCHIVE" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+NODE_ARCHIVE="/tmp/node-v${NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz"
+curl -fsSLo "$NODE_ARCHIVE" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz"
 printf "%s  %s\\n" "$NODE_SHA256" "$NODE_ARCHIVE" | sha256sum -c -
 tar -xJf "$NODE_ARCHIVE" -C /usr/local --strip-components=1
 rm -f "$NODE_ARCHIVE"
