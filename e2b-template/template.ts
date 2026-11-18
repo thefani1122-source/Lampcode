@@ -1,5 +1,5 @@
-import { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from './shared-scaffold.js'
-export { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from './shared-scaffold.js'
+import { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from '../src/deploy/shared-scaffold-assets.js'
+export { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from '../src/deploy/shared-scaffold-assets.js'
 
 import { Template } from 'e2b'
 
