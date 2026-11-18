@@ -372,7 +372,7 @@ console.log(JSON.stringify(result))
 // No passWithNoTests: a run with no test files must exit non-zero, because
 // "the agent wrote no tests" and "the tests pass" are different facts and
 // runTests in e2b-service.ts reports them differently.
-const VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
+export const VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -397,7 +397,7 @@ export default defineConfig({
 // here because models reach for them by habit, and without the import they
 // fail as "not a function", which reads like a broken test rather than a
 // missing matcher.
-const VITEST_SETUP = `import '@testing-library/jest-dom/vitest'`
+export const VITEST_SETUP = `import '@testing-library/jest-dom/vitest'`
 
 // Minimal manifest for the internal tooling directory — see the note beside
 // the WORKDIR below for why this is not `npm init -y`.
