@@ -318,8 +318,11 @@ try {
       await page.waitForTimeout(400) // let async errors surface after load
 
       const blank = await page.evaluate(() => {
-        const root = document.getElementById("root")
-        return !!root && root.children.length === 0
+        const root = document.querySelector("#root, #__next")
+        if (root) return (root.textContent || "").trim().length === 0
+        const main = document.querySelector("main, [role=main]")
+        const bodyText = (document.body?.innerText || "").replace(/\\s+/g, " ").trim()
+        return !(main && (main.textContent || "").trim()) && bodyText.length < 20
       })
 
       // Vite's error overlay is a CUSTOM ELEMENT on document.body, not a child
@@ -343,7 +346,7 @@ try {
         // Measure the primary workspace, not just the whole document. A real
         // backend can return zero records, but the app must still render its
         // summary, list/table container, guidance and useful empty-state actions.
-        const root = document.getElementById("root")
+        const root = document.querySelector("#root, #__next")
         const surface = document.querySelector("main, [role=main]") || root || body
         const visible = (el) => {
           const style = getComputedStyle(el)

@@ -1,9 +1,9 @@
 export type FullstackFramework = "react" | "nextjs" | "tanstack"
 
-const NEXT_REQUEST = /\\bnext\\.?\\s*js\\b|\\bnextjs\\b/i
-const TANSTACK_REQUEST = /\\btanstack(?:[- ]?start)?\\b|\\btss\\b/i
+const NEXT_REQUEST = /\bnext\.?\s*js\b|\bnextjs\b/i
+const TANSTACK_REQUEST = /\btanstack(?:[- ]?start)?\b|\btss\b/i
 const EXPLICIT_VITE_OR_SEPARATE_API =
-  /\\bvite\\b|\\bhono\\b|\\bexpress\\b|\\bfastapi\\b|\\bdjango\\b|\\bpython\\s+(?:backend|api|server)\\b|\\breact\\s*(?:\\+|and)\\s*(?:hono|express)\\b/i
+  /\bvite\b|\bhono\b|\bexpress\b|\bfastapi\b|\bdjango\b|\bpython\s+(?:backend|api|server)\b|\breact\s*(?:\+|and)\s*(?:hono|express)\b/i
 
 /**
  * Select the framework only for full-stack builds. Next becomes the default

@@ -85,50 +85,27 @@ async function runSandboxScriptWithJsonInput(
 //
 // Railway Env Var: E2B_TEMPLATE_ID=lampcode-vite
 const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
+const NEXTJS_TEMPLATE_ID_RE = /^lampcode-nextjs-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
 
 /**
- * Returns the E2B sandbox template ID for the given fullstack framework.
- *
- * It ALWAYS returns the React/Vite template, and deliberately ignores
- * NEXTJS_TEMPLATE_ID / TANSTACK_TEMPLATE_ID even when they are set — which on
- * Railway they are, as of 2026-10-10.
- *
- * The reason is the opposite of what it looks like. `lampcode-nextjs` and
- * `lampcode-tanstack` are REAL templates on the E2B account (15 and 13 builds)
- * and they boot fine, which is exactly what makes routing to them dangerous
- * rather than merely broken. Both were last built on 2026-09-09, before every
- * October fix, and `template-nextjs.ts` contains NONE of `.lampcode-tools`,
- * playwright, `check-render.mjs`, `PLAYWRIGHT_BROWSERS_PATH` or vitest — the
- * live `template.ts` has all five. A build routed there loses `check_page`,
- * `check_types` AND `run_tests` in one step, silently: the sandbox comes up,
- * the app renders, and all three gates report `unavailable` with nothing
- * anywhere saying why. A template that fails to boot is loud; this is not.
- *
- * It is also very unlikely such a build is genuinely Next.js. `classifyBuild`
- * pins `framework` to "react" for new builds, so the only route to another
- * value is `detectFrameworkFromFiles` on an EDIT — and the project it is
- * inspecting was itself produced on this Vite template, so an `app/layout.tsx`
- * in it is a stray file rather than a Next.js app. Returning the Vite template
- * is therefore the correct answer for that project, not just the safe one.
- *
- * To re-enable: port the October fixes into `template-nextjs.ts` (tools dir,
- * playwright + browser path, check-render.mjs, vitest and its config), rebuild,
- * verify in a live sandbox the way `e2b-template/verify-template.ts` does, and
- * only then read the env vars here again.
+ * Framework template selection is fail-closed. A stale legacy Next template
+ * must never be used simply because NEXTJS_TEMPLATE_ID happens to be set.
  */
 export function selectTemplate(framework: FullstackFramework): string {
-  if (framework === "nextjs" || framework === "tanstack") {
-    const configured = process.env[
-      framework === "nextjs" ? "NEXTJS_TEMPLATE_ID" : "TANSTACK_TEMPLATE_ID"
-    ];
-    if (configured) {
-      console.warn(
-        `[e2b] ${framework} template id is configured (${configured}) but IGNORED — ` +
-        `that image predates the October fixes and has no check_page/check_types/run_tests. ` +
-        `Using ${TEMPLATE_ID}. See selectTemplate() for how to re-enable.`,
+  if (framework === "nextjs") {
+    const configured = process.env["NEXTJS_TEMPLATE_ID"] ?? "";
+    if (!NEXTJS_TEMPLATE_ID_RE.test(configured)) {
+      throw new Error(
+        "Next.js was requested, but NEXTJS_TEMPLATE_ID is not set to a verified Ubuntu candidate. " +
+        "Build and verify lampcode-nextjs-ubuntu24, then set NEXTJS_TEMPLATE_ID to that exact template ID.",
       );
     }
-    return TEMPLATE_ID;
+    return configured;
+  }
+  if (framework === "tanstack") {
+    throw new Error(
+      "TanStack Start is not enabled in the current E2B runtime. Use Next.js App Router or React/Vite + Hono until a TanStack Ubuntu template is built and verified.",
+    );
   }
   return TEMPLATE_ID;
 }
@@ -987,7 +964,7 @@ export async function checkRender(
   try {
     const r = await runSandboxScriptWithJsonInput(
       sandbox, "lampcode-render.mjs", RENDER_SCRIPT,
-      { base: "http://localhost:5173", routes, requireInitialContent, requireCollectionSurface }, 90_000,
+      { base: `http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`, routes, requireInitialContent, requireCollectionSurface }, 90_000,
     );
     const report = parseRenderReport(r.stdout);
     // Unparseable output means the pages were never actually looked at. Saying
@@ -1027,7 +1004,7 @@ export async function checkInteractions(
   try {
     const r = await runSandboxScriptWithJsonInput(
       sandbox, "lampcode-interact.mjs", INTERACTION_SCRIPT,
-      { base: "http://localhost:5173", routes }, 90_000,
+      { base: `http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`, routes }, 90_000,
     );
     // The probe prints its findings, then — on a second line behind a marker —
     // what the app had persisted at the moment it finished clicking. Split
@@ -1809,7 +1786,7 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
   let stdout = "";
   try {
     const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://localhost:5173`,
+      `${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`,
       { timeoutMs: 30_000 },
     );
     stdout = r.stdout;
