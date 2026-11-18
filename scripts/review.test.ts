@@ -245,23 +245,30 @@ check(
   const missing = authoritative.filter((p) => !templateOwnsFile(p));
   check("every file e2b-service bakes is in review-units' copy", missing, []);
 
-  // Same file, read the same way and for the same reason — importing it hangs.
-  //
-  // selectTemplate must NOT route a build to NEXTJS_TEMPLATE_ID or
-  // TANSTACK_TEMPLATE_ID. Both are set on Railway and both name REAL E2B
-  // templates that boot, which is what makes this quiet instead of loud: they
-  // were last built 2026-09-09 and carry none of .lampcode-tools, playwright,
-  // check-render.mjs or vitest, so a build sent there loses check_page,
-  // check_types and run_tests at once with nothing reporting why.
+  // The candidate runtime deliberately enables Next.js only through an
+  // explicitly configured Ubuntu image. The name check is fail-closed:
+  // missing/stale values throw before Sandbox.create; Vite keeps its existing
+  // production selector and TanStack remains disabled until its own image exists.
   const selector = /export function selectTemplate\([\s\S]*?\n}/.exec(src)?.[0] ?? "";
   ok("the guard actually found selectTemplate", selector.length > 50);
   ok(
-    "selectTemplate never returns a framework template id",
-    !/return\s+(process\.env\[|configured)/.test(selector),
+    "Next.js selection requires an Ubuntu candidate ID",
+    selector.includes('process.env["NEXTJS_TEMPLATE_ID"] ?? ""') &&
+      selector.includes("!NEXTJS_TEMPLATE_ID_RE.test(configured)") &&
+      selector.includes("return configured"),
   );
   ok(
-    "selectTemplate still mentions the vars, so the warning is not silently dropped",
-    selector.includes("NEXTJS_TEMPLATE_ID") && selector.includes("TANSTACK_TEMPLATE_ID"),
+    "missing or stale Next.js IDs fail closed with an actionable error",
+    selector.includes("NEXTJS_TEMPLATE_ID is not set to a verified Ubuntu candidate"),
+  );
+  ok(
+    "TanStack remains disabled until its runtime is verified",
+    selector.includes('framework === "tanstack"') &&
+      selector.includes("TanStack Start is not enabled in the current E2B runtime"),
+  );
+  ok(
+    "the existing Vite production template remains the fallback for React",
+    selector.includes("return TEMPLATE_ID"),
   );
 }
 
