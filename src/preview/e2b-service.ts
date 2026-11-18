@@ -9,6 +9,7 @@ import { db } from "../db/client.js";
 import { projectEnvVars } from "../db/schema.js";
 import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
+import { canReuseSandboxForFramework } from "./framework-compat.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
 import type { InteractionFinding } from "../verify/interactions.js";
 import { RENDER_SCRIPT, parseRenderReport } from "../verify/render.js";
@@ -1185,7 +1186,7 @@ async function saveSandboxId(projectId: string, sandboxId: string, framework: Fu
 async function loadFramework(projectId: string): Promise<FullstackFramework | null> {
   try {
     const f = await withRedisTimeout(redis.get(frameworkRedisKey(projectId)), "get framework");
-    return (f as FullstackFramework) ?? null;
+    return f === "react" || f === "nextjs" || f === "tanstack" ? f : null;
   } catch {
     return null;
   }
@@ -1957,22 +1958,34 @@ async function acquireRunningSandbox(
   log: PreviewLogCallback,
   framework: FullstackFramework = "react",
 ): Promise<Sandbox> {
+  // Validate the requested template before resuming or disposing of any
+  // existing sandbox. A missing Next.js candidate must never destroy a working
+  // Vite preview before the fail-closed configuration error is reported.
+  const templateId = selectTemplate(framework);
   const savedSandboxId = await loadSandboxId(projectId);
   if (savedSandboxId) {
-    const resumed = await tryResumeSandbox(projectId, savedSandboxId);
-    if (resumed) {
-      sandboxes.set(projectId, resumed);
-      sandboxFrameworks.set(projectId, framework);
-      // A resumed snapshot's dev server may not have survived the pause —
-      // verify and restart it if needed rather than assuming.
-      await ensureDevServer(resumed, log, framework);
-      log("Resumed existing sandbox");
-      return resumed;
+    const savedFramework = await loadFramework(projectId);
+    if (canReuseSandboxForFramework(savedFramework, framework)) {
+      const resumed = await tryResumeSandbox(projectId, savedSandboxId);
+      if (resumed) {
+        sandboxes.set(projectId, resumed);
+        sandboxFrameworks.set(projectId, framework);
+        // A resumed snapshot's dev server may not have survived the pause —
+        // verify and restart it if needed rather than assuming.
+        await ensureDevServer(resumed, log, framework);
+        log("Resumed existing sandbox");
+        return resumed;
+      }
+    } else {
+      log(`Replacing stored ${savedFramework ?? "legacy/unknown"} sandbox with ${framework} runtime`);
+      const stale = await tryResumeSandbox(projectId, savedSandboxId);
+      if (stale) await stale.kill().catch(() => {});
+      await deleteSandboxId(projectId);
     }
   }
 
   log("Creating fresh sandbox from template...");
-  const sandbox = await Sandbox.create(selectTemplate(framework), {
+  const sandbox = await Sandbox.create(templateId, {
     ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
     timeoutMs: SANDBOX_TIMEOUT_MS,
   });
@@ -2243,6 +2256,10 @@ export async function createPreviewSandbox(
     throw new Error("E2B_API_KEY is not configured on the server");
   }
 
+  // Fail closed before touching a currently working preview if the requested
+  // framework has no verified template configured.
+  selectTemplate(framework);
+
   const log = (line: string): void => {
     onLog?.(line);
     logger.debug({ sessionId, projectId, line }, "[e2b]");
@@ -2261,8 +2278,16 @@ export async function createPreviewSandbox(
     await awaitWarming(projectId);
     sandbox = sandboxes.get(projectId);
     if (sandbox) {
-      console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
-    } else {
+      const liveFramework = sandboxFrameworks.get(projectId) ?? "react";
+      if (liveFramework !== framework) {
+        log(`Replacing live ${liveFramework} sandbox with ${framework} runtime`);
+        await killSandbox(projectId);
+        sandbox = undefined;
+      } else {
+        console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
+      }
+    }
+    if (!sandbox) {
       let warm = warmingSandboxes.get(projectId);
       if (!warm) {
         warm = acquireRunningSandbox(projectId, log, framework).finally(() => {
