@@ -44,6 +44,8 @@
 import { callMcpTool } from "../mcp/call-tool.js";
 import { logger } from "../server/logger.js";
 import { runSmokeTests } from "./smoke.js";
+import { nextjsSmokeTargets, nextjsVercelScaffold } from "./nextjs-scaffold.js";
+import { PREBAKED_UI_PRIMITIVES, QUERY_CLIENT_TS, STYLES_CSS, UTILS_TS } from "../../e2b-template/shared-scaffold.js";
 
 /** The user's own Vercel credential, from their connected MCP row. Never
  *  logged, never sent to the model, never written into the sandbox. */
@@ -54,7 +56,7 @@ export interface VercelAuth {
 }
 
 /** What the generated app actually is, which decides the Vercel preset. */
-export type DeployShape = "static" | "hono" | "fastapi";
+export type DeployShape = "static" | "hono" | "fastapi" | "nextjs";
 
 export interface DeployOutcome {
   ok: boolean;
@@ -82,6 +84,13 @@ const VERCEL_MCP_URL = "https://mcp.vercel.com";
  */
 export function detectDeployShape(files: Record<string, string>): DeployShape {
   const has = (p: string) => Object.prototype.hasOwnProperty.call(files, p);
+  const hasNextApp = [
+    "app/page.tsx", "app/page.jsx", "app/page.js", "app/layout.tsx", "app/layout.jsx", "app/layout.js",
+    "src/app/page.tsx", "src/app/page.jsx", "src/app/page.js", "src/app/layout.tsx", "src/app/layout.jsx", "src/app/layout.js",
+  ].some(has);
+  // An App Router project is a complete Next runtime. It takes precedence over
+  // any stale split-server files left from a previous Vite/Hono framework.
+  if (hasNextApp) return "nextjs";
   if (has("src/server/main.py")) return "fastapi";
   if (has("src/server/app.ts") || has("src/server/index.ts")) return "hono";
   return "static";
@@ -130,6 +139,18 @@ const DEPLOY_DEPENDENCIES: Record<string, string> = {
   clsx: "^2.1.1",
   "tailwind-merge": "^2.5.4",
   "@supabase/supabase-js": "^2.45.0",
+  "@radix-ui/react-dialog": "^1.1.2",
+  "@radix-ui/react-dropdown-menu": "^2.1.2",
+  "@radix-ui/react-label": "^2.1.0",
+  "@radix-ui/react-select": "^2.1.2",
+  "@radix-ui/react-separator": "^1.1.0",
+  "@radix-ui/react-slot": "^1.1.0",
+  "@radix-ui/react-tabs": "^2.1.1",
+  "@radix-ui/react-toast": "^1.2.2",
+  "@radix-ui/react-tooltip": "^1.1.3",
+  "@radix-ui/react-avatar": "^1.1.1",
+  "@radix-ui/react-checkbox": "^1.1.2",
+  "@radix-ui/react-switch": "^1.1.1",
   hono: "^4.6.3",
   "@hono/node-server": "^1.13.1",
   zod: "^3.23.8",
@@ -182,7 +203,7 @@ function buildFiles(files: Record<string, string>): Record<string, string> {
     devDependencies: DEPLOY_DEV_DEPENDENCIES,
   };
 
-  return {
+  const buildFilesResult: Record<string, string> = {
     "package.json": `${JSON.stringify(pkg, null, 2)}\n`,
     // No `server.proxy` — see the note above. A production build has no dev
     // server, so a proxy here would be dead config that implies working API
@@ -227,12 +248,23 @@ function buildFiles(files: Record<string, string>): Record<string, string> {
       `    <script type="module" src="/src/index.tsx"></script>\n` +
       `  </body>\n</html>\n`,
   };
+
+  // These files live in the E2B image and therefore aren't guaranteed to be
+  // in the persisted app file map sent to Vercel.
+  for (const [relativePath, content] of Object.entries(PREBAKED_UI_PRIMITIVES)) {
+    const path = `src/${relativePath}`;
+    if (!Object.prototype.hasOwnProperty.call(files, path)) {
+      (buildFilesResult as Record<string, string>)[path] = content;
+    }
+  }
+  return buildFilesResult;
 }
 
 export function vercelScaffold(
   shape: DeployShape,
   files: Record<string, string> = {},
 ): Record<string, string> {
+  if (shape === "nextjs") return nextjsVercelScaffold(files);
   if (shape === "hono") {
     return {
       ...buildFiles(files),
@@ -418,7 +450,7 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
     mcpToolName,
   });
 
-  const framework = shape === "fastapi" ? "fastapi" : "vite";
+  const framework = shape === "fastapi" ? "fastapi" : shape === "nextjs" ? "nextjs" : "vite";
   const requestBody: Record<string, unknown> = {
     name,
     target: "production",
@@ -522,7 +554,11 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
 
   // Vercel returns a bare hostname.
   const fullUrl = /^https?:\/\//.test(url) ? url : `https://${url}`;
-  const smoke = await smokeFn(fullUrl).catch(() => undefined);
+  const smoke = await smokeFn(
+    fullUrl,
+    undefined,
+    shape === "nextjs" ? nextjsSmokeTargets(input.files) : undefined,
+  ).catch(() => undefined);
 
   return {
     ok: smoke?.ok !== false,
