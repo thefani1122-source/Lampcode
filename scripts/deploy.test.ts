@@ -27,6 +27,7 @@ import {
   deployToVercel,
   formatDeployForUser,
 } from "../src/deploy/vercel.js";
+import { runSmokeTests } from "../src/deploy/smoke.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -46,6 +47,9 @@ function ok(name: string, cond: boolean): void {
 // disagree, an app boots in the preview and deploys as the wrong thing.
 
 check("a frontend-only app is static", detectDeployShape({ "src/App.tsx": "x" }), "static");
+check("an App Router app is detected as Next.js", detectDeployShape({ "app/page.tsx": "x", "app/layout.tsx": "y" }), "nextjs");
+check("the src/App Router layout is also detected", detectDeployShape({ "src/app/page.tsx": "x" }), "nextjs");
+check("Next.js takes precedence over stale Hono files after a framework switch", detectDeployShape({ "app/page.tsx": "x", "src/server/app.ts": "stale" }), "nextjs");
 check(
   "the Hono app file means hono",
   detectDeployShape({ "src/server/app.ts": "x", "src/App.tsx": "y" }),
@@ -79,12 +83,36 @@ const staticScaffold = vercelScaffold("static");
 for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json"]) {
   ok(`a static app gets ${needed}, which the template owns and never ships`, needed in staticScaffold);
 }
-check(
-  "a hono app gets the build files AND its api entry",
-  Object.keys(vercelScaffold("hono")).sort(),
-  ["api/[...route].ts", "index.html", "package.json", "tsconfig.json", "vite.config.ts"],
-);
+const honoScaffold = vercelScaffold("hono");
+ok("a hono app gets its API entry", "api/[...route].ts" in honoScaffold);
+for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json", "src/components/ui/button.tsx", "src/lib/utils.ts", "src/lib/queryClient.ts", "src/styles.css"]) {
+  ok(`a Hono/Vite deploy materializes ${needed}`, needed in honoScaffold);
+}
 check("fastapi already exposes the ASGI app Vercel wants", vercelScaffold("fastapi"), {});
+
+const NEXT_APP_FILES = {
+  "app/page.tsx": "export default function Page() { return <main>hello</main> }",
+  "app/layout.tsx": "export default function Layout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html> }",
+  "app/api/health/route.ts": "export async function GET() { return Response.json({ ok: true }) }",
+  "package.json": JSON.stringify({ dependencies: { "my-private-lib": "^2.0.0" }, devDependencies: { "my-test-types": "^1.0.0" } }),
+};
+const nextScaffold = vercelScaffold("nextjs", NEXT_APP_FILES);
+const nextPackage = JSON.parse(nextScaffold["package.json"] ?? "{}") as {
+  scripts: Record<string, string>;
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+};
+check("Next.js deploy uses next build, not Vite", nextPackage.scripts.build, "next build");
+check("Next.js version is pinned to the sandbox template", nextPackage.dependencies.next, "16.4.6");
+check("React version matches the Next.js template", nextPackage.dependencies.react, "19.2.0");
+check("user runtime dependencies survive Next.js scaffolding", nextPackage.dependencies["my-private-lib"], "^2.0.0");
+check("user dev dependencies survive Next.js scaffolding", nextPackage.devDependencies["my-test-types"], "^1.0.0");
+ok("Tailwind PostCSS is included for Next.js", nextPackage.devDependencies["@tailwindcss/postcss"] !== undefined);
+ok("Next.js app and PostCSS configs are reconstructed", "next.config.ts" in nextScaffold && "postcss.config.mjs" in nextScaffold);
+ok("Next.js provider and SSR-safe query cache are reconstructed", "app/providers.tsx" in nextScaffold && "lib/queryClient.ts" in nextScaffold);
+ok("Next.js deploy includes shared UI primitives", "components/ui/button.tsx" in nextScaffold);
+ok("Next.js deploy does not add Vite config or index.html", !("vite.config.ts" in nextScaffold) && !("index.html" in nextScaffold));
+check("Next.js app-owned page content is not overwritten", nextScaffold["app/page.tsx"], undefined);
 
 // Trap 11: the template's vite.config bakes server.proxy['/api'] → localhost,
 // a DEV-SERVER feature. Shipping it to Vercel would be dead config implying
@@ -262,6 +290,27 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
   ok("the api scaffold is uploaded with the app", uploaded.includes("api/[...route].ts"));
   ok("alongside the app's own server file", uploaded.includes("src/server/app.ts"));
   check("the project name is slugged", body["name"], "rota");
+{
+  const { call, sent } = fakeCall();
+  let capturedSmokeOptions: unknown;
+  const smoke = async (url: string, _fetcher?: unknown, options?: unknown) => {
+    capturedSmokeOptions = options;
+    return smokeOk(url);
+  };
+  const out = await deployToVercel({
+    auth: AUTH, files: NEXT_APP_FILES, projectName: "Next App",
+    call: call as never, smoke: smoke as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("Next.js deploy reports the correct shape", out.shape, "nextjs");
+  const created = sent.find((entry) => entry.tool === "create_deployment");
+  const body = created?.args["requestBody"] as Record<string, unknown>;
+  check("Vercel receives the native Next.js preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "nextjs");
+  const uploaded = (body["files"] as Array<{ file: string }>).map((entry) => entry.file);
+  ok("Next.js deploy uploads the App Router page", uploaded.includes("app/page.tsx"));
+  ok("Next.js deploy does not upload Vite config", !uploaded.includes("vite.config.ts"));
+  check("Next.js smoke checks only configured API routes", capturedSmokeOptions, { checkHealth: true, checkAuth: false });
+}
+
   check("it targets production, not a preview URL", body["target"], "production");
   check("a vite app uses the vite preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "vite");
 
@@ -457,4 +506,16 @@ if (failures > 0) process.exit(1);
     [out.ok, out.url],
     [true, "https://deploy-probe-mvafdglk-d82mk8efw.vercel.app"],
   );
+}
+
+// Next.js apps without API routes should be judged by the actual homepage,
+// not by missing Hono-era endpoints.
+{
+  const homepageOnly = await runSmokeTests(
+    "https://next-app.example",
+    async (url) => ({ status: url.endsWith("/") ? 200 : 404, ok: url.endsWith("/") }),
+    { checkHealth: false, checkAuth: false },
+  );
+  check("Next.js homepage-only smoke test passes without API routes", homepageOnly.ok, true);
+  check("missing legacy API endpoints are not probed", homepageOnly.checks.map((entry) => entry.name), ["Homepage"]);
 }
