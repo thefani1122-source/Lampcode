@@ -254,7 +254,16 @@ function buildFiles(files: Record<string, string>): Record<string, string> {
   for (const [relativePath, content] of Object.entries(PREBAKED_UI_PRIMITIVES)) {
     const path = `src/${relativePath}`;
     if (!Object.prototype.hasOwnProperty.call(files, path)) {
-      (buildFilesResult as Record<string, string>)[path] = content;
+      buildFilesResult[path] = content;
+    }
+  }
+  for (const [path, content] of [
+    ["src/lib/utils.ts", UTILS_TS],
+    ["src/lib/queryClient.ts", QUERY_CLIENT_TS],
+    ["src/styles.css", STYLES_CSS],
+  ] as const) {
+    if (!Object.prototype.hasOwnProperty.call(files, path)) {
+      buildFilesResult[path] = content;
     }
   }
   return buildFilesResult;
