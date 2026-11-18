@@ -45,7 +45,7 @@ import { callMcpTool } from "../mcp/call-tool.js";
 import { logger } from "../server/logger.js";
 import { runSmokeTests } from "./smoke.js";
 import { nextjsSmokeTargets, nextjsVercelScaffold } from "./nextjs-scaffold.js";
-import { PREBAKED_UI_PRIMITIVES, QUERY_CLIENT_TS, STYLES_CSS, UTILS_TS } from "../../e2b-template/shared-scaffold.js";
+import { PREBAKED_UI_PRIMITIVES, QUERY_CLIENT_TS, STYLES_CSS, UTILS_TS } from "./shared-scaffold-assets.js";
 
 /** The user's own Vercel credential, from their connected MCP row. Never
  *  logged, never sent to the model, never written into the sandbox. */
