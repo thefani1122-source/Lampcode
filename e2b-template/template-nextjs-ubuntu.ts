@@ -164,12 +164,12 @@ const NEXT_PAGE = `export default function Page() {
 
 const NEXT_VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
-import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, '.') },
+    alias: { '@': fileURLToPath(new URL('.', import.meta.url)) },
   },
   test: {
     environment: 'jsdom',
