@@ -15,7 +15,7 @@ import {
   ubuntuTemplate,
   createUbuntuBaseTemplate,
 } from '../e2b-template/template.js'
-import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
+import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
 
 // Existing production Node 20 image stays unchanged and remains Vite.
 assert.match(dockerfile, /^FROM node:20-slim/m)
@@ -77,5 +77,10 @@ assert.equal(nextPkg.dependencies.react, NEXTJS_REACT_VERSION)
 assert.ok(nextPkg.devDependencies['@tailwindcss/postcss'], 'Tailwind PostCSS is a build-time plugin')
 assert.ok(nextPkg.dependencies['@radix-ui/react-dialog'])
 assert.ok(!nextPkg.dependencies.three, 'Three.js should be installed only when the generated app imports it')
+
+// Next.js SSR must not reuse one module-level QueryClient across user requests.
+assert.match(NEXT_QUERY_CLIENT_TS, /export function createQueryClient\(\)/)
+assert.match(NEXT_PROVIDERS_TS, /useState\(\(\) => createQueryClient\(\)\)/)
+assert.ok(!NEXT_PROVIDERS_TS.includes("import { queryClient }"))
 
 console.log('E2B Ubuntu Vite + Next.js template contract tests passed.')
