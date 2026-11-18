@@ -2,7 +2,7 @@ import {
   PREBAKED_UI_PRIMITIVES,
   STYLES_CSS,
   UTILS_TS,
-} from "../../e2b-template/shared-scaffold.js"
+} from "./shared-scaffold-assets.js"
 
 const NEXT_VERSION = "16.4.6"
 const REACT_VERSION = "19.2.0"
