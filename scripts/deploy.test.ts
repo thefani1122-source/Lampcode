@@ -290,6 +290,18 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
   ok("the api scaffold is uploaded with the app", uploaded.includes("api/[...route].ts"));
   ok("alongside the app's own server file", uploaded.includes("src/server/app.ts"));
   check("the project name is slugged", body["name"], "rota");
+  check("it targets production, not a preview URL", body["target"], "production");
+  check("a vite app uses the vite preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "vite");
+
+  // Without this Vercel returns 400 asking a human to confirm the framework,
+  // which no automated deploy can answer.
+  check(
+    "framework-detection confirmation is skipped",
+    created?.args["skipAutoDetectionConfirmation"],
+    "1",
+  );
+}
+
 {
   const { call, sent } = fakeCall();
   let capturedSmokeOptions: unknown;
@@ -311,17 +323,6 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
   check("Next.js smoke checks only configured API routes", capturedSmokeOptions, { checkHealth: true, checkAuth: false });
 }
 
-  check("it targets production, not a preview URL", body["target"], "production");
-  check("a vite app uses the vite preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "vite");
-
-  // Without this Vercel returns 400 asking a human to confirm the framework,
-  // which no automated deploy can answer.
-  check(
-    "framework-detection confirmation is skipped",
-    created?.args["skipAutoDetectionConfirmation"],
-    "1",
-  );
-}
 
 {
   const { call } = fakeCall({ failCreate: true });
