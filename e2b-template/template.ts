@@ -323,10 +323,13 @@ export const queryClient = new QueryClient({
 })`
 
 // Writes `body` to `path` inside the image via a single-line base64 decode.
-const writeFile = (path: string, body: string): string => {
+const writeFileCommand = (path: string, body: string): string => {
   const b64 = Buffer.from(body, 'utf8').toString('base64')
-  return `RUN mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
+  return `mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
 }
+
+const writeFile = (path: string, body: string): string =>
+  `RUN ${writeFileCommand(path, body)}`
 
 // Headless-Chromium render check (build.ts's finishPreview(), after the
 // backend-crash and typecheck fix loops) — navigates to the live Vite dev
@@ -432,101 +435,117 @@ const TOOLS_PKG_JSON = JSON.stringify(
   2,
 )
 
+// Commands shared by the legacy Dockerfile template and the Ubuntu builder.
+// Paths are absolute so the same commands work through both E2B build APIs.
+export const COMMON_SCAFFOLD_COMMANDS = [
+  writeFileCommand('/home/user/app/package.json', PKG_JSON),
+  writeFileCommand('/home/user/app/vite.config.ts', VITE_CONFIG),
+  writeFileCommand('/home/user/app/vitest.config.ts', VITEST_CONFIG),
+  writeFileCommand('/home/user/app/vitest.setup.ts', VITEST_SETUP),
+  writeFileCommand('/home/user/app/tsconfig.json', TSCONFIG),
+  writeFileCommand('/home/user/app/index.html', INDEX_HTML),
+  writeFileCommand('/home/user/app/src/index.tsx', INDEX_TSX),
+  writeFileCommand('/home/user/app/src/vite-env.d.ts', VITE_ENV_DTS),
+  writeFileCommand('/home/user/app/src/App.tsx', APP_TSX),
+  writeFileCommand('/home/user/app/src/styles.css', STYLES_CSS),
+  ...Object.entries(PREBAKED_UI_PRIMITIVES).map(([filePath, fileContent]) =>
+    writeFileCommand(`/home/user/app/src/${filePath}`, fileContent),
+  ),
+  writeFileCommand('/home/user/app/src/lib/utils.ts', UTILS_TS),
+  writeFileCommand('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
+  'cd /home/user/app && npm install --legacy-peer-deps',
+  'chown -R user:user /home/user/app',
+  writeFileCommand('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
+  'mkdir -p /home/user/.lampcode-tools',
+  'cd /home/user/.lampcode-tools && npm install playwright && npx playwright install --with-deps chromium',
+  writeFileCommand('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
+  'chown -R user:user /home/user/.lampcode-tools',
+]
+
 const commonScaffoldDockerfile = [
   'WORKDIR /home/user/app',
-  writeFile('/home/user/app/package.json', PKG_JSON),
-  writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),
-  writeFile('/home/user/app/vitest.config.ts', VITEST_CONFIG),
-  writeFile('/home/user/app/vitest.setup.ts', VITEST_SETUP),
-  writeFile('/home/user/app/tsconfig.json', TSCONFIG),
-  writeFile('/home/user/app/index.html', INDEX_HTML),
-  writeFile('/home/user/app/src/index.tsx', INDEX_TSX),
-  writeFile('/home/user/app/src/vite-env.d.ts', VITE_ENV_DTS),
-  writeFile('/home/user/app/src/App.tsx', APP_TSX),
-  writeFile('/home/user/app/src/styles.css', STYLES_CSS),
-  ...Object.entries(PREBAKED_UI_PRIMITIVES).map(([filePath, fileContent]) => writeFile(`/home/user/app/src/${filePath}`, fileContent)),
-  writeFile('/home/user/app/src/lib/utils.ts', UTILS_TS),
-  writeFile('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
-  // Install once at build time so per-project cold start is just a fast
-  // `npm install` of whatever extra deps the generated app declares.
-  // --legacy-peer-deps: React 19 conflicts with peer deps on some packages
-  // (three.js ecosystem, particles, spline) that still declare react ^18.
-  'RUN npm install --legacy-peer-deps',
-  // Belt and braces, NOT load-bearing — do not reason from its presence.
-  // The image is built as root but run as `user`, so everything above this line
-  // is written root-owned, and vitest needs to write a transform cache under
-  // node_modules. That looked like it needed fixing. It does not: E2B's own
-  // `[config]` phase ends every build with "Give 'user' ownership to
-  // /home/user", so ownership is already correct without this step — confirmed
-  // in the 2026-10-02 build log and by a live sandbox writing into
-  // node_modules. Kept because it costs one cached layer and states the
-  // requirement explicitly where the next person will look for it.
-  'RUN chown -R user:user /home/user/app',
-  // ── Internal tooling, deliberately OUTSIDE /home/user/app ─────────────────
-  // Headless Chromium for the post-build render check (verifyBrowserRender in
-  // e2b-service.ts) — kept in its own directory with its own node_modules so
-  // it never touches the generated app's package.json/dependency tree (that
-  // list is what the build prompt tells the model is "allowed" — see CLAUDE.md's
-  // "Prompt-vs-reality drift" warning). `playwright install --with-deps` pulls
-  // the exact OS packages its bundled Chromium build needs for this Linux
-  // base — baked here (build time) so per-project cold start never re-fetches
-  // a browser.
-  //
-  // The package.json is written explicitly rather than generated with
-  // `npm init -y`, which names the package after its directory. npm rejects a
-  // name beginning with a dot, so in `.lampcode-tools` it exits with
-  //   npm error Invalid name: ".lampcode-tools"
-  // taking the whole && chain with it. That failed every template build since
-  // this step was added on 2026-09-09 — so playwright and check-render.mjs
-  // never reached the image, and check_page could never have worked.
-  //
-  // PLAYWRIGHT_BROWSERS_PATH is set because the image is BUILT as root but RUN
-  // as `user`, and playwright resolves its browser directory from the running
-  // user's home. Left at the default, chromium downloads into /root/.cache and
-  // check_page dies at launch with "Executable doesn't exist at
-  // /home/user/.cache/ms-playwright/..." — confirmed in a live sandbox, with
-  // playwright and check-render.mjs both present and correct. The path is
-  // repeated on the commands in e2b-service.ts, so this does not depend on
-  // Docker ENV surviving into E2B's runtime.
-  'WORKDIR /home/user/.lampcode-tools',
-  writeFile('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
-  'ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
-  'RUN npm install playwright && npx playwright install --with-deps chromium ' +
-    '&& chown -R user:user /home/user/.lampcode-tools',
-  writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
+  ...COMMON_SCAFFOLD_COMMANDS.map((command) => `RUN ${command}`),
   'WORKDIR /home/user/app',
-
-].join('\n')
+].join('\\n')
 
 const NODE_GLOBAL_TOOLS = 'RUN npm install -g vite tsx typescript'
 const PYTHON_RUNTIME_PACKAGES =
   'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn'
 
-// Keep the current production image's OS, runtime versions and Python package
-// baseline unchanged until the Ubuntu candidate has been verified.
+// Preserve the existing production image and its runtime versions.
 export const dockerfile = [
   'FROM node:20-slim',
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
   NODE_GLOBAL_TOOLS,
   PYTHON_RUNTIME_PACKAGES,
   commonScaffoldDockerfile,
-].join('\n')
+].join('\\n')
 
-// Candidate only: Ubuntu is the final OS. Node/npm are copied from the
-// official, version-pinned Node LTS image. Python packages live in a venv;
-// Ubuntu's externally-managed system Python is never modified by pip.
-export const ubuntuDockerfile = [
-  'FROM node:22.23.5-bookworm-slim AS lampcode-node',
-  'FROM ubuntu:24.04',
-  'COPY --from=lampcode-node /usr/local/ /usr/local/',
-  'ENV DEBIAN_FRONTEND=noninteractive',
-  'RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3-full python3-pip python3-venv python3-dev build-essential pkg-config libffi-dev libssl-dev libpq-dev unzip zip jq ripgrep procps sqlite3 && rm -rf /var/lib/apt/lists/*',
-  'RUN python3 -m venv /opt/lampcode-python && /opt/lampcode-python/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && /opt/lampcode-python/bin/pip install --no-cache-dir fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn',
-  'ENV PATH="/opt/lampcode-python/bin:${PATH}"',
-  'ENV PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1',
-  NODE_GLOBAL_TOOLS,
-  commonScaffoldDockerfile,
-].join('\n')
+// Ubuntu candidate is built with E2B's native image builder API. Its SDK
+// Dockerfile parser intentionally does not support multi-stage Dockerfiles.
+export const UBUNTU_BASE_IMAGE = '24.04'
+export const UBUNTU_APT_PACKAGES = [
+  'ca-certificates',
+  'curl',
+  'git',
+  'python3-full',
+  'python3-pip',
+  'python3-venv',
+  'python3-dev',
+  'build-essential',
+  'pkg-config',
+  'libffi-dev',
+  'libssl-dev',
+  'libpq-dev',
+  'libatomic1',
+  'unzip',
+  'zip',
+  'jq',
+  'ripgrep',
+  'procps',
+  'sqlite3',
+  'xz-utils',
+] as const
+
+export const NODE_VERSION = '22.23.5'
+export const NODE_SHA256_BY_ARCH = {
+  amd64: 'cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8',
+  arm64: '2babb9eb5264860d540849f4b064a6fbdebcdc323657d9d382ce23d313fd5e09',
+} as const
+
+// Download the exact official Node LTS binary and verify it against the
+// SHA-256 published in Node.js's signed release checksum manifest.
+export const NODE_INSTALL_COMMAND = `set -eu
+case "$(dpkg --print-architecture)" in
+  amd64) NODE_ARCH=x64; NODE_SHA256=${NODE_SHA256_BY_ARCH.amd64} ;;
+  arm64) NODE_ARCH=arm64; NODE_SHA256=${NODE_SHA256_BY_ARCH.arm64} ;;
+  *) echo "Unsupported architecture for pinned Node.js ${NODE_VERSION}" >&2; exit 1 ;;
+esac
+NODE_ARCHIVE="/tmp/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+curl -fsSLo "$NODE_ARCHIVE" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+printf "%s  %s\\n" "$NODE_SHA256" "$NODE_ARCHIVE" | sha256sum -c -
+tar -xJf "$NODE_ARCHIVE" -C /usr/local --strip-components=1
+rm -f "$NODE_ARCHIVE"
+test "$(node --version)" = "v${NODE_VERSION}"`
+
+export const PYTHON_SETUP_COMMAND =
+  'python3 -m venv /opt/lampcode-python && ' +
+  '/opt/lampcode-python/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && ' +
+  '/opt/lampcode-python/bin/pip install --no-cache-dir fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn'
+
+export const ubuntuTemplate = Template()
+  .fromUbuntuImage(UBUNTU_BASE_IMAGE)
+  .aptInstall([...UBUNTU_APT_PACKAGES], { noInstallRecommends: true })
+  .runCmd(NODE_INSTALL_COMMAND, { user: 'root' })
+  .runCmd(PYTHON_SETUP_COMMAND, { user: 'root' })
+  .setEnvs({
+    PATH: '/opt/lampcode-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    PYTHONUNBUFFERED: '1',
+    PIP_DISABLE_PIP_VERSION_CHECK: '1',
+    PLAYWRIGHT_BROWSERS_PATH: '/home/user/.lampcode-tools/browsers',
+  })
+  .npmInstall(['vite', 'tsx', 'typescript'], { g: true })
+  .runCmd(COMMON_SCAFFOLD_COMMANDS, { user: 'root' })
+  .setWorkdir('/home/user/app')
 
 export const template = Template().fromDockerfile(dockerfile)
-export const ubuntuTemplate = Template().fromDockerfile(ubuntuDockerfile)

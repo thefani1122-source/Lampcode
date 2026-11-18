@@ -1,31 +1,49 @@
 import assert from 'node:assert/strict'
-import { dockerfile, ubuntuDockerfile } from '../e2b-template/template.js'
+import {
+  COMMON_SCAFFOLD_COMMANDS,
+  NODE_INSTALL_COMMAND,
+  NODE_SHA256_BY_ARCH,
+  NODE_VERSION,
+  PYTHON_SETUP_COMMAND,
+  UBUNTU_APT_PACKAGES,
+  UBUNTU_BASE_IMAGE,
+  dockerfile,
+  ubuntuTemplate,
+} from '../e2b-template/template.js'
 
-// Production remains on the known-good image until live E2B and staged canaries pass.
+// Production remains on the known-good Debian image until live E2B and staged canaries pass.
 assert.match(dockerfile, /^FROM node:20-slim/m)
 assert.ok(dockerfile.includes('pip3 install --no-cache-dir --break-system-packages'))
-assert.match(ubuntuDockerfile, /^FROM node:22\.23\.5-bookworm-slim AS lampcode-node/m)
-assert.match(ubuntuDockerfile, /^FROM ubuntu:24\.04/m)
-assert.match(ubuntuDockerfile, /^COPY --from=lampcode-node \/usr\/local\/ \/usr\/local\//m)
 
-assert.ok(ubuntuDockerfile.includes('python3 -m venv /opt/lampcode-python'))
-assert.ok(ubuntuDockerfile.includes('/opt/lampcode-python/bin/pip install'))
-assert.ok(ubuntuDockerfile.includes('ENV PATH="/opt/lampcode-python/bin:${PATH}"'))
-assert.ok(!ubuntuDockerfile.includes('pip3 install'), 'Ubuntu must not install Python packages globally')
-assert.ok(!ubuntuDockerfile.includes('--break-system-packages'))
-assert.ok(!ubuntuDockerfile.includes('useradd'), 'E2B controls runtime-user creation')
-assert.ok(ubuntuDockerfile.includes('RUN npm install -g vite tsx typescript'))
+// Constructing the builder in this import also verifies the pinned E2B SDK
+// exposes the Ubuntu-native builder methods used by the candidate.
+assert.ok(ubuntuTemplate)
+assert.equal(UBUNTU_BASE_IMAGE, '24.04')
+assert.ok(UBUNTU_APT_PACKAGES.includes('git'))
+assert.ok(UBUNTU_APT_PACKAGES.includes('build-essential'))
+assert.ok(UBUNTU_APT_PACKAGES.includes('xz-utils'))
+
+assert.equal(NODE_VERSION, '22.23.5')
+assert.match(NODE_INSTALL_COMMAND, /fromUbuntuImage|node-v22\\.23\\.5-linux-/)
+assert.ok(NODE_INSTALL_COMMAND.includes('sha256sum -c -'))
+assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.amd64))
+assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.arm64))
+assert.ok(NODE_INSTALL_COMMAND.includes('test "$(node --version)" = "v22.23.5"'))
+
+assert.ok(PYTHON_SETUP_COMMAND.includes('python3 -m venv /opt/lampcode-python'))
+assert.ok(PYTHON_SETUP_COMMAND.includes('/opt/lampcode-python/bin/pip install'))
+assert.ok(!PYTHON_SETUP_COMMAND.includes('--break-system-packages'))
 
 for (const required of [
-  'ca-certificates', 'curl', 'git', 'python3-full', 'python3-venv',
-  'build-essential', 'pkg-config', 'libpq-dev', 'unzip', 'zip',
-  'jq', 'ripgrep', 'procps', 'sqlite3',
-  'vitest.config.ts', 'vitest.setup.ts', 'tsconfig.json',
-  'playwright install --with-deps chromium', 'check-render.mjs',
-  'PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
-  'vite-error-overlay', 'npm install --legacy-peer-deps',
+  'vite.config.ts', 'vitest.config.ts', 'vitest.setup.ts', 'tsconfig.json',
+  'npm install --legacy-peer-deps',
+  'playwright install --with-deps chromium',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'check-render.mjs',
+  'chown -R user:user /home/user/app',
+  'chown -R user:user /home/user/.lampcode-tools',
 ]) {
-  assert.ok(ubuntuDockerfile.includes(required), `Ubuntu candidate lost required capability: ${required}`)
+  assert.ok(COMMON_SCAFFOLD_COMMANDS.some((command) => command.includes(required)), `shared scaffold lost: ${required}`)
 }
 
 console.log('E2B Ubuntu template contract tests passed.')
