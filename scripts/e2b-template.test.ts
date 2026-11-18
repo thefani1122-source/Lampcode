@@ -18,7 +18,7 @@ assert.ok(dockerfile.includes('\nRUN '), 'legacy Dockerfile instructions must be
 assert.ok(!dockerfile.includes('\\n'), 'legacy Dockerfile must not contain literal backslash-n sequences')
 assert.ok(dockerfile.includes('pip3 install --no-cache-dir --break-system-packages'))
 
-// Constructing the builder also checks that the pinned E2B SDK exposes the native Ubuntu API.
+// Constructing the builder also checks that the pinned E2B SDK exposes its native Ubuntu API.
 assert.ok(ubuntuTemplate)
 assert.equal(UBUNTU_BASE_IMAGE, '24.04')
 assert.ok(UBUNTU_APT_PACKAGES.includes('git'))
@@ -30,6 +30,7 @@ assert.match(NODE_INSTALL_COMMAND, /node-v22\.23\.5-linux-\$\{NODE_ARCH\}/)
 assert.ok(NODE_INSTALL_COMMAND.includes('sha256sum -c -'))
 assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.amd64))
 assert.ok(NODE_INSTALL_COMMAND.includes(NODE_SHA256_BY_ARCH.arm64))
+assert.ok(NODE_INSTALL_COMMAND.includes('\${NODE_ARCH}'), 'architecture should expand in the sandbox shell')
 assert.ok(NODE_INSTALL_COMMAND.includes('test "$(node --version)" = "v22.23.5"'))
 
 assert.ok(PYTHON_SETUP_COMMAND.includes('python3 -m venv /opt/lampcode-python'))
@@ -45,7 +46,10 @@ for (const required of [
   'chown -R user:user /home/user/app',
   'chown -R user:user /home/user/.lampcode-tools',
 ]) {
-  assert.ok(COMMON_SCAFFOLD_COMMANDS.some((command) => command.includes(required)), \`shared scaffold lost: \${required}\`)
+  assert.ok(
+    COMMON_SCAFFOLD_COMMANDS.some((command) => command.includes(required)),
+    'shared scaffold lost required capability: ' + required,
+  )
 }
 
 console.log('E2B Ubuntu template contract tests passed.')
