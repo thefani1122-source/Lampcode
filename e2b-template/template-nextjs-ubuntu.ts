@@ -162,7 +162,7 @@ const NEXT_PAGE = `export default function Page() {
 }
 `
 
-const NEXT_VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
+export const NEXT_VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
 
