@@ -18,6 +18,7 @@ assert.ok(dockerfile.startsWith('FROM node:20-slim\n'))
 assert.ok(dockerfile.includes('\nRUN '), 'legacy Dockerfile instructions must be newline-separated')
 assert.ok(!dockerfile.includes('\\n'), 'legacy Dockerfile must not contain literal backslash-n sequences')
 assert.ok(dockerfile.includes('pip3 install --no-cache-dir --break-system-packages'))
+assert.ok(dockerfile.includes('ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers'), 'legacy template must preserve its baked Chromium path')
 
 // Constructing the builder also checks that the pinned E2B SDK exposes its native Ubuntu API.
 assert.ok(ubuntuTemplate)

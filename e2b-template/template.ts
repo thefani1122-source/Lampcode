@@ -478,6 +478,7 @@ export const dockerfile = [
   'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
   NODE_GLOBAL_TOOLS,
   PYTHON_RUNTIME_PACKAGES,
+  'ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
   commonScaffoldDockerfile,
 ].join('\n')
 
