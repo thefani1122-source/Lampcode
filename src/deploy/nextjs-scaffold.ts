@@ -182,7 +182,7 @@ export function nextjsVercelScaffold(files: Record<string, string>): Record<stri
   }
 
   const output: Record<string, string> = {
-    "package.json": `${JSON.stringify(pkg, null, 2)}\\n`,
+    "package.json": `${JSON.stringify(pkg, null, 2)}\n`,
   }
 
   // Files that exist only inside the E2B image are reconstructed for Vercel.
