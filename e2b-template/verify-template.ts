@@ -17,7 +17,7 @@ import { Sandbox } from 'e2b'
 const TOOLS_DIR = '/home/user/.lampcode-tools'
 const TOOLS_ENV = `PLAYWRIGHT_BROWSERS_PATH=${TOOLS_DIR}/browsers`
 const PROJECT_DIR = '/home/user/app'
-const TEMPLATE = process.env['E2B_TEMPLATE_ID'] ?? 'lampcode-vite'
+const EXPECT_UBUNTU = process.env['E2B_EXPECT_UBUNTU'] === 'true'\nconst TEMPLATE = process.env['E2B_VERIFY_TEMPLATE_ID'] ?? process.env['E2B_TEMPLATE_ID'] ?? 'lampcode-vite'
 
 let failures = 0
 function report(name: string, ok: boolean, detail = ''): void {
@@ -55,6 +55,33 @@ async function main(): Promise<void> {
     //    what put Chromium in /root/.cache.
     const who = await run('id -un; echo HOME=$HOME')
     report('runs as a known user', who.out.includes('user'), who.out.trim())
+
+    if (EXPECT_UBUNTU) {
+      // Verify the candidate's host OS/toolchain separately from app-level QA.
+      const os = await run('grep -q \'^VERSION_ID="24.04"$\' /etc/os-release && . /etc/os-release && echo "$PRETTY_NAME"')
+      report('Ubuntu 24.04 is the final sandbox OS', os.code === 0 && os.out.includes('24.04'), os.out.trim())
+
+      const toolchain = await run(
+        'node --version && npm --version && python3 --version && pip --version && git --version && rg --version | head -n 1 && jq --version && make --version | head -n 1 && gcc --version | head -n 1'
+      )
+      const hasTools = toolchain.code === 0 &&
+        toolchain.out.includes('v22.23.5') &&
+        toolchain.out.includes('git version') &&
+        toolchain.out.includes('ripgrep') &&
+        toolchain.out.includes('jq-') &&
+        toolchain.out.includes('GNU Make') &&
+        toolchain.out.includes('gcc')
+      report('Node/npm, Python/pip, Git and build utilities are installed', hasTools, toolchain.out.trim())
+
+      const pythonEnv = await run(
+        'python3 -c "import sys, fastapi, uvicorn, supabase; print(sys.executable); print(sys.prefix); print(fastapi.__version__)"'
+      )
+      report(
+        'Python backend runs from the dedicated virtual environment',
+        pythonEnv.code === 0 && pythonEnv.out.includes('/opt/lampcode-python/bin/python3') && pythonEnv.out.includes('/opt/lampcode-python'),
+        pythonEnv.out.trim(),
+      )
+    }
 
     // 1. The app directory must be WRITABLE by that user — vitest writes a
     //    transform cache under node_modules before running a single test.

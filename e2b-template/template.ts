@@ -432,9 +432,7 @@ const TOOLS_PKG_JSON = JSON.stringify(
   2,
 )
 
-const dockerfile = [
-  'FROM node:20-slim',
-  'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
+const commonScaffoldDockerfile = [
   'RUN npm install -g vite tsx typescript',
   // Python backends (FastAPI) run on the same :3001 the frontend proxies /api to.
   'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn',
@@ -500,6 +498,35 @@ const dockerfile = [
     '&& chown -R user:user /home/user/.lampcode-tools',
   writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
   'WORKDIR /home/user/app',
+
 ].join('\n')
 
-export const template = Template().fromDockerfile(dockerfile)
+// Legacy production image. Keep unchanged until the Ubuntu candidate has passed
+// a real E2B build + sandbox verification and a staged backend canary.
+export const dockerfile = [
+  'FROM node:20-slim',
+  'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
+  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn',
+  commonScaffoldDockerfile,
+].join('\n')
+
+// Ubuntu candidate image. Node is copied from the official, version-pinned Node
+// image so Ubuntu remains the final OS while Node/npm stay on a supported LTS.
+// Python packages live in a dedicated venv: Ubuntu's externally-managed system
+// Python is never modified by pip, and python3/pip resolve to that venv at run
+// time. The existing scaffold and QA tooling below are shared with production.
+export const ubuntuDockerfile = [
+  'FROM node:22.23.5-bookworm-slim AS lampcode-node',
+  'FROM ubuntu:24.04',
+  'COPY --from=lampcode-node /usr/local/ /usr/local/',
+  'ENV DEBIAN_FRONTEND=noninteractive',
+  'RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3-full python3-pip python3-venv python3-dev build-essential pkg-config libffi-dev libssl-dev libpq-dev unzip zip jq ripgrep procps sqlite3 passwd && rm -rf /var/lib/apt/lists/* && if ! id -u user >/dev/null 2>&1; then useradd --create-home --uid 1000 --shell /bin/bash user; fi',
+  'RUN python3 -m venv /opt/lampcode-python && /opt/lampcode-python/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && /opt/lampcode-python/bin/pip install --no-cache-dir fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn',
+  'ENV PATH="/opt/lampcode-python/bin:${PATH}"',
+  'ENV PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1',
+  commonScaffoldDockerfile,
+].join('\n')
+
+
+
+export const template = Template().fromDockerfile(dockerfile)\nexport const ubuntuTemplate = Template().fromDockerfile(ubuntuDockerfile)
