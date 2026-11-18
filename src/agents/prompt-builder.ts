@@ -1690,7 +1690,7 @@ async function buildPipManifest(): Promise<string> {
   if (pipManifestCache !== null) return pipManifestCache;
   try {
     const raw = await readFile(TEMPLATE_TS_PATH, 'utf-8');
-    const match = /export const PYTHON_BASE_PACKAGES = \\[([^\\]]+)\\] as const/.exec(raw);
+    const match = /export const PYTHON_BASE_PACKAGES = \[([^\]]+)\] as const/.exec(raw);
     if (!match) throw new Error('PYTHON_BASE_PACKAGES not found');
     const packages = [...(match[1] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1]).filter(Boolean);
     pipManifestCache = 'PRE-INSTALLED PYTHON ESSENTIALS in /opt/lampcode-python: ' + packages.join(', ') +
