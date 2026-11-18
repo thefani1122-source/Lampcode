@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
 import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
+import { detectFullstackFramework as detectFullstackRuntime } from "./framework-selection.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -591,12 +592,7 @@ export function detectFramework(prompt: string, fallback: Framework = "react"): 
 }
 
 export type FullstackFramework = "react" | "nextjs" | "tanstack";
-
-export function detectFullstackFramework(prompt: string): FullstackFramework {
-  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
-  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
-  return "react";
-}
+export const detectFullstackFramework = detectFullstackRuntime;
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
   react: `

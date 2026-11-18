@@ -1,9 +1,10 @@
 import { logger } from "../server/logger.js";
 import type { AgentDispatcher } from "./dispatcher.js";
+import { detectFullstackFramework, type FullstackFramework } from "./framework-selection.js";
 
 export interface BuildClassification {
   buildType: "frontend" | "fullstack";
-  framework: "react" | "nextjs" | "tanstack";
+  framework: FullstackFramework;
   database: "supabase" | "mongodb" | "none";
   needsAuth: boolean;
   reason: string;
@@ -200,6 +201,7 @@ export type DeterministicSignals = {
   multiPerson: boolean;
   crossDevice: boolean;
   mentionsMongo: boolean;
+  framework: FullstackFramework;
 };
 
 /** The word-level reading, exported so the cases can pin each signal. */
@@ -215,19 +217,10 @@ export function readSignals(prompt: string): DeterministicSignals {
     multiPerson: MULTI_PERSON_RE.test(deNegated),
     crossDevice: CROSS_DEVICE_RE.test(deNegated),
     mentionsMongo: /\bmongo(?:db)?\b/i.test(deNegated),
+    framework: detectFullstackFramework(text),
   };
 }
 
-// The framework is pinned to "react" on purpose. The Next.js and TanStack Start
-// E2B templates were never built — selectTemplate() still carries the TODOs for
-// them and silently falls back to the Vite template, so returning either value
-// produced a sandbox that could not boot: `npm run dev` with no Next.js
-// installed, a readiness poll against :3000 when Vite serves :5173, and an
-// expected entry point the generator was told to write but the template cannot
-// serve. NEXTJS_TEMPLATE_ID/TANSTACK_TEMPLATE_ID being set is NOT a safe signal
-// to re-enable on — they are populated in production but point at no real
-// template. The framework words still count as a server signal above.
-const FRAMEWORK: BuildClassification["framework"] = "react";
 
 function decide(
   signals: DeterministicSignals,
@@ -238,7 +231,7 @@ function decide(
 ): BuildClassification {
   return {
     buildType,
-    framework: FRAMEWORK,
+    framework: buildType === 'fullstack' ? signals.framework : 'react',
     database: buildType === "fullstack" ? (signals.mentionsMongo ? "mongodb" : "supabase") : "none",
     needsAuth: buildType === "fullstack" && needsAuth,
     reason,
