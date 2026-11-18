@@ -466,7 +466,7 @@ const commonScaffoldDockerfile = [
   'WORKDIR /home/user/app',
   ...COMMON_SCAFFOLD_COMMANDS.map((command) => `RUN ${command}`),
   'WORKDIR /home/user/app',
-].join('\\n')
+].join('\n')
 
 const NODE_GLOBAL_TOOLS = 'RUN npm install -g vite tsx typescript'
 const PYTHON_RUNTIME_PACKAGES =
@@ -479,7 +479,7 @@ export const dockerfile = [
   NODE_GLOBAL_TOOLS,
   PYTHON_RUNTIME_PACKAGES,
   commonScaffoldDockerfile,
-].join('\\n')
+].join('\n')
 
 // Ubuntu candidate is built with E2B's native image builder API. Its SDK
 // Dockerfile parser intentionally does not support multi-stage Dockerfiles.
