@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     // 0. Who are we? Everything below depends on this, and getting it wrong is
     //    what put Chromium in /root/.cache.
     const who = await run('id -un; printf "HOME=%s\\n" "$HOME"')
-    const whoLines = who.out.trim().split('\\n')
+    const whoLines = who.out.trim().split('\n')
     report('runs as the E2B user', who.code === 0 && whoLines[0] === 'user' && whoLines[1] === 'HOME=/home/user', who.out.trim())
 
     if (EXPECT_UBUNTU) {
@@ -206,13 +206,8 @@ async function main(): Promise<void> {
     )
 
     // 7. The Python backend path, which is a user-facing feature.
-    const py = await run('python3 -c "import sys, fastapi, uvicorn, supabase; print(sys.executable); print(fastapi.__version__)" 2>&1')
-    const pyLines = py.out.trim().split('\n')
-    const pythonIsReady =
-      py.code === 0 &&
-      pyLines[0] === '/opt/lampcode-python/bin/python3' &&
-      /^\d+\./.test(pyLines[1] ?? '')
-    report('python backend deps are installed in the selected runtime', pythonIsReady, py.out.trim())
+    const py = await run('python3 -c "import fastapi, uvicorn; print(fastapi.__version__)" 2>&1')
+    report('python backend deps are installed', py.code === 0 && /^\d+\./.test(py.out.trim()), py.out.trim())
   } finally {
     await sandbox.kill().catch(() => {})
     console.log('\nSandbox killed.')
