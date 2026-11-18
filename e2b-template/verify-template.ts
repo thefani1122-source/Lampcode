@@ -17,7 +17,9 @@ import { Sandbox } from 'e2b'
 const TOOLS_DIR = '/home/user/.lampcode-tools'
 const TOOLS_ENV = `PLAYWRIGHT_BROWSERS_PATH=${TOOLS_DIR}/browsers`
 const PROJECT_DIR = '/home/user/app'
-const EXPECT_UBUNTU = process.env['E2B_EXPECT_UBUNTU'] === 'true'\nconst TEMPLATE = process.env['E2B_VERIFY_TEMPLATE_ID'] ?? process.env['E2B_TEMPLATE_ID'] ?? 'lampcode-vite'
+const EXPECT_UBUNTU = process.env['E2B_EXPECT_UBUNTU'] === 'true'
+const TEMPLATE = process.env['E2B_VERIFY_TEMPLATE_ID'] ?? process.env['E2B_TEMPLATE_ID'] ?? 'lampcode-vite'
+const UBUNTU_TEMPLATE_ID_RE = /^lampcode-vite-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/
 
 let failures = 0
 function report(name: string, ok: boolean, detail = ''): void {
@@ -29,6 +31,10 @@ async function main(): Promise<void> {
   if (!process.env['E2B_API_KEY']) {
     console.error('❌ E2B_API_KEY missing — see build.ts for where it goes.')
     process.exit(1)
+  }
+
+  if (EXPECT_UBUNTU && !UBUNTU_TEMPLATE_ID_RE.test(TEMPLATE)) {
+    throw new Error(`Refusing to verify non-candidate template "${TEMPLATE}" as Ubuntu 24.04.`)
   }
 
   console.log(`Starting a sandbox from "${TEMPLATE}"…`)
@@ -53,8 +59,9 @@ async function main(): Promise<void> {
   try {
     // 0. Who are we? Everything below depends on this, and getting it wrong is
     //    what put Chromium in /root/.cache.
-    const who = await run('id -un; echo HOME=$HOME')
-    report('runs as a known user', who.out.includes('user'), who.out.trim())
+    const who = await run('id -un; printf "HOME=%s\\n" "$HOME"')
+    const whoLines = who.out.trim().split('\\n')
+    report('runs as the E2B user', who.code === 0 && whoLines[0] === 'user' && whoLines[1] === 'HOME=/home/user', who.out.trim())
 
     if (EXPECT_UBUNTU) {
       // Verify the candidate's host OS/toolchain separately from app-level QA.
@@ -62,7 +69,7 @@ async function main(): Promise<void> {
       report('Ubuntu 24.04 is the final sandbox OS', os.code === 0 && os.out.includes('24.04'), os.out.trim())
 
       const toolchain = await run(
-        'node --version && npm --version && python3 --version && pip --version && git --version && rg --version | head -n 1 && jq --version && make --version | head -n 1 && gcc --version | head -n 1'
+        'node --version && npm --version && python3 --version && pip --version && git --version && rg --version | head -n 1 && jq --version && make --version | head -n 1 && gcc --version | head -n 1 && vite --version && tsx --version && tsc --version'
       )
       const hasTools = toolchain.code === 0 &&
         toolchain.out.includes('v22.23.5') &&
@@ -70,7 +77,10 @@ async function main(): Promise<void> {
         toolchain.out.includes('ripgrep') &&
         toolchain.out.includes('jq-') &&
         toolchain.out.includes('GNU Make') &&
-        toolchain.out.includes('gcc')
+        toolchain.out.includes('gcc') &&
+        toolchain.out.includes('vite/') &&
+        toolchain.out.includes('tsx v') &&
+        toolchain.out.includes('Version ')
       report('Node/npm, Python/pip, Git and build utilities are installed', hasTools, toolchain.out.trim())
 
       const pythonEnv = await run(
@@ -196,8 +206,13 @@ async function main(): Promise<void> {
     )
 
     // 7. The Python backend path, which is a user-facing feature.
-    const py = await run('python3 -c "import fastapi, uvicorn; print(fastapi.__version__)" 2>&1')
-    report('python backend deps are installed', /^\d+\./.test(py.out.trim()), py.out.trim())
+    const py = await run('python3 -c "import sys, fastapi, uvicorn, supabase; print(sys.executable); print(fastapi.__version__)" 2>&1')
+    const pyLines = py.out.trim().split('\n')
+    const pythonIsReady =
+      py.code === 0 &&
+      pyLines[0] === '/opt/lampcode-python/bin/python3' &&
+      /^\d+\./.test(pyLines[1] ?? '')
+    report('python backend deps are installed in the selected runtime', pythonIsReady, py.out.trim())
   } finally {
     await sandbox.kill().catch(() => {})
     console.log('\nSandbox killed.')

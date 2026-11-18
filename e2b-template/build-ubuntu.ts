@@ -5,7 +5,7 @@ import { ubuntuTemplate } from './template.js'
 // Build a separate candidate image. This script refuses to target the current
 // production template ID so a POC cannot silently replace the live baseline.
 const TEMPLATE_ID = process.env['E2B_UBUNTU_TEMPLATE_ID'] ?? 'lampcode-vite-ubuntu24'
-const CANDIDATE_ID_RE = /^lampcode-vite-ubuntu24(?:-[a-z0-9-]+)?$/
+const CANDIDATE_ID_RE = /^lampcode-vite-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/
 
 async function main(): Promise<void> {
   if (!process.env['E2B_API_KEY']) {

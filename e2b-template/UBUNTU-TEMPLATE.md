@@ -7,7 +7,7 @@
 - Keeps Ubuntu 24.04 as the final sandbox OS.
 - Copies Node.js 22.23.5 and npm from the official version-pinned Node image in a multi-stage build.
 - Includes common Linux build utilities (Git, curl, compiler toolchain, package/config utilities, SQLite CLI, ripgrep).
-- Installs the existing Python backend/agent package baseline into `/opt/lampcode-python`, a dedicated virtual environment. The OS-managed Python installation is not modified by pip.
+- Installs the existing Python backend/agent package baseline into `/opt/lampcode-python`, a dedicated virtual environment. The OS-managed Python installation is not modified by pip, and `python3` / `pip` resolve to this environment.
 - Reuses the exact same LampCode Vite scaffold, internal Playwright tooling, Chromium path, Vitest setup, type-check configuration and render probe as the existing production template.
 
 The candidate deliberately does not add new LLM tools or inject extra system/tool descriptions into prompts. Runtime capabilities remain available to the backend; model-facing tools stay task-scoped.
