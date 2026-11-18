@@ -512,7 +512,7 @@ export const dockerfile = [
   NODE_GLOBAL_TOOLS,
   PYTHON_RUNTIME_PACKAGES,
   commonScaffoldDockerfile,
-].join('\\n')
+].join('\n')
 
 // Ubuntu candidate image. Ubuntu is the final OS; Node/npm are copied from an
 // official, version-pinned Node image. Python dependencies are installed into a
@@ -528,7 +528,7 @@ export const ubuntuDockerfile = [
   'ENV PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1',
   NODE_GLOBAL_TOOLS,
   commonScaffoldDockerfile,
-].join('\\n')
+].join('\n')
 
 export const template = Template().fromDockerfile(dockerfile)
 export const ubuntuTemplate = Template().fromDockerfile(ubuntuDockerfile)
