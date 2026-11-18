@@ -126,12 +126,27 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
 }
 `
 
-const NEXT_PROVIDERS = `'use client'
+export const NEXT_QUERY_CLIENT_TS = `import { QueryClient } from '@tanstack/react-query'
 
+// Create one cache per rendered app tree. A module-level QueryClient can be
+// shared by concurrent server renders and leak user-specific cached data.
+export function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: 60 * 1000, retry: 1 },
+    },
+  })
+}
+`
+
+export const NEXT_PROVIDERS_TS = `'use client'
+
+import { useState } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClient } from '@/lib/queryClient'
+import { createQueryClient } from '@/lib/queryClient'
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => createQueryClient())
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 }
 `
@@ -176,7 +191,7 @@ export const NEXTJS_SCAFFOLD_COMMANDS = [
   writeFileCommand('/home/user/app/tsconfig.json', NEXT_TSCONFIG),
   writeFileCommand('/home/user/app/postcss.config.mjs', POSTCSS_CONFIG),
   writeFileCommand('/home/user/app/app/layout.tsx', NEXT_LAYOUT),
-  writeFileCommand('/home/user/app/app/providers.tsx', NEXT_PROVIDERS),
+  writeFileCommand('/home/user/app/app/providers.tsx', NEXT_PROVIDERS_TS),
   writeFileCommand('/home/user/app/app/page.tsx', NEXT_PAGE),
   writeFileCommand('/home/user/app/app/globals.css', STYLES_CSS),
   writeFileCommand('/home/user/app/vitest.config.ts', NEXT_VITEST_CONFIG),
@@ -185,7 +200,7 @@ export const NEXTJS_SCAFFOLD_COMMANDS = [
     writeFileCommand(`/home/user/app/${filePath}`, fileContent),
   ),
   writeFileCommand('/home/user/app/lib/utils.ts', UTILS_TS),
-  writeFileCommand('/home/user/app/lib/queryClient.ts', QUERY_CLIENT_TS),
+  writeFileCommand('/home/user/app/lib/queryClient.ts', NEXT_QUERY_CLIENT_TS),
   'cd /home/user/app && npm install --legacy-peer-deps',
   'chown -R user:user /home/user/app',
 ]
