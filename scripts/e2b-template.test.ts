@@ -68,10 +68,13 @@ for (const capability of ['next.config.ts', 'app/layout.tsx', 'app/page.tsx', 'p
 }
 assert.equal(NEXTJS_VERSION, '16.4.6')
 assert.equal(NEXTJS_REACT_VERSION, '19.2.0')
-const nextPkg = JSON.parse(NEXTJS_PKG_JSON) as { dependencies: Record<string, string> }
+const nextPkg = JSON.parse(NEXTJS_PKG_JSON) as {
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+}
 assert.equal(nextPkg.dependencies.next, NEXTJS_VERSION)
 assert.equal(nextPkg.dependencies.react, NEXTJS_REACT_VERSION)
-assert.ok(nextPkg.dependencies['@tailwindcss/postcss'])
+assert.ok(nextPkg.devDependencies['@tailwindcss/postcss'], 'Tailwind PostCSS is a build-time plugin')
 assert.ok(nextPkg.dependencies['@radix-ui/react-dialog'])
 assert.ok(!nextPkg.dependencies.three, 'Three.js should be installed only when the generated app imports it')
 
