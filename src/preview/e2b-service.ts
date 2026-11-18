@@ -2276,26 +2276,33 @@ export async function createPreviewSandbox(
     // concurrent callers (prewarm vs completion, double builds) always share
     // ONE sandbox instead of leaking a second one.
     await awaitWarming(projectId);
-    sandbox = sandboxes.get(projectId);
-    if (sandbox) {
-      const liveFramework = sandboxFrameworks.get(projectId) ?? "react";
-      if (liveFramework !== framework) {
-        log(`Replacing live ${liveFramework} sandbox with ${framework} runtime`);
-        await killSandbox(projectId);
-        sandbox = undefined;
-      } else {
+    let warm = warmingSandboxes.get(projectId);
+    if (!warm) {
+      const live = sandboxes.get(projectId);
+      const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
+      if (live && liveFramework === framework) {
+        sandbox = live;
         console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
-      }
-    }
-    if (!sandbox) {
-      let warm = warmingSandboxes.get(projectId);
-      if (!warm) {
-        warm = acquireRunningSandbox(projectId, log, framework).finally(() => {
+      } else {
+        // Put framework replacement inside the same promise lock as cold
+        // creation. Concurrent build turns then share one kill/recreate cycle
+        // rather than racing into multiple new E2B sandboxes.
+        warm = (async () => {
+          if (live) {
+            log(`Replacing live ${liveFramework} sandbox with ${framework} runtime`);
+            await killSandbox(projectId);
+          }
+          return acquireRunningSandbox(projectId, log, framework);
+        })().finally(() => {
           warmingSandboxes.delete(projectId);
         });
         warmingSandboxes.set(projectId, warm);
       }
-      sandbox = await warm;
+    }
+    if (!sandbox) {
+      const activeWarm = warm ?? warmingSandboxes.get(projectId);
+      if (!activeWarm) throw new Error("Preview sandbox acquisition lost its in-flight promise");
+      sandbox = await activeWarm;
     }
 
     // Each build turn extends the sandbox lifetime — a long iterate session
