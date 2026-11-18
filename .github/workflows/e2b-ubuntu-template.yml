@@ -41,7 +41,11 @@ jobs:
 
       - name: Install template build dependencies
         working-directory: e2b-template
-        run: npm install --no-audit --no-fund
+        run: npm install --no-fund
+
+      - name: Audit template build dependencies
+        working-directory: e2b-template
+        run: npm audit
 
       - name: Build isolated Ubuntu template candidate
         working-directory: e2b-template
