@@ -7,6 +7,7 @@ import {
   PYTHON_SETUP_COMMAND,
   UBUNTU_APT_PACKAGES,
   UBUNTU_BASE_IMAGE,
+  UBUNTU_TEMPLATE_ENVS,
   dockerfile,
   ubuntuTemplate,
 } from '../e2b-template/template.js'
@@ -24,6 +25,8 @@ assert.equal(UBUNTU_BASE_IMAGE, '24.04')
 assert.ok(UBUNTU_APT_PACKAGES.includes('git'))
 assert.ok(UBUNTU_APT_PACKAGES.includes('build-essential'))
 assert.ok(UBUNTU_APT_PACKAGES.includes('xz-utils'))
+assert.equal(UBUNTU_TEMPLATE_ENVS.PLAYWRIGHT_BROWSERS_PATH, '/home/user/.lampcode-tools/browsers')
+assert.equal(UBUNTU_TEMPLATE_ENVS.PATH.split(':')[0], '/opt/lampcode-python/bin')
 
 assert.equal(NODE_VERSION, '22.23.5')
 assert.match(NODE_INSTALL_COMMAND, /node-v22\.23\.5-linux-\$\{NODE_ARCH\}/)
@@ -41,7 +44,6 @@ for (const required of [
   'vite.config.ts', 'vitest.config.ts', 'vitest.setup.ts', 'tsconfig.json',
   'npm install --legacy-peer-deps',
   'playwright install --with-deps chromium',
-  'PLAYWRIGHT_BROWSERS_PATH',
   'check-render.mjs',
   'chown -R user:user /home/user/app',
   'chown -R user:user /home/user/.lampcode-tools',

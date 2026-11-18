@@ -533,17 +533,19 @@ export const PYTHON_SETUP_COMMAND =
   '/opt/lampcode-python/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && ' +
   '/opt/lampcode-python/bin/pip install --no-cache-dir fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn'
 
+export const UBUNTU_TEMPLATE_ENVS = {
+  PATH: '/opt/lampcode-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  PYTHONUNBUFFERED: '1',
+  PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  PLAYWRIGHT_BROWSERS_PATH: '/home/user/.lampcode-tools/browsers',
+} as const
+
 export const ubuntuTemplate = Template()
   .fromUbuntuImage(UBUNTU_BASE_IMAGE)
   .aptInstall([...UBUNTU_APT_PACKAGES], { noInstallRecommends: true })
   .runCmd(NODE_INSTALL_COMMAND, { user: 'root' })
   .runCmd(PYTHON_SETUP_COMMAND, { user: 'root' })
-  .setEnvs({
-    PATH: '/opt/lampcode-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    PYTHONUNBUFFERED: '1',
-    PIP_DISABLE_PIP_VERSION_CHECK: '1',
-    PLAYWRIGHT_BROWSERS_PATH: '/home/user/.lampcode-tools/browsers',
-  })
+  .setEnvs(UBUNTU_TEMPLATE_ENVS)
   .npmInstall(['vite', 'tsx', 'typescript'], { g: true })
   .runCmd(COMMON_SCAFFOLD_COMMANDS, { user: 'root' })
   .setWorkdir('/home/user/app')
