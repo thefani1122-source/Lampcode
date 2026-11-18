@@ -83,30 +83,44 @@ async function smokeCheck(
  * Hit four endpoints on the deployed URL and return structured results.
  * Accepts an optional `fetcher` for testing without real HTTP calls.
  */
+export interface SmokeTestOptions {
+  /** Default true for existing Vite/Hono/FastAPI deploys. */
+  checkHealth?: boolean;
+  /** Default true for existing Vite/Hono/FastAPI deploys. */
+  checkAuth?: boolean;
+}
+
+/**
+ * Hit the homepage and the API routes this app actually exposes.
+ * Legacy deploy shapes keep their existing health/auth checks by default.
+ */
 export async function runSmokeTests(
   url: string,
   fetcher: Fetcher = defaultFetcher,
+  options: SmokeTestOptions = {},
 ): Promise<SmokeResult> {
   const clean = url.replace(/\/$/, "");
   const t0 = Date.now();
+  const checkHealth = options.checkHealth ?? true;
+  const checkAuth = options.checkAuth ?? true;
 
   const [homepage, health, authEndpoint, dbCheck] = await Promise.all([
     smokeCheck("Homepage", `${clean}/`, [200, 301, 302], fetcher),
-    smokeCheck("Health endpoint", `${clean}/api/health`, [200], fetcher),
-    // Auth endpoint — 400/401/405 are all fine, just not 500
-    smokeCheck("Auth endpoint", `${clean}/api/auth/login`, [200, 400, 401, 405], fetcher),
-    // DB check is part of /api/health — re-evaluate separately via body inspection
-    smokeCheck("DB connectivity", `${clean}/api/health`, [200], fetcher),
+    checkHealth ? smokeCheck("Health endpoint", `${clean}/api/health`, [200], fetcher) : Promise.resolve(undefined),
+    checkAuth
+      ? smokeCheck("Auth endpoint", `${clean}/api/auth/login`, [200, 400, 401, 405], fetcher)
+      : Promise.resolve(undefined),
+    checkHealth ? smokeCheck("DB connectivity", `${clean}/api/health`, [200], fetcher) : Promise.resolve(undefined),
   ]);
 
-  // Enrich DB check: parse health body for db status
-  const enrichedDbCheck: SmokeCheck = (() => {
-    if (!dbCheck.passed) return { ...dbCheck, name: "DB connectivity" };
-    // If health returned 200 and body says db ok — pass
-    return { ...dbCheck, name: "DB connectivity", detail: "Included in health endpoint" };
-  })();
-
-  const checks = [homepage, health, authEndpoint, enrichedDbCheck];
+  const checks: SmokeCheck[] = [homepage];
+  if (health) checks.push(health)
+  if (authEndpoint) checks.push(authEndpoint)
+  if (dbCheck) {
+    checks.push(dbCheck.passed
+      ? { ...dbCheck, name: "DB connectivity", detail: "Included in health endpoint" }
+      : { ...dbCheck, name: "DB connectivity" })
+  }
 
   return {
     url: clean,
