@@ -4,22 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       template_id:
-        description: Candidate template ID (must stay in the lampcode-vite-ubuntu24 namespace)
-        required: false
+        description: Candidate template ID (lampcode-vite-ubuntu24 or lampcode-nextjs-ubuntu24)
+        required: true
         default: lampcode-vite-ubuntu24
-        type: string
+        type: choice
+        options:
+          - lampcode-vite-ubuntu24
+          - lampcode-nextjs-ubuntu24
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2b-ubuntu-template-${{ github.ref }}
+  group: e2b-ubuntu-template-${{ github.ref }}-${{ inputs.template_id }}
   cancel-in-progress: false
 
 jobs:
   build-and-verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -53,4 +56,5 @@ jobs:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           E2B_VERIFY_TEMPLATE_ID: ${{ inputs.template_id }}
           E2B_EXPECT_UBUNTU: 'true'
+          E2B_EXPECT_FRAMEWORK: ${{ contains(inputs.template_id, 'nextjs') && 'nextjs' || 'vite' }}
         run: npx tsx verify-template.ts

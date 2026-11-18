@@ -1,26 +1,35 @@
-# Ubuntu 24.04 E2B template candidate
+# Ubuntu 24.04 E2B runtime candidates
 
-**Status:** isolated candidate / proof of concept. It is not the production default.
+**Status:** isolated Vite and Next.js candidate images. Neither is a production default until the manual E2B build, live sandbox verifier and staging canary pass.
 
-## What this candidate changes
+## Shared Ubuntu base
 
-- Keeps Ubuntu 24.04 as the final sandbox OS.
-- Installs the official Node.js 22.23.5 binary from nodejs.org and verifies its published SHA-256 checksum before extraction.
-- Includes common Linux build utilities (Git, curl, compiler toolchain, package/config utilities, SQLite CLI, ripgrep).
-- Installs the existing Python backend/agent package baseline into `/opt/lampcode-python`, a dedicated virtual environment. The OS-managed Python installation is not modified by pip, and `python3` / `pip` resolve to this environment.
-- Reuses the exact same LampCode Vite scaffold, internal Playwright tooling, Chromium path, Vitest setup, type-check configuration and render probe as the existing production template.
+Both framework images use E2B SDK 2.55.0's native Ubuntu image builder API and share:
+- Ubuntu 24.04 as the final OS.
+- Official Node.js 22.23.5 binary, downloaded for amd64/arm64 and verified against pinned SHA-256.
+- Python 3 and pip inside `/opt/lampcode-python`, a dedicated virtual environment. System Python is left externally managed.
+- Minimal Python essentials only: FastAPI, Uvicorn, Supabase and python-dotenv.
+- Git, curl, compiler/build tools, pkg-config, database native headers, SQLite CLI, unzip/zip, jq, ripgrep and process tools.
+- Playwright + Chromium and one shared framework-neutral render-check tool.
+- Global TypeScript and tsx utilities.
 
-The candidate uses E2B SDK 2.55.0's native Ubuntu image builder API rather than a multi-stage Dockerfile. The candidate deliberately does not add new LLM tools or inject extra system/tool descriptions into prompts. Runtime capabilities remain available to the backend; model-facing tools stay task-scoped.
+Heavy packages such as CrewAI, LangGraph, LangChain, Three.js, React Three Fiber, Spline, GSAP, Motion and Lenis are **not** baked into every project. The preview backend installs optional npm imports and Python requirements into the isolated project sandbox before its server starts. This avoids paying cold-start and dependency costs for apps that do not use them, and keeps framework/tool catalogues out of the model prompt unless relevant.
+
+## Candidate IDs
+
+- Vite/React: `lampcode-vite-ubuntu24`
+- Next.js App Router: `lampcode-nextjs-ubuntu24`
 
 ## Build and verify
 
-Create `e2b-template/.env` (this path is gitignored) with:
+Add these values to `e2b-template/.env` (gitignored):
 
 ```dotenv
-E2B_API_KEY=your_E2B_key
+E2B_API_KEY=your_private_key
 E2B_UBUNTU_TEMPLATE_ID=lampcode-vite-ubuntu24
 E2B_VERIFY_TEMPLATE_ID=lampcode-vite-ubuntu24
 E2B_EXPECT_UBUNTU=true
+E2B_EXPECT_FRAMEWORK=vite
 ```
 
 Then run:
@@ -32,12 +41,23 @@ npm run build:ubuntu24
 npx tsx verify-template.ts
 ```
 
-The build script refuses template IDs outside the `lampcode-vite-ubuntu24` candidate namespace. A successful image build is not sufficient: the verification script starts a real E2B sandbox and checks the base OS, Node/npm, Python virtual environment, Git/build utilities, writable project dependencies, Vitest, TypeScript, Playwright/Chromium and the live render probe.
+For the Next.js candidate, change both template IDs to `lampcode-nextjs-ubuntu24` and set `E2B_EXPECT_FRAMEWORK=nextjs`.
 
-Alternatively, use the manually triggered **E2B Ubuntu 24.04 Template** GitHub Actions workflow after adding `E2B_API_KEY` as a repository Actions secret. The workflow is manual-only because template builds consume E2B resources.
+The verifier starts a real E2B sandbox, checks the OS/toolchain and package layout, runs Vitest and TypeScript, starts the actual framework dev server on its preview port, and then opens it using the same Playwright/Chromium QA browser. A green image build alone is not sufficient.
 
-## Promotion / rollback
+The manual GitHub Actions workflow can run the same process after adding `E2B_API_KEY` as a repository Actions secret. Do not paste the key into chat or commit `.env`.
 
-Do not change production configuration during the POC. After the build and live verification pass, set `E2B_TEMPLATE_ID=lampcode-vite-ubuntu24` only in a staging backend and run a representative full-stack canary. The existing backend selector already reads `E2B_TEMPLATE_ID`; no new model tool or prompt change is required.
+## Framework and deployment model
 
-Promote to production only after the canary verifies React/Vite preview, Node backend, Python backend, package installation, type checks, Vitest, Playwright render and logs. Roll back by restoring `E2B_TEMPLATE_ID=lampcode-vite`. Existing production template and snapshots remain untouched throughout this candidate build.
+- Frontend-only pages remain Vite/React by default: fast client-side builds with low runtime overhead.
+- New full-stack applications can use Next.js App Router as the default only after the Next.js Ubuntu image is built, verified and enabled in staging through `NEXTJS_TEMPLATE_ID`.
+- Explicit React + Hono remains available for projects that need a separate API service; Python/FastAPI remains available for Python backend projects.
+- Next.js runs a single Node process on port 3000 and uses Route Handlers/server-side code rather than a second Hono process.
+- Vite runs on 5173 and preserves its Hono/FastAPI companion service on 3001.
+- The preview URL/QA paths use the detected framework port; the app files remain framework-native for deployment.
+
+## Promotion and rollback
+
+Do not alter production configuration during the POC. After both candidates are live-verified, set `E2B_TEMPLATE_ID=lampcode-vite-ubuntu24` and `NEXTJS_TEMPLATE_ID=lampcode-nextjs-ubuntu24` only in a staging backend. Run real Vite+Hono, Vite+FastAPI and Next.js canaries. Then promote the same selectors to production.
+
+Rollback: restore `E2B_TEMPLATE_ID=lampcode-vite` and keep `NEXTJS_TEMPLATE_ID` unset. No migrations or user-project conversions are required; projects keep their framework metadata and stored files.
