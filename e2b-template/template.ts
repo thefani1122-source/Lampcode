@@ -375,6 +375,7 @@ export const dockerfile = [
 export const UBUNTU_BASE_IMAGE = '24.04'
 export const UBUNTU_APT_PACKAGES = [
   'ca-certificates',
+  'coreutils',
   'curl',
   'git',
   'python3-full',
@@ -387,6 +388,8 @@ export const UBUNTU_APT_PACKAGES = [
   'libssl-dev',
   'libpq-dev',
   'libatomic1',
+  'less',
+  'lesspipe',
   'unzip',
   'zip',
   'jq',
@@ -418,16 +421,20 @@ export const LAMPCODE_APT_SETUP_COMMAND = [
 ].join(' && ')
 
 /**
- * E2B executes sandbox.commands.run() using a login bash shell. Ubuntu's
- * /etc/profile can reset PATH for that shell, so persist the venv path in
- * profile.d as well as the image ENV. This makes python3/pip resolve to the
- * prebuilt venv for preview servers and agent shell commands after login.
+ * Put the Python venv first only in the generated-project user's shell.
+ *
+ * Do not set PATH as a template-wide image environment variable: E2B's envd
+ * updater also runs inside the image and requires the unmodified Ubuntu PATH
+ * to resolve core commands such as chmod and mv while updating its daemon.
+ * The project user gets Python from /opt/lampcode-python in both login and
+ * interactive bash shells, without changing root's or envd's environment.
  */
 export const LAMPCODE_LOGIN_ENV_SCRIPT = 'export PATH="/opt/lampcode-python/bin:$PATH"\\n'
 
 export const LAMPCODE_LOGIN_ENV_SETUP_COMMAND = [
-  writeFileCommand('/etc/profile.d/00-lampcode-python.sh', LAMPCODE_LOGIN_ENV_SCRIPT),
-  'chown root:root /etc/profile.d/00-lampcode-python.sh && chmod 0644 /etc/profile.d/00-lampcode-python.sh',
+  `grep -Fqx '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' /home/user/.profile || printf '\\n%s\\n' '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' >> /home/user/.profile`,
+  `grep -Fqx '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' /home/user/.bashrc || printf '\\n%s\\n' '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' >> /home/user/.bashrc`,
+  'chown user:user /home/user/.profile /home/user/.bashrc',
 ].join(' && ')
 
 export const NODE_VERSION = '22.23.5'
@@ -459,7 +466,9 @@ export const PYTHON_SETUP_COMMAND =
   "/opt/lampcode-python/bin/pip install --no-cache-dir fastapi 'uvicorn[standard]' supabase python-dotenv"
 
 export const UBUNTU_TEMPLATE_ENVS = {
-  PATH: '/opt/lampcode-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  // Do not replace the image-wide PATH: E2B's envd updater also runs inside
+  // the image and needs the untouched Ubuntu system command path. Python's
+  // project-user PATH is set in that user's profile below instead.
   PYTHONUNBUFFERED: '1',
   PIP_DISABLE_PIP_VERSION_CHECK: '1',
   PLAYWRIGHT_BROWSERS_PATH: '/home/user/.lampcode-tools/browsers',
