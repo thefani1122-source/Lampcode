@@ -256,11 +256,11 @@ try {
       const hasRoot = root ? (root.textContent || "").trim().length > 0 : false
       const hasMain = main ? (main.textContent || "").trim().length > 0 : false
       const hasContent = hasRoot || hasMain || text.length > 20
-      const readOverlay = (el) => el ? ((el.shadowRoot?.textContent || el.textContent || "").replace(/\\\\s+/g, " ").trim().slice(0, 500) || null) : null
+      const readOverlay = (el) => el ? ((el.shadowRoot?.textContent || el.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500) || null) : null
       const portal = document.querySelector("nextjs-portal")
       const nextError = portal?.shadowRoot?.querySelector("[data-nextjs-dialog-overlay], [data-nextjs-toast]")
       const nextOverlay = nextError
-        ? ((nextError.textContent || "Next.js development error overlay is visible").replace(/\\\\s+/g, " ").trim().slice(0, 500) || "Next.js development error overlay is visible")
+        ? ((nextError.textContent || "Next.js development error overlay is visible").replace(/\\s+/g, " ").trim().slice(0, 500) || "Next.js development error overlay is visible")
         : null
       return { hasContent, overlay: readOverlay(document.querySelector("vite-error-overlay")) || nextOverlay }
     })
