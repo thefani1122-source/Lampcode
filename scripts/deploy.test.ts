@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 
 import {
   detectDeployShape,
+  deploySmokeTargets,
   vercelScaffold,
   projectSlug,
   toInlinedFiles,
@@ -65,6 +66,27 @@ check(
   "python wins over a leftover ts server, matching the sandbox's own order",
   detectDeployShape({ "src/server/main.py": "x", "src/server/index.ts": "y" }),
   "fastapi",
+);
+
+check(
+  "static apps probe only the homepage, not assumed API endpoints",
+  deploySmokeTargets("static", { "src/App.tsx": "export default function App() {}" }),
+  { checkHealth: false, checkAuth: false },
+);
+check(
+  "Hono health checks are enabled only for an explicit route",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.get("/api/health", (c) => c.json({ ok: true }))' }),
+  { checkHealth: true, checkAuth: false },
+);
+check(
+  "FastAPI auth checks are enabled only for an explicit route",
+  deploySmokeTargets("fastapi", { "src/server/main.py": '@app.post("/api/auth/login")\\nasync def login(): pass' }),
+  { checkHealth: false, checkAuth: true },
+);
+check(
+  "backend apps without optional probe routes are not penalised",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.get("/api/projects", handler)' }),
+  { checkHealth: false, checkAuth: false },
 );
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
@@ -399,13 +421,19 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
 // A static app must not get the api scaffold — there is no server to serve.
 {
   const { call, sent } = fakeCall();
+  let capturedSmokeOptions: unknown;
+  const smoke = async (url: string, _fetcher?: unknown, options?: unknown) => {
+    capturedSmokeOptions = options;
+    return smokeOk(url);
+  };
   await deployToVercel({
     auth: AUTH, files: { "src/App.tsx": "x" }, projectName: "Rota",
-    call: call as never, smoke: smokeOk as never, sleep: noSleep, maxWaitMs: 1000,
+    call: call as never, smoke: smoke as never, sleep: noSleep, maxWaitMs: 1000,
   });
   const body = sent[0]?.args["requestBody"] as Record<string, unknown>;
   const uploaded = (body["files"] as Array<{ file: string }>).map((f) => f.file);
   ok("a frontend-only app gets no api entry", !uploaded.some((f) => f.startsWith("api/")));
+  check("static deploy passes homepage-only smoke options", capturedSmokeOptions, { checkHealth: false, checkAuth: false });
 }
 
 // ── what the user is told ────────────────────────────────────────────────────
