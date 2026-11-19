@@ -71,7 +71,7 @@ async function smokeCheck(
 // ── Main smoke test runner ────────────────────────────────────────────────────
 
 /**
- * Hit four endpoints on the deployed URL and return structured results.
+ * Check the deployed homepage and only the optional API routes declared by the app.
  * Accepts an optional `fetcher` for testing without real HTTP calls.
  */
 export interface SmokeTestOptions {
@@ -95,23 +95,17 @@ export async function runSmokeTests(
   const checkHealth = options.checkHealth ?? true;
   const checkAuth = options.checkAuth ?? true;
 
-  const [homepage, health, authEndpoint, dbCheck] = await Promise.all([
+  const [homepage, health, authEndpoint] = await Promise.all([
     smokeCheck("Homepage", `${clean}/`, [200, 301, 302], fetcher),
     checkHealth ? smokeCheck("Health endpoint", `${clean}/api/health`, [200], fetcher) : Promise.resolve(undefined),
     checkAuth
       ? smokeCheck("Auth endpoint", `${clean}/api/auth/login`, [200, 400, 401, 405], fetcher)
       : Promise.resolve(undefined),
-    checkHealth ? smokeCheck("DB connectivity", `${clean}/api/health`, [200], fetcher) : Promise.resolve(undefined),
   ]);
 
   const checks: SmokeCheck[] = [homepage];
   if (health) checks.push(health)
   if (authEndpoint) checks.push(authEndpoint)
-  if (dbCheck) {
-    checks.push(dbCheck.passed
-      ? { ...dbCheck, name: "DB connectivity", detail: "Included in health endpoint" }
-      : { ...dbCheck, name: "DB connectivity" })
-  }
 
   return {
     url: clean,
