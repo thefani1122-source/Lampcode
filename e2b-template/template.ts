@@ -429,7 +429,7 @@ export const LAMPCODE_APT_SETUP_COMMAND = [
  * The project user gets Python from /opt/lampcode-python in both login and
  * interactive bash shells, without changing root's or envd's environment.
  */
-export const LAMPCODE_LOGIN_ENV_SCRIPT = 'export PATH="/opt/lampcode-python/bin:$PATH"\\n'
+export const LAMPCODE_LOGIN_ENV_SCRIPT = 'export PATH="/opt/lampcode-python/bin:$PATH"'
 
 export const LAMPCODE_LOGIN_ENV_SETUP_COMMAND = [
   `grep -Fqx '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' /home/user/.profile || printf '\\n%s\\n' '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' >> /home/user/.profile`,
