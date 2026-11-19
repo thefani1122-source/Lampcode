@@ -99,6 +99,40 @@ async function main(): Promise<void> {
     const launch = await run(`${TOOLS_ENV} node -e "import('playwright').then(async (p) => { const b = await p.chromium.launch(); await b.close(); console.log('CHROMIUM OK') }).catch((e) => { console.error(e); process.exit(1) })"`, TOOLS_DIR)
     report('Playwright Chromium launches as sandbox user', launch.code === 0 && launch.out.includes('CHROMIUM OK'), launch.out.trim())
 
+    // Exercise a real framework API handler, not just the frontend page.
+    // Vite's backend is provided by Hono on :3001 and reached through its
+    // configured /api proxy. Next.js owns its Route Handler on :3000.
+    if (FRAMEWORK === 'vite') {
+      const dir = await run('mkdir -p src/server', PROJECT_DIR)
+      report('Hono backend fixture directory is writable', dir.code === 0, dir.out.trim())
+      await sandbox.files.write('/home/user/app/src/server/app.ts',
+        'import { Hono } from "hono"\n' +
+        'export const app = new Hono()\n' +
+        'app.get("/api/health", (c) => c.json({ ok: true, runtime: "hono" }))\n')
+      await sandbox.files.write('/home/user/app/src/server/index.ts',
+        'import { serve } from "@hono/node-server"\n' +
+        'import { app } from "./app.js"\n' +
+        'const port = Number(process.env.PORT ?? 3001)\n' +
+        'serve({ fetch: app.fetch, port, hostname: "0.0.0.0" })\n')
+    } else {
+      const dir = await run('mkdir -p app/api/health', PROJECT_DIR)
+      report('Next.js Route Handler fixture directory is writable', dir.code === 0, dir.out.trim())
+      await sandbox.files.write('/home/user/app/app/api/health/route.ts',
+        'export function GET() {\n' +
+        '  return Response.json({ ok: true, runtime: "nextjs" })\n' +
+        '}\n')
+    }
+
+    const fastApiDir = '/tmp/lampcode-fastapi-canary'
+    const fastApiDirResult = await run('mkdir -p ' + fastApiDir)
+    report('FastAPI canary directory is writable', fastApiDirResult.code === 0, fastApiDirResult.out.trim())
+    await sandbox.files.write(fastApiDir + '/main.py',
+      'from fastapi import FastAPI\n' +
+      'app = FastAPI()\n' +
+      '@app.get("/api/health")\n' +
+      'def health():\n' +
+      '    return {"ok": True, "runtime": "fastapi"}\n')
+
     const testRoot = FRAMEWORK === 'nextjs' ? 'lib' : 'src/lib'
     const componentRoot = FRAMEWORK === 'nextjs' ? 'components' : 'src/components'
     await sandbox.files.write(`${PROJECT_DIR}/${testRoot}/totals.ts`,
@@ -115,6 +149,48 @@ async function main(): Promise<void> {
 
     const types = await run('npx tsc --noEmit --pretty false', PROJECT_DIR, 90_000)
     report('TypeScript typecheck passes for application and tests', types.code === 0, types.out.slice(0, 1000).trim())
+
+    // Prove the Python venv can serve a real HTTP API request. This runs beside
+    // the selected frontend framework so both candidates cover FastAPI too.
+    let fastApiReady = false
+    try {
+      const started = await sandbox.commands.run(
+        '/opt/lampcode-python/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 3002',
+        { cwd: fastApiDir, background: true, timeoutMs: 0 },
+      )
+      void started
+      const api = await run(
+        "for i in $(seq 1 30); do body=$(curl -fsS http://127.0.0.1:3002/api/health 2>/dev/null || true); if [ \"$body\" = '{\"ok\":true,\"runtime\":\"fastapi\"}' ]; then echo FASTAPI API READY; exit 0; fi; sleep 1; done; echo FASTAPI API NOT READY; exit 1",
+        fastApiDir,
+        35_000,
+      )
+      fastApiReady = api.code === 0 && api.out.includes('FASTAPI API READY')
+      report('FastAPI serves a real JSON API request from the dedicated Python venv', fastApiReady, api.out.trim())
+    } catch (err) {
+      report('FastAPI serves a real JSON API request from the dedicated Python venv', false, err instanceof Error ? err.message : String(err))
+    }
+
+    // The Vite candidate's Hono backend starts through the same tsx entry
+    // point used by e2b-service and is reachable on :3001.
+    let honoReady = false
+    if (FRAMEWORK === 'vite') {
+      try {
+        const started = await sandbox.commands.run(
+          "NODE_OPTIONS='--experimental-websocket' tsx src/server/index.ts",
+          { cwd: PROJECT_DIR, background: true, timeoutMs: 0, envs: { PORT: '3001' } },
+        )
+        void started
+        const api = await run(
+          "for i in $(seq 1 30); do body=$(curl -fsS http://127.0.0.1:3001/api/health 2>/dev/null || true); if [ \"$body\" = '{\"ok\":true,\"runtime\":\"hono\"}' ]; then echo HONO API READY; exit 0; fi; sleep 1; done; echo HONO API NOT READY; exit 1",
+          PROJECT_DIR,
+          35_000,
+        )
+        honoReady = api.code === 0 && api.out.includes('HONO API READY')
+        report('Hono backend starts with LampCode tsx entrypoint and serves JSON on :3001', honoReady, api.out.trim())
+      } catch (err) {
+        report('Hono backend starts with LampCode tsx entrypoint and serves JSON on :3001', false, err instanceof Error ? err.message : String(err))
+      }
+    }
 
     // Start the exact framework server LampCode's preview manager uses, then
     // inspect the live page in Chromium (not just the image's installed files).
@@ -140,6 +216,28 @@ async function main(): Promise<void> {
       let parsed: { ok?: boolean; blank?: boolean; errors?: string[] } | null = null
       try { parsed = JSON.parse(browserCheck.out.trim().split(/\r?\n/).at(-1) ?? '') } catch { parsed = null }
       report('independent browser render check passes through the public E2B HTTPS/WSS host', parsed?.ok === true && parsed.blank === false && (parsed.errors?.length ?? 0) === 0, browserCheck.out.slice(-1000).trim())
+
+      if (FRAMEWORK === 'vite' && honoReady) {
+        const proxy = await run('curl -fsS http://127.0.0.1:5173/api/health', PROJECT_DIR, 15_000)
+        report(
+          'Vite /api proxy forwards a real request to the Hono backend',
+          proxy.code === 0 && proxy.out.trim() === '{"ok":true,"runtime":"hono"}',
+          proxy.out.trim(),
+        )
+      }
+
+      if (FRAMEWORK === 'nextjs') {
+        const route = await run(
+          "for i in $(seq 1 30); do body=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null || true); if [ \"$body\" = '{\"ok\":true,\"runtime\":\"nextjs\"}' ]; then echo NEXT API READY; exit 0; fi; sleep 1; done; echo NEXT API NOT READY; exit 1",
+          PROJECT_DIR,
+          35_000,
+        )
+        report(
+          'Next.js App Router Route Handler serves a real JSON API request',
+          route.code === 0 && route.out.includes('NEXT API READY'),
+          route.out.trim(),
+        )
+      }
     }
   } finally {
     await sandbox.kill().catch(() => {})
