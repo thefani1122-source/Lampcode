@@ -88,7 +88,7 @@ const OUT_OF_BOUNDS = [
  * paths, local deb files, source edits, removals and arbitrary root commands.
  * These operations still pause for explicit user approval.
  */
-const SANDBOX_APT = /^sudo\\s+-n\\s+\\/usr\\/local\\/bin\\/lampcode-apt\\s+(?:update|install(?:\\s+[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9:~.+-]+)?)+)$/;
+const SANDBOX_APT = /^sudo\s+-n\s+\/usr\/local\/bin\/lampcode-apt\s+(?:update|install(?:\s+[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9:~.+-]+)?)+)$/;
 
 /** Privilege, persistence, and getting out. */
 const ESCALATION = [
