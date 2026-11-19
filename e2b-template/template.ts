@@ -394,7 +394,6 @@ export const UBUNTU_APT_PACKAGES = [
   'procps',
   'sqlite3',
   'sudo',
-  'tree',
   'xz-utils',
 ] as const
 
