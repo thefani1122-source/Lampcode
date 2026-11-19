@@ -423,11 +423,10 @@ export const LAMPCODE_APT_SETUP_COMMAND = [
  * profile.d as well as the image ENV. This makes python3/pip resolve to the
  * prebuilt venv for preview servers and agent shell commands after login.
  */
+export const LAMPCODE_LOGIN_ENV_SCRIPT = 'export PATH="/opt/lampcode-python/bin:$PATH"\\n'
+
 export const LAMPCODE_LOGIN_ENV_SETUP_COMMAND = [
-  writeFileCommand(
-    '/etc/profile.d/00-lampcode-python.sh',
-    'export PATH="/opt/lampcode-python/bin:$PATH"\n',
-  ),
+  writeFileCommand('/etc/profile.d/00-lampcode-python.sh', LAMPCODE_LOGIN_ENV_SCRIPT),
   'chown root:root /etc/profile.d/00-lampcode-python.sh && chmod 0644 /etc/profile.d/00-lampcode-python.sh',
 ].join(' && ')
 
