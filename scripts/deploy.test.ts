@@ -120,7 +120,27 @@ ok("a hono app gets its API entry", "api/[...route].ts" in honoScaffold);
 for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json", "src/components/ui/button.tsx", "src/lib/utils.ts", "src/lib/queryClient.ts", "src/styles.css"]) {
   ok(`a Hono/Vite deploy materializes ${needed}`, needed in honoScaffold);
 }
-check("fastapi already exposes the ASGI app Vercel wants", vercelScaffold("fastapi"), {});
+const fastApiScaffold = vercelScaffold("fastapi", {
+  "src/server/main.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+});
+const fastApiPyproject = fastApiScaffold["pyproject.toml"] ?? "";
+ok("FastAPI deploy declares its nested Vercel entrypoint", fastApiPyproject.includes('entrypoint = "src.server.main:app"'));
+ok("FastAPI scaffold declares the Vercel tool table", fastApiPyproject.includes("[tool.vercel]"));
+
+const fastApiWithExistingMetadata = vercelScaffold("fastapi", {
+  "src/server/main.py": "app = None",
+  "pyproject.toml": '[project]\nname = "generated-app"\n\n[tool.pytest.ini_options]\nasyncio_mode = "auto"\n',
+})["pyproject.toml"] ?? "";
+ok("FastAPI scaffold preserves existing project metadata", fastApiWithExistingMetadata.includes('name = "generated-app"'));
+ok("FastAPI scaffold preserves other pyproject tool tables", fastApiWithExistingMetadata.includes("[tool.pytest.ini_options]"));
+ok("FastAPI scaffold adds the Vercel table to an existing pyproject", fastApiWithExistingMetadata.includes('entrypoint = "src.server.main:app"'));
+
+const fastApiWithCustomEntrypoint = vercelScaffold("fastapi", {
+  "src/server/main.py": "app = None",
+  "pyproject.toml": '[tool.vercel]\nentrypoint = "backend.server:app"\n',
+})["pyproject.toml"] ?? "";
+check("an explicit app-owned Vercel entrypoint is not overwritten", fastApiWithCustomEntrypoint.match(/entrypoint =/g)?.length, 1);
+ok("the custom Vercel entrypoint is preserved", fastApiWithCustomEntrypoint.includes('entrypoint = "backend.server:app"'));
 
 const NEXT_APP_FILES = {
   "app/page.tsx": "export default function Page() { return <main>hello</main> }",
@@ -332,6 +352,27 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
     created?.args["skipAutoDetectionConfirmation"],
     "1",
   );
+}
+
+{
+  const { call, sent } = fakeCall();
+  const out = await deployToVercel({
+    auth: AUTH,
+    files: {
+      "src/server/main.py": '@app.get("/api/health")\ndef health(): return {"ok": True}',
+      "requirements.txt": "fastapi==0.115.0\n",
+    },
+    projectName: "FastAPI App",
+    call: call as never, smoke: smokeOk as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("FastAPI deploy reports its runtime shape", out.shape, "fastapi");
+  const created = sent.find((entry) => entry.tool === "create_deployment");
+  const body = created?.args["requestBody"] as Record<string, unknown>;
+  check("Vercel receives the native FastAPI preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "fastapi");
+  const uploaded = body["files"] as Array<{ file: string; data: string }>;
+  const pyproject = uploaded.find((entry) => entry.file === "pyproject.toml")?.data ?? "";
+  ok("FastAPI deploy uploads the Vercel entrypoint config", pyproject.includes('entrypoint = "src.server.main:app"'));
+  ok("FastAPI deploy retains the generated app entrypoint", uploaded.some((entry) => entry.file === "src/server/main.py"));
 }
 
 {
