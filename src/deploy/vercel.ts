@@ -560,8 +560,11 @@ function servicesVercelConfig(existing: string | undefined, backendEntrypoint: s
     throw new Error("Existing vercel.json has global functions settings. Move these into the intended service before automatic multi-service deployment.");
   }
 
-  const frontend: Record<string, unknown> = { root: "frontend", framework: "vite" };
-  const backend: Record<string, unknown> = { root: "backend", entrypoint: backendEntrypoint, framework: "fastapi" };
+  const frontend: Record<string, unknown> = { root: "frontend/", framework: "vite" };
+  const backend: Record<string, unknown> = { root: "backend/", entrypoint: backendEntrypoint, framework: "fastapi" };
+  if (config["framework"] !== undefined && config["framework"] !== "vite") {
+    throw new Error("Existing vercel.json framework is not Vite; refusing to override the app's framework declaration.");
+  }
   for (const key of ["buildCommand", "installCommand", "outputDirectory", "devCommand", "ignoreCommand", "framework"]) {
     if (config[key] !== undefined) { frontend[key] = config[key]; delete config[key]; }
   }
@@ -594,7 +597,7 @@ function viteFastApiScaffold(files: Record<string, string>): Record<string, stri
   }
   for (const [path, content] of Object.entries(frontendFiles)) out["frontend/" + path] = content;
   for (const [path, content] of Object.entries(files)) {
-    if (isPythonBackendFile(path)) out["backend/" + path] = content;
+    if (isPythonBackendFile(path) && !isPythonRequirementFile(path)) out["backend/" + path] = content;
   }
   const pyproject = withFastApiVercelEntrypoint(
     files["pyproject.toml"] ?? "",
