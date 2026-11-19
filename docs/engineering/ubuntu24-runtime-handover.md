@@ -245,7 +245,7 @@ Only after staging canaries succeed should the same two selectors be updated in 
 
 ## 9. Verification state on this branch
 
-Latest completed functional CI and MCP CI on the runtime/package-manager code (19 Nov 2026): [CI run #44455712411](https://github.com/thefani1122-source/Lampcode/actions/runs/44455712411) and [MCP CI run #44455712518](https://github.com/thefani1122-source/Lampcode/actions/runs/44455712518). Both workflows passed; CI's functional job includes typecheck, full repository tests and backend bundle, and its audit job includes both production and full dependency scans.
+Latest completed functional CI and MCP CI after the E2B SDK 2.64.0 pin and its contract test (19 Nov 2026): [CI run #44460504364](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504364) and [MCP CI run #44460504390](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504390). Both workflows passed; CI's functional job includes typecheck, the full repository test suite and backend bundle, while its audit job independently scans production and all dependencies.
 
 - `npm ci`: passed.
 - TypeScript typecheck: passed.
@@ -253,10 +253,11 @@ Latest completed functional CI and MCP CI on the runtime/package-manager code (1
 - Backend production bundle: passed.
 - MCP CI (typecheck, MCP test suites and production build): passed.
 - `npm audit --omit=dev`: passed — 0 vulnerabilities.
-- Full `npm audit`: passed — 0 vulnerabilities.
+- Full `npm audit`: passed — 0 vulnerabilities in the LampCode root dependency graph. E2B template-builder dependency audit is separate and last failed on SDK `2.55.0`; the template builder pin is now `2.64.0`, but its updated `npm audit` still awaits the next manual E2B workflow dispatch.
 - `tsup` remains at the tested `8.5.1` version, moved to `devDependencies`; no forced downgrade was applied. `picomatch@4.0.4` remains in the development tool graph, but the GitHub advisory GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov 2026 after maintainer dispute/review. See the [withdrawn GitHub Advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) and [upstream maintainer discussion](https://github.com/micromatch/picomatch/pull/235). CI now independently audits production and all dependencies; both pass.
 - The two first manual E2B workflow runs (#3 Vite and #4 Next.js) both stopped at **Audit template build dependencies**. The E2B credential check, `npm install` and source-branch checkout passed; the image build and sandbox verifier were skipped. The audit found 4 vulnerabilities (3 moderate, 1 high) through E2B SDK `2.55.0` dependencies, including `glob` and `undici8`; npm's suggested E2B fix was `2.64.0`.
 - Updated the E2B template-builder SDK pin to exact `2.64.0` (the official SDK changelog includes the `glob@^14.0.3` and `undici@^8.12.3` fixes), while preserving the API usage in the template build/verify scripts. Added a contract test to keep this audited pin from silently drifting.
+- Branch CI after this update passed: [functional CI #44460504364](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504364) and [MCP CI #44460504390](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504390). These do not execute the separate `e2b-template` audit/build workflow.
 - **The audit after this SDK upgrade has not yet been run in the manual E2B workflow.** Re-run Vite and Next.js candidates from `main`, with `source_ref=feat/e2b-ubuntu24-template-poc`. Both new runs must pass the audit before any image build begins. The repository secret is already configured; no new secret is required.
 - Real E2B candidate builds: **not yet verified**. The image build and sandbox verifier have not run yet.
 - Real provider-backed staging/Vercel canaries: **not yet run**.
