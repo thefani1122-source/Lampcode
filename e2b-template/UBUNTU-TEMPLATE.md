@@ -9,7 +9,8 @@ Both framework images use E2B SDK 2.55.0's native Ubuntu image builder API and s
 - Official Node.js 22.23.5 binary, downloaded for amd64/arm64 and verified against pinned SHA-256.
 - Python 3 and pip inside `/opt/lampcode-python`, a dedicated virtual environment. System Python is left externally managed.
 - Minimal Python essentials only: FastAPI, Uvicorn, Supabase and python-dotenv.
-- Git, curl, compiler/build tools, pkg-config, database native headers, SQLite CLI, unzip/zip, jq, ripgrep and process tools.
+- Git, curl, compiler/build tools, pkg-config, database native headers, SQLite CLI, unzip/zip, jq, ripgrep, tree and process tools.
+- A restricted root-owned apt wrapper: the project user can request Ubuntu repository packages through `sudo -n /usr/local/bin/lampcode-apt update` and `sudo -n /usr/local/bin/lampcode-apt install <package>`. LampCode's shell policy requires explicit user approval for both operations. Arbitrary sudo/root commands, local `.deb` files and apt removals remain refused.
 - Playwright + Chromium and one shared framework-neutral render-check tool.
 - Global TypeScript and tsx utilities.
 
@@ -19,6 +20,17 @@ Heavy packages such as CrewAI, LangGraph, LangChain, Three.js, React Three Fiber
 
 - Vite/React: `lampcode-vite-ubuntu24`
 - Next.js App Router: `lampcode-nextjs-ubuntu24`
+
+## Installing optional OS packages
+
+Generated apps sometimes need native Linux libraries that should not be baked into every project image. After the user approves the shell action, the agent can request:
+
+```bash
+sudo -n /usr/local/bin/lampcode-apt update
+sudo -n /usr/local/bin/lampcode-apt install libcairo2-dev libpq-dev
+```
+
+The root-owned wrapper validates repository package names and invokes non-interactive apt. It does not provide a general root shell, accept local package files, change apt sources or remove packages. The verifier installs `tree` through this exact path and tests that local `.deb` arguments are rejected.
 
 ## Build and verify
 
