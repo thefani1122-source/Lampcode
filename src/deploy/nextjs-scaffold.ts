@@ -215,8 +215,14 @@ export function nextjsVercelScaffold(files: Record<string, string>): Record<stri
 
 /** Route probes are only enabled when the generated app actually has them. */
 export function nextjsSmokeTargets(files: Record<string, string>): { checkHealth: boolean; checkAuth: boolean } {
+  const routeFiles = (route: string) => [
+    `app/api/${route}/route.ts`, `app/api/${route}/route.tsx`,
+    `app/api/${route}/route.js`, `app/api/${route}/route.jsx`,
+    `src/app/api/${route}/route.ts`, `src/app/api/${route}/route.tsx`,
+    `src/app/api/${route}/route.js`, `src/app/api/${route}/route.jsx`,
+  ];
   return {
-    checkHealth: hasAny(files, ["app/api/health/route.ts", "src/app/api/health/route.ts"]),
-    checkAuth: hasAny(files, ["app/api/auth/login/route.ts", "src/app/api/auth/login/route.ts"]),
+    checkHealth: hasAny(files, routeFiles("health")),
+    checkAuth: hasAny(files, routeFiles("auth/login")),
   }
 }
