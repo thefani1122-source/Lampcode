@@ -19,7 +19,7 @@ import {
   LAMPCODE_APT_SETUP_COMMAND,
   LAMPCODE_LOGIN_ENV_SETUP_COMMAND,
 } from '../e2b-template/template.js'
-import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
+import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, NEXT_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
 
 // Existing production Node 20 image stays unchanged and remains Vite.
 assert.match(dockerfile, /^FROM node:20-slim/m)
@@ -104,6 +104,8 @@ assert.match(NEXT_PROVIDERS_TS, /useState\(\(\) => createQueryClient\(\)\)/)
 assert.ok(!NEXT_PROVIDERS_TS.includes("import { queryClient }"))
 assert.ok(NEXT_VITEST_CONFIG.includes("import.meta.url"), 'Vitest alias resolves correctly in the ESM project')
 assert.ok(!NEXT_VITEST_CONFIG.includes('__dirname'), 'Vitest config does not rely on CommonJS globals')
+assert.match(NEXT_CONFIG, /allowedDevOrigins: previewHost \? \[previewHost\] : \[\]/)
+assert.ok(NEXT_CONFIG.includes('process.env.LAMPCODE_PREVIEW_HOST'), 'Next.js only allows the exact runtime preview hostname')
 
 const e2bBuilderPackage = JSON.parse(readFileSync(new URL('../e2b-template/package.json', import.meta.url), 'utf8')) as { devDependencies: Record<string, string> }
 assert.equal(e2bBuilderPackage.devDependencies.e2b, '2.64.0', 'E2B SDK pin includes the current glob/undici security fixes')
