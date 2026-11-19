@@ -307,6 +307,34 @@ function buildFiles(files: Record<string, string>): Record<string, string> {
   return buildFilesResult;
 }
 
+/**
+ * Vercel's FastAPI preset does not resolve LampCode's nested server module by
+ * default. Keep existing pyproject content intact and add the explicit app
+ * entrypoint only when the project has not already configured one.
+ */
+function withFastApiVercelEntrypoint(existing: string): string {
+  const lines = existing.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => /^\s*\[tool\.vercel\]\s*(?:#.*)?$/.test(line));
+  if (headerIndex >= 0) {
+    let sectionEnd = lines.length;
+    for (let i = headerIndex + 1; i < lines.length; i += 1) {
+      if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(lines[i] ?? "")) {
+        sectionEnd = i;
+        break;
+      }
+    }
+    if (lines.slice(headerIndex + 1, sectionEnd).some((line) => /^\s*entrypoint\s*=/.test(line))) {
+      return existing;
+    }
+    lines.splice(headerIndex + 1, 0, 'entrypoint = "src.server.main:app"');
+    return lines.join("\n") + (existing.endsWith("\n") ? "\n" : "");
+  }
+
+  const trimmed = existing.trimEnd();
+  const separator = trimmed.length > 0 ? "\n\n" : "";
+  return trimmed + separator + '[tool.vercel]\nentrypoint = "src.server.main:app"\n';
+}
+
 export function vercelScaffold(
   shape: DeployShape,
   files: Record<string, string> = {},
@@ -327,10 +355,16 @@ export function vercelScaffold(
         `export default app;\n`,
     };
   }
-  // FastAPI already exposes the ASGI `app` that Vercel's python preset wants,
-  // and its dependencies come from the generated requirements.txt rather than
-  // from here. Untouched and still UNPROVEN — no Python app has been deployed.
-  if (shape === "fastapi") return {};
+  // The Python preset can detect a root-level FastAPI app, but LampCode keeps
+  // the generated entrypoint at src/server/main.py. Vercel's live build rejects
+  // that nested path unless the custom entrypoint is declared in pyproject.toml.
+  // Preserve any app-owned Python project metadata and only add the missing
+  // Vercel entrypoint setting.
+  if (shape === "fastapi") {
+    return {
+      "pyproject.toml": withFastApiVercelEntrypoint(files["pyproject.toml"] ?? ""),
+    };
+  }
 
   // Static: a React/Vite app, which needs everything above to build.
   return buildFiles(files);
