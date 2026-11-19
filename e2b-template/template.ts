@@ -417,6 +417,20 @@ export const LAMPCODE_APT_SETUP_COMMAND = [
   'visudo -cf /etc/sudoers.d/90-lampcode-apt',
 ].join(' && ')
 
+/**
+ * E2B executes sandbox.commands.run() using a login bash shell. Ubuntu's
+ * /etc/profile can reset PATH for that shell, so persist the venv path in
+ * profile.d as well as the image ENV. This makes python3/pip resolve to the
+ * prebuilt venv for preview servers and agent shell commands after login.
+ */
+export const LAMPCODE_LOGIN_ENV_SETUP_COMMAND = [
+  writeFileCommand(
+    '/etc/profile.d/00-lampcode-python.sh',
+    'export PATH="/opt/lampcode-python/bin:$PATH"\n',
+  ),
+  'chown root:root /etc/profile.d/00-lampcode-python.sh && chmod 0644 /etc/profile.d/00-lampcode-python.sh',
+].join(' && ')
+
 export const NODE_VERSION = '22.23.5'
 export const NODE_SHA256_BY_ARCH = {
   amd64: 'cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8',
@@ -457,6 +471,7 @@ export function createUbuntuBaseTemplate() {
     .fromUbuntuImage(UBUNTU_BASE_IMAGE)
     .aptInstall([...UBUNTU_APT_PACKAGES], { noInstallRecommends: true })
     .runCmd(LAMPCODE_APT_SETUP_COMMAND, { user: 'root' })
+    .runCmd(LAMPCODE_LOGIN_ENV_SETUP_COMMAND, { user: 'root' })
     .runCmd(NODE_INSTALL_COMMAND, { user: 'root' })
     .runCmd(PYTHON_SETUP_COMMAND, { user: 'root' })
     .setEnvs({ ...UBUNTU_TEMPLATE_ENVS, NEXT_TELEMETRY_DISABLED: '1' })
