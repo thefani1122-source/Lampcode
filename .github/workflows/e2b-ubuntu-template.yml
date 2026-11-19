@@ -1,22 +1,8 @@
 name: E2B Ubuntu 24.04 Template
 
-run-name: E2B Ubuntu 24.04 — ${{ github.event_name == 'push' && 'both candidates' || inputs.template_id }} from ${{ github.event_name == 'push' && github.ref_name || inputs.source_ref }}
+run-name: E2B Ubuntu 24.04 — ${{ inputs.template_id }} from ${{ inputs.source_ref }}
 
 on:
-  # Every runtime/template implementation change on the candidate branch
-  # automatically rebuilds and verifies BOTH images. Docs-only commits are
-  # excluded so they do not spend E2B build minutes.
-  push:
-    branches:
-      - feat/e2b-ubuntu24-template-poc
-    paths:
-      - '.github/workflows/e2b-ubuntu-template.yml'
-      - 'e2b-template/template.ts'
-      - 'e2b-template/template-nextjs-ubuntu.ts'
-      - 'e2b-template/build-ubuntu.ts'
-      - 'e2b-template/verify-template.ts'
-      - 'e2b-template/package.json'
-      - 'src/preview/e2b-service.ts'
   workflow_dispatch:
     inputs:
       source_ref:
@@ -38,22 +24,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: e2b-ubuntu-template-${{ github.ref }}-${{ inputs.template_id }}
+  cancel-in-progress: false
+
 jobs:
   build-and-verify:
-    strategy:
-      fail-fast: false
-      # A manual run builds only the selected candidate; a push builds both.
-      matrix:
-        template_id: ${{ fromJSON(github.event_name == 'push' && '["lampcode-vite-ubuntu24","lampcode-nextjs-ubuntu24"]' || format('["{0}"]', inputs.template_id)) }}
-    concurrency:
-      group: e2b-ubuntu-template-${{ github.ref }}-${{ matrix.template_id }}
-      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.source_ref }}
+          ref: ${{ inputs.source_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -80,14 +62,14 @@ jobs:
         working-directory: e2b-template
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          E2B_UBUNTU_TEMPLATE_ID: ${{ matrix.template_id }}
+          E2B_UBUNTU_TEMPLATE_ID: ${{ inputs.template_id }}
         run: npm run build:ubuntu24
 
       - name: Start a real sandbox and verify capabilities
         working-directory: e2b-template
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          E2B_VERIFY_TEMPLATE_ID: ${{ matrix.template_id }}
+          E2B_VERIFY_TEMPLATE_ID: ${{ inputs.template_id }}
           E2B_EXPECT_UBUNTU: 'true'
-          E2B_EXPECT_FRAMEWORK: ${{ contains(matrix.template_id, 'nextjs') && 'nextjs' || 'vite' }}
+          E2B_EXPECT_FRAMEWORK: ${{ contains(inputs.template_id, 'nextjs') && 'nextjs' || 'vite' }}
         run: npx tsx verify-template.ts
