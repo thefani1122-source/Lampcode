@@ -43,7 +43,7 @@
 
 import { callMcpTool } from "../mcp/call-tool.js";
 import { logger } from "../server/logger.js";
-import { runSmokeTests } from "./smoke.js";
+import { runSmokeTests, type SmokeTestOptions } from "./smoke.js";
 import { nextjsSmokeTargets, nextjsVercelScaffold } from "./nextjs-scaffold.js";
 import { PREBAKED_UI_PRIMITIVES, QUERY_CLIENT_TS, STYLES_CSS, UTILS_TS } from "./shared-scaffold-assets.js";
 
@@ -94,6 +94,44 @@ export function detectDeployShape(files: Record<string, string>): DeployShape {
   if (has("src/server/main.py")) return "fastapi";
   if (has("src/server/app.ts") || has("src/server/index.ts")) return "hono";
   return "static";
+}
+
+/**
+ * Probe only endpoints the generated app actually declares.
+ *
+ * A generic Vite app has no API server, and a Hono/FastAPI app is not required
+ * to expose LampCode's optional health/auth examples. Assuming those endpoints
+ * exist made healthy deployments fail smoke checks with 404s. For backend
+ * projects, match explicit route declarations in the project server sources;
+ * if a route is dynamic or composed from prefixes, do not guess its URL.
+ */
+export function deploySmokeTargets(
+  shape: DeployShape,
+  files: Record<string, string>,
+): SmokeTestOptions {
+  if (shape === "nextjs") return nextjsSmokeTargets(files);
+  if (shape === "static") return { checkHealth: false, checkAuth: false };
+
+  const serverSources = Object.entries(files)
+    .filter(([path]) => path.startsWith("src/server/") && /\.(?:[cm]?[jt]sx?|py)$/i.test(path))
+    .map(([, content]) => content);
+
+  const declaresRoute = (endpoint: string): boolean => {
+    // The endpoints are fixed internal constants, so no user-controlled regex
+    // content is evaluated here. Match common Hono and FastAPI route syntax.
+    const pattern = new RegExp(
+      "(?:\\.\\s*(?:get|post|route)|@[\\w.]+\\.\\s*(?:get|post|route)|add_api_route)\\s*\\(\\s*[\\\"']" +
+        endpoint +
+        "[\\\"']",
+      "i",
+    );
+    return serverSources.some(source => pattern.test(source));
+  };
+
+  return {
+    checkHealth: declaresRoute("/api/health"),
+    checkAuth: declaresRoute("/api/auth/login"),
+  };
 }
 
 /**
@@ -569,7 +607,7 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
     smoke = await smokeFn(
       fullUrl,
       undefined,
-      shape === "nextjs" ? nextjsSmokeTargets(input.files) : undefined,
+      deploySmokeTargets(shape, input.files),
     );
   } catch (err) {
     // A failed verifier is not evidence that the app works. Keep the live URL
