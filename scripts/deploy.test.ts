@@ -359,6 +359,22 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
 }
 
 {
+  const { call } = fakeCall();
+  const out = await deployToVercel({
+    auth: AUTH, files: APP, projectName: "Rota",
+    call: call as never,
+    smoke: (async () => { throw new Error("probe crashed"); }) as never,
+    sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("a thrown smoke verifier cannot turn a READY deploy green", out.ok, false);
+  check("the deployed URL is retained when verification throws", out.url, "https://rota.vercel.app");
+  ok("the verification failure is explicit", (out.error ?? "").includes("could not complete"));
+  const message = formatDeployForUser(out);
+  ok("the user is told the URL exists but is unverified", message.some(line => line.includes("could not verify")));
+  ok("the user is not falsely told nothing changed", !message.some(line => line.includes("Nothing was changed")));
+}
+
+{
   const { call } = fakeCall({ state: "BUILDING" });
   const out = await deployToVercel({
     auth: AUTH, files: APP, projectName: "Rota",
