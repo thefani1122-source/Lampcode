@@ -66,7 +66,7 @@ export const NEXTJS_PKG_JSON = `{
   }
 }`
 
-const NEXT_CONFIG = `import type { NextConfig } from 'next'
+export const NEXT_CONFIG = `import type { NextConfig } from 'next'
 
 // E2B preview sandboxes set this to their own exact public hostname when the
 // Next.js dev server starts. Keep the allowlist per sandbox rather than using
