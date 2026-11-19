@@ -563,22 +563,33 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
 
   // Vercel returns a bare hostname.
   const fullUrl = /^https?:\/\//.test(url) ? url : `https://${url}`;
-  const smoke = await smokeFn(
-    fullUrl,
-    undefined,
-    shape === "nextjs" ? nextjsSmokeTargets(input.files) : undefined,
-  ).catch(() => undefined);
+  let smoke: Awaited<ReturnType<typeof runSmokeTests>> | undefined;
+  let smokeError: string | undefined;
+  try {
+    smoke = await smokeFn(
+      fullUrl,
+      undefined,
+      shape === "nextjs" ? nextjsSmokeTargets(input.files) : undefined,
+    );
+  } catch (err) {
+    // A failed verifier is not evidence that the app works. Keep the live URL
+    // visible to the user, but never turn an exception into a green deploy.
+    logger.warn({ project: name, err }, "Post-deploy smoke verification failed");
+    smokeError = "The deployment reached READY, but LampCode could not complete the post-deploy verification.";
+  }
 
-  return {
-    ok: smoke?.ok !== false,
-    url: fullUrl,
-    state,
-    shape,
-    ...(smoke === undefined ? {} : { smoke }),
-    ...(smoke?.ok === false
-      ? { error: "The app deployed but did not answer correctly when checked." }
-      : {}),
-  };
+  if (smoke?.ok !== true) {
+    return {
+      ok: false,
+      url: fullUrl,
+      state,
+      shape,
+      ...(smoke === undefined ? {} : { smoke }),
+      error: smokeError ?? "The app deployed but did not answer correctly when checked.",
+    };
+  }
+
+  return { ok: true, url: fullUrl, state, shape, smoke };
 }
 
 /**
