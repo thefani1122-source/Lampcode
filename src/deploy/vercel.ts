@@ -344,7 +344,7 @@ export function parsePythonRequirements(files: Record<string, string>): string[]
           (markerAt >= 0 && (!markerPart || !validMarker.test(markerPart)))) {
         throw new Error("Unsupported Python requirement syntax at " + path + ":" + (index + 1) + ".");
       }
-      result.push(match[1] + (tail ? " " + tail : ""));
+      result.push(match[1] + tail);
     }
   }
   const seen = new Set<string>();
