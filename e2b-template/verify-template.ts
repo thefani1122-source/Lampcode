@@ -118,7 +118,15 @@ async function main(): Promise<void> {
 
     // Start the exact framework server LampCode's preview manager uses, then
     // inspect the live page in Chromium (not just the image's installed files).
-    const start = await sandbox.commands.run('npm run dev', { cwd: PROJECT_DIR, background: true, timeoutMs: 0 })
+    const devServerEnvs = FRAMEWORK === 'nextjs'
+      ? { LAMPCODE_PREVIEW_HOST: sandbox.getHost(PORT) }
+      : undefined
+    const start = await sandbox.commands.run('npm run dev', {
+      cwd: PROJECT_DIR,
+      background: true,
+      timeoutMs: 0,
+      ...(devServerEnvs ? { envs: devServerEnvs } : {}),
+    })
     void start
     const ready = await run(`for i in $(seq 1 90); do if curl -fsS http://127.0.0.1:${PORT}/ >/dev/null; then echo SERVER READY; exit 0; fi; sleep 1; done; echo SERVER NOT READY; exit 1`, PROJECT_DIR, 100_000)
     report(`${FRAMEWORK} dev server becomes ready on :${PORT}`, ready.code === 0 && ready.out.includes('SERVER READY'), ready.out.trim())
