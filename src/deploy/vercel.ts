@@ -56,7 +56,7 @@ export interface VercelAuth {
 }
 
 /** What the generated app actually is, which decides the Vercel preset. */
-export type DeployShape = "static" | "hono" | "fastapi" | "nextjs";
+export type DeployShape = "static" | "hono" | "fastapi" | "vite-fastapi" | "nextjs";
 
 export interface DeployOutcome {
   ok: boolean;
@@ -88,10 +88,13 @@ export function detectDeployShape(files: Record<string, string>): DeployShape {
     "app/page.tsx", "app/page.jsx", "app/page.js", "app/layout.tsx", "app/layout.jsx", "app/layout.js",
     "src/app/page.tsx", "src/app/page.jsx", "src/app/page.js", "src/app/layout.tsx", "src/app/layout.jsx", "src/app/layout.js",
   ].some(has);
-  // An App Router project is a complete Next runtime. It takes precedence over
-  // any stale split-server files left from a previous Vite/Hono framework.
+  const hasViteFrontend = [
+    "src/App.tsx", "src/App.jsx", "src/App.js",
+    "src/index.tsx", "src/index.jsx", "src/main.tsx", "src/main.jsx", "index.html",
+  ].some(has);
   if (hasNextApp) return "nextjs";
-  if (has("src/server/main.py")) return "fastapi";
+  // Vite UI and FastAPI server are separate services on the same public origin.
+  if (has("src/server/main.py")) return hasViteFrontend ? "vite-fastapi" : "fastapi";
   if (has("src/server/app.ts") || has("src/server/index.ts")) return "hono";
   return "static";
 }
@@ -307,32 +310,299 @@ function buildFiles(files: Record<string, string>): Record<string, string> {
   return buildFilesResult;
 }
 
-/**
- * Vercel's FastAPI preset does not resolve LampCode's nested server module by
- * default. Keep existing pyproject content intact and add the explicit app
- * entrypoint only when the project has not already configured one.
- */
-function withFastApiVercelEntrypoint(existing: string): string {
-  const lines = existing.split(/\r?\n/);
+const PYTHON_REQUIREMENT_FILES = ["requirements.txt", "src/server/requirements.txt"] as const;
+
+function pythonPackageKey(value: string): string {
+  const name = /^([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(value.trim())?.[1] ?? "";
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+/** Parse the portable PEP 508 subset; never silently drop pip options or URLs. */
+export function parsePythonRequirements(files: Record<string, string>): string[] {
+  const result: string[] = [];
+  for (const path of PYTHON_REQUIREMENT_FILES) {
+    const content = files[path];
+    if (typeof content !== "string") continue;
+    for (const [index, raw] of content.split(/\r?\n/).entries()) {
+      const line = raw.replace(/\s+#.*$/, "").trim();
+      if (!line || line.startsWith("#")) continue;
+      const match = /^([A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?)(.*)$/.exec(line);
+      if (!match) {
+        throw new Error("Unsupported Python requirement at " + path + ":" + (index + 1) +
+          ". Automatic deploy supports package names with PEP 508 version constraints and markers, not pip directives, VCS/URL or local-path installs.");
+      }
+      const tail = (match[2] ?? "").trim();
+      if (/[\\/@]/.test(tail) || tail.includes("://")) {
+        throw new Error("Unsupported direct URL or local Python dependency at " + path + ":" + (index + 1) + ".");
+      }
+      const markerAt = tail.indexOf(";");
+      const versionPart = (markerAt < 0 ? tail : tail.slice(0, markerAt)).trim();
+      const markerPart = markerAt < 0 ? "" : tail.slice(markerAt + 1).trim();
+      const validVersion = /^(?:(?:===|==|~=|!=|<=|>=|<|>)\s*[A-Za-z0-9.*+!_-]+)(?:\s*,\s*(?:===|==|~=|!=|<=|>=|<|>)\s*[A-Za-z0-9.*+!_-]+)*$/;
+      const validMarker = /^[A-Za-z0-9_ ."'()!<>=:/-]+$/;
+      if ((versionPart && !validVersion.test(versionPart)) ||
+          (markerAt >= 0 && (!markerPart || !validMarker.test(markerPart)))) {
+        throw new Error("Unsupported Python requirement syntax at " + path + ":" + (index + 1) + ".");
+      }
+      result.push(match[1] + (tail ? " " + tail : ""));
+    }
+  }
+  const seen = new Set<string>();
+  return result.filter((item) => {
+    const key = item.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function tomlArrayClose(text: string, open: number): number {
+  let quote = "";
+  let escaped = false;
+  let comment = false;
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i] ?? "";
+    if (comment) {
+      if (ch === "\n") comment = false;
+      continue;
+    }
+    if (quote) {
+      if (quote === '"' && escaped) escaped = false;
+      else if (quote === '"' && ch === "\\") escaped = true;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "#") comment = true;
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "[") depth += 1;
+    else if (ch === "]" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function parseTomlStringArray(value: string): string[] {
+  if (!value.startsWith("[") || !value.endsWith("]")) {
+    throw new Error("Expected a TOML string array in pyproject.toml.");
+  }
+  const body = value.slice(1, -1);
+  const values: string[] = [];
+  let i = 0;
+  while (i < body.length) {
+    const ch = body[i] ?? "";
+    if (/\s/.test(ch) || ch === ",") { i += 1; continue; }
+    if (ch === "#") {
+      while (i < body.length && body[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch !== '"' && ch !== "'") {
+      throw new Error("Unsupported non-string value in pyproject.toml dependency array.");
+    }
+    const quote = ch;
+    const start = i++;
+    let escaped = false;
+    while (i < body.length) {
+      const current = body[i] ?? "";
+      if (quote === '"' && escaped) escaped = false;
+      else if (quote === '"' && current === "\\") escaped = true;
+      else if (current === quote) break;
+      i += 1;
+    }
+    if (i >= body.length) throw new Error("Unterminated string in pyproject.toml dependency array.");
+    const literal = body.slice(start, i + 1);
+    if (quote === '"') {
+      try { values.push(JSON.parse(literal) as string); }
+      catch { throw new Error("Unsupported TOML string escape in pyproject.toml dependency array."); }
+    } else {
+      values.push(literal.slice(1, -1));
+    }
+    i += 1;
+  }
+  return values;
+}
+
+function projectSection(source: string): { start: number; end: number } | null {
+  const lines = source.split("\n");
+  const starts = lines.map((line, index) =>
+    /^\s*\[project\]\s*(?:#.*)?$/.test(line) ? index : -1
+  ).filter((index) => index >= 0);
+  if (starts.length > 1) throw new Error("pyproject.toml contains duplicate [project] tables.");
+  if (starts.length === 0) return null;
+  const start = starts[0]!;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(lines[i] ?? "")) { end = i; break; }
+  }
+  return { start, end };
+}
+
+function arrayAssignment(section: string, key: string): { open: number; close: number; values: string[] } | null {
+  const match = new RegExp("^\\s*" + key + "\\s*=", "m").exec(section);
+  if (!match) return null;
+  const open = section.indexOf("[", match.index + match[0].length);
+  const close = open >= 0 ? tomlArrayClose(section, open) : -1;
+  if (open < 0 || close < 0) {
+    throw new Error("pyproject.toml has an unsupported " + key + " value; refusing to overwrite project metadata.");
+  }
+  return { open, close, values: parseTomlStringArray(section.slice(open, close + 1)) };
+}
+
+function withFastApiProjectDependencies(existing: string, requirements: string[]): string {
+  let source = existing.replace(/\r\n/g, "\n");
+  if (!projectSection(source)) {
+    const trimmed = source.trimEnd();
+    source = (trimmed ? trimmed + "\n\n" : "") + '[project]\nname = "lampcode-generated-api"\n';
+  }
+
+  let bounds = projectSection(source)!;
+  let sectionOffset = source.split("\n").slice(0, bounds.start + 1).join("\n").length + 1;
+  let section = source.split("\n").slice(bounds.start + 1, bounds.end).join("\n");
+  if (!/^\s*name\s*=/m.test(section)) {
+    source = source.slice(0, sectionOffset) + 'name = "lampcode-generated-api"\n' + source.slice(sectionOffset);
+    bounds = projectSection(source)!;
+    sectionOffset = source.split("\n").slice(0, bounds.start + 1).join("\n").length + 1;
+    section = source.split("\n").slice(bounds.start + 1, bounds.end).join("\n");
+  }
+
+  const dynamic = arrayAssignment(section, "dynamic");
+  if (dynamic?.values.includes("dependencies")) {
+    throw new Error("pyproject.toml declares dependencies as dynamic; automatic deploy cannot safely merge requirements.txt.");
+  }
+
+  const dependency = arrayAssignment(section, "dependencies");
+  const merged = dependency?.values.slice() ?? [];
+  const seen = new Set(merged.map(pythonPackageKey).filter(Boolean));
+  for (const item of requirements) {
+    const key = pythonPackageKey(item);
+    if (key && !seen.has(key)) { merged.push(item); seen.add(key); }
+  }
+  if (!seen.has("fastapi")) merged.push("fastapi");
+
+  const replacement = "[\n" + merged.map((item) => "  " + JSON.stringify(item) + ",").join("\n") + "\n]";
+  if (dependency) {
+    const open = sectionOffset + dependency.open;
+    const close = sectionOffset + dependency.close;
+    source = source.slice(0, open) + replacement + source.slice(close + 1);
+  } else {
+    const lines = source.split("\n");
+    bounds = projectSection(source)!;
+    const insertAt = lines.slice(0, bounds.end).join("\n").length;
+    const prefix = source.slice(0, insertAt);
+    const separator = prefix.endsWith("\n") ? "" : "\n";
+    source = prefix + separator + "dependencies = " + replacement + "\n" + source.slice(insertAt);
+  }
+  return source + (existing.endsWith("\n") && !source.endsWith("\n") ? "\n" : "");
+}
+
+function withFastApiVercelEntrypoint(existing: string, requirements: string[] = []): string {
+  const metadata = withFastApiProjectDependencies(existing, requirements);
+  const lines = metadata.split(/\r?\n/);
   const headerIndex = lines.findIndex((line) => /^\s*\[tool\.vercel\]\s*(?:#.*)?$/.test(line));
   if (headerIndex >= 0) {
     let sectionEnd = lines.length;
     for (let i = headerIndex + 1; i < lines.length; i += 1) {
-      if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(lines[i] ?? "")) {
-        sectionEnd = i;
-        break;
-      }
+      if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(lines[i] ?? "")) { sectionEnd = i; break; }
     }
-    if (lines.slice(headerIndex + 1, sectionEnd).some((line) => /^\s*entrypoint\s*=/.test(line))) {
-      return existing;
-    }
+    if (lines.slice(headerIndex + 1, sectionEnd).some((line) => /^\s*entrypoint\s*=/.test(line))) return metadata;
     lines.splice(headerIndex + 1, 0, 'entrypoint = "src.server.main:app"');
-    return lines.join("\n") + (existing.endsWith("\n") ? "\n" : "");
+    return lines.join("\n") + (metadata.endsWith("\n") ? "\n" : "");
+  }
+  const trimmed = metadata.trimEnd();
+  return trimmed + (trimmed ? "\n\n" : "") + '[tool.vercel]\nentrypoint = "src.server.main:app"\n';
+}
+
+function fastApiEntrypoint(pyproject: string): string {
+  const lines = pyproject.split(/\r?\n/);
+  const header = lines.findIndex((line) => /^\s*\[tool\.vercel\]\s*(?:#.*)?$/.test(line));
+  if (header < 0) return "src.server.main:app";
+  for (let i = header + 1; i < lines.length && !/^\s*\[/.test(lines[i] ?? ""); i += 1) {
+    const found = /^\s*entrypoint\s*=\s*["']([^"']+)["']/.exec(lines[i] ?? "");
+    if (found?.[1]) return found[1];
+  }
+  return "src.server.main:app";
+}
+
+function isPythonRequirementFile(path: string): boolean {
+  return (PYTHON_REQUIREMENT_FILES as readonly string[]).includes(path);
+}
+
+function isPythonBackendFile(path: string): boolean {
+  return path.endsWith(".py") || path.startsWith("src/server/") ||
+    path.startsWith("src/db/") || path.startsWith("alembic/") ||
+    path === "alembic.ini" || path.endsWith(".sql") ||
+    /\.(?:toml|ini|ya?ml|csv)$/i.test(path);
+}
+
+function servicesVercelConfig(existing: string | undefined, backendEntrypoint: string): string {
+  let config: Record<string, unknown> = {};
+  if (existing) {
+    try {
+      const parsed: unknown = JSON.parse(existing);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error("vercel.json must contain a JSON object.");
+      }
+      config = parsed as Record<string, unknown>;
+    } catch (error) {
+      throw new Error("Cannot add Vercel Services to the existing vercel.json: " +
+        (error instanceof Error ? error.message : String(error)));
+    }
+  }
+  const currentServices = config["services"];
+  if (currentServices !== undefined &&
+      (typeof currentServices !== "object" || currentServices === null || Array.isArray(currentServices))) {
+    throw new Error("Existing vercel.json services must be an object.");
+  }
+  const services = (currentServices ?? {}) as Record<string, unknown>;
+  if ("lampcode_frontend" in services || "lampcode_backend" in services) {
+    throw new Error("Existing vercel.json already uses a reserved LampCode service name; refusing to overwrite it.");
+  }
+  if ("functions" in config) {
+    throw new Error("Existing vercel.json has global functions settings. Move these into the intended service before automatic multi-service deployment.");
   }
 
-  const trimmed = existing.trimEnd();
-  const separator = trimmed.length > 0 ? "\n\n" : "";
-  return trimmed + separator + '[tool.vercel]\nentrypoint = "src.server.main:app"\n';
+  const frontend: Record<string, unknown> = { root: "frontend", framework: "vite" };
+  const backend: Record<string, unknown> = { root: "backend", entrypoint: backendEntrypoint, framework: "fastapi" };
+  for (const key of ["buildCommand", "installCommand", "outputDirectory", "devCommand", "ignoreCommand", "framework"]) {
+    if (config[key] !== undefined) { frontend[key] = config[key]; delete config[key]; }
+  }
+  const previousRewrites = config["rewrites"];
+  if (previousRewrites !== undefined && !Array.isArray(previousRewrites)) {
+    throw new Error("Existing vercel.json rewrites must be an array.");
+  }
+  return JSON.stringify({
+    ...config,
+    services: { ...services, lampcode_frontend: frontend, lampcode_backend: backend },
+    rewrites: [
+      { source: "/api", destination: { service: "lampcode_backend" } },
+      { source: "/api/(.*)", destination: { service: "lampcode_backend" } },
+      ...(previousRewrites as unknown[] | undefined ?? []),
+      { source: "/(.*)", destination: { service: "lampcode_frontend" } },
+    ],
+  }, null, 2) + "\n";
+}
+
+function viteFastApiScaffold(files: Record<string, string>): Record<string, string> {
+  if (files["vercel.toml"]) {
+    throw new Error("This app already has vercel.toml. Automatic Vite + FastAPI deployment requires a vercel.json Services config; convert the existing config first.");
+  }
+  const out: Record<string, string> = {};
+  const frontendFiles = buildFiles(files);
+  for (const [path, content] of Object.entries(files)) {
+    if (path === "package.json" || path === "vercel.json" ||
+        path === "pyproject.toml" || isPythonRequirementFile(path) || isPythonBackendFile(path)) continue;
+    out["frontend/" + path] = content;
+  }
+  for (const [path, content] of Object.entries(frontendFiles)) out["frontend/" + path] = content;
+  for (const [path, content] of Object.entries(files)) {
+    if (isPythonBackendFile(path)) out["backend/" + path] = content;
+  }
+  const pyproject = withFastApiVercelEntrypoint(
+    files["pyproject.toml"] ?? "",
+    parsePythonRequirements(files),
+  );
+  out["backend/pyproject.toml"] = pyproject;
+  out["vercel.json"] = servicesVercelConfig(files["vercel.json"], fastApiEntrypoint(pyproject));
+  return out;
 }
 
 export function vercelScaffold(
@@ -340,6 +610,7 @@ export function vercelScaffold(
   files: Record<string, string> = {},
 ): Record<string, string> {
   if (shape === "nextjs") return nextjsVercelScaffold(files);
+  if (shape === "vite-fastapi") return viteFastApiScaffold(files);
   if (shape === "hono") {
     return {
       ...buildFiles(files),
@@ -362,7 +633,7 @@ export function vercelScaffold(
   // Vercel entrypoint setting.
   if (shape === "fastapi") {
     return {
-      "pyproject.toml": withFastApiVercelEntrypoint(files["pyproject.toml"] ?? ""),
+      "pyproject.toml": withFastApiVercelEntrypoint(files["pyproject.toml"] ?? "", parsePythonRequirements(files)),
     };
   }
 
@@ -520,7 +791,20 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
     return { ok: false, shape, error: "There are no files to deploy." };
   }
 
-  const withScaffold = { ...input.files, ...vercelScaffold(shape, input.files) };
+  let withScaffold: Record<string, string>;
+  try {
+    const scaffold = vercelScaffold(shape, input.files);
+    withScaffold = shape === "vite-fastapi" ? scaffold : { ...input.files, ...scaffold };
+    if (shape === "fastapi") {
+      for (const path of PYTHON_REQUIREMENT_FILES) delete withScaffold[path];
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      shape,
+      error: "Cannot prepare the Python deployment safely: " + (error instanceof Error ? error.message : String(error)),
+    };
+  }
   const { inlined, skipped } = toInlinedFiles(withScaffold);
   const name = projectSlug(input.projectName);
 
@@ -531,7 +815,7 @@ export async function deployToVercel(input: DeployInput): Promise<DeployOutcome>
     mcpToolName,
   });
 
-  const framework = shape === "fastapi" ? "fastapi" : shape === "nextjs" ? "nextjs" : "vite";
+  const framework = shape === "vite-fastapi" ? "services" : shape === "fastapi" ? "fastapi" : shape === "nextjs" ? "nextjs" : "vite";
   const requestBody: Record<string, unknown> = {
     name,
     target: "production",
