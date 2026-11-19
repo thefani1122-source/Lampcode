@@ -1,0 +1,64 @@
+name: E2B Ubuntu 24.04 Template
+
+on:
+  workflow_dispatch:
+    inputs:
+      template_id:
+        description: Candidate template ID (lampcode-vite-ubuntu24 or lampcode-nextjs-ubuntu24)
+        required: true
+        default: lampcode-vite-ubuntu24
+        type: choice
+        options:
+          - lampcode-vite-ubuntu24
+          - lampcode-nextjs-ubuntu24
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2b-ubuntu-template-${{ github.ref }}-${{ inputs.template_id }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.5'
+
+      - name: Require E2B credential
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+        run: |
+          if [ -z "$E2B_API_KEY" ]; then
+            echo "::error::Add E2B_API_KEY under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Install template build dependencies
+        working-directory: e2b-template
+        run: npm install --no-fund
+
+      - name: Audit template build dependencies
+        working-directory: e2b-template
+        run: npm audit
+
+      - name: Build isolated Ubuntu template candidate
+        working-directory: e2b-template
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          E2B_UBUNTU_TEMPLATE_ID: ${{ inputs.template_id }}
+        run: npm run build:ubuntu24
+
+      - name: Start a real sandbox and verify capabilities
+        working-directory: e2b-template
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          E2B_VERIFY_TEMPLATE_ID: ${{ inputs.template_id }}
+          E2B_EXPECT_UBUNTU: 'true'
+          E2B_EXPECT_FRAMEWORK: ${{ contains(inputs.template_id, 'nextjs') && 'nextjs' || 'vite' }}
+        run: npx tsx verify-template.ts
