@@ -213,11 +213,10 @@ A repository secret is hidden from normal GitHub reads; this handover does not c
 
 ### B. Build and verify each candidate
 
-1. Open **Actions → E2B Ubuntu 24.04 Template** on the default `main` branch (the manual workflow definition lives there).
-2. Choose **Run workflow**. In the `source_ref` dropdown, select `feat/e2b-ubuntu24-template-poc`. This tells the workflow to check out the candidate implementation while keeping the workflow definition on `main`.
-3. Select `lampcode-vite-ubuntu24` as `template_id` for the first run.
-4. Wait for the workflow to finish successfully. It builds the image and starts a real sandbox to check the OS, toolchain, venv, project permissions, Chromium, Vitest, TypeScript, dev-server readiness and browser rendering.
-5. Run again with `lampcode-nextjs-ubuntu24`. The workflow title includes the candidate ID so you can distinguish the Vite and Next.js runs.
+1. A push to the feature branch that changes a runtime/template path automatically starts a matrix run for both candidate IDs. Docs-only and deploy-only changes do not spend E2B build minutes.
+2. For a targeted manual run, open **Actions → E2B Ubuntu 24.04 Template** on `main`, choose **Run workflow**, select `source_ref=feat/e2b-ubuntu24-template-poc`, and choose one `template_id`.
+3. A green audit step is not enough. Each candidate must complete both **Build isolated Ubuntu template candidate** and **Start a real sandbox and verify capabilities**. The verifier checks OS/toolchain, Python venv, apt package installation, permissions, Chromium, Vitest, TypeScript, dev-server readiness and browser rendering.
+4. If a matrix run is already in progress, inspect it before launching another one; do not create duplicate E2B builds just to refresh the UI.
 
 A green image-build step alone is not sufficient; the real sandbox verifier must also pass. The candidate IDs do not overwrite the existing `lampcode-vite` image.
 
@@ -253,16 +252,25 @@ Latest completed functional CI and MCP CI after the E2B SDK 2.64.0 pin and its c
 - Backend production bundle: passed.
 - MCP CI (typecheck, MCP test suites and production build): passed.
 - `npm audit --omit=dev`: passed — 0 vulnerabilities.
-- Full `npm audit`: passed — 0 vulnerabilities in the LampCode root dependency graph. E2B template-builder dependency audit is separate and last failed on SDK `2.55.0`; the template builder pin is now `2.64.0`, but its updated `npm audit` still awaits the next manual E2B workflow dispatch.
+- Full `npm audit`: passed — 0 vulnerabilities in the LampCode root dependency graph. The E2B template-builder audit is a separate gate; its updated `npm audit` passed for both candidates in run [#44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463).
 - `tsup` remains at the tested `8.5.1` version, moved to `devDependencies`; no forced downgrade was applied. `picomatch@4.0.4` remains in the development tool graph, but the GitHub advisory GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov 2026 after maintainer dispute/review. See the [withdrawn GitHub Advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) and [upstream maintainer discussion](https://github.com/micromatch/picomatch/pull/235). CI now independently audits production and all dependencies; both pass.
 - The two first manual E2B workflow runs (#3 Vite and #4 Next.js) both stopped at **Audit template build dependencies**. The E2B credential check, `npm install` and source-branch checkout passed; the image build and sandbox verifier were skipped. The audit found 4 vulnerabilities (3 moderate, 1 high) through E2B SDK `2.55.0` dependencies, including `glob` and `undici8`; npm's suggested E2B fix was `2.64.0`.
 - Updated the E2B template-builder SDK pin to exact `2.64.0` (the official SDK changelog includes the `glob@^14.0.3` and `undici@^8.12.3` fixes), while preserving the API usage in the template build/verify scripts. Added a contract test to keep this audited pin from silently drifting.
 - Branch CI after this update passed: [functional CI #44460504364](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504364) and [MCP CI #44460504390](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504390). These do not execute the separate `e2b-template` audit/build workflow.
-- **The audit after this SDK upgrade has not yet been run in the manual E2B workflow.** Re-run Vite and Next.js candidates from `main`, with `source_ref=feat/e2b-ubuntu24-template-poc`. Both new runs must pass the audit before any image build begins. The repository secret is already configured; no new secret is required.
-- Real E2B candidate builds: **not yet verified**. The image build and sandbox verifier have not run yet.
+- The upgraded E2B template-builder audit **passed for both candidates** in run [#44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463). The repository secret check and dependency installation also passed.
+- At the last status check (19 Nov 2026, 12:44 PKT), both matrix jobs were still running at **Build isolated Ubuntu template candidate**. The real sandbox verifier had not started, and neither candidate had a final success/failure result. Do not interpret a long-running build step as a pass.
+- That E2B run was started from code head `f7b9661b06bcd10fc2d3d2b25afe0aa99c17670c`; later deploy-only fixes do not change the E2B template sources.
+- Latest completed functional CI [#44479357900](https://github.com/thefani1122-source/Lampcode/actions/runs/44479357900) and MCP CI [#44479357924](https://github.com/thefani1122-source/Lampcode/actions/runs/44479357924) passed at head `f7b9661b06bcd10fc2d3d2b25afe0aa99c17670c`. **They do not cover the later deploy reliability commits; current PR head `28f47a16bac7261cd2036b4b4093fcadf94e3a9f` has no attached CI check-runs yet.**
 - Real provider-backed staging/Vercel canaries: **not yet run**.
 
 The audit issue is closed at the current verification date because the advisory was withdrawn and both npm audit jobs pass. This does not replace the required real E2B image build and live sandbox checks.
+
+### Deploy verification correctness added after the latest CI run
+
+- A post-deploy smoke-check exception now fails closed. A Vercel READY deployment URL can still be shown, but LampCode must say it could not verify the app rather than mark the deployment successful.
+- Static apps are checked by their homepage only. Hono/FastAPI probes are enabled only for the optional health/auth route declarations found in the generated server source. Next.js route probes recognise TypeScript and JavaScript Route Handler files.
+- Removed a duplicate request to `/api/health` that had been labelled "DB connectivity" without proof that the generated health handler actually checks the database.
+- Regression cases were added to `scripts/deploy.test.ts`. Targeted route-matcher checks were run locally, but the full repository CI/test suite has **not yet been observed on the latest branch head**.
 
 ## 10. What this PR does not claim
 
