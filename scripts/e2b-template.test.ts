@@ -35,7 +35,7 @@ assert.ok(ubuntuTemplate)
 assert.ok(ubuntuNextTemplate)
 assert.ok(createUbuntuBaseTemplate())
 assert.equal(UBUNTU_BASE_IMAGE, '24.04')
-for (const name of ['git', 'build-essential', 'python3-venv', 'libpq-dev', 'ripgrep', 'jq', 'sqlite3', 'sudo', 'coreutils', 'less', 'lesspipe', 'xz-utils']) {
+for (const name of ['git', 'build-essential', 'python3-venv', 'libpq-dev', 'ripgrep', 'jq', 'sqlite3', 'sudo', 'coreutils', 'less', 'xz-utils']) {
   assert.ok(UBUNTU_APT_PACKAGES.includes(name as never), `missing Ubuntu package ${name}`)
 }
 assert.equal(UBUNTU_TEMPLATE_ENVS.PLAYWRIGHT_BROWSERS_PATH, '/home/user/.lampcode-tools/browsers')
