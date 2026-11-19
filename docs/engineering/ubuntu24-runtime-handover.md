@@ -245,19 +245,20 @@ Only after staging canaries succeed should the same two selectors be updated in 
 
 ## 9. Verification state on this branch
 
-Implementation and dependency changes were validated on the PR branch; the latest completed functional/MCP runs also include the documentation-only handover commits (18 Nov 2026). See [CI run #44345813812](https://github.com/thefani1122-source/Lampcode/actions/runs/44345813812) and [MCP CI run #44345815037](https://github.com/thefani1122-source/Lampcode/actions/runs/44345815037).
+Latest completed functional CI and MCP CI on the runtime/package-manager code (19 Nov 2026): [CI run #44455712411](https://github.com/thefani1122-source/Lampcode/actions/runs/44455712411) and [MCP CI run #44455712518](https://github.com/thefani1122-source/Lampcode/actions/runs/44455712518). Both workflows passed; CI's functional job includes typecheck, full repository tests and backend bundle, and its audit job includes both production and full dependency scans.
 
 - `npm ci`: passed.
 - TypeScript typecheck: passed.
 - Full repository Cases suite: passed.
 - Backend production bundle: passed.
 - MCP CI (typecheck, MCP test suites and production build): passed.
-- `npm audit --omit=dev`: passed.
-- Full `npm audit`: still reports the high-severity `picomatch` advisory through the `tsup → tinyglobby → fdir` build-tool chain. `tsup` was moved from production dependencies to development dependencies, and the lockfile was updated accordingly. The production audit now passes. The upstream advisory currently identifies `picomatch` versions through 4.0.7 as affected and lists no patched version: [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf). The suggested npm `--force` path would downgrade `tsup` to 8.2.4; it was not applied.
-- Real E2B candidate builds: **not yet verified**. The repository secret value cannot be read through this review connection; run the manual workflow above.
+- `npm audit --omit=dev`: passed — 0 vulnerabilities.
+- Full `npm audit`: passed — 0 vulnerabilities.
+- `tsup` remains at the tested `8.5.1` version, moved to `devDependencies`; no forced downgrade was applied. `picomatch@4.0.4` remains in the development tool graph, but the GitHub advisory GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov 2026 after maintainer dispute/review. See the [withdrawn GitHub Advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) and [upstream maintainer discussion](https://github.com/micromatch/picomatch/pull/235). CI now independently audits production and all dependencies; both pass.
+- Real E2B candidate builds: **not yet verified**. No manual workflow-dispatch run exists for this branch. The repository secret value is not visible through this review connection; run the manual workflow above after checking/adding the secret.
 - Real provider-backed staging/Vercel canaries: **not yet run**.
 
-The audit distinction is deliberate: a clean production dependency audit does not make the development toolchain advisory disappear. Do not label the full dependency audit clean until upstream fixes the package or a separately tested dependency change removes it.
+The audit issue is closed at the current verification date because the advisory was withdrawn and both npm audit jobs pass. This does not replace the required real E2B image build and live sandbox checks.
 
 ## 10. What this PR does not claim
 
