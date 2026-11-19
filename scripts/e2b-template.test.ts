@@ -17,6 +17,7 @@ import {
   createUbuntuBaseTemplate,
   LAMPCODE_APT_WRAPPER_SCRIPT,
   LAMPCODE_APT_SETUP_COMMAND,
+  LAMPCODE_LOGIN_ENV_SETUP_COMMAND,
 } from '../e2b-template/template.js'
 import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
 
@@ -51,6 +52,14 @@ assert.ok(LAMPCODE_APT_WRAPPER_SCRIPT.includes('Rejected package argument'), 'ap
 assert.ok(!LAMPCODE_APT_WRAPPER_SCRIPT.includes('apt-get remove'), 'apt wrapper cannot remove system packages')
 assert.ok(LAMPCODE_APT_SETUP_COMMAND.includes('visudo -cf /etc/sudoers.d/90-lampcode-apt'))
 assert.ok(LAMPCODE_APT_SETUP_COMMAND.includes('chmod 0440 /etc/sudoers.d/90-lampcode-apt'))
+assert.ok(LAMPCODE_LOGIN_ENV_SETUP_COMMAND.includes('/etc/profile.d/00-lampcode-python.sh'))
+assert.ok(LAMPCODE_LOGIN_ENV_SETUP_COMMAND.includes('/opt/lampcode-python/bin:$PATH'))
+assert.ok(LAMPCODE_LOGIN_ENV_SETUP_COMMAND.includes('chmod 0644'), 'login-shell Python path is root-owned and readable')
+const ubuntuVerifier = readFileSync(new URL('../e2b-template/verify-template.ts', import.meta.url), 'utf8')
+const verifierFixtures = ubuntuVerifier.slice(ubuntuVerifier.indexOf('const testRoot ='), ubuntuVerifier.indexOf('const tests ='))
+assert.ok(!verifierFixtures.includes(String.raw`\\n`), 'generated verifier fixtures contain real newline escapes, not literal backslash-n text')
+assert.ok(ubuntuVerifier.includes('command -v python3') && ubuntuVerifier.includes('/opt/lampcode-python/bin/pip'), 'verifier proves login-shell Python and pip resolve to the venv')
+assert.ok(ubuntuVerifier.includes('sandbox.getHost(PORT)'), 'browser QA runs through the public E2B preview host so HMR uses HTTPS/WSS ingress')
 
 
 assert.equal(NODE_VERSION, '22.23.5')
