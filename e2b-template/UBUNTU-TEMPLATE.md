@@ -4,7 +4,7 @@
 
 ## Shared Ubuntu base
 
-Both framework images use E2B SDK 2.55.0's native Ubuntu image builder API and share:
+Both framework images use E2B SDK 2.64.0's native Ubuntu image builder API and share:
 - Ubuntu 24.04 as the final OS.
 - Official Node.js 22.23.5 binary, downloaded for amd64/arm64 and verified against pinned SHA-256.
 - Python 3 and pip inside `/opt/lampcode-python`, a dedicated virtual environment. System Python is left externally managed.
