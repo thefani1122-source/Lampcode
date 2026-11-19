@@ -14,6 +14,8 @@ import {
   VITE_PKG_JSON,
   ubuntuTemplate,
   createUbuntuBaseTemplate,
+  LAMPCODE_APT_WRAPPER_SCRIPT,
+  LAMPCODE_APT_SETUP_COMMAND,
 } from '../e2b-template/template.js'
 import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
 
@@ -30,7 +32,7 @@ assert.ok(ubuntuTemplate)
 assert.ok(ubuntuNextTemplate)
 assert.ok(createUbuntuBaseTemplate())
 assert.equal(UBUNTU_BASE_IMAGE, '24.04')
-for (const name of ['git', 'build-essential', 'python3-venv', 'libpq-dev', 'ripgrep', 'jq', 'sqlite3', 'xz-utils']) {
+for (const name of ['git', 'build-essential', 'python3-venv', 'libpq-dev', 'ripgrep', 'jq', 'sqlite3', 'sudo', 'tree', 'xz-utils']) {
   assert.ok(UBUNTU_APT_PACKAGES.includes(name as never), `missing Ubuntu package ${name}`)
 }
 assert.equal(UBUNTU_TEMPLATE_ENVS.PLAYWRIGHT_BROWSERS_PATH, '/home/user/.lampcode-tools/browsers')
@@ -41,6 +43,14 @@ assert.ok(PYTHON_SETUP_COMMAND.includes('/opt/lampcode-python/bin/pip install'))
 assert.ok(!PYTHON_SETUP_COMMAND.includes('--break-system-packages'))
 assert.ok(!PYTHON_SETUP_COMMAND.includes('crewai'))
 assert.ok(!PYTHON_SETUP_COMMAND.includes('langgraph'))
+assert.ok(UBUNTU_APT_PACKAGES.includes('sudo' as never), 'sandbox package manager is installed')
+assert.ok(LAMPCODE_APT_WRAPPER_SCRIPT.includes('/usr/bin/apt-get update'))
+assert.ok(LAMPCODE_APT_WRAPPER_SCRIPT.includes('/usr/bin/apt-get install -y --no-install-recommends'))
+assert.ok(LAMPCODE_APT_WRAPPER_SCRIPT.includes('Rejected package argument'), 'apt wrapper validates package-only arguments')
+assert.ok(!LAMPCODE_APT_WRAPPER_SCRIPT.includes('apt-get remove'), 'apt wrapper cannot remove system packages')
+assert.ok(LAMPCODE_APT_SETUP_COMMAND.includes('visudo -cf /etc/sudoers.d/90-lampcode-apt'))
+assert.ok(LAMPCODE_APT_SETUP_COMMAND.includes('chmod 0440 /etc/sudoers.d/90-lampcode-apt'))
+
 
 assert.equal(NODE_VERSION, '22.23.5')
 assert.match(NODE_INSTALL_COMMAND, /node-v22\.23\.5-linux-\$\{NODE_ARCH\}/)
