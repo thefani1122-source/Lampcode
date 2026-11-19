@@ -55,9 +55,10 @@ async function main(): Promise<void> {
         toolchain.out.includes('jq-') && toolchain.out.includes('GNU Make') && toolchain.out.includes('gcc')
       report('Node/npm, Python/pip, Git and Linux build utilities exist', good, toolchain.out.trim())
 
-      const py = await run('python3 -c "import sys, fastapi, uvicorn, supabase; print(sys.executable); print(sys.prefix)"')
-      report('Python essentials run inside the dedicated venv', py.code === 0 &&
-        py.out.includes('/opt/lampcode-python/bin/python3') && py.out.includes('/opt/lampcode-python'), py.out.trim())
+      const py = await run('command -v python3 && python3 -c "import sys, fastapi, uvicorn, supabase; print(sys.executable); print(sys.prefix)" && command -v pip && pip --version')
+      report('login-shell Python and pip resolve to the dedicated venv', py.code === 0 &&
+        py.out.includes('/opt/lampcode-python/bin/python3') && py.out.includes('/opt/lampcode-python/bin/pip') &&
+        py.out.includes('/opt/lampcode-python'), py.out.trim())
 
       const globalPackages = await run('python3 -m pip list --format=freeze')
       report('the global Python site is not used for app dependencies', globalPackages.code === 0 &&
@@ -101,13 +102,13 @@ async function main(): Promise<void> {
     const testRoot = FRAMEWORK === 'nextjs' ? 'lib' : 'src/lib'
     const componentRoot = FRAMEWORK === 'nextjs' ? 'components' : 'src/components'
     await sandbox.files.write(`${PROJECT_DIR}/${testRoot}/totals.ts`,
-      'export const subtotal = (items: Array<{ price: number; qty: number }>) => items.reduce((s, i) => s + i.price * i.qty, 0);\\n')
+      'export const subtotal = (items: Array<{ price: number; qty: number }>) => items.reduce((s, i) => s + i.price * i.qty, 0);\n')
     await sandbox.files.write(`${PROJECT_DIR}/${testRoot}/totals.test.ts`,
-      'import { describe, it, expect } from "vitest";\\nimport { subtotal } from "@/lib/totals";\\ndescribe("subtotal", () => { it("sums price times quantity", () => { expect(subtotal([{ price: 10, qty: 2 }, { price: 5, qty: 3 }])).toBe(35); }); });\\n')
+      'import { describe, it, expect } from "vitest";\nimport { subtotal } from "@/lib/totals";\ndescribe("subtotal", () => { it("sums price times quantity", () => { expect(subtotal([{ price: 10, qty: 2 }, { price: 5, qty: 3 }])).toBe(35); }); });\n')
     await sandbox.files.write(`${PROJECT_DIR}/${componentRoot}/Badge.tsx`,
-      'export function Badge({ label }: { label: string }) { return <span className="badge">{label}</span>; }\\n')
+      'export function Badge({ label }: { label: string }) { return <span className="badge">{label}</span>; }\n')
     await sandbox.files.write(`${PROJECT_DIR}/${componentRoot}/Badge.test.tsx`,
-      `import { describe, it, expect } from "vitest";\\nimport { render, screen } from "@testing-library/react";\\nimport { Badge } from "${FRAMEWORK === 'nextjs' ? '@/components/Badge' : './Badge'}";\\ndescribe("Badge", () => { it("renders its label", () => { render(<Badge label="New" />); expect(screen.getByText("New")).toBeInTheDocument(); }); });\\n`)
+      `import { describe, it, expect } from "vitest";\nimport { render, screen } from "@testing-library/react";\nimport { Badge } from "${FRAMEWORK === 'nextjs' ? '@/components/Badge' : './Badge'}";\ndescribe("Badge", () => { it("renders its label", () => { render(<Badge label="New" />); expect(screen.getByText("New")).toBeInTheDocument(); }); });\n`)
 
     const tests = await run('npx vitest run --reporter=dot', PROJECT_DIR, 180_000)
     report('Vitest executes logic and React component tests', tests.code === 0 && /2 passed|2\s+tests? passed/i.test(tests.out), tests.out.slice(-900).trim())
@@ -123,10 +124,14 @@ async function main(): Promise<void> {
     report(`${FRAMEWORK} dev server becomes ready on :${PORT}`, ready.code === 0 && ready.out.includes('SERVER READY'), ready.out.trim())
 
     if (ready.code === 0) {
-      const browserCheck = await run(`${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://127.0.0.1:${PORT}`, PROJECT_DIR, 40_000)
+      // Test the same public HTTPS ingress that the user's preview iframe
+      // uses. The Vite template intentionally advertises secure WSS on 443;
+      // testing localhost would bypass that proxy and produce a false failure.
+      const browserUrl = `https://${sandbox.getHost(PORT)}`
+      const browserCheck = await run(`${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs ${JSON.stringify(browserUrl)}`, PROJECT_DIR, 60_000)
       let parsed: { ok?: boolean; blank?: boolean; errors?: string[] } | null = null
       try { parsed = JSON.parse(browserCheck.out.trim().split(/\r?\n/).at(-1) ?? '') } catch { parsed = null }
-      report('independent browser render check passes', parsed?.ok === true && parsed.blank === false && (parsed.errors?.length ?? 0) === 0, browserCheck.out.slice(-1000).trim())
+      report('independent browser render check passes through the public E2B HTTPS/WSS host', parsed?.ok === true && parsed.blank === false && (parsed.errors?.length ?? 0) === 0, browserCheck.out.slice(-1000).trim())
     }
   } finally {
     await sandbox.kill().catch(() => {})
