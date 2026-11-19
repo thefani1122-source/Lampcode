@@ -103,6 +103,22 @@ Both Ubuntu candidates are built with the E2B SDK's **native image builder API**
 
 This separation matters: Python app dependencies can be installed into the app's own venv without damaging Ubuntu's system Python.
 
+### Installing additional Linux packages
+
+The project user is not given a general root shell. The image installs `sudo` plus a root-owned helper at `/usr/local/bin/lampcode-apt`. That helper permits only:
+- `sudo -n /usr/local/bin/lampcode-apt update`
+- `sudo -n /usr/local/bin/lampcode-apt install <package> [package ...]`
+
+The wrapper validates each argument as an Ubuntu repository package name/version and runs `apt-get install -y --no-install-recommends`. It rejects local `.deb` paths, arbitrary flags, apt removals, source-list edits and all other root commands. In LampCode's agent shell policy, the two allowed operations pause for explicit user approval; arbitrary `sudo`, `su`, service management and privileged commands remain refused. The privilege boundary is the isolated E2B project VM, not the AWS backend or host machine.
+
+Example request the agent can use (after the user approves):
+```bash
+sudo -n /usr/local/bin/lampcode-apt update
+sudo -n /usr/local/bin/lampcode-apt install libcairo2-dev libpq-dev
+```
+
+The live E2B verifier performs a real package install of `tree` and confirms that a local `.deb` argument is rejected. This check runs in the throwaway verification sandbox, not in production.
+
 ### Browser QA and developer tools
 
 - Playwright and Chromium are installed in a shared tools directory.
