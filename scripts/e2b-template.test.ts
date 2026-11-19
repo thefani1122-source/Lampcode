@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   COMMON_QA_COMMANDS,
   COMMON_SCAFFOLD_COMMANDS,
@@ -94,5 +95,8 @@ assert.match(NEXT_PROVIDERS_TS, /useState\(\(\) => createQueryClient\(\)\)/)
 assert.ok(!NEXT_PROVIDERS_TS.includes("import { queryClient }"))
 assert.ok(NEXT_VITEST_CONFIG.includes("import.meta.url"), 'Vitest alias resolves correctly in the ESM project')
 assert.ok(!NEXT_VITEST_CONFIG.includes('__dirname'), 'Vitest config does not rely on CommonJS globals')
+
+const e2bBuilderPackage = JSON.parse(readFileSync(new URL('../e2b-template/package.json', import.meta.url), 'utf8')) as { devDependencies: Record<string, string> }
+assert.equal(e2bBuilderPackage.devDependencies.e2b, '2.64.0', 'E2B SDK pin includes the current glob/undici security fixes')
 
 console.log('E2B Ubuntu Vite + Next.js template contract tests passed.')
