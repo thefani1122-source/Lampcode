@@ -445,7 +445,6 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
   check("the Vite deployment still includes Three.js", frontendPackage.dependencies.three, "^0.180.0");
   check("post-deploy smoke tests still inspect the FastAPI route", capturedSmokeOptions, { checkHealth: true, checkAuth: false });
 }
-}
 
 {
   const { call, sent } = fakeCall();
