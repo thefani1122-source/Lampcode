@@ -79,6 +79,16 @@ check(
   { checkHealth: true, checkAuth: false },
 );
 check(
+  "a POST-only health path is not probed with GET",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.post("/api/health", handler)' }),
+  { checkHealth: false, checkAuth: false },
+);
+check(
+  "JavaScript Next.js Route Handlers are recognised",
+  deploySmokeTargets("nextjs", { "app/api/health/route.js": "export async function GET() {}" }),
+  { checkHealth: true, checkAuth: false },
+);
+check(
   "FastAPI auth checks are enabled only for an explicit route",
   deploySmokeTargets("fastapi", { "src/server/main.py": '@app.post("/api/auth/login")\\nasync def login(): pass' }),
   { checkHealth: false, checkAuth: true },
