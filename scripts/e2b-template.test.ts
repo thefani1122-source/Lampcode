@@ -65,6 +65,11 @@ const verifierFixtures = ubuntuVerifier.slice(ubuntuVerifier.indexOf('const test
 assert.ok(!verifierFixtures.includes(String.raw`\\n`), 'generated verifier fixtures contain real newline escapes, not literal backslash-n text')
 assert.ok(ubuntuVerifier.includes('command -v python3') && ubuntuVerifier.includes('/opt/lampcode-python/bin/pip'), 'verifier proves login-shell Python and pip resolve to the venv')
 assert.ok(ubuntuVerifier.includes('sandbox.getHost(PORT)'), 'browser QA runs through the public E2B preview host so HMR uses HTTPS/WSS ingress')
+assert.ok(ubuntuVerifier.includes('FastAPI serves a real JSON API request from the dedicated Python venv'), 'Ubuntu verifier proves the Python venv can serve an HTTP API')
+assert.ok(ubuntuVerifier.includes('Hono backend starts with LampCode tsx entrypoint'), 'Vite candidate exercises the Hono backend entrypoint')
+assert.ok(ubuntuVerifier.includes('Vite /api proxy forwards a real request to the Hono backend'), 'Vite candidate proves its /api proxy reaches Hono')
+assert.ok(ubuntuVerifier.includes('Next.js App Router Route Handler serves a real JSON API request'), 'Next.js candidate exercises an actual App Router API handler')
+assert.ok(ubuntuVerifier.includes('/opt/lampcode-python/bin/python3 -m uvicorn main:app'), 'FastAPI canary uses the image-provided Python venv and uvicorn')
 
 
 assert.equal(NODE_VERSION, '22.23.5')
