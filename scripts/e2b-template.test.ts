@@ -70,6 +70,9 @@ assert.ok(ubuntuVerifier.includes('Hono backend starts with LampCode tsx entrypo
 assert.ok(ubuntuVerifier.includes('Vite /api proxy forwards a real request to the Hono backend'), 'Vite candidate proves its /api proxy reaches Hono')
 assert.ok(ubuntuVerifier.includes('Next.js App Router Route Handler serves a real JSON API request'), 'Next.js candidate exercises an actual App Router API handler')
 assert.ok(ubuntuVerifier.includes('/opt/lampcode-python/bin/python3 -m uvicorn main:app'), 'FastAPI canary uses the image-provided Python venv and uvicorn')
+assert.ok(ubuntuVerifier.includes('for attempt in 1 2 3'), 'apt verifier retries transient Ubuntu mirror sync failures')
+assert.ok(ubuntuVerifier.includes('sleep 15'), 'apt retries are spaced to allow mirror metadata to converge')
+assert.ok(!ubuntuVerifier.includes('Acquire::AllowInsecureRepositories'), 'apt mirror retries do not weaken repository signature or hash verification')
 
 
 assert.equal(NODE_VERSION, '22.23.5')
