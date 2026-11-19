@@ -1372,7 +1372,10 @@ async function ensureDevServer(
   // Also (re)start the app's own Hono/Node backend if it ships one — no-op for
   // Next.js/TanStack (Route Handlers / createServerFn are served by the framework).
   if (framework === "react") {
-    await ensureBackendServer(sandbox, log).catch(() => {});
+    // A frontend preview is not healthy when its declared backend failed to
+    // start. Let the failure reach the build/repair flow instead of silently
+    // handing out a URL whose /api requests cannot work.
+    await ensureBackendServer(sandbox, log);
   }
 }
 
@@ -1389,17 +1392,13 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   // or Python/FastAPI (src/server/main.py). Either runs on :3001.
   let runtime: "node" | "python" | null = null;
   let envText = "";
-  try {
-    const r = await sandbox.commands.run(
-      "test -f src/server/index.ts && echo NODE; test -f src/server/main.py && echo PY; cat .env 2>/dev/null || true",
-      { cwd: PROJECT_DIR, timeoutMs: 10_000 },
-    );
-    if (r.stdout.includes("PY")) runtime = "python";
-    else if (r.stdout.includes("NODE")) runtime = "node";
-    envText = r.stdout;
-  } catch {
-    return;
-  }
+  const detected = await sandbox.commands.run(
+    "test -f src/server/index.ts && echo NODE; test -f src/server/main.py && echo PY; cat .env 2>/dev/null || true",
+    { cwd: PROJECT_DIR, timeoutMs: 10_000 },
+  );
+  if (detected.stdout.includes("PY")) runtime = "python";
+  else if (detected.stdout.includes("NODE")) runtime = "node";
+  envText = detected.stdout;
   if (!runtime) return;
 
   // Parse .env (KEY=VALUE lines) so we can pass Supabase creds to BOTH runtimes
@@ -1411,12 +1410,12 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   }
   if (runtime === "node") {
     envs.NODE_OPTIONS = envs.NODE_OPTIONS
-      ? `${envs.NODE_OPTIONS} --experimental-websocket`
+      ? envs.NODE_OPTIONS + " --experimental-websocket"
       : "--experimental-websocket";
   }
 
   await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
-  log(`Starting ${runtime} backend server on :3001...`);
+  log("Starting " + runtime + " backend server on :3001...");
   const buf: string[] = [];
   backendLogs.set(sandbox.sandboxId, buf);
   const capture = (line: string): void => {
@@ -1425,11 +1424,11 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
     if (buf.length > 80) buf.shift();
   };
 
-  // Node: tsx runs the Hono server. Python: uvicorn serves the FastAPI `app`
-  // from src/server/main.py (run from that dir so `main:app` resolves).
+  // Node: tsx runs the Hono server. Python: use the dedicated Ubuntu venv
+  // explicitly so non-login E2B command shells cannot fall back to system Python.
   const cmd =
     runtime === "python"
-      ? "cd src/server && python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
+      ? "cd src/server && /opt/lampcode-python/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
       : "NODE_OPTIONS='--experimental-websocket' tsx src/server/index.ts";
   try {
     await sandbox.commands.run(cmd, {
@@ -1441,8 +1440,32 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
       onStderr: capture,
     });
   } catch (err) {
-    logger.warn({ err }, "[e2b] Failed to start backend server");
+    const detail = extractBackendError(buf);
+    logger.warn({ err, projectLog: detail }, "[e2b] Failed to start backend server");
+    throw new Error("Failed to start the " + runtime + " backend on port 3001. " + detail);
   }
+
+  // A background command being accepted does not prove the process survived
+  // startup. Wait for an HTTP response (any status, including 404) so apps are
+  // not reported preview-ready while their /api proxy points at a dead port.
+  let readyOutput = "";
+  try {
+    const ready = await sandbox.commands.run(
+      "for i in $(seq 1 20); do code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 1 http://127.0.0.1:3001/ 2>/dev/null || true); if [ -n \"$code\" ] && [ \"$code\" != \"000\" ]; then echo \"BACKEND_READY_HTTP_$code\"; exit 0; fi; sleep 1; done; echo BACKEND_NOT_READY; exit 1",
+      { cwd: PROJECT_DIR, timeoutMs: 45_000 },
+    );
+    readyOutput = ready.stdout + "\n" + ready.stderr;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    readyOutput = detail;
+  }
+
+  if (!readyOutput.includes("BACKEND_READY_HTTP_")) {
+    const detail = extractBackendError(buf) || readyOutput || "No HTTP response on port 3001.";
+    logger.warn({ runtime, projectLog: detail, probe: readyOutput }, "[e2b] Backend did not become ready");
+    throw new Error("The " + runtime + " backend did not respond on port 3001 after startup. " + detail);
+  }
+  log(runtime + " backend is responding on port 3001 (" + (readyOutput.match(/BACKEND_READY_HTTP_\d+/)?.[0] ?? "HTTP response") + ")");
 }
 
 // Recent backend stdout/stderr per sandbox, for the agentic verify-and-fix step.
