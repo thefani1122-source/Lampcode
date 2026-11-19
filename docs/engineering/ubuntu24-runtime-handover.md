@@ -244,33 +244,41 @@ Only after staging canaries succeed should the same two selectors be updated in 
 
 ## 9. Verification state on this branch
 
-Latest completed functional CI and MCP CI after the E2B SDK 2.64.0 pin and its contract test (19 Nov 2026): [CI run #44460504364](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504364) and [MCP CI run #44460504390](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504390). Both workflows passed; CI's functional job includes typecheck, the full repository test suite and backend bundle, while its audit job independently scans production and all dependencies.
+Latest completed full CI on the current candidate branch (19 Nov 2026): [run #44483470357](https://github.com/thefani1122-source/Lampcode/actions/runs/44483470357), head \`edb130df61405e2409c01f8ede7c7615cc4953da\`. Both CI jobs passed.
 
-- `npm ci`: passed.
+- \`npm ci\`: passed.
 - TypeScript typecheck: passed.
-- Full repository Cases suite: passed.
+- Full repository Cases suite: passed, including the new deploy and E2B verifier contract assertions.
 - Backend production bundle: passed.
-- MCP CI (typecheck, MCP test suites and production build): passed.
-- `npm audit --omit=dev`: passed — 0 vulnerabilities.
-- Full `npm audit`: passed — 0 vulnerabilities in the LampCode root dependency graph. The E2B template-builder audit is a separate gate; its updated `npm audit` passed for both candidates in run [#44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463).
-- `tsup` remains at the tested `8.5.1` version, moved to `devDependencies`; no forced downgrade was applied. `picomatch@4.0.4` remains in the development tool graph, but the GitHub advisory GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov 2026 after maintainer dispute/review. See the [withdrawn GitHub Advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) and [upstream maintainer discussion](https://github.com/micromatch/picomatch/pull/235). CI now independently audits production and all dependencies; both pass.
-- The two first manual E2B workflow runs (#3 Vite and #4 Next.js) both stopped at **Audit template build dependencies**. The E2B credential check, `npm install` and source-branch checkout passed; the image build and sandbox verifier were skipped. The audit found 4 vulnerabilities (3 moderate, 1 high) through E2B SDK `2.55.0` dependencies, including `glob` and `undici8`; npm's suggested E2B fix was `2.64.0`.
-- Updated the E2B template-builder SDK pin to exact `2.64.0` (the official SDK changelog includes the `glob@^14.0.3` and `undici@^8.12.3` fixes), while preserving the API usage in the template build/verify scripts. Added a contract test to keep this audited pin from silently drifting.
-- Branch CI after this update passed: [functional CI #44460504364](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504364) and [MCP CI #44460504390](https://github.com/thefani1122-source/Lampcode/actions/runs/44460504390). These do not execute the separate `e2b-template` audit/build workflow.
-- The upgraded E2B template-builder audit **passed for both candidates** in run [#44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463). The repository secret check and dependency installation also passed.
-- At the last status check (19 Nov 2026, 12:44 PKT), both matrix jobs were still running at **Build isolated Ubuntu template candidate**. The real sandbox verifier had not started, and neither candidate had a final success/failure result. Do not interpret a long-running build step as a pass.
-- That E2B run was started from code head `f7b9661b06bcd10fc2d3d2b25afe0aa99c17670c`; later deploy-only fixes do not change the E2B template sources.
-- Latest completed functional CI [#44479357900](https://github.com/thefani1122-source/Lampcode/actions/runs/44479357900) and MCP CI [#44479357924](https://github.com/thefani1122-source/Lampcode/actions/runs/44479357924) passed at head `f7b9661b06bcd10fc2d3d2b25afe0aa99c17670c`. **They do not cover the later deploy reliability commits; current PR head `28f47a16bac7261cd2036b4b4093fcadf94e3a9f` has no attached CI check-runs yet.**
-- Real provider-backed staging/Vercel canaries: **not yet run**.
+- Production dependency audit: passed.
+- Full root dependency audit: passed, 0 vulnerabilities.
+- Latest MCP CI [#44479357924](https://github.com/thefani1122-source/Lampcode/actions/runs/44479357924) passed at \`f7b9661\`; no MCP implementation sources changed in the later runtime/deploy commits.
+- The E2B template-builder dependency audit is separate from root CI. Both candidates passed the updated \`e2b@2.64.0\` audit in [run #44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463).
 
-The audit issue is closed at the current verification date because the advisory was withdrawn and both npm audit jobs pass. This does not replace the required real E2B image build and live sandbox checks.
+### E2B image-build and sandbox verification status
 
-### Deploy verification correctness added after the latest CI run
+- [Run #44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463) checked out runtime head \`f7b9661b06bcd10fc2d3d2b25afe0aa99c17670c\`. Both Vite and Next.js jobs passed credential check, dependency install and template dependency audit, then remained at **Build isolated Ubuntu template candidate** for more than 30 minutes. The real sandbox verifier did not start and neither candidate has a final result.
+- The longer-than-expected build is not evidence of success. Its jobs must finish or report a failure before we can conclude that either image builds.
+- [Run #44483250785](https://github.com/thefani1122-source/Lampcode/actions/runs/44483250785) was queued behind the first run's per-candidate concurrency group. It includes the expanded backend API verifier below. At the last check it was pending, not running.
+- The expanded verifier code itself passed the current branch's CI contract tests, but Hono/FastAPI/Next.js API requests have not yet executed inside a real E2B candidate sandbox.
+- Current candidate branch head at the latest CI pass: \`edb130df61405e2409c01f8ede7c7615cc4953da\`.
 
-- A post-deploy smoke-check exception now fails closed. A Vercel READY deployment URL can still be shown, but LampCode must say it could not verify the app rather than mark the deployment successful.
-- Static apps are checked by their homepage only. Hono/FastAPI probes are enabled only for the optional health/auth route declarations found in the generated server source. Next.js route probes recognise TypeScript and JavaScript Route Handler files.
-- Removed a duplicate request to `/api/health` that had been labelled "DB connectivity" without proof that the generated health handler actually checks the database.
-- Regression cases were added to `scripts/deploy.test.ts`. Targeted route-matcher checks were run locally, but the full repository CI/test suite has **not yet been observed on the latest branch head**.
+### Backend and deployment verification improvements
+
+- The Ubuntu verifier writes a test FastAPI app and serves it using \`/opt/lampcode-python/bin/python3 -m uvicorn\`, then calls its real HTTP endpoint on port 3002.
+- For Vite, it writes a Hono app, launches it through the same \`tsx src/server/index.ts\` entrypoint used by LampCode preview, checks the API on port 3001 and checks that Vite's \`/api\` proxy forwards correctly.
+- For Next.js, it writes and calls an actual App Router \`GET\` Route Handler.
+- The verifier contract tests in \`scripts/e2b-template.test.ts\` assert these API checks remain present. They are source/contract tests; only a completed E2B matrix can prove the runtime requests pass.
+- Post-deploy smoke verification now fails closed if the checker throws. A Vercel READY URL may still be shown, but LampCode reports it as unverified rather than as a successful deployment.
+- Static apps are checked by the homepage only. Hono/FastAPI checks are enabled only when the optional health/auth endpoint is declared in generated server source. Next.js route detection supports TypeScript and JavaScript Route Handler files.
+- Removed the duplicate \`/api/health\` request that had been described as "DB connectivity" without proof that the handler actually checks the database.
+- Deploy regression cases in \`scripts/deploy.test.ts\` passed as part of CI run #44483470357.
+
+### Remaining external verification before merge / rollout
+
+- Complete both E2B candidate image builds and the real sandbox verifiers. Inspect the active run before starting another; the next matrix is already queued.
+- Run provider-backed staging canaries for Vite + Hono, Vite + FastAPI and Next.js with a staging-connected Vercel account. The E2B canary verifies the sandbox runtime, but it does not replace real provider deployment and live URL checks.
+- Keep production selectors unchanged until both candidate verification and all provider canaries pass.
 
 ## 10. What this PR does not claim
 
