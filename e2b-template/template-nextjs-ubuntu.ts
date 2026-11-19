@@ -68,7 +68,13 @@ export const NEXTJS_PKG_JSON = `{
 
 const NEXT_CONFIG = `import type { NextConfig } from 'next'
 
+// E2B preview sandboxes set this to their own exact public hostname when the
+// Next.js dev server starts. Keep the allowlist per sandbox rather than using
+// a provider-wide wildcard that would trust other tenants' preview origins.
+const previewHost = process.env.LAMPCODE_PREVIEW_HOST
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: previewHost ? [previewHost] : [],
   // Next handles the dependency bundle. Add a package here only when its
   // docs explicitly require transpilation in a server component.
 }
