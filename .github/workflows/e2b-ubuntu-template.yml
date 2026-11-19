@@ -1,8 +1,17 @@
 name: E2B Ubuntu 24.04 Template
 
+run-name: E2B Ubuntu 24.04 — ${{ inputs.template_id }} from ${{ inputs.source_ref }}
+
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: Branch containing the Ubuntu runtime implementation to build
+        required: true
+        default: feat/e2b-ubuntu24-template-poc
+        type: choice
+        options:
+          - feat/e2b-ubuntu24-template-poc
       template_id:
         description: Candidate template ID (lampcode-vite-ubuntu24 or lampcode-nextjs-ubuntu24)
         required: true
@@ -25,6 +34,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
 
       - uses: actions/setup-node@v4
         with:
