@@ -255,7 +255,10 @@ Latest completed functional CI and MCP CI on the runtime/package-manager code (1
 - `npm audit --omit=dev`: passed — 0 vulnerabilities.
 - Full `npm audit`: passed — 0 vulnerabilities.
 - `tsup` remains at the tested `8.5.1` version, moved to `devDependencies`; no forced downgrade was applied. `picomatch@4.0.4` remains in the development tool graph, but the GitHub advisory GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov 2026 after maintainer dispute/review. See the [withdrawn GitHub Advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) and [upstream maintainer discussion](https://github.com/micromatch/picomatch/pull/235). CI now independently audits production and all dependencies; both pass.
-- Real E2B candidate builds: **not yet verified**. No manual workflow-dispatch run exists for this branch. The repository secret value is not visible through this review connection; run the manual workflow above after checking/adding the secret.
+- The two first manual E2B workflow runs (#3 Vite and #4 Next.js) both stopped at **Audit template build dependencies**. The E2B credential check, `npm install` and source-branch checkout passed; the image build and sandbox verifier were skipped. The audit found 4 vulnerabilities (3 moderate, 1 high) through E2B SDK `2.55.0` dependencies, including `glob` and `undici8`; npm's suggested E2B fix was `2.64.0`.
+- Updated the E2B template-builder SDK pin to exact `2.64.0` (the official SDK changelog includes the `glob@^14.0.3` and `undici@^8.12.3` fixes), while preserving the API usage in the template build/verify scripts. Added a contract test to keep this audited pin from silently drifting.
+- **The audit after this SDK upgrade has not yet been run in the manual E2B workflow.** Re-run Vite and Next.js candidates from `main`, with `source_ref=feat/e2b-ubuntu24-template-poc`. Both new runs must pass the audit before any image build begins. The repository secret is already configured; no new secret is required.
+- Real E2B candidate builds: **not yet verified**. The image build and sandbox verifier have not run yet.
 - Real provider-backed staging/Vercel canaries: **not yet run**.
 
 The audit issue is closed at the current verification date because the advisory was withdrawn and both npm audit jobs pass. This does not replace the required real E2B image build and live sandbox checks.
