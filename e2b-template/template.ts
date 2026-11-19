@@ -389,7 +389,6 @@ export const UBUNTU_APT_PACKAGES = [
   'libpq-dev',
   'libatomic1',
   'less',
-  'lesspipe',
   'unzip',
   'zip',
   'jq',
