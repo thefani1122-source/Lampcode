@@ -62,6 +62,28 @@ async function main(): Promise<void> {
       const globalPackages = await run('python3 -m pip list --format=freeze')
       report('the global Python site is not used for app dependencies', globalPackages.code === 0 &&
         !globalPackages.out.includes('crewai==') && !globalPackages.out.includes('langgraph=='), globalPackages.out.trim().slice(0, 500))
+
+      const apt = await run(
+        'sudo -n /usr/local/bin/lampcode-apt update && sudo -n /usr/local/bin/lampcode-apt install tree && tree --version',
+        PROJECT_DIR,
+        240_000,
+      )
+      report(
+        'project user can install an OS package through the approval-gated apt wrapper',
+        apt.code === 0 && apt.out.toLowerCase().includes('tree'),
+        apt.out.trim().slice(-1200),
+      )
+
+      const aptReject = await run(
+        'if sudo -n /usr/local/bin/lampcode-apt install /tmp/unsafe-package.deb; then echo UNSAFE_PACKAGE_ACCEPTED; exit 1; else echo INVALID_PACKAGE_REJECTED; fi',
+        PROJECT_DIR,
+        10_000,
+      )
+      report(
+        'apt wrapper rejects local package files',
+        aptReject.code === 0 && aptReject.out.includes('INVALID_PACKAGE_REJECTED') && !aptReject.out.includes('UNSAFE_PACKAGE_ACCEPTED'),
+        aptReject.out.trim(),
+      )
     }
 
     const entry = await run(ENTRY_CHECK, PROJECT_DIR)
