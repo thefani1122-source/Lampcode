@@ -57,7 +57,7 @@ For the Next.js candidate, change both template IDs to `lampcode-nextjs-ubuntu24
 
 The verifier starts a real E2B sandbox, checks the OS/toolchain and package layout, runs Vitest and TypeScript, starts the actual framework dev server on its preview port, and then opens it using the same Playwright/Chromium QA browser. A green image build alone is not sufficient.
 
-The manual GitHub Actions workflow can run the same process after adding `E2B_API_KEY` as a repository Actions secret. Do not paste the key into chat or commit `.env`.
+The manual GitHub Actions workflow is defined on the repository's `main` branch. On **Run workflow**, select `feat/e2b-ubuntu24-template-poc` in the `source_ref` input and choose the desired candidate in `template_id`. It checks out the selected implementation branch, builds the candidate and runs the real-sandbox verifier. The run title includes the candidate ID. The existing `E2B_API_KEY` repository Actions secret is used automatically; do not paste the key into chat or commit `.env`.
 
 ## Framework and deployment model
 
