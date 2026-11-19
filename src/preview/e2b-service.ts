@@ -1304,10 +1304,16 @@ async function startDevServer(
   framework: FullstackFramework,
 ): Promise<void> {
   const cmd = devStartCommand(framework);
+  // Next.js blocks dev-only asset/HMR requests from unknown hostnames. Give
+  // it this sandbox's exact public E2B hostname, never a provider-wide wildcard.
+  const envs = framework === "nextjs"
+    ? { LAMPCODE_PREVIEW_HOST: sandbox.getHost(devPort(framework)) }
+    : undefined;
   try {
     log(`Starting dev server (${framework})...`);
     await sandbox.commands.run(cmd, {
       cwd: PROJECT_DIR,
+      ...(envs ? { envs } : {}),
       background: true,
       // CRITICAL: the SDK's default command timeout is 60s and it applies to
       // background commands too — without this, E2B killed the dev server one
