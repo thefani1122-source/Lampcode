@@ -65,7 +65,10 @@ async function main(): Promise<void> {
         !globalPackages.out.includes('crewai==') && !globalPackages.out.includes('langgraph=='), globalPackages.out.trim().slice(0, 500))
 
       const apt = await run(
-        'sudo -n /usr/local/bin/lampcode-apt update && sudo -n /usr/local/bin/lampcode-apt install tree && tree --version',
+        // Ubuntu mirrors can briefly serve a Release index and Packages file
+        // from different sync generations. Retry metadata refresh a few times
+        // without disabling signature/hash verification or weakening apt.
+        'updated=0; for attempt in 1 2 3; do if sudo -n /usr/local/bin/lampcode-apt update; then updated=1; break; fi; if [ "$attempt" -lt 3 ]; then sleep 15; fi; done; [ "$updated" -eq 1 ] || exit 1; sudo -n /usr/local/bin/lampcode-apt install tree && tree --version',
         PROJECT_DIR,
         240_000,
       )
