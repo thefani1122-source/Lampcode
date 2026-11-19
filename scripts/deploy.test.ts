@@ -574,3 +574,29 @@ if (failures > 0) process.exit(1);
   check("Next.js homepage-only smoke test passes without API routes", homepageOnly.ok, true);
   check("missing legacy API endpoints are not probed", homepageOnly.checks.map((entry) => entry.name), ["Homepage"]);
 }
+
+// A health response cannot independently prove database connectivity. The
+// old implementation called /api/health twice and labelled the second request
+// "DB connectivity" without knowing what the generated handler actually did.
+{
+  const requested: string[] = [];
+  const checked = await runSmokeTests(
+    "https://api-app.example",
+    async (url) => {
+      requested.push(new URL(url).pathname);
+      return { status: 200, ok: true };
+    },
+    { checkHealth: true, checkAuth: true },
+  );
+  check(
+    "each declared smoke endpoint is requested only once",
+    requested.sort(),
+    ["/", "/api/auth/login", "/api/health"],
+  );
+  check(
+    "smoke results report only checks actually performed",
+    checked.checks.map((entry) => entry.name),
+    ["Homepage", "Health endpoint", "Auth endpoint"],
+  );
+  ok("a health response is not mislabeled as database connectivity", !checked.checks.some(entry => entry.name === "DB connectivity"));
+}
