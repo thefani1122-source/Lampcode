@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   COMMON_QA_COMMANDS,
+  CHECK_RENDER_MJS,
   COMMON_SCAFFOLD_COMMANDS,
   NODE_INSTALL_COMMAND,
   NODE_SHA256_BY_ARCH,
@@ -98,6 +99,10 @@ const nextPkg = JSON.parse(NEXTJS_PKG_JSON) as {
 }
 assert.equal(nextPkg.dependencies.next, NEXTJS_VERSION)
 assert.equal(nextPkg.dependencies.react, NEXTJS_REACT_VERSION)
+assert.equal(nextPkg.devDependencies.vitest, '^5.0.0', 'Vitest 5 uses the same Vite major/minor line')
+assert.equal(nextPkg.devDependencies.vite, '^6.4.0', 'Vitest 5 requires Vite 6.4+ and Node 22.12+')
+assert.ok(CHECK_RENDER_MJS.includes('[data-nextjs-dialog-overlay], [data-nextjs-toast]'))
+assert.ok(!CHECK_RENDER_MJS.includes('readOverlay(document.querySelector("nextjs-portal"))'), 'Next portal styles are not mistaken for an error overlay')
 assert.ok(nextPkg.devDependencies['@tailwindcss/postcss'], 'Tailwind PostCSS is a build-time plugin')
 assert.ok(nextPkg.dependencies['@radix-ui/react-dialog'])
 assert.ok(!nextPkg.dependencies.three, 'Three.js should be installed only when the generated app imports it')

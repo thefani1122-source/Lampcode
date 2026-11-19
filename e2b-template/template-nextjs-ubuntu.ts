@@ -56,13 +56,13 @@ export const NEXTJS_PKG_JSON = `{
     "tailwindcss": "^4.0.0",
     "@tailwindcss/postcss": "^4.0.0",
     "postcss": "^8.4.0",
-    "vitest": "^2.1.8",
+    "vitest": "^5.0.0",
     "jsdom": "^25.0.1",
     "@testing-library/react": "^16.1.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^6.0.0"
+    "vite": "^6.4.0"
   }
 }`
 

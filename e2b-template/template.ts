@@ -256,8 +256,13 @@ try {
       const hasRoot = root ? (root.textContent || "").trim().length > 0 : false
       const hasMain = main ? (main.textContent || "").trim().length > 0 : false
       const hasContent = hasRoot || hasMain || text.length > 20
-      const readOverlay = (el) => el ? ((el.shadowRoot?.textContent || el.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500) || null) : null
-      return { hasContent, overlay: readOverlay(document.querySelector("vite-error-overlay")) || readOverlay(document.querySelector("nextjs-portal")) }
+      const readOverlay = (el) => el ? ((el.shadowRoot?.textContent || el.textContent || "").replace(/\\\\s+/g, " ").trim().slice(0, 500) || null) : null
+      const portal = document.querySelector("nextjs-portal")
+      const nextError = portal?.shadowRoot?.querySelector("[data-nextjs-dialog-overlay], [data-nextjs-toast]")
+      const nextOverlay = nextError
+        ? ((nextError.textContent || "Next.js development error overlay is visible").replace(/\\\\s+/g, " ").trim().slice(0, 500) || "Next.js development error overlay is visible")
+        : null
+      return { hasContent, overlay: readOverlay(document.querySelector("vite-error-overlay")) || nextOverlay }
     })
     if (inspection.overlay) errors.push("Development error overlay: " + inspection.overlay)
     result = { ok: errors.length === 0 && inspection.hasContent && !inspection.overlay, blank: !inspection.hasContent, overlay: inspection.overlay || undefined, errors }
