@@ -613,6 +613,13 @@ export function formatDeployForUser(outcome: DeployOutcome): string[] {
       "The build succeeded, so this is about how the deployed app is wired rather than the code itself. Tell me and I'll look.",
     ].filter((l) => l !== "");
   }
+  if (outcome.url && outcome.state === "READY" && outcome.error) {
+    return [
+      `Vercel created the deployment at ${outcome.url}, but LampCode could not verify it.`,
+      outcome.error,
+      "Do not treat this as a verified successful deploy until the live URL has been checked.",
+    ];
+  }
   return [
     outcome.error ?? "The deployment didn't go through.",
     "Nothing was changed in your project. Tell me and I'll try again.",
