@@ -393,8 +393,30 @@ export const UBUNTU_APT_PACKAGES = [
   'ripgrep',
   'procps',
   'sqlite3',
+  'sudo',
+  'tree',
   'xz-utils',
 ] as const
+
+
+/**
+ * Narrow OS package manager for the unprivileged project user.
+ *
+ * The E2B VM is the security boundary. Inside that VM, the project user can
+ * request repository packages through this root-owned validator. It cannot
+ * run arbitrary sudo commands, edit apt sources, install local .deb files,
+ * remove packages, or execute a root shell. The shell policy separately
+ * requires user approval before either operation reaches this wrapper.
+ */
+export const LAMPCODE_APT_WRAPPER_SCRIPT = "#!/usr/bin/env bash\nset -euo pipefail\n\naction=\"\\${1:-}\"\nif [[ $# -gt 0 ]]; then shift; fi\n\ncase \"$action\" in\n  update)\n    if [[ $# -ne 0 ]]; then\n      echo \"Usage: lampcode-apt update\" >&2\n      exit 2\n    fi\n    exec /usr/bin/apt-get update\n    ;;\n  install)\n    if [[ $# -lt 1 ]]; then\n      echo \"Usage: lampcode-apt install <package> [package ...]\" >&2\n      exit 2\n    fi\n    for package in \"$@\"; do\n      if [[ ! \"$package\" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?(=[A-Za-z0-9:~.+-]+)?$ ]]; then\n        echo \"Rejected package argument: $package\" >&2\n        exit 2\n      fi\n    done\n    exec /usr/bin/apt-get install -y --no-install-recommends \"$@\"\n    ;;\n  *)\n    echo \"Only apt metadata refresh and repository package installation are allowed.\" >&2\n    echo \"Usage: lampcode-apt update | lampcode-apt install <package> [package ...]\" >&2\n    exit 2\n    ;;\nesac\n"
+
+export const LAMPCODE_APT_SETUP_COMMAND = [
+  writeFileCommand('/usr/local/bin/lampcode-apt', LAMPCODE_APT_WRAPPER_SCRIPT),
+  'chown root:root /usr/local/bin/lampcode-apt && chmod 0755 /usr/local/bin/lampcode-apt',
+  'printf "%s\\n" "user ALL=(root) NOPASSWD: /usr/local/bin/lampcode-apt *" > /etc/sudoers.d/90-lampcode-apt',
+  'chown root:root /etc/sudoers.d/90-lampcode-apt && chmod 0440 /etc/sudoers.d/90-lampcode-apt',
+  'visudo -cf /etc/sudoers.d/90-lampcode-apt',
+].join(' && ')
 
 export const NODE_VERSION = '22.23.5'
 export const NODE_SHA256_BY_ARCH = {
@@ -435,6 +457,7 @@ export function createUbuntuBaseTemplate() {
   return Template()
     .fromUbuntuImage(UBUNTU_BASE_IMAGE)
     .aptInstall([...UBUNTU_APT_PACKAGES], { noInstallRecommends: true })
+    .runCmd(LAMPCODE_APT_SETUP_COMMAND, { user: 'root' })
     .runCmd(NODE_INSTALL_COMMAND, { user: 'root' })
     .runCmd(PYTHON_SETUP_COMMAND, { user: 'root' })
     .setEnvs({ ...UBUNTU_TEMPLATE_ENVS, NEXT_TELEMETRY_DISABLED: '1' })
