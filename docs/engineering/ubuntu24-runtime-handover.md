@@ -213,11 +213,11 @@ A repository secret is hidden from normal GitHub reads; this handover does not c
 
 ### B. Build and verify each candidate
 
-1. Open **Actions → E2B Ubuntu 24.04 Template**.
-2. Choose **Run workflow** and the branch `feat/e2b-ubuntu24-template-poc`.
-3. Run once with `lampcode-vite-ubuntu24`.
+1. Open **Actions → E2B Ubuntu 24.04 Template** on the default `main` branch (the manual workflow definition lives there).
+2. Choose **Run workflow**. In the `source_ref` dropdown, select `feat/e2b-ubuntu24-template-poc`. This tells the workflow to check out the candidate implementation while keeping the workflow definition on `main`.
+3. Select `lampcode-vite-ubuntu24` as `template_id` for the first run.
 4. Wait for the workflow to finish successfully. It builds the image and starts a real sandbox to check the OS, toolchain, venv, project permissions, Chromium, Vitest, TypeScript, dev-server readiness and browser rendering.
-5. Run again with `lampcode-nextjs-ubuntu24`.
+5. Run again with `lampcode-nextjs-ubuntu24`. The workflow title includes the candidate ID so you can distinguish the Vite and Next.js runs.
 
 A green image-build step alone is not sufficient; the real sandbox verifier must also pass. The candidate IDs do not overwrite the existing `lampcode-vite` image.
 
