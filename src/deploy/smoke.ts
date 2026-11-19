@@ -1,20 +1,9 @@
 /**
- * Does a deployed URL actually answer?
+ * Post-deploy HTTP verification for Vercel.
  *
- * **Nothing imports this yet.** Its only caller was `pipeline.ts`, deleted
- * 2026-10-11 because every one of that file's methods returned a hardcoded
- * `success: false` — a 223-line shell that fired progress events from 5% to
- * 100% while doing nothing, which is the same hollow shape `verify/wiring.ts`
- * now looks for in generated apps.
- *
- * This file is kept because, unlike that one, it is real: it makes actual
- * requests and reports actual statuses. It is the verification half of the
- * deploy path being built on the user's own connected Vercel MCP — a deploy
- * that returns a URL proves the API call succeeded, not that the app loads,
- * which is the same distinction the rest of `verify/` exists for.
- *
- * If that deploy path is abandoned, delete this too. An orphan file kept on the
- * strength of a plan is how the thing it replaced got to 223 lines.
+ * `deployToVercel` calls this only after Vercel reports READY. Its result is
+ * part of the deployment verdict: an unavailable endpoint, failed request or
+ * verifier exception must never be converted into a successful deployment.
  */
 interface SmokeCheck {
   name: string;
@@ -46,13 +35,15 @@ const defaultFetcher: Fetcher = async (url, opts = {}) => {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-    const body = await res.text().catch(() => undefined);
+    // Keep the abort timer active until the response body is consumed too;
+    // fetch() can resolve headers while the body stream is still stalled.
+    const body = await res.text();
     return { status: res.status, ok: res.ok, body };
   } catch (err) {
-    clearTimeout(timer);
     const reason = err instanceof Error ? err.message : String(err);
     return { status: 0, ok: false, body: reason };
+  } finally {
+    clearTimeout(timer);
   }
 };
 
