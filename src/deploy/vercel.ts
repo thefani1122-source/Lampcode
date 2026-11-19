@@ -116,21 +116,21 @@ export function deploySmokeTargets(
     .filter(([path]) => path.startsWith("src/server/") && /\.(?:[cm]?[jt]sx?|py)$/i.test(path))
     .map(([, content]) => content);
 
-  const declaresRoute = (endpoint: string): boolean => {
-    // The endpoints are fixed internal constants, so no user-controlled regex
-    // content is evaluated here. Match common Hono and FastAPI route syntax.
+  const declaresRoute = (methods: "get" | "get|post", endpoint: string): boolean => {
+    // The endpoints and method allowlists are internal constants. Match common
+    // Hono and FastAPI route syntax without executing generated source.
+    const methodPattern = "(?:" + methods + "|route)";
     const pattern = new RegExp(
-      "(?:\\.\\s*(?:get|post|route)|@[\\w.]+\\.\\s*(?:get|post|route)|add_api_route)\\s*\\(\\s*[\\\"']" +
-        endpoint +
-        "[\\\"']",
+      "(?:\\.\\s*" + methodPattern + "|@[\\w.]+\\.\\s*" + methodPattern + "|add_api_route)" +
+        "\\s*\\(\\s*[\\\"']" + endpoint + "[\\\"']",
       "i",
     );
     return serverSources.some(source => pattern.test(source));
   };
 
   return {
-    checkHealth: declaresRoute("/api/health"),
-    checkAuth: declaresRoute("/api/auth/login"),
+    checkHealth: declaresRoute("get", "/api/health"),
+    checkAuth: declaresRoute("get|post", "/api/auth/login"),
   };
 }
 
