@@ -556,28 +556,29 @@ function servicesVercelConfig(existing: string | undefined, backendEntrypoint: s
   if ("lampcode_frontend" in services || "lampcode_backend" in services) {
     throw new Error("Existing vercel.json already uses a reserved LampCode service name; refusing to overwrite it.");
   }
-  if ("functions" in config) {
-    throw new Error("Existing vercel.json has global functions settings. Move these into the intended service before automatic multi-service deployment.");
+  const globalBuildSettings = ["functions", "framework", "buildCommand", "installCommand", "outputDirectory", "devCommand", "ignoreCommand"];
+  const conflictingSettings = globalBuildSettings.filter((key) => config[key] !== undefined);
+  if (conflictingSettings.length > 0) {
+    throw new Error(
+      "Existing vercel.json contains top-level build settings (" + conflictingSettings.join(", ") +
+      "). Automatic Vercel Services deployment cannot safely reinterpret them as per-service settings; move or review them explicitly first.",
+    );
   }
 
-  const frontend: Record<string, unknown> = { root: "frontend/", framework: "vite" };
-  const backend: Record<string, unknown> = { root: "backend/", entrypoint: backendEntrypoint, framework: "fastapi" };
-  if (config["framework"] !== undefined && config["framework"] !== "vite") {
-    throw new Error("Existing vercel.json framework is not Vite; refusing to override the app's framework declaration.");
-  }
-  for (const key of ["buildCommand", "installCommand", "outputDirectory", "devCommand", "ignoreCommand", "framework"]) {
-    if (config[key] !== undefined) { frontend[key] = config[key]; delete config[key]; }
-  }
+  // Per-service framework keys are deliberately omitted: Vercel detects each
+  // service from its root/entrypoint. The deployment itself uses framework=services.
+  const frontend: Record<string, unknown> = { root: "frontend/" };
+  const backend: Record<string, unknown> = { root: "backend/", entrypoint: backendEntrypoint };
   const previousRewrites = config["rewrites"];
   if (previousRewrites !== undefined && !Array.isArray(previousRewrites)) {
     throw new Error("Existing vercel.json rewrites must be an array.");
   }
   return JSON.stringify({
+    "$schema": "https://openapi.vercel.sh/vercel.json",
     ...config,
     services: { ...services, lampcode_frontend: frontend, lampcode_backend: backend },
     rewrites: [
-      { source: "/api", destination: { service: "lampcode_backend" } },
-      { source: "/api/(.*)", destination: { service: "lampcode_backend" } },
+      { source: "/api/:path*", destination: { service: "lampcode_backend" } },
       ...(previousRewrites as unknown[] | undefined ?? []),
       { source: "/(.*)", destination: { service: "lampcode_frontend" } },
     ],
