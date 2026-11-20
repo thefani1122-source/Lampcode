@@ -5438,6 +5438,10 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (extractBuildStatus), so the person still gets their preview. What
     // changes is that the record stops claiming the work is good.
     const gatesFailed = outcome.checkPage === "fail" || outcome.checkTypes === "fail";
+    // A test suite that actually ran and failed is a real verification failure,
+    // not an optional/unavailable check. Preserve the preview, but do not label
+    // the build as successful.
+    const testsFailed = outcome.checkTests === "fail";
     // Never call a build successful when a mandatory verification gate did
     // not run or could not run. A preview is still delivered as "completed",
     // but the record must not claim the app was verified.
@@ -5457,14 +5461,14 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     const dataLayerIncomplete = dataLayerFindings.length > 0;
     const journeyIncomplete = coreJourneyRequired && journeyVerification?.passed !== true;
     const buildIncomplete =
-      gatesFailed || pageUnverified || typesUnverified ||
+      gatesFailed || testsFailed || pageUnverified || typesUnverified ||
       result.turnsExhausted || result.budgetExhausted ||
       planningUnverified || auditIncomplete || hollowControls > 0 ||
       dataLayerIncomplete || stillStale.length > 0 || postBuildOverran || journeyIncomplete;
     if (buildIncomplete) {
       console.log(
         `[build] honest-status session=${sessionId} status=completed ` +
-        `page=${outcome.checkPage} types=${outcome.checkTypes} ` +
+        `page=${outcome.checkPage} types=${outcome.checkTypes} testsFailed=${testsFailed} ` +
         `planUnverified=${planningUnverified} auditUnresolved=${auditUnresolvedCount} ` +
         `auditUnavailable=${auditUnavailable} hollowControls=${hollowControls} ` +
         `dataLayerFindings=${dataLayerFindings.length} stale=${stillStale.length} ` +
