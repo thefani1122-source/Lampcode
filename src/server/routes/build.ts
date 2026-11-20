@@ -44,7 +44,7 @@ import { logger } from "../logger.js";
 import { assertHasBudget, getUserPlan } from "../../build/credits.js";
 import { isAdmin } from "../../auth/admin.js";
 import { recordUserPrompt } from "../../websocket/message-recorder.js";
-import { capturePreviewScreenshot, captureStorage, checkInteractions, checkRender, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
+import { capturePreviewScreenshot, captureStorage, checkInteractions, checkRender, runJourney, runTests, createPreviewSandbox, killSandbox, hasSandbox, hasSandboxRecord, writeFilesToSandbox, deleteProjectFileFromSandbox, prewarmSandbox, setProjectPreviewEnv, verifyPreview, runTypeCheck, verifyBrowserRender, isTemplateOwnedFile, type PreviewScreenshotViewport } from "../../preview/e2b-service.js";
 import { getUserSupabasePreviewCreds, isUserSupabaseConnected, getUserSupabaseMcpAuth, getConnectedMcpServers, getConnectedServicesSummary, getUserVercelDeployToken, getUserVercelTeamId, getUserGitHubToken, getRestProviderCredentials } from "./integrations.js";
 import { classifyPromptIntent } from "../../agents/prompt-intent.js";
 import { applySupabaseSchema } from "../../mcp/supabase-mcp.js";
@@ -4831,6 +4831,41 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // again and the next batch is selected from what remains unmet.
     const repairBaseline = completionAudit;
     const canRepair = hasSandbox(projectId) && !sandboxWriteFailed;
+
+    // A rollback must restore both in-memory files and the actual E2B tree.
+    // writeFilesToSandbox overwrites paths but does not remove newly-created
+    // files, so explicitly delete additions before re-applying the snapshot.
+    const restoreRepairSnapshot = async (
+      snapshot: Record<string, string>,
+      changedPaths: string[],
+      restoreSandbox: boolean,
+    ): Promise<boolean> => {
+      Object.assign(allFiles, snapshot);
+      for (const path of Object.keys(allFiles)) {
+        if (!(path in snapshot)) delete allFiles[path];
+      }
+      if (!restoreSandbox) return true;
+      if (sandboxWriteFailed) return false;
+
+      try {
+        for (const path of changedPaths) {
+          if (!(path in snapshot)) await deleteProjectFileFromSandbox(projectId, path);
+        }
+        return await applyRepairWriteToSandbox("completion-audit-revert", changedPaths);
+      } catch (err) {
+        sandboxWriteFailed = true;
+        logger.error(
+          { sessionId, projectId, paths: changedPaths, err },
+          "Could not restore the exact E2B file tree after an audit-repair regression",
+        );
+        server?.emitToRoom(sessionId, "build:warning", {
+          sessionId,
+          message: "A repair had to be reverted, but I could not restore the exact preview file tree. The preview is now treated as unverified.",
+        });
+        return false;
+      }
+    };
+
     let repairBatches = 0;
     let repairAttempted = 0;
     let repairCost = 0;
@@ -4898,10 +4933,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           batchOutcome = "no-files";
         } else if (!(await applyRepairWriteToSandbox("completion-audit", written))) {
           batchOutcome = "no-files";
-          Object.assign(allFiles, snapshot);
-          for (const path of Object.keys(allFiles)) {
-            if (!(path in snapshot)) delete allFiles[path];
-          }
+          await restoreRepairSnapshot(snapshot, written, true);
         } else {
           writeApplied = true;
           recorder.record({ type: "repair/applied", kind: "completion-audit" });
@@ -4943,25 +4975,15 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
               recorder.record({ type: "verification/result", gate: "types", status: typesAfter.ok ? "pass" : "fail" });
             }
           } else {
-            Object.assign(allFiles, snapshot);
-            for (const path of Object.keys(allFiles)) {
-              if (!(path in snapshot)) delete allFiles[path];
-            }
-            const restored = await applyRepairWriteToSandbox("completion-audit-revert", written);
+            const restored = await restoreRepairSnapshot(snapshot, written, true);
             if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
             else batchOutcome = "no-files";
           }
         }
       } catch (err) {
         logger.warn({ sessionId, projectId, err }, "Completion-audit repair batch failed");
-        Object.assign(allFiles, snapshot);
-        for (const path of Object.keys(allFiles)) {
-          if (!(path in snapshot)) delete allFiles[path];
-        }
-        if (writeApplied && written.length > 0) {
-          const restored = await applyRepairWriteToSandbox("completion-audit-revert", written).catch(() => false);
-          if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
-        }
+        const restored = await restoreRepairSnapshot(snapshot, written, writeApplied && written.length > 0);
+        if (restored && writeApplied) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
         batchOutcome = "no-files";
       }
 
