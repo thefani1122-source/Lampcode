@@ -254,7 +254,7 @@ console.log("\n— the wiring —");
 
   ok("the repair runs AFTER the audit it acts on",
     build.indexOf("formatAuditForUser(completionAudit)") < build.indexOf("planAuditRepair(completionAudit)"));
-  ok("it needs a live, known sandbox state", build.includes("hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair"));
+  ok("it needs a live, known sandbox state", build.includes("const canRepair = hasSandbox(projectId) && !sandboxWriteFailed;"));
   ok("and it respects the cost ceiling", build.includes("cumulativeCostUsd < MAX_BUILD_COST_USD"));
   ok("a skipped repair is logged with its reason", build.includes("skipped=${whyNoRepair(completionAudit)}"));
 
@@ -273,10 +273,20 @@ console.log("\n— the wiring —");
   ok("the re-audit reuses the SAME criteria", build.includes("criteria: before.criteria"));
   ok("stale gate verdicts are labelled to the re-audit", build.includes("(STALE — a repair landed after it)"));
   ok("template-owned files are still refused", build.includes("!isTemplateOwnedFile(file.path)"));
-  ok("a failed dispatch does not fail the build", build.includes("Completion-audit repair dispatch failed"));
+  ok("a failed dispatch does not fail the build", build.includes("Completion-audit repair batch failed"));
   ok("tools are off — this is one shot at a file set", build.includes("enableTools: false"));
-  ok("the outcome is logged with its numbers", build.includes("[build] audit repair session="));
+  ok("the outcome is logged with its numbers", build.includes("[build] audit repair complete session="));
 
+  ok("reverting new files deletes them from the E2B project before restoring the snapshot",
+    build.includes("await deleteProjectFileFromSandbox(projectId, path)"));
+  ok("the rollback helper restores memory and sandbox files together",
+    build.includes("const restoreRepairSnapshot = async"));
+  ok("a failed sandbox write restores the in-memory snapshot even if sandbox state is uncertain",
+    build.includes("await restoreRepairSnapshot(snapshot, written, true)"));
+  ok("the batch loop has a hard three-pass ceiling",
+    build.includes("repairBatches < MAX_REPAIR_BATCHES"));
+  ok("repair stops when an independent re-audit sees no progress",
+    build.includes("stopping=no-measurable-progress"));
   ok("repair writes use the fail-closed sandbox apply helper", build.includes("const applyRepairWriteToSandbox = async"));
   ok("a failed apply is logged with its affected paths", build.includes("Repair files could not be fully applied to the live sandbox"));
   ok("a failed apply marks page, type and test evidence unavailable", build.includes('gate, status: "unavailable"'));
@@ -288,7 +298,7 @@ console.log("\n— the wiring —");
   // nothing has to be visible later — an unchanged audit alone would read as
   // if no repair had ever run.
   ok("the repair is stored in build_outcome", build.includes("...(auditRepair ? { auditRepair } : {})"));
-  ok("with how many it attempted", build.includes("attempted: repairPlan.items.length"));
+  ok("with how many it attempted", build.includes("attempted: repairAttempted"));
   const schema = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
   ok("the field is declared optional, so absent means never attempted", schema.includes("auditRepair?: {"));
   ok("and it records the cost", /auditRepair\?: \{[^}]*costUsd: number/s.test(schema));
