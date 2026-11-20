@@ -4899,8 +4899,9 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         } else if (!(await applyRepairWriteToSandbox("completion-audit", written))) {
           batchOutcome = "no-files";
           Object.assign(allFiles, snapshot);
-          const restored = await applyRepairWriteToSandbox("completion-audit-revert", written).catch(() => false);
-          if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
+          for (const path of Object.keys(allFiles)) {
+            if (!(path in snapshot)) delete allFiles[path];
+          }
         } else {
           writeApplied = true;
           recorder.record({ type: "repair/applied", kind: "completion-audit" });
