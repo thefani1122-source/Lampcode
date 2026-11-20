@@ -535,6 +535,9 @@ ok("broken integrations cannot be hidden behind mock persistence",
     build.includes("formatAcceptanceCriteriaForBuild(extractedCriteria.criteria)"));
   ok("final audit reuses the same extraction result",
     build.includes("const extracted = extractedCriteria;"));
+  ok("acceptance extraction cost is included in both completion and failure evidence",
+    build.includes("costUsd: result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd") &&
+    build.includes("cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd"));
 }
 
 const understood = (texts: string[], dropped = 0) => formatCriteriaForUser({
