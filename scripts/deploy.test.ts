@@ -198,6 +198,24 @@ const combinedVercel = JSON.parse(viteFastApiScaffold["vercel.json"] ?? "{}") as
 check("Services frontend points to its isolated Vite root", combinedVercel.services.lampcode_frontend?.root, "frontend/");
 check("Services backend points to its isolated FastAPI root", combinedVercel.services.lampcode_backend?.root, "backend/");
 check("Services backend keeps the Python entrypoint", combinedVercel.services.lampcode_backend?.entrypoint, "src.server.main:app");
+check("Services config includes Vercel JSON schema", combinedVercel["$schema"], "https://openapi.vercel.sh/vercel.json");
+check("per-service settings use documented root and entrypoint only", [
+  Object.keys(combinedVercel.services.lampcode_frontend ?? {}).sort(),
+  Object.keys(combinedVercel.services.lampcode_backend ?? {}).sort(),
+], [["root"], ["entrypoint", "root"]]);
+check("backend routing uses documented path wildcard", combinedVercel.rewrites[0]?.source, "/api/:path*");
+check("frontend catch-all remains last", combinedVercel.rewrites[combinedVercel.rewrites.length - 1]?.source, "/(.*)");
+
+check(
+  "Vercel Services rejects unsupported global function configuration",
+  (() => {
+    try {
+      vercelScaffold("vite-fastapi", { "src/App.tsx": "app", "src/server/main.py": "api", "vercel.json": JSON.stringify({ functions: { "api/*.py": { maxDuration: 30 } } }) });
+      return "accepted";
+    } catch { return "rejected"; }
+  })(),
+  "rejected",
+);
 check("API routing is declared before the frontend catch-all", combinedVercel.rewrites[0]?.destination.service, "lampcode_backend");
 check("Frontend catch-all routes to the Vite service", combinedVercel.rewrites[combinedVercel.rewrites.length - 1]?.destination.service, "lampcode_frontend");
 
