@@ -192,6 +192,7 @@ check("Three.js dependency is preserved in Vite frontend", combinedPackage.depen
 check("React Three Fiber dependency is preserved in Vite frontend", combinedPackage.dependencies["@react-three/fiber"], "^9.0.0");
 check("Drei dependency is preserved in Vite frontend", combinedPackage.dependencies["@react-three/drei"], "^10.0.0");
 const combinedVercel = JSON.parse(viteFastApiScaffold["vercel.json"] ?? "{}") as {
+  "$schema"?: string;
   services: Record<string, { root: string; framework?: string; entrypoint?: string }>;
   rewrites: Array<{ source: string; destination: { service: string } }>;
 };
