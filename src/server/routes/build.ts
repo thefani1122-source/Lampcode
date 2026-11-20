@@ -5126,7 +5126,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         Boolean(config.PREVIEW_SUPABASE_URL && config.PREVIEW_SUPABASE_ANON_KEY) ||
         Boolean(config.PREVIEW_MONGODB_URI),
       schemaApplied: schemaApply?.ok === true,
-      ...(schemaApply?.ok === false && schemaApply.error
+      ...(schemaApply?.ran === true && schemaApply.ok === false && schemaApply.error
         ? { schemaError: schemaApply.error }
         : {}),
     });
