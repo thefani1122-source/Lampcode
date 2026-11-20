@@ -15,6 +15,8 @@
 import { readFileSync } from "node:fs";
 import {
   MAX_REPAIRABLE,
+  MAX_REPAIR_BATCHES,
+  MAX_REPAIR_TOTAL,
   repairStatusLine,
   auditRepairInstruction,
   describeRepair,
@@ -76,16 +78,29 @@ console.log("\n— refused, with a reason —");
   ok("and it says so", whyNoRepair(allGood).includes("every requirement was proven"));
 }
 {
-  // The important refusal. A build with ten unmet requirements is not nearly
-  // finished, and one dispatch cannot rescue it — trying costs real money to
-  // produce a worse mess, and the honest move is to report.
   const many = audit(
     Array.from({ length: 10 }, (_, i) => criterion(`c${i}`)),
     Array.from({ length: 10 }, (_, i) => verdict(`c${i}`, "unverified")),
   );
-  ok(`more than ${MAX_REPAIRABLE} unmet is not repaired`, planAuditRepair(many) === null);
-  ok("and the reason names the count", whyNoRepair(many).includes("10 requirements are unmet"));
-  ok("the boundary itself is repaired", planAuditRepair(audit(
+  const firstBatch = planAuditRepair(many);
+  ok("ten unmet requirements start in a bounded batch", firstBatch?.items.length === MAX_REPAIRABLE);
+  ok("the rest are retained for later batches", firstBatch?.remaining === 5);
+  ok("batch selection preserves audit order", firstBatch?.items[0]?.criterion.id === "c0");
+  ok("repair is bounded to three batches", MAX_REPAIR_BATCHES === 3);
+  ok("total automatic-repair cap is 15 requirements", MAX_REPAIR_TOTAL === 15);
+  ok("sets above five are described as batchable", whyNoRepair(many).includes("focused batches"));
+  const atLimit = audit(
+    Array.from({ length: MAX_REPAIR_TOTAL }, (_, i) => criterion(`c${i}`)),
+    Array.from({ length: MAX_REPAIR_TOTAL }, (_, i) => verdict(`c${i}`, "unverified")),
+  );
+  ok("the total safety boundary is accepted", planAuditRepair(atLimit)?.remaining === 10);
+  const beyond = audit(
+    Array.from({ length: MAX_REPAIR_TOTAL + 1 }, (_, i) => criterion(`c${i}`)),
+    Array.from({ length: MAX_REPAIR_TOTAL + 1 }, (_, i) => verdict(`c${i}`, "unverified")),
+  );
+  ok("beyond the cap is reported instead of broadly rewritten", planAuditRepair(beyond) === null);
+  ok("the refusal explains the total limit", whyNoRepair(beyond).includes(String(MAX_REPAIR_TOTAL)));
+  ok("a batch at its five-item boundary contains five requirements", planAuditRepair(audit(
     Array.from({ length: MAX_REPAIRABLE }, (_, i) => criterion(`c${i}`)),
     Array.from({ length: MAX_REPAIRABLE }, (_, i) => verdict(`c${i}`, "unverified")),
   ))?.items.length === MAX_REPAIRABLE);

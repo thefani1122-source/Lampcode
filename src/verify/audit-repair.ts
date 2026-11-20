@@ -20,13 +20,16 @@ import type { AcceptanceCriterion, CompletionAudit, CriterionVerdict } from "../
  * money, invalidates every gate above it, and can break code that worked.
  */
 
-/** More than this and the build is not nearly finished; one dispatch will not
- *  rescue it, and trying costs money to produce a worse mess. Report instead. */
+/** Keep each repair dispatch focused; the full unmet set is handled in batches. */
 export const MAX_REPAIRABLE = 5;
+export const MAX_REPAIR_BATCHES = 3;
+export const MAX_REPAIR_TOTAL = MAX_REPAIRABLE * MAX_REPAIR_BATCHES;
 
 export type AuditRepairPlan = {
-  /** The requirements to fix, paired with what the audit said about them. */
+  /** The next bounded batch of requirements to fix, paired with its verdict. */
   items: Array<{ criterion: AcceptanceCriterion; verdict: CriterionVerdict }>;
+  /** Unmet requirements left for later batches after this one. */
+  remaining: number;
 };
 
 /**
@@ -52,8 +55,8 @@ export function planAuditRepair(audit: CompletionAudit | null): AuditRepairPlan 
   }
 
   if (items.length === 0) return null;
-  if (items.length > MAX_REPAIRABLE) return null;
-  return { items };
+  if (items.length > MAX_REPAIR_TOTAL) return null;
+  return { items: items.slice(0, MAX_REPAIRABLE), remaining: Math.max(0, items.length - MAX_REPAIRABLE) };
 }
 
 /** Why no repair was attempted, in words the log and the user can both take. */
@@ -61,10 +64,10 @@ export function whyNoRepair(audit: CompletionAudit | null): string {
   if (!audit || audit.criteria.length === 0) return "no requirements were extracted";
   const unmet = audit.verdicts.filter((v) => v.status !== "proven").length;
   if (unmet === 0) return "every requirement was proven";
-  if (unmet > MAX_REPAIRABLE) {
-    return `${unmet} requirements are unmet — too many for one repair, so the build reports them instead of guessing`;
+  if (unmet > MAX_REPAIR_TOTAL) {
+    return `${unmet} requirements are unmet — this exceeds the safe automatic-repair limit of ${MAX_REPAIR_TOTAL}, so the build reports them instead of attempting a broad rewrite`;
   }
-  return "nothing to repair";
+  return `${unmet} unmet requirement(s) can be handled in focused batches of up to ${MAX_REPAIRABLE}`;
 }
 
 /**

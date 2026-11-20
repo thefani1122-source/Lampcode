@@ -426,6 +426,29 @@ export function formatAuditForUser(audit: CompletionAudit): string[] {
   return lines;
 }
 
+/**
+ * Independent acceptance criteria are useful before generation, not only after it.
+ * These are extracted from the raw request and reused by the final audit.
+ */
+export function formatAcceptanceCriteriaForBuild(criteria: AcceptanceCriterion[]): string {
+  if (criteria.length === 0) return "";
+  return [
+    "",
+    "USER ACCEPTANCE CRITERIA — IMPLEMENT EVERY ITEM",
+    "These requirements were extracted independently from the user's original request. Treat them as the implementation checklist alongside the original prompt.",
+    ...criteria.map((criterion) => `- [${criterion.id}] (${criterion.kind}) ${criterion.text}`),
+    "",
+    "IMPLEMENTATION AND VERIFICATION RULES:",
+    "- Implement each requested outcome end to end. A screen, button, placeholder, mock row or unconnected helper is not a completed feature.",
+    "- Trace every primary journey from the user's action through validation, real business logic, persistence or external service, and the visible result.",
+    "- Keep the source of truth consistent across views. Do not leave hardcoded dashboard metrics or mock records where the request requires live shared data.",
+    "- For data and business-logic requirements, add focused unit or integration tests where applicable. Test important boundaries and failure cases, not only the happy path.",
+    "- Before finishing, run relevant tests, type checks and browser checks. Repair failures and re-run the checks affected by each repair.",
+    "- Never replace an unavailable integration, API or database with console.log, fabricated data or localStorage pretending to be server persistence. Show an honest, actionable error state instead.",
+    "- Do not claim a criterion is complete unless the implementation exists and there is evidence for its behaviour.",
+  ].join("\n");
+}
+
 /** The user's own words, shown as soon as extraction finishes so they can
  *  correct a misunderstanding while the build is still running. */
 export function formatCriteriaForUser(result: ExtractResult): string[] {

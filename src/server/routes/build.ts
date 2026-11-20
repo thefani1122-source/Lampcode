@@ -69,7 +69,7 @@ import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, 
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
 import { findArchitectureGaps, formatArchitectureGaps, type ArchitectureKind } from "../../verify/architecture.js";
-import { auditRepairInstruction, describeRepair, formatFilesForRepair, judgeRepair, planAuditRepair, repairStatusLine, whyNoRepair, type RepairOutcome } from "../../verify/audit-repair.js";
+import { auditRepairInstruction, describeRepair, formatFilesForRepair, judgeRepair, planAuditRepair, repairStatusLine, whyNoRepair, MAX_REPAIR_BATCHES, type RepairOutcome } from "../../verify/audit-repair.js";
 import { BuildEventRecorder } from "../build-events.js";
 import { projectOutcome } from "../../verify/outcome-projection.js";
 import {
@@ -93,6 +93,7 @@ import { formatPreviewEmailConfirmationGuidance } from "../../verify/preview-aut
 import {
   shouldAudit,
   extractCriteria,
+  formatAcceptanceCriteriaForBuild,
   auditCompletion,
   discountFakedEvidence,
   unverifiedAudit,
@@ -1812,7 +1813,9 @@ export async function runFastBuild(
     // failed chat emit cannot become an unhandled rejection.
     void criteriaPromise
       .then((result) => {
-        // Retained for completion audit at the end of build; omitted from chat thinking stream
+        for (const line of formatCriteriaForUser(result)) {
+          server?.thinking(sessionId, { sessionId, text: line });
+        }
       })
       .catch((err) => logger.warn({ sessionId, err }, "Could not extract requirements"));
 
@@ -1988,6 +1991,12 @@ export async function runFastBuild(
       `Call the Stitch tools first to generate design screens, extract the layout and components, and build the React app reflecting that design.\n` +
       `NEVER use web_search, Firecrawl or Exa for the user's private account data — web tools only see the public internet. If a tool reports the service is not connected, say so and tell the user to connect it in the Integrations panel.\n`;
 
+    // Reuse independently extracted original-user criteria as the generator's
+    // implementation checklist. The plan is an interpretation, not a substitute
+    // for the user's own requested outcomes.
+    const extractedCriteria = await criteriaPromise;
+    const acceptanceBlock = formatAcceptanceCriteriaForBuild(extractedCriteria.criteria);
+
     const result = await dispatcher.dispatch({
       agentType: "frontend",
       usageCategory: "build",
@@ -1997,6 +2006,7 @@ export async function runFastBuild(
           taskDescription +
           formatBuildShapeForPrompt(planningShape) +
           (buildPlan ? formatPlanForPrompt(buildPlan) : "") +
+          acceptanceBlock +
           connectedDataRule +
           (threatBlock ? `\n\n${threatBlock}` : ""),
         requirements: effectiveRequirements,
@@ -2021,7 +2031,7 @@ export async function runFastBuild(
       // model precise, targeted context directly, so they don't opt in.
       // cumulativeUsd is 0 here: this is the first dispatch of the build.
       enableTools: true,
-      costGuard: { cumulativeUsd: 0, maxUsd: MAX_BUILD_COST_USD },
+      costGuard: { cumulativeUsd: planCostUsd + extractedCriteria.costUsd, maxUsd: MAX_BUILD_COST_USD },
       agenticBuild,
       userPrompt: prompt,
       // Only this loop knows the ORDER of its rounds, tool calls, gate verdicts
@@ -2084,7 +2094,7 @@ export async function runFastBuild(
     // always fires regardless of cost — there is nothing to check it against yet.
     // The planning pass counts: it is a model call this build paid for, and
     // leaving it out would understate every planned build's cost.
-    let cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd;
+    let cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd;
 
     // ── Check for cancellation ──────────────────────────────────────────────
     if (cancelledSessions.has(sessionId)) {
@@ -4728,7 +4738,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // failed. This compares the user's words against the delivered files, and
     // keeps `unverified` apart from `fail` — nothing else in the build can tell
     // the difference between "checked and fine" and "never checked".
-    const extracted = await criteriaPromise;
+    const extracted = extractedCriteria;
     let completionAudit: CompletionAudit | null = null;
     if (extracted.criteria.length > 0) {
       // A gate verdict is only evidence about the code that existed when it
@@ -4783,7 +4793,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         }
       }
 
-      cumulativeCostUsd += extracted.costUsd + completionAudit.costUsd;
+      cumulativeCostUsd += completionAudit.costUsd;
       console.log(
         `[build] audit session=${sessionId} proven=${completionAudit.proven} ` +
         `unverified=${completionAudit.unverified} contradicted=${completionAudit.contradicted} ` +
@@ -4815,34 +4825,49 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       }
     }
 
-    // ── The audit found gaps. Go and fix them ───────────────────────────────
-    // THE HALF THAT WAS MISSING. The audit turns the person's own words into
-    // requirements and marks each one proven / contradicted / unverified — and
-    // nothing acted on it. Measured 2026-10-19: a follow-up build ended 0
-    // proven, 2 unverified, and completed anyway. Seeing a gap and shipping it
-    // is barely better than not seeing it; the person still gets an app that
-    // does not do what they asked, now with a note attached.
-    //
-    // Strict on purpose. One attempt, only with a live sandbox, only when the
-    // list is short enough that one dispatch could plausibly close it, and the
-    // result is kept only if it survives a type check and does not un-prove
-    // something that was already proven.
-    const repairPlan = hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair(completionAudit) : null;
-    if (completionAudit && !repairPlan) {
-      console.log(`[build] audit repair session=${sessionId} skipped=${whyNoRepair(completionAudit)}`);
+    // ── Repair audit findings in bounded batches ─────────────────────────
+    // Each dispatch handles at most five requirements. Larger audits are not
+    // abandoned: after an accepted repair, the same independent audit runs
+    // again and the next batch is selected from what remains unmet.
+    const repairBaseline = completionAudit;
+    const canRepair = hasSandbox(projectId) && !sandboxWriteFailed;
+    let repairBatches = 0;
+    let repairAttempted = 0;
+    let repairCost = 0;
+    let acceptedRepair = false;
+    let lastRepairOutcome: RepairOutcome = "not-attempted";
+
+    if (completionAudit && !canRepair) {
+      console.log(`[build] audit repair session=${sessionId} skipped=no-live-sandbox`);
     }
-    if (repairPlan && completionAudit && cumulativeCostUsd < MAX_BUILD_COST_USD) {
+
+    while (
+      completionAudit &&
+      canRepair &&
+      repairBatches < MAX_REPAIR_BATCHES &&
+      cumulativeCostUsd < MAX_BUILD_COST_USD
+    ) {
+      const repairPlan = planAuditRepair(completionAudit);
+      if (!repairPlan) {
+        if (repairBatches === 0) {
+          console.log(`[build] audit repair session=${sessionId} skipped=${whyNoRepair(completionAudit)}`);
+        }
+        break;
+      }
+
+      repairBatches += 1;
+      repairAttempted += repairPlan.items.length;
       const before = completionAudit;
       server?.thinking(sessionId, {
         sessionId,
-        text: `${repairPlan.items.length} thing(s) you asked for aren't actually there yet — going back to finish them…`,
+        text: `Going back to finish ${repairPlan.items.length} missing part(s) (repair batch ${repairBatches}/${MAX_REPAIR_BATCHES})…`,
       });
 
-      // The two things the judgement needs, taken before anything changes.
       const typesBefore = await runTypeCheck(projectId).catch(() => null);
       const snapshot = { ...allFiles };
-      let outcome: RepairOutcome = "no-files";
-      let repairCost = 0;
+      const written: string[] = [];
+      let writeApplied = false;
+      let batchOutcome: RepairOutcome = "no-files";
 
       try {
         const fix = await dispatcher.dispatch({
@@ -4862,37 +4887,30 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         repairCost += fix.costUsd ?? 0;
         cumulativeCostUsd += fix.costUsd ?? 0;
 
-        // New files are allowed: a requirement that is missing usually needs
-        // one. Same rule as the broken-import loop, opposite of the cut.
-        const written: string[] = [];
         for (const file of parseFilesFromContent(fix.content ?? "")) {
-          // A template-owned path is refused here exactly as everywhere else —
-          // the sandbox owns vite.config.ts and writing it breaks the preview.
           if (file.code.trim().length > 0 && !isTemplateOwnedFile(file.path)) {
             allFiles[file.path] = file.code;
             written.push(file.path);
           }
         }
 
-        if (written.length > 0) {
-          if (!(await applyRepairWriteToSandbox("completion-audit", written))) {
-            outcome = "no-files";
-          } else {
-            recorder.record({ type: "repair/applied", kind: "completion-audit" });
-            const typesAfter = await runTypeCheck(projectId).catch(() => null);
+        if (written.length === 0) {
+          batchOutcome = "no-files";
+        } else if (!(await applyRepairWriteToSandbox("completion-audit", written))) {
+          batchOutcome = "no-files";
+          Object.assign(allFiles, snapshot);
+          const restored = await applyRepairWriteToSandbox("completion-audit-revert", written).catch(() => false);
+          if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
+        } else {
+          writeApplied = true;
+          recorder.record({ type: "repair/applied", kind: "completion-audit" });
+          const typesAfter = await runTypeCheck(projectId).catch(() => null);
 
-          // Re-audit with the SAME criteria over the new files. This is the
-          // only way to know whether the repair worked, and it is paid for
-          // only when a repair actually landed.
-          const after = await auditCompletion({
+          const auditedAfter = await auditCompletion({
             dispatcher,
             criteria: before.criteria,
             files: allFiles,
             gates: {
-              // Both of these are the model's own verdicts from before the
-              // repair, so they are labelled STALE rather than quoted as if
-              // they described the files the re-audit is reading. The types
-              // verdict is the only one that was actually re-run.
               checkPage: `${result.gateResults.checkPage ?? "never"} (STALE — a repair landed after it)`,
               checkTypes: typesAfter === null || typesAfter.unavailable
                 ? "unavailable"
@@ -4904,54 +4922,82 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
             projectId,
             provider,
           });
+          const after = before.criteriaDropped
+            ? { ...auditedAfter, criteriaDropped: before.criteriaDropped }
+            : auditedAfter;
           repairCost += after.costUsd;
           cumulativeCostUsd += after.costUsd;
 
-          outcome = judgeRepair({
+          batchOutcome = judgeRepair({
             typesWereGreen: typesBefore?.ok === true,
             typesAreGreen: typesAfter ? typesAfter.ok : null,
             provenBefore: before.proven,
             provenAfter: after.proven,
           });
 
-          if (outcome === "kept") {
-            // The record now describes the repaired app, which is the one the
-            // user gets. Keeping the old audit would understate a fix that
-            // worked and overstate one that did not.
+          if (batchOutcome === "kept") {
             completionAudit = after;
+            acceptedRepair = true;
             if (typesAfter && !typesAfter.unavailable) {
               recorder.record({ type: "verification/result", gate: "types", status: typesAfter.ok ? "pass" : "fail" });
             }
           } else {
             Object.assign(allFiles, snapshot);
-            for (const path of written) if (!(path in snapshot)) delete allFiles[path];
+            for (const path of Object.keys(allFiles)) {
+              if (!(path in snapshot)) delete allFiles[path];
+            }
             const restored = await applyRepairWriteToSandbox("completion-audit-revert", written);
             if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
-            else outcome = "no-files";
-          }
+            else batchOutcome = "no-files";
           }
         }
       } catch (err) {
-        logger.warn({ sessionId, projectId, err }, "Completion-audit repair dispatch failed");
-        outcome = "no-files";
+        logger.warn({ sessionId, projectId, err }, "Completion-audit repair batch failed");
+        Object.assign(allFiles, snapshot);
+        for (const path of Object.keys(allFiles)) {
+          if (!(path in snapshot)) delete allFiles[path];
+        }
+        if (writeApplied && written.length > 0) {
+          const restored = await applyRepairWriteToSandbox("completion-audit-revert", written).catch(() => false);
+          if (restored) recorder.record({ type: "repair/applied", kind: "completion-audit-reverted" });
+        }
+        batchOutcome = "no-files";
       }
 
-      const fixed = Math.max(0, completionAudit.proven - before.proven);
-      const remaining = completionAudit.unverified + completionAudit.contradicted;
-      auditRepair = { outcome, attempted: repairPlan.items.length, fixed, remaining, costUsd: repairCost };
+      lastRepairOutcome = batchOutcome;
       console.log(
-        `[build] audit repair session=${sessionId} outcome=${outcome} attempted=${repairPlan.items.length} ` +
-        `fixed=${fixed} remaining=${remaining} cost=$${repairCost.toFixed(4)}`,
+        `[build] audit repair batch session=${sessionId} batch=${repairBatches}/${MAX_REPAIR_BATCHES} ` +
+        `outcome=${batchOutcome} attempted=${repairPlan.items.length} remainingBefore=${repairPlan.remaining} ` +
+        `proven=${completionAudit.proven}/${completionAudit.criteria.length} cost=$${repairCost.toFixed(4)}`,
+      );
+
+      if (batchOutcome !== "kept") break;
+
+      const unresolvedBefore = before.contradicted + before.unverified;
+      const unresolvedAfter = completionAudit.contradicted + completionAudit.unverified;
+      const madeProgress =
+        completionAudit.proven > before.proven || unresolvedAfter < unresolvedBefore;
+      if (!madeProgress) {
+        console.log(`[build] audit repair session=${sessionId} stopping=no-measurable-progress`);
+        break;
+      }
+    }
+
+    if (repairBaseline && repairAttempted > 0) {
+      const fixed = Math.max(0, completionAudit!.proven - repairBaseline.proven);
+      const remaining =
+        completionAudit!.contradicted +
+        completionAudit!.unverified +
+        (completionAudit!.criteriaDropped ?? 0);
+      const outcome: RepairOutcome = acceptedRepair ? "kept" : lastRepairOutcome;
+      auditRepair = { outcome, attempted: repairAttempted, fixed, remaining, costUsd: repairCost };
+      console.log(
+        `[build] audit repair complete session=${sessionId} batches=${repairBatches} ` +
+        `outcome=${outcome} attempted=${repairAttempted} fixed=${fixed} ` +
+        `remaining=${remaining} cost=$${repairCost.toFixed(4)}`,
       );
       const line = describeRepair(outcome, fixed, remaining);
       if (line) server?.thinking(sessionId, { sessionId, text: line });
-
-      // The repair wrote files AFTER every gate, including a revert — which
-      // restores the old bytes but leaves the event stream saying a write
-      // landed. Either way the gates have been outrun, so re-run whatever the
-      // projection now calls stale. Without this, a repair that compiles but
-      // renders a white screen would ship behind a page verdict obtained
-      // before it existed.
       await revalidateStaleGates();
     }
 
@@ -5056,7 +5102,10 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
         ownSupabaseConnected ||
         Boolean(config.PREVIEW_SUPABASE_URL && config.PREVIEW_SUPABASE_ANON_KEY) ||
         Boolean(config.PREVIEW_MONGODB_URI),
-      schemaApplied: ownSupabaseConnected,
+      schemaApplied: schemaApply?.ok === true,
+      ...(schemaApply?.ok === false && schemaApply.error
+        ? { schemaError: schemaApply.error }
+        : {}),
     });
     for (const line of formatDataLayerForUser(dataLayerFindings)) {
       server?.thinking(sessionId, { text: line, sessionId });
