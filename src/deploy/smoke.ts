@@ -1,20 +1,9 @@
 /**
- * Does a deployed URL actually answer?
+ * Post-deploy HTTP verification for Vercel.
  *
- * **Nothing imports this yet.** Its only caller was `pipeline.ts`, deleted
- * 2026-10-11 because every one of that file's methods returned a hardcoded
- * `success: false` — a 223-line shell that fired progress events from 5% to
- * 100% while doing nothing, which is the same hollow shape `verify/wiring.ts`
- * now looks for in generated apps.
- *
- * This file is kept because, unlike that one, it is real: it makes actual
- * requests and reports actual statuses. It is the verification half of the
- * deploy path being built on the user's own connected Vercel MCP — a deploy
- * that returns a URL proves the API call succeeded, not that the app loads,
- * which is the same distinction the rest of `verify/` exists for.
- *
- * If that deploy path is abandoned, delete this too. An orphan file kept on the
- * strength of a plan is how the thing it replaced got to 223 lines.
+ * `deployToVercel` calls this only after Vercel reports READY. Its result is
+ * part of the deployment verdict: an unavailable endpoint, failed request or
+ * verifier exception must never be converted into a successful deployment.
  */
 interface SmokeCheck {
   name: string;
@@ -46,13 +35,15 @@ const defaultFetcher: Fetcher = async (url, opts = {}) => {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-    const body = await res.text().catch(() => undefined);
+    // Keep the abort timer active until the response body is consumed too;
+    // fetch() can resolve headers while the body stream is still stalled.
+    const body = await res.text();
     return { status: res.status, ok: res.ok, body };
   } catch (err) {
-    clearTimeout(timer);
     const reason = err instanceof Error ? err.message : String(err);
     return { status: 0, ok: false, body: reason };
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -80,33 +71,41 @@ async function smokeCheck(
 // ── Main smoke test runner ────────────────────────────────────────────────────
 
 /**
- * Hit four endpoints on the deployed URL and return structured results.
+ * Check the deployed homepage and only the optional API routes declared by the app.
  * Accepts an optional `fetcher` for testing without real HTTP calls.
+ */
+export interface SmokeTestOptions {
+  /** Default true for existing Vite/Hono/FastAPI deploys. */
+  checkHealth?: boolean;
+  /** Default true for existing Vite/Hono/FastAPI deploys. */
+  checkAuth?: boolean;
+}
+
+/**
+ * Hit the homepage and the API routes this app actually exposes.
+ * Legacy deploy shapes keep their existing health/auth checks by default.
  */
 export async function runSmokeTests(
   url: string,
   fetcher: Fetcher = defaultFetcher,
+  options: SmokeTestOptions = {},
 ): Promise<SmokeResult> {
   const clean = url.replace(/\/$/, "");
   const t0 = Date.now();
+  const checkHealth = options.checkHealth ?? true;
+  const checkAuth = options.checkAuth ?? true;
 
-  const [homepage, health, authEndpoint, dbCheck] = await Promise.all([
+  const [homepage, health, authEndpoint] = await Promise.all([
     smokeCheck("Homepage", `${clean}/`, [200, 301, 302], fetcher),
-    smokeCheck("Health endpoint", `${clean}/api/health`, [200], fetcher),
-    // Auth endpoint — 400/401/405 are all fine, just not 500
-    smokeCheck("Auth endpoint", `${clean}/api/auth/login`, [200, 400, 401, 405], fetcher),
-    // DB check is part of /api/health — re-evaluate separately via body inspection
-    smokeCheck("DB connectivity", `${clean}/api/health`, [200], fetcher),
+    checkHealth ? smokeCheck("Health endpoint", `${clean}/api/health`, [200], fetcher) : Promise.resolve(undefined),
+    checkAuth
+      ? smokeCheck("Auth endpoint", `${clean}/api/auth/login`, [200, 400, 401, 405], fetcher)
+      : Promise.resolve(undefined),
   ]);
 
-  // Enrich DB check: parse health body for db status
-  const enrichedDbCheck: SmokeCheck = (() => {
-    if (!dbCheck.passed) return { ...dbCheck, name: "DB connectivity" };
-    // If health returned 200 and body says db ok — pass
-    return { ...dbCheck, name: "DB connectivity", detail: "Included in health endpoint" };
-  })();
-
-  const checks = [homepage, health, authEndpoint, enrichedDbCheck];
+  const checks: SmokeCheck[] = [homepage];
+  if (health) checks.push(health)
+  if (authEndpoint) checks.push(authEndpoint)
 
   return {
     url: clean,

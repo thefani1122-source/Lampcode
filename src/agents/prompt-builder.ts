@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
 import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
+import { detectFullstackFramework as detectFullstackRuntime } from "./framework-selection.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -591,12 +592,7 @@ export function detectFramework(prompt: string, fallback: Framework = "react"): 
 }
 
 export type FullstackFramework = "react" | "nextjs" | "tanstack";
-
-export function detectFullstackFramework(prompt: string): FullstackFramework {
-  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
-  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
-  return "react";
-}
+export const detectFullstackFramework = detectFullstackRuntime;
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
   react: `
@@ -1311,63 +1307,97 @@ custom JWT auth in the Hono backend. Generate:
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
 export const NEXTJS_INSTRUCTION = `
 
-## ARCHITECTURE — NEXT.JS APP ROUTER + API ROUTES (no separate server process)
+## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
 
-This is a fullstack Next.js App Router application. The API backend is built using
-Next.js Route Handlers (app/api/) — there is NO separate Hono/Node server process.
-The preview runs a SINGLE \`next dev\` process on :3000.
+This is a full-stack Next.js App Router application. Use Route Handlers in app/api/**/route.ts
+for HTTP APIs. There is no separate Hono process; the preview runs one Node.js process on port 3000.
+The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
 
-GENERATE THESE FILES (generate API routes FIRST so they're never dropped):
+IMPLEMENT IN THIS ORDER:
+1. Server-only data access, shared types/models and app/api/<resource>/route.ts handlers.
+2. app/layout.tsx, app/globals.css and shared providers.
+3. app/page.tsx and all requested route pages.
+4. Small Client Components only where browser state, event handlers, animations or WebGL are required.
 
-1. \`\`\`filename:app/api/[collection]/route.ts — Route Handler per resource. EXACT shape:
-     import { NextRequest, NextResponse } from 'next/server'
-     // ...import DB client per DATABASE section...
-     export async function GET() {
-       try { /* read from DB */ return NextResponse.json(rows ?? []) }
-       catch { return NextResponse.json([], { status: 200 }) }
-     }
-     export async function POST(req: NextRequest) {
-       try {
-         const body = await req.json()
-         /* insert into DB */
-         return NextResponse.json(created, { status: 201 })
-       } catch (e) { return NextResponse.json({ error: String(e) }, { status: 400 }) }
-     }
-   Create one route.ts per resource under app/api/[resourceName]/route.ts.
-   For Stripe webhooks: app/api/webhooks/stripe/route.ts.
+ROUTE HANDLERS:
+- Export GET/POST/PATCH/DELETE functions and use NextRequest/NextResponse.
+- Validate every untrusted body, query and path input with Zod safeParse; return 400 for invalid data.
+- Authenticate and authorize on the server for every protected read/write. Derive identity from
+  a verified session/token; never trust userId, tenantId, role or ownerId from request input.
+- Return a generic 500 when a DB operation fails. Never turn an error into an empty 200 response,
+  expose String(error), SQL text or stack traces, or log secrets.
+- Verify webhook signatures against the raw body and return non-2xx when verification/processing fails.
+- Use Node runtime for DB drivers, native dependencies and AI frameworks; never switch to Edge unless
+  every dependency in that handler supports it.
 
-2. \`\`\`filename:app/page.tsx — Main page, Server Component by default.
-   Fetch data using server-side DB client directly (no fetch() to /api for page data —
-   Server Components can call the DB directly). "use client" only for interactive parts.
+SERVER/CLIENT BOUNDARIES:
+- Keep DB clients, private credentials and privileged functions in server-only modules.
+- Server Components should call server-only data-access functions directly rather than calling their
+  own Route Handler over HTTP. Client Components may use same-origin fetch('/api/...') or Server Actions.
+- Mark browser-only animation, Canvas and window/document code with 'use client'. Lazy-load WebGL and
+  give it a usable fallback.
+- Use session-aware Supabase SSR and RLS, or server-only Mongo connections with per-request ownership
+  checks. Never use a service-role key as a shortcut around user permissions.
+- Treat caching deliberately: personalised data must not be shared between users. Opt out of caching
+  for user-specific and rapidly-changing reads; revalidate only when the product permits it.
 
-3. \`\`\`filename:app/layout.tsx — Root layout:
-     import './globals.css'
-     export default function RootLayout({ children }: { children: React.ReactNode }) {
-       return <html lang="en"><body>{children}</body></html>
-     }
+FILES AND DEPLOYABILITY:
+- Generate app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts as required.
+- The environment owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs,
+  vitest.config.ts and vitest.setup.ts. Do not replace those files.
+- lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Use the existing accessible
+  Radix/shadcn-style primitives, cn() helper, Tailwind CSS v4 tokens and lucide-react.
+- Do not use Tailwind v3 directives or add a second CSS framework.
+- Do not generate src/App.tsx, src/index.tsx, src/styles.css, Vite config or a Hono server.
+- The preview listens on port 3000. Do not hard-code localhost in browser code.
+- Main UI should remain useful without a login wall unless authentication is the requested core flow.
 
-4. \`\`\`filename:app/globals.css — app styles (CSS variables, global resets).
+{{NPM_MANIFEST}}
+`
 
-5. next.config.js is provided by the sandbox environment — do NOT generate next.config.js or next.config.ts.
+// Next.js uses session-aware SSR/server-side database clients, not the Hono snippets above.
+export const NEXTJS_DATABASE_INSTRUCTIONS: Record<Database, string> = {
+  supabase: `
+NEXT.JS + SUPABASE SSR:
+- Use @supabase/ssr with createServerClient for server rendering and Route Handlers.
+- In lib/supabase/server.ts, await cookies() from next/headers and bridge getAll/setAll.
+- In lib/supabase/client.ts, use createBrowserClient only for browser auth/UI.
+- NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are public values only.
+  Never prefix service-role keys, JWT secrets or DB passwords with NEXT_PUBLIC_.
+- Server handlers must use the caller session so Postgres RLS sees auth.uid(). Never use
+  a service-role client for normal end-user reads/writes.
+- Keep authoritative SQL schema and explicit RLS policies in src/db/schema.sql and row types
+  in src/db/types.ts. Every queried table must exist in that schema.
+- On DB error, return a generic 500; never turn the failure into an empty 200 result.
+`,
+  mongodb: `
+NEXT.JS + MONGODB:
+- Create server-only lib/db.ts using mongoose.connect(process.env.MONGODB_URI!). Cache the
+  connection/promise on globalThis in development so hot reload does not open new pools.
+- Put models in lib/models/<name>.ts and reuse mongoose.models.Name || mongoose.model(...).
+- Route Handlers validate with Zod and scope every query to verified user/tenant identity.
+- Keep DB clients and connection strings server-side; do not create SQL/RLS files for MongoDB.
+`,
+};
 
-HARD RULES:
-- NO separate Hono/Node server — Next.js Route Handlers ARE the backend.
-- Server Components can query the DB directly (server-side only, no leaking keys).
-- Client Components ("use client") must use fetch('/api/...') — never import DB client.
-- The DB client (per DATABASE section) is server-only — only import in Server Components
-  or Route Handlers, never in "use client" components.
-- Do NOT emit .env — the environment provides it. A package.json is read for its
-  "dependencies" only; that is how you add a package that is not pre-installed.
-- Do NOT generate src/index.tsx, src/App.tsx, or src/styles.css — this is Next.js App Router, not React/Vite.
-- Port is 3000 (next dev default) — do NOT hardcode another port.
-
-Do NOT generate lib/utils.ts — it is pre-baked. Import cn from "@/lib/utils" directly.
-Do NOT generate app/globals.css with @tailwind directives — use plain CSS only if needed.
-
-ALLOWED IMPORTS: react, react-dom, next, lucide-react, @tanstack/react-query, clsx,
-tailwind-merge, class-variance-authority, plus EXACTLY the DB/auth libraries named
-in the DATABASE/AUTH sections below. All pre-installed. Do not import other libraries.`;
-
+export const NEXTJS_AUTH_INSTRUCTIONS: Record<Database, string> = {
+  supabase: `
+AUTH — SUPABASE SSR:
+- Use @supabase/ssr browser/server clients. Do not put tokens in localStorage or add a second JWT system.
+- Client sign-in/sign-up uses the browser client. Server Components and Route Handlers verify
+  identity with supabase.auth.getUser(); never trust a client-supplied user ID.
+- Let the SSR client maintain HttpOnly session cookies and enforce ownership/tenant access with RLS.
+- Include sign-out, loading/error states and an app-first entry flow as requested.
+`,
+  mongodb: `
+AUTH — MONGODB + COOKIE SESSION:
+- Implement register/login/logout Route Handlers with Zod and bcryptjs password hashing.
+- JWT_SECRET is required; never use a fallback or hard-coded secret. Store short-lived tokens in an
+  HttpOnly, Secure-in-production, SameSite=Lax cookie, never localStorage.
+- Derive user identity from the verified token sub claim. Ignore user/tenant/role fields in request bodies.
+- Clear the cookie on logout. Check Origin/CSRF on cookie-authenticated mutations and scope DB queries.
+`,
+};
 // ── TanStack Start fullstack instruction ──────────────────────────────────────
 export const TANSTACK_INSTRUCTION = `
 
@@ -1485,146 +1515,15 @@ const AGENT_BUILD_INSTRUCTION = "";
 
 const ANIMATION_DEFAULT_INSTRUCTION = `
 
-ANIMATION SYSTEM — LampCode E2B template has these pre-installed: Motion, GSAP, Lenis, TSParticles React, AOS, Three.js, @react-three/fiber, @react-three/drei, and @splinetool/react-spline. Use only libraries relevant to the requested experience; do not add animation to a product that should remain calm or static:
-
-━━ SIMPLE TRANSITIONS (Tailwind — always prefer these first) ━━
-- Hover scale: className="transition-transform duration-200 hover:scale-105"
-- Hover lift: className="transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
-- Fade in: className="transition-opacity duration-300 opacity-0 animate-in fade-in"
-- Color transition: className="transition-colors duration-150"
-- Slide up entrance: className="animate-in slide-in-from-bottom-4 duration-500"
-- Ping indicator: className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
-- Pulse skeleton: className="animate-pulse bg-muted rounded"
-- Spin loader: className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full"
-
-━━ MOTION (for interactive + complex animations) ━━
-import { motion, AnimatePresence } from "motion/react"
-
-Entrance:
-<motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: "easeOut" }}>
-
-Stagger children:
-<motion.div variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} initial="hidden" animate="show">
-  <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}>
-
-Hover + tap:
-<motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-
-Scroll reveal:
-<motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }}>
-
-List items (AnimatePresence for add/remove):
-<AnimatePresence>
-  {items.map(item => (
-    <motion.div key={item.id} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
-  ))}
-</AnimatePresence>
-
-Modal/drawer:
-<motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
-
-━━ GSAP (for scroll timelines + complex sequences) ━━
-Use gsap.context() inside useLayoutEffect. Do NOT import "@gsap/react" — that is a
-SEPARATE package and it is not installed; useGSAP would fail to resolve. The pattern
-below needs only "gsap", which is installed.
-
-import { useLayoutEffect, useRef } from "react"
-import gsap from "gsap"
-import { ScrollTrigger } from "gsap/ScrollTrigger"
-gsap.registerPlugin(ScrollTrigger)
-
-Scroll-triggered entrance (ctx.revert() cleans up every tween AND its ScrollTrigger):
-const root = useRef<HTMLDivElement>(null)
-useLayoutEffect(() => {
-  const ctx = gsap.context(() => {
-    gsap.from(".reveal", {
-      opacity: 0, y: 40, duration: 0.7, ease: "power3.out",
-      scrollTrigger: { trigger: ".reveal", start: "top 80%" }
-    })
-    gsap.from(".card-item", {
-      opacity: 0, y: 30, stagger: 0.1, duration: 0.5,
-      scrollTrigger: { trigger: ".cards-container", start: "top 75%" }
-    })
-  }, root)
-  return () => ctx.revert()
-}, [])
-// …then <div ref={root}> around the animated section.
-
-Pinned / scrubbed sequence (the backbone of a scroll-driven site):
-gsap.timeline({ scrollTrigger: {
-  trigger: ".chapter", start: "top top", end: "+=1200", scrub: 1, pin: true,
-}}).to(".layer", { yPercent: -30 }).to(".title", { opacity: 0 }, "<")
-
-Every GSAP plugin is free as of GSAP 3.13 and ships in the installed package — import
-them from "gsap/<Name>" and registerPlugin, same as ScrollTrigger:
-  ScrollTrigger   scroll-driven animation, pinning, scrubbing
-  ScrollSmoother  smooth scrolling (requires ScrollTrigger; do not combine with Lenis)
-  SplitText       split headings into chars/words/lines for stagger reveals
-  Flip            animate an element between two layouts/positions
-  Observer        unified wheel/touch/pointer input without wiring listeners
-  MorphSVGPlugin  morph one SVG path into another
-Respect prefers-reduced-motion: skip the animation and set the end state directly.
-
-━━ LENIS (smooth scrolling — add to root component) ━━
-import Lenis from "lenis"
-import { useEffect } from "react"
-useEffect(() => {
-  const lenis = new Lenis()
-  function raf(time: number) { lenis.raf(time); requestAnimationFrame(raf) }
-  requestAnimationFrame(raf)
-  return () => lenis.destroy()
-}, [])
-
-━━ PARTICLES (for hero backgrounds) ━━
-Use the installed @tsparticles/react component with the @tsparticles/slim
-engine. Follow that package's initialization API; do not import from the
-non-installed tsparticles package.
-
-━━ AOS (simple scroll animations via CSS classes) ━━
-import AOS from "aos"
-import "aos/dist/aos.css"
-useEffect(() => { AOS.init({ duration: 600, once: true }) }, [])
-// On elements: data-aos="fade-up" data-aos-delay="100"
-
-━━ THREE.JS / R3F (for 3D scenes) ━━
-import { Canvas } from "@react-three/fiber"
-import { OrbitControls, Sphere, MeshDistortMaterial } from "@react-three/drei"
-<Canvas><Sphere /><OrbitControls /></Canvas>
-
-━━ SPLINE (for pre-made 3D scenes) ━━
-import Spline from "@splinetool/react-spline"
-<Spline scene="https://prod.spline.design/[scene-id]/scene.splinecode" />
-
-━━ FULL-BLEED BACKGROUND LAYERS (canvas, Three.js, particles) — GET THIS RIGHT ━━
-A fixed full-viewport layer behind the content is the standard way to put a canvas
-behind a page. Done wrong it renders perfectly and is INVISIBLE, and nothing reports
-it: the page loads, the console is clean, types check, tests pass.
-
-The trap: an app shell with position:relative and no z-index is NOT a stacking context,
-so a child at -z-10 resolves against the ROOT — where it paints BEFORE the shell. The
-shell's own opaque background then covers the canvas completely.
-
-NEVER — the canvas is painted, then hidden by the shell's background:
-  <div className="relative min-h-screen bg-[#04080e]">   {/* opaque shell */}
-    <div className="fixed inset-0 -z-10"><canvas /></div> {/* painted under it */}
-
-DO — keep the background ON the layer and lift the content above it:
-  <div className="relative min-h-screen">                 {/* NO background here */}
-    <div className="fixed inset-0 z-0 bg-[#04080e]"><canvas /></div>
-    <main className="relative z-10"> … </main>
-
-Rule: whichever element owns the page background must NOT sit above the canvas. Either
-the background lives on the canvas layer itself, or the shell has no background at all.
-If you write a fixed full-bleed canvas, check the page after and confirm you can SEE it —
-a dark flat page is what this bug looks like.
-
-━━ ABSOLUTE RULES ━━
-- NEVER: style={{ animation: "..." }} — use Tailwind animate-* or Framer Motion
-- NEVER: style={{ transform: "translateX(20px)" }} for static values — use Tailwind translate-*
-- NEVER: style={{ transition: "all 0.3s" }} — use Tailwind transition-* duration-*
-- DO: style={{ transform: \`translateX(\${dynamicValue}px)\` }} — dynamic runtime values only
-- Prefer Tailwind → Framer Motion → GSAP (in that order of complexity)
-- All animations must feel smooth, modern, purposeful — not distracting
+ANIMATION AND 3D — USE ONLY WHEN IT IMPROVES THE REQUESTED EXPERIENCE:
+- A business site, SaaS dashboard, form-heavy app or data table may be excellent with no motion. Never animate every section by default.
+- Prefer CSS transitions for simple hover/focus/opacity movement. Use Motion (package motion, import from motion/react) for component state transitions and gestures.
+- Use GSAP (package gsap) only for complex timelines, pinned scrolling or ScrollTrigger sequences. Use Lenis only when smooth scrolling is a deliberate design feature and preserve native keyboard/focus behavior.
+- Use Three.js with React Three Fiber + Drei for genuine interactive 3D. This sandbox uses React 19, so choose the React-19-compatible Fiber v9 line. Lazy-load Canvas and provide a lightweight fallback.
+- Use Spline only when the user provides a real scene URL or asks for an identified placeholder. Never invent a scene ID.
+- Animation/3D packages are NOT preinstalled in every project. Add only the packages your code imports; LampCode installs detected npm imports before dev-server startup.
+- In Next.js, browser-only animation/Canvas code belongs in a small "use client" component. Do not import WebGL/window/document packages from Server Components or API routes.
+- Respect prefers-reduced-motion and keep content and controls usable without animation.
 `;
 
 /**
@@ -1685,7 +1584,7 @@ export function parseSkillFrontmatter(raw: string, fallbackName: string): Parsed
 export const ALL_SKILL_NAMES = [
   "agent-architecture", "animation-expert", "api-design", "crewai",
   "database-rls", "exa", "firecrawl", "frontend-sandbox", "fullstack-hono",
-  "langgraph", "pexels-images", "react-production", "supabase-rls",
+  "langgraph", "nextjs-production", "pexels-images", "react-production", "supabase-rls",
   "surgical-editing", "typescript-strict",
 ] as const;
 
@@ -1729,6 +1628,7 @@ async function buildSkillIndex(): Promise<string> {
 // loader above. No second hand-maintained package list anywhere in this file.
 
 const TEMPLATE_TS_PATH = join(process.cwd(), "e2b-template", "template.ts");
+const NEXTJS_TEMPLATE_TS_PATH = join(process.cwd(), "e2b-template", "template-nextjs-ubuntu.ts");
 
 // DB/auth libraries already named explicitly throughout the DATABASE/AUTH
 // instruction blocks below — excluded here so they aren't listed twice under
@@ -1745,75 +1645,59 @@ let pipManifestCache: string | null = null;
  */
 async function buildNpmManifest(): Promise<string> {
   if (npmManifestCache !== null) return npmManifestCache;
-
   try {
-    const raw = await readFile(TEMPLATE_TS_PATH, "utf-8");
-    const m = /const PKG_JSON = `([\s\S]*?)`\n/.exec(raw);
-    if (!m) throw new Error("PKG_JSON block not found in template.ts");
-    const pkg = JSON.parse(m[1] ?? "{}") as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    const names = Object.keys(pkg.dependencies ?? {}).filter((n) => !DB_AUTH_LIBS.has(n));
-
-    // Test tooling sits in devDependencies, so it is absent from the list
-    // above — but the line above ends with "plus EXACTLY the DB/auth
-    // libraries", which reads as a closed set. Without naming them here, a
-    // model that has been told to write tests also has an instruction saying
-    // the vitest import it needs is not allowed.
-    const testLibs = Object.keys(pkg.devDependencies ?? {}).filter(
-      (n) => n === "vitest" || n.startsWith("@testing-library/"),
-    );
-    const testLine = testLibs.length > 0
-      ? `\nIn TEST FILES ONLY (*.test.ts / *.test.tsx) you may also import: ${testLibs.join(", ")}.`
-      : "";
-
-    npmManifestCache =
-      `AVAILABLE IN THIS SANDBOX (pre-installed — use freely, no install step needed):\n` +
-      `${names.join(", ")},\nplus EXACTLY the DB/auth libraries named in the DATABASE/AUTH sections below.` +
-      testLine +
-      `\n\nBRINGING ONE MORE PACKAGE: the list above is what is already installed, not a ` +
-      `hard limit. If the app genuinely needs a library that is not there — a router, a ` +
-      `charting library, a date library — declare it in the dependencies of a generated ` +
-      `package.json and it is installed BEFORE the dev server starts. Up to 12 extra ` +
-      `packages, npm registry names only (no URLs, git refs or local paths). Prefer what ` +
-      `is pre-installed, because that costs nothing and cannot fail; reach for an extra ` +
-      `package when the alternative is hand-rolling something a standard library does ` +
-      `better. Declaring it is required — importing a package you did not declare will ` +
-      `fail to resolve in the browser.`;
+    const raw = await readFile(TEMPLATE_TS_PATH, 'utf-8');
+    const match = /export const VITE_PKG_JSON = `([\\s\\S]*?)`\\n/.exec(raw);
+    if (!match) throw new Error('VITE_PKG_JSON block not found');
+    const pkg = JSON.parse(match[1] ?? '{}') as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const available = Object.keys(pkg.dependencies ?? {}).filter((name) => !DB_AUTH_LIBS.has(name));
+    const tests = Object.keys(pkg.devDependencies ?? {}).filter((name) => name === 'vitest' || name.startsWith('@testing-library/'));
+    npmManifestCache = 'PRE-INSTALLED IN THIS REACT/VITE SANDBOX: ' + available.join(', ') +
+      '. DB/auth packages are described in the database/auth sections below.' +
+      (tests.length ? ' Test files may also import: ' + tests.join(', ') + '.' : '') +
+      ' Optional animation/3D packages are not pre-installed. LampCode installs detected npm imports before preview startup (maximum 12 extra packages).';
   } catch (err) {
-    // template.ts unreadable — fail safe to the old static list rather than
-    // emitting an empty/broken instruction block.
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "[prompt-builder] buildNpmManifest: template.ts unreadable, falling back to static allowed-imports list",
-    );
-    npmManifestCache =
-      `ALLOWED IMPORTS (frontend): react, react-dom, @tanstack/react-query, lucide-react,\n` +
-      `@radix-ui/react-*, class-variance-authority, clsx, tailwind-merge, plus EXACTLY the\n` +
-      `DB/auth libraries named below. All pre-installed. Do not import other libraries.\n` +
-      `ALLOWED IMPORTS (backend/server): hono, @hono/node-server, zod, plus EXACTLY the\n` +
-      `DB/auth libraries named in the DATABASE/AUTH sections below.`;
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, '[prompt-builder] could not parse Vite dependency manifest');
+    npmManifestCache = 'React, React DOM, Tailwind CSS v4, Radix/shadcn-style components, lucide-react and TanStack Query are included. Optional packages are installed only when imported.';
   }
   return npmManifestCache;
+}
+
+let nextNpmManifestCache: string | null = null;
+
+async function buildNextNpmManifest(): Promise<string> {
+  if (nextNpmManifestCache !== null) return nextNpmManifestCache;
+  try {
+    const raw = await readFile(NEXTJS_TEMPLATE_TS_PATH, 'utf-8');
+    const match = /export const NEXTJS_PKG_JSON = `([\\s\\S]*?)`\\n/.exec(raw);
+    if (!match) throw new Error('NEXTJS_PKG_JSON block not found');
+    const pkg = JSON.parse(match[1] ?? '{}') as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const available = Object.keys(pkg.dependencies ?? {}).filter((name) => !DB_AUTH_LIBS.has(name));
+    const tests = Object.keys(pkg.devDependencies ?? {}).filter((name) => name === 'vitest' || name.startsWith('@testing-library/'));
+    nextNpmManifestCache = 'PRE-INSTALLED IN THIS NEXT.JS SANDBOX: ' + available.join(', ') +
+      '. DB/auth packages are described in the Next.js database/auth sections below.' +
+      (tests.length ? ' Test files may also import: ' + tests.join(', ') + '.' : '') +
+      ' Optional animation/3D packages are not pre-installed; LampCode installs detected imports before preview startup (maximum 12 extra packages).';
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, '[prompt-builder] could not parse Next.js dependency manifest');
+    nextNpmManifestCache = 'Next.js App Router, React 19, Tailwind CSS v4, Radix/shadcn-style primitives and lucide-react are included. Optional packages are installed only when imported.';
+  }
+  return nextNpmManifestCache;
 }
 
 /** Extracts the pip3 install line's package tokens from template.ts's Dockerfile array. */
 async function buildPipManifest(): Promise<string> {
   if (pipManifestCache !== null) return pipManifestCache;
-
   try {
-    const raw = await readFile(TEMPLATE_TS_PATH, "utf-8");
-    const m = /pip3 install --no-cache-dir --break-system-packages ([^']+)'/.exec(raw);
-    if (!m) throw new Error("pip3 install line not found in template.ts");
-    const tokens = (m[1] ?? "")
-      .split(/\s+/)
-      .map((t) => t.replace(/^"|"$/g, "").trim())
-      .filter(Boolean);
-
-    pipManifestCache = `Available Python packages in this sandbox (pre-installed — use freely): ${tokens.join(", ")}.`;
-  } catch {
-    pipManifestCache = "";
+    const raw = await readFile(TEMPLATE_TS_PATH, 'utf-8');
+    const match = /export const PYTHON_BASE_PACKAGES = \[([^\]]+)\] as const/.exec(raw);
+    if (!match) throw new Error('PYTHON_BASE_PACKAGES not found');
+    const packages = [...(match[1] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1]).filter(Boolean);
+    pipManifestCache = 'PRE-INSTALLED PYTHON ESSENTIALS in /opt/lampcode-python: ' + packages.join(', ') +
+      '. Optional AI/data packages are installed only when the task needs them. Declare Python packages in requirements.txt; LampCode installs them into the isolated project venv before backend startup. Do not use system pip.';
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, '[prompt-builder] could not parse Python base manifest');
+    pipManifestCache = 'Python essentials are installed in /opt/lampcode-python. Declare optional packages in requirements.txt; LampCode installs them into that project venv.';
   }
   return pipManifestCache;
 }
@@ -1858,15 +1742,18 @@ async function loadSkillsForPrompt(
   // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
   // actually start. "fullstack" is not synonymous with Hono: Next.js and
   // TanStack use their own server runtimes, while FastAPI replaces Hono.
-  if (
-    opts?.buildType === "fullstack" &&
-    detectFullstackFramework(prompt) === "react" &&
-    !PYTHON_BACKEND_RE.test(prompt)
-  ) {
+  const selectedFramework = detectFullstackFramework(prompt);
+  if (opts?.buildType === "fullstack" && selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
   }
+  if (opts?.buildType === "fullstack" && selectedFramework === "nextjs") skillsToLoad.add("nextjs-production");
+  // Optional specialist guidance is deliberately NOT injected by keyword
+  // matching. The metadata-only catalogue is always available to tool-enabled
+  // builds; the model decides semantically whether to call load_skill. This
+  // avoids carrying large CrewAI/LangGraph/animation references through every
+  // prompt merely because a provider name appears in the request.
 
   // Core implementation AND product-design skills — always for any frontend/fullstack build.
   // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
@@ -2044,11 +1931,12 @@ export class PromptBuilder {
 
     // Only the react/hono path maps to e2b-template/template.ts — Next.js and
     // TanStack route to their own separate templates (out of scope this session).
-    if (isFullstackMode && fullstackFramework === "react") {
+    if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "nextjs") {
+      fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNextNpmManifest());
+    }
+    if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "react") {
       fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNpmManifest());
-      if (wantsPython) {
-        fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
-      }
+      if (wantsPython) fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
     }
 
     // framework detection for frameworkInstruction (Sandpack rules):
@@ -2069,15 +1957,20 @@ export class PromptBuilder {
     // fixed file layout. Existing projects must follow their own code/schema
     // conventions instead of being migrated to the current template.
     const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit ? DB_INSTRUCTIONS[db] : "";
+      isFullstackMode && !isExistingFullstackEdit
+        ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
+        : "";
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
       task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // TanStack uses Vite/import.meta.env, compatible with FULLSTACK_AUTH_INSTRUCTION. Next.js needs separate NEXT_PUBLIC_* pattern — not yet implemented.
-    // For react+mongodb: custom JWT. For react/tanstack+supabase: Supabase auth.
-    const authInstruction = isFullstackAuthMode && (fullstackFramework === "react" || fullstackFramework === "tanstack")
-      ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
+    // Next uses SSR-safe cookies/HttpOnly sessions; Vite uses its existing auth contract.
+    const authInstruction = isFullstackAuthMode
+      ? fullstackFramework === "nextjs"
+        ? NEXTJS_AUTH_INSTRUCTIONS[db]
+        : (fullstackFramework === "react" || fullstackFramework === "tanstack")
+          ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
+          : ""
       : "";
 
     const isEditMode =

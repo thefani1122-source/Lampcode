@@ -1,55 +1,22 @@
 ---
 name: langgraph
-description: LangGraph stateful Python agent workflows — use over CrewAI when an agent needs looping/retry, branching, persistent memory, or checkpointing.
+description: LangGraph stateful workflows — branching, bounded loops/retries, human approval and checkpoints for long-running agents.
 ---
 
-# LangGraph — Stateful Agent Workflows (Python)
+# LangGraph — stateful agent workflows
 
-## Install
-```bash
-pip install langgraph langchain-anthropic
-```
+Choose LangGraph when an agent needs explicit graph state, branching, conditional loops, retry/resume or checkpointed human approval. Use a direct model SDK for a straightforward one-agent tool loop. Use CrewAI for a role-based team when delegation is the core abstraction; do not install both unless the product needs both.
 
-## When to use LangGraph instead of CrewAI:
-- Agent needs to loop/retry based on output quality
-- Human-in-the-loop approval needed
-- Complex branching logic (if output X → do Y, else Z)
-- Agent needs persistent memory across runs
-- You need checkpointing (resume after failure)
+## Install only for this project
 
-## Core Pattern
-```python
-from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
-from typing import TypedDict
+Add langgraph and only the LangChain integrations actually used to requirements.txt. LampCode installs them into the isolated Python project venv before the backend starts; they are not baked into every sandbox.
 
-class AgentState(TypedDict):
-  messages: list
-  research_output: str
-  final_output: str
+## Design requirements
 
-def research_node(state: AgentState):
-  # Do research
-  return {"research_output": result}
-
-def write_node(state: AgentState):
-  # Generate content using research_output
-  return {"final_output": result}
-
-def should_continue(state: AgentState):
-  # Conditional routing
-  if quality_check(state["final_output"]):
-    return END
-  return "write_node"  # retry
-
-workflow = StateGraph(AgentState)
-workflow.add_node("research", research_node)
-workflow.add_node("write", write_node)
-workflow.add_edge("research", "write")
-workflow.add_conditional_edges("write", should_continue)
-workflow.set_entry_point("research")
-
-app = workflow.compile()
-result = app.invoke({"messages": [], "research_output": "",
-                     "final_output": ""})
-```
+- Define a typed state schema and keep only information required by later nodes.
+- Make graph transitions explicit; every cycle must have a bounded condition or iteration limit.
+- Use durable checkpoint storage for workflows that must survive process restarts. In-memory checkpointers are development-only.
+- Add timeouts, bounded retries with backoff, idempotency and cancellation for external operations.
+- Human approval must interrupt before privileged writes, then resume with an auditable decision.
+- Keep credentials in server-side environment variables; never serialize secrets into checkpoint state.
+- Validate model/tool output against schemas at every trust boundary.

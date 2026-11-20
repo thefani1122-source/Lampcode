@@ -20,13 +20,16 @@ import { readFileSync } from "node:fs";
 
 import {
   detectDeployShape,
+  deploySmokeTargets,
   vercelScaffold,
   projectSlug,
   toInlinedFiles,
   parseMcpJson,
   deployToVercel,
+  parsePythonRequirements,
   formatDeployForUser,
 } from "../src/deploy/vercel.js";
+import { runSmokeTests } from "../src/deploy/smoke.js";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -46,6 +49,9 @@ function ok(name: string, cond: boolean): void {
 // disagree, an app boots in the preview and deploys as the wrong thing.
 
 check("a frontend-only app is static", detectDeployShape({ "src/App.tsx": "x" }), "static");
+check("an App Router app is detected as Next.js", detectDeployShape({ "app/page.tsx": "x", "app/layout.tsx": "y" }), "nextjs");
+check("the src/App Router layout is also detected", detectDeployShape({ "src/app/page.tsx": "x" }), "nextjs");
+check("Next.js takes precedence over stale Hono files after a framework switch", detectDeployShape({ "app/page.tsx": "x", "src/server/app.ts": "stale" }), "nextjs");
 check(
   "the Hono app file means hono",
   detectDeployShape({ "src/server/app.ts": "x", "src/App.tsx": "y" }),
@@ -58,9 +64,50 @@ check(
 );
 check("a FastAPI entry means fastapi", detectDeployShape({ "src/server/main.py": "x" }), "fastapi");
 check(
+  "a Vite frontend and FastAPI backend are detected as one multi-service app",
+  detectDeployShape({ "src/App.tsx": "x", "src/server/main.py": "x" }),
+  "vite-fastapi",
+);
+check(
   "python wins over a leftover ts server, matching the sandbox's own order",
   detectDeployShape({ "src/server/main.py": "x", "src/server/index.ts": "y" }),
   "fastapi",
+);
+
+check(
+  "static apps probe only the homepage, not assumed API endpoints",
+  deploySmokeTargets("static", { "src/App.tsx": "export default function App() {}" }),
+  { checkHealth: false, checkAuth: false },
+);
+check(
+  "Hono health checks are enabled only for an explicit route",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.get("/api/health", (c) => c.json({ ok: true }))' }),
+  { checkHealth: true, checkAuth: false },
+);
+check(
+  "a POST-only health path is not probed with GET",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.post("/api/health", handler)' }),
+  { checkHealth: false, checkAuth: false },
+);
+check(
+  "JavaScript Next.js Route Handlers are recognised",
+  deploySmokeTargets("nextjs", { "app/api/health/route.js": "export async function GET() {}" }),
+  { checkHealth: true, checkAuth: false },
+);
+check(
+  "FastAPI auth checks are enabled only for an explicit route",
+  deploySmokeTargets("fastapi", { "src/server/main.py": '@app.post("/api/auth/login")\\nasync def login(): pass' }),
+  { checkHealth: false, checkAuth: true },
+);
+check(
+  "Vite + FastAPI smoke tests inspect the declared Python API routes",
+  deploySmokeTargets("vite-fastapi", { "src/server/main.py": '@app.get("/api/health")\nasync def health(): return {"ok": True}' }),
+  { checkHealth: true, checkAuth: false },
+);
+check(
+  "backend apps without optional probe routes are not penalised",
+  deploySmokeTargets("hono", { "src/server/app.ts": 'app.get("/api/projects", handler)' }),
+  { checkHealth: false, checkAuth: false },
 );
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
@@ -79,12 +126,124 @@ const staticScaffold = vercelScaffold("static");
 for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json"]) {
   ok(`a static app gets ${needed}, which the template owns and never ships`, needed in staticScaffold);
 }
+const honoScaffold = vercelScaffold("hono");
+ok("a hono app gets its API entry", "api/[...route].ts" in honoScaffold);
+for (const needed of ["package.json", "vite.config.ts", "index.html", "tsconfig.json", "src/components/ui/button.tsx", "src/lib/utils.ts", "src/lib/queryClient.ts", "src/styles.css"]) {
+  ok(`a Hono/Vite deploy materializes ${needed}`, needed in honoScaffold);
+}
+const fastApiScaffold = vercelScaffold("fastapi", {
+  "src/server/main.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+});
+const fastApiPyproject = fastApiScaffold["pyproject.toml"] ?? "";
+ok("FastAPI deploy declares its nested Vercel entrypoint", fastApiPyproject.includes('entrypoint = "src.server.main:app"'));
+ok("FastAPI scaffold declares the Vercel tool table", fastApiPyproject.includes("[tool.vercel]"));
+
+const fastApiWithExistingMetadata = vercelScaffold("fastapi", {
+  "src/server/main.py": "app = None",
+  "pyproject.toml": '[project]\nname = "generated-app"\n\n[tool.pytest.ini_options]\nasyncio_mode = "auto"\n',
+})["pyproject.toml"] ?? "";
+ok("FastAPI scaffold preserves existing project metadata", fastApiWithExistingMetadata.includes('name = "generated-app"'));
+ok("FastAPI scaffold preserves other pyproject tool tables", fastApiWithExistingMetadata.includes("[tool.pytest.ini_options]"));
+ok("FastAPI scaffold adds the Vercel table to an existing pyproject", fastApiWithExistingMetadata.includes('entrypoint = "src.server.main:app"'));
+
+const fastApiWithCustomEntrypoint = vercelScaffold("fastapi", {
+  "src/server/main.py": "app = None",
+  "pyproject.toml": '[tool.vercel]\nentrypoint = "backend.server:app"\n',
+})["pyproject.toml"] ?? "";
+check("an explicit app-owned Vercel entrypoint is not overwritten", fastApiWithCustomEntrypoint.match(/entrypoint =/g)?.length, 1);
+ok("the custom Vercel entrypoint is preserved", fastApiWithCustomEntrypoint.includes('entrypoint = "backend.server:app"'));
+
+const requirements = parsePythonRequirements({
+  "requirements.txt": "# base dependencies\nfastapi==0.115.0\nhttpx>=0.27,<1.0\n",
+  "src/server/requirements.txt": "supabase>=2.0; python_version >= \"3.10\"\n",
+});
+ok("Python requirements parser keeps the pinned FastAPI version", requirements.includes("fastapi==0.115.0"));
+ok("Python requirements parser keeps compound version ranges", requirements.includes("httpx>=0.27,<1.0"));
+ok("Python requirements parser keeps PEP 508 environment markers", requirements.includes('supabase>=2.0; python_version >= \"3.10\"'));
 check(
-  "a hono app gets the build files AND its api entry",
-  Object.keys(vercelScaffold("hono")).sort(),
-  ["api/[...route].ts", "index.html", "package.json", "tsconfig.json", "vite.config.ts"],
+  "Python requirements parser rejects recursive pip directives",
+  (() => { try { parsePythonRequirements({ "requirements.txt": "-r base.txt\n" }); return "accepted"; } catch { return "rejected"; } })(),
+  "rejected",
 );
-check("fastapi already exposes the ASGI app Vercel wants", vercelScaffold("fastapi"), {});
+
+const VITE_FASTAPI_FILES = {
+  "src/App.tsx": "export default function App() { return <main>UI</main> }",
+  "src/main.tsx": "import App from \"./App\";",
+  "src/server/main.py": "from fastapi import FastAPI\napp = FastAPI()",
+  "src/server/requirements.txt": "uvicorn>=0.30\n",
+  "requirements.txt": "fastapi==0.115.0\nhttpx>=0.27\n",
+  "package.json": JSON.stringify({ dependencies: {
+    three: "^0.180.0",
+    "@react-three/fiber": "^9.0.0",
+    "@react-three/drei": "^10.0.0",
+  } }),
+};
+check("Vite + FastAPI is not misclassified as a Python-only app", detectDeployShape(VITE_FASTAPI_FILES), "vite-fastapi");
+const viteFastApiScaffold = vercelScaffold("vite-fastapi", VITE_FASTAPI_FILES);
+ok("Vite + FastAPI scaffold creates a complete frontend root", [
+  "frontend/package.json", "frontend/vite.config.ts", "frontend/index.html", "frontend/src/App.tsx",
+].every((path) => path in viteFastApiScaffold));
+ok("Vite + FastAPI scaffold creates the Python backend root", "backend/src/server/main.py" in viteFastApiScaffold);
+ok("Vite + FastAPI scaffold maps Python dependencies to backend pyproject", (viteFastApiScaffold["backend/pyproject.toml"] ?? "").includes('"fastapi==0.115.0"'));
+ok("Nested requirements are not uploaded raw", !("backend/src/server/requirements.txt" in viteFastApiScaffold));
+ok("Root requirements are not uploaded raw", !("frontend/requirements.txt" in viteFastApiScaffold));
+const combinedPackage = JSON.parse(viteFastApiScaffold["frontend/package.json"] ?? "{}") as { dependencies: Record<string, string> };
+check("Three.js dependency is preserved in Vite frontend", combinedPackage.dependencies.three, "^0.180.0");
+check("React Three Fiber dependency is preserved in Vite frontend", combinedPackage.dependencies["@react-three/fiber"], "^9.0.0");
+check("Drei dependency is preserved in Vite frontend", combinedPackage.dependencies["@react-three/drei"], "^10.0.0");
+const combinedVercel = JSON.parse(viteFastApiScaffold["vercel.json"] ?? "{}") as {
+  "$schema"?: string;
+  services: Record<string, { root: string; framework?: string; entrypoint?: string }>;
+  rewrites: Array<{ source: string; destination: { service: string } }>;
+};
+check("Services frontend points to its isolated Vite root", combinedVercel.services.lampcode_frontend?.root, "frontend/");
+check("Services backend points to its isolated FastAPI root", combinedVercel.services.lampcode_backend?.root, "backend/");
+check("Services backend keeps the Python entrypoint", combinedVercel.services.lampcode_backend?.entrypoint, "src.server.main:app");
+check("Services config includes Vercel JSON schema", combinedVercel["$schema"], "https://openapi.vercel.sh/vercel.json");
+check("per-service settings use documented root and entrypoint only", [
+  Object.keys(combinedVercel.services.lampcode_frontend ?? {}).sort(),
+  Object.keys(combinedVercel.services.lampcode_backend ?? {}).sort(),
+], [["root"], ["entrypoint", "root"]]);
+check("backend routing uses documented path wildcard", combinedVercel.rewrites[0]?.source, "/api/:path*");
+check("frontend catch-all remains last", combinedVercel.rewrites[combinedVercel.rewrites.length - 1]?.source, "/(.*)");
+
+check(
+  "Vercel Services rejects unsupported global function configuration",
+  (() => {
+    try {
+      vercelScaffold("vite-fastapi", { "src/App.tsx": "app", "src/server/main.py": "api", "vercel.json": JSON.stringify({ functions: { "api/*.py": { maxDuration: 30 } } }) });
+      return "accepted";
+    } catch { return "rejected"; }
+  })(),
+  "rejected",
+);
+check("API routing is declared before the frontend catch-all", combinedVercel.rewrites[0]?.destination.service, "lampcode_backend");
+check("Frontend catch-all routes to the Vite service", combinedVercel.rewrites[combinedVercel.rewrites.length - 1]?.destination.service, "lampcode_frontend");
+
+
+const NEXT_APP_FILES = {
+  "app/page.tsx": "export default function Page() { return <main>hello</main> }",
+  "app/layout.tsx": "export default function Layout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html> }",
+  "app/api/health/route.ts": "export async function GET() { return Response.json({ ok: true }) }",
+  "package.json": JSON.stringify({ dependencies: { "my-private-lib": "^2.0.0" }, devDependencies: { "my-test-types": "^1.0.0" } }),
+};
+const nextScaffold = vercelScaffold("nextjs", NEXT_APP_FILES);
+const nextPackage = JSON.parse(nextScaffold["package.json"] ?? "{}") as {
+  scripts: Record<string, string>;
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+};
+check("Next.js deploy uses next build, not Vite", nextPackage.scripts.build, "next build");
+check("Next.js version is pinned to the sandbox template", nextPackage.dependencies.next, "16.4.6");
+check("React version matches the Next.js template", nextPackage.dependencies.react, "19.2.0");
+check("user runtime dependencies survive Next.js scaffolding", nextPackage.dependencies["my-private-lib"], "^2.0.0");
+check("user dev dependencies survive Next.js scaffolding", nextPackage.devDependencies["my-test-types"], "^1.0.0");
+ok("Tailwind PostCSS is included for Next.js", nextPackage.devDependencies["@tailwindcss/postcss"] !== undefined);
+ok("Next.js app and PostCSS configs are reconstructed", "next.config.ts" in nextScaffold && "postcss.config.mjs" in nextScaffold);
+ok("Next.js provider and SSR-safe query cache are reconstructed", "app/providers.tsx" in nextScaffold && "lib/queryClient.ts" in nextScaffold);
+ok("Next.js deploy includes shared UI primitives", "components/ui/button.tsx" in nextScaffold);
+ok("Next.js deploy does not add Vite config or index.html", !("vite.config.ts" in nextScaffold) && !("index.html" in nextScaffold));
+check("Next.js app-owned page content is not overwritten", nextScaffold["app/page.tsx"], undefined);
 
 // Trap 11: the template's vite.config bakes server.proxy['/api'] → localhost,
 // a DEV-SERVER feature. Shipping it to Vercel would be dead config implying
@@ -275,6 +434,60 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
 }
 
 {
+  const { call, sent } = fakeCall();
+  let capturedSmokeOptions: unknown;
+  const smoke = async (url: string, _fetcher?: unknown, options?: unknown) => {
+    capturedSmokeOptions = options;
+    return smokeOk(url);
+  };
+  const out = await deployToVercel({
+    auth: AUTH,
+    files: {
+      "src/App.tsx": "export default function App() { return <main>UI</main> }",
+      "src/server/main.py": '@app.get("/api/health")\nasync def health(): return {"ok": True}',
+      "requirements.txt": "fastapi==0.115.0\n",
+      "package.json": JSON.stringify({ dependencies: { three: "^0.180.0" } }),
+    },
+    projectName: "Full Stack Python App",
+    call: call as never, smoke: smoke as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("Vite + FastAPI deployment reports its combined shape", out.shape, "vite-fastapi");
+  const created = sent.find((entry) => entry.tool === "create_deployment");
+  const body = created?.args["requestBody"] as Record<string, unknown>;
+  check("Vercel receives the Services framework preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "services");
+  const uploaded = body["files"] as Array<{ file: string; data: string }>;
+  const names = uploaded.map((entry) => entry.file);
+  ok("the generated frontend and FastAPI app are both uploaded", names.includes("frontend/src/App.tsx") && names.includes("backend/src/server/main.py"));
+  ok("the Vite build files and shared routing config are uploaded", names.includes("frontend/package.json") && names.includes("vercel.json"));
+  ok("Python dependencies are mapped and requirements files are not uploaded raw", names.includes("backend/pyproject.toml") && !names.includes("requirements.txt"));
+  const frontendPackage = JSON.parse(uploaded.find((entry) => entry.file === "frontend/package.json")?.data ?? "{}") as { dependencies: Record<string, string> };
+  check("the Vite deployment still includes Three.js", frontendPackage.dependencies.three, "^0.180.0");
+  check("post-deploy smoke tests still inspect the FastAPI route", capturedSmokeOptions, { checkHealth: true, checkAuth: false });
+}
+
+{
+  const { call, sent } = fakeCall();
+  let capturedSmokeOptions: unknown;
+  const smoke = async (url: string, _fetcher?: unknown, options?: unknown) => {
+    capturedSmokeOptions = options;
+    return smokeOk(url);
+  };
+  const out = await deployToVercel({
+    auth: AUTH, files: NEXT_APP_FILES, projectName: "Next App",
+    call: call as never, smoke: smoke as never, sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("Next.js deploy reports the correct shape", out.shape, "nextjs");
+  const created = sent.find((entry) => entry.tool === "create_deployment");
+  const body = created?.args["requestBody"] as Record<string, unknown>;
+  check("Vercel receives the native Next.js preset", (body["projectSettings"] as Record<string, unknown>)["framework"], "nextjs");
+  const uploaded = (body["files"] as Array<{ file: string }>).map((entry) => entry.file);
+  ok("Next.js deploy uploads the App Router page", uploaded.includes("app/page.tsx"));
+  ok("Next.js deploy does not upload Vite config", !uploaded.includes("vite.config.ts"));
+  check("Next.js smoke checks only configured API routes", capturedSmokeOptions, { checkHealth: true, checkAuth: false });
+}
+
+
+{
   const { call } = fakeCall({ failCreate: true });
   const out = await deployToVercel({
     auth: AUTH, files: APP, projectName: "Rota",
@@ -309,6 +522,22 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
 }
 
 {
+  const { call } = fakeCall();
+  const out = await deployToVercel({
+    auth: AUTH, files: APP, projectName: "Rota",
+    call: call as never,
+    smoke: (async () => { throw new Error("probe crashed"); }) as never,
+    sleep: noSleep, maxWaitMs: 1000,
+  });
+  check("a thrown smoke verifier cannot turn a READY deploy green", out.ok, false);
+  check("the deployed URL is retained when verification throws", out.url, "https://rota.vercel.app");
+  ok("the verification failure is explicit", (out.error ?? "").includes("could not complete"));
+  const message = formatDeployForUser(out);
+  ok("the user is told the URL exists but is unverified", message.some(line => line.includes("could not verify")));
+  ok("the user is not falsely told nothing changed", !message.some(line => line.includes("Nothing was changed")));
+}
+
+{
   const { call } = fakeCall({ state: "BUILDING" });
   const out = await deployToVercel({
     auth: AUTH, files: APP, projectName: "Rota",
@@ -333,13 +562,19 @@ function fakeCall(opts: { state?: string; url?: string; failCreate?: boolean; ba
 // A static app must not get the api scaffold — there is no server to serve.
 {
   const { call, sent } = fakeCall();
+  let capturedSmokeOptions: unknown;
+  const smoke = async (url: string, _fetcher?: unknown, options?: unknown) => {
+    capturedSmokeOptions = options;
+    return smokeOk(url);
+  };
   await deployToVercel({
     auth: AUTH, files: { "src/App.tsx": "x" }, projectName: "Rota",
-    call: call as never, smoke: smokeOk as never, sleep: noSleep, maxWaitMs: 1000,
+    call: call as never, smoke: smoke as never, sleep: noSleep, maxWaitMs: 1000,
   });
   const body = sent[0]?.args["requestBody"] as Record<string, unknown>;
   const uploaded = (body["files"] as Array<{ file: string }>).map((f) => f.file);
   ok("a frontend-only app gets no api entry", !uploaded.some((f) => f.startsWith("api/")));
+  check("static deploy passes homepage-only smoke options", capturedSmokeOptions, { checkHealth: false, checkAuth: false });
 }
 
 // ── what the user is told ────────────────────────────────────────────────────
@@ -457,4 +692,42 @@ if (failures > 0) process.exit(1);
     [out.ok, out.url],
     [true, "https://deploy-probe-mvafdglk-d82mk8efw.vercel.app"],
   );
+}
+
+// Next.js apps without API routes should be judged by the actual homepage,
+// not by missing Hono-era endpoints.
+{
+  const homepageOnly = await runSmokeTests(
+    "https://next-app.example",
+    async (url) => ({ status: url.endsWith("/") ? 200 : 404, ok: url.endsWith("/") }),
+    { checkHealth: false, checkAuth: false },
+  );
+  check("Next.js homepage-only smoke test passes without API routes", homepageOnly.ok, true);
+  check("missing legacy API endpoints are not probed", homepageOnly.checks.map((entry) => entry.name), ["Homepage"]);
+}
+
+// A health response cannot independently prove database connectivity. The
+// old implementation called /api/health twice and labelled the second request
+// "DB connectivity" without knowing what the generated handler actually did.
+{
+  const requested: string[] = [];
+  const checked = await runSmokeTests(
+    "https://api-app.example",
+    async (url) => {
+      requested.push(new URL(url).pathname);
+      return { status: 200, ok: true };
+    },
+    { checkHealth: true, checkAuth: true },
+  );
+  check(
+    "each declared smoke endpoint is requested only once",
+    requested.sort(),
+    ["/", "/api/auth/login", "/api/health"],
+  );
+  check(
+    "smoke results report only checks actually performed",
+    checked.checks.map((entry) => entry.name),
+    ["Homepage", "Health endpoint", "Auth endpoint"],
+  );
+  ok("a health response is not mislabeled as database connectivity", !checked.checks.some(entry => entry.name === "DB connectivity"));
 }

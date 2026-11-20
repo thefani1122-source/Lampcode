@@ -1,3 +1,6 @@
+import { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from '../src/deploy/shared-scaffold-assets.js'
+export { STYLES_CSS, PREBAKED_UI_PRIMITIVES, UTILS_TS, QUERY_CLIENT_TS } from '../src/deploy/shared-scaffold-assets.js'
+
 import { Template } from 'e2b'
 
 // ── Lampcode preview sandbox — v2 template definition ────────────────────────
@@ -19,7 +22,7 @@ import { Template } from 'e2b'
 // which parser E2B uses), and needs no COPY build-context. base64's alphabet
 // has no shell metacharacters, so the content can't break the command.
 
-const PKG_JSON = `{
+export const VITE_PKG_JSON = `{
   "name": "lampcode-app",
   "private": true,
   "type": "module",
@@ -57,17 +60,7 @@ const PKG_JSON = `{
     "zod": "^3.23.8",
     "mongoose": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
-    "bcryptjs": "^2.4.3",
-    "gsap": "^3.12.5",
-    "motion": "^11.11.0",
-    "lenis": "^1.1.14",
-    "@tsparticles/react": "^3.0.0",
-    "@tsparticles/slim": "^3.5.0",
-    "@splinetool/react-spline": "^4.0.0",
-    "@react-three/fiber": "^8.17.10",
-    "@react-three/drei": "^9.114.3",
-    "three": "^0.169.0",
-    "aos": "^2.3.4"
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -228,105 +221,14 @@ export default function App() {
   )
 }`
 
-const STYLES_CSS = `@import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
-:root {
-  --background: oklch(0.985 0.002 247);
-  --foreground: oklch(0.145 0.015 250);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.015 250);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.015 250);
-  --primary: oklch(0.50 0.20 264);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.01 250);
-  --secondary-foreground: oklch(0.25 0.02 250);
-  --muted: oklch(0.96 0.008 250);
-  --muted-foreground: oklch(0.50 0.02 250);
-  --accent: oklch(0.95 0.03 264);
-  --accent-foreground: oklch(0.35 0.18 264);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.915 0.008 250);
-  --input: oklch(0.915 0.008 250);
-  --ring: oklch(0.50 0.20 264);
-  --radius: 0.625rem;
-}
-.dark {
-  --background: oklch(0.12 0.015 250);
-  --foreground: oklch(0.985 0.002 247);
-  --card: oklch(0.16 0.018 250);
-  --card-foreground: oklch(0.985 0.002 247);
-  --popover: oklch(0.16 0.018 250);
-  --popover-foreground: oklch(0.985 0.002 247);
-  --primary: oklch(0.65 0.22 264);
-  --primary-foreground: oklch(0.12 0.015 250);
-  --secondary: oklch(0.22 0.02 250);
-  --secondary-foreground: oklch(0.985 0.002 247);
-  --muted: oklch(0.20 0.02 250);
-  --muted-foreground: oklch(0.65 0.02 250);
-  --accent: oklch(0.24 0.03 264);
-  --accent-foreground: oklch(0.985 0.002 247);
-  --destructive: oklch(0.55 0.22 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.65 0.22 264);
-}
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
-@layer base {
-  * { @apply border-border; box-sizing: border-box; }
-  body {
-    @apply bg-background text-foreground;
-    font-family: system-ui, -apple-system, sans-serif;
-    margin: 0;
-  }
-}`
-
-const PREBAKED_UI_PRIMITIVES: Record<string, string> = {"components/ui/avatar.tsx": "import * as React from 'react'\nimport * as AvatarPrimitive from '@radix-ui/react-avatar'\nimport { cn } from '@/lib/utils'\n\nconst Avatar = React.forwardRef<\n  React.ElementRef<typeof AvatarPrimitive.Root>,\n  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root>\n>(({ className, ...props }, ref) => (\n  <AvatarPrimitive.Root\n    ref={ref}\n    className={cn('relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full', className)}\n    {...props}\n  />\n))\nAvatar.displayName = AvatarPrimitive.Root.displayName\n\nconst AvatarImage = React.forwardRef<\n  React.ElementRef<typeof AvatarPrimitive.Image>,\n  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>\n>(({ className, ...props }, ref) => (\n  <AvatarPrimitive.Image\n    ref={ref}\n    className={cn('aspect-square h-full w-full', className)}\n    {...props}\n  />\n))\nAvatarImage.displayName = AvatarPrimitive.Image.displayName\n\nconst AvatarFallback = React.forwardRef<\n  React.ElementRef<typeof AvatarPrimitive.Fallback>,\n  React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Fallback>\n>(({ className, ...props }, ref) => (\n  <AvatarPrimitive.Fallback\n    ref={ref}\n    className={cn(\n      'flex h-full w-full items-center justify-center rounded-full bg-muted font-medium text-xs',\n      className\n    )}\n    {...props}\n  />\n))\nAvatarFallback.displayName = AvatarPrimitive.Fallback.displayName\n\nexport { Avatar, AvatarImage, AvatarFallback }\n", "components/ui/badge.tsx": "import * as React from 'react'\nimport { cva, type VariantProps } from 'class-variance-authority'\nimport { cn } from '@/lib/utils'\n\nconst badgeVariants = cva(\n  'inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',\n  {\n    variants: {\n      variant: {\n        default: 'border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80',\n        secondary: 'border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80',\n        destructive: 'border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80',\n        outline: 'text-foreground',\n        success: 'border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',\n      },\n    },\n    defaultVariants: {\n      variant: 'default',\n    },\n  }\n)\n\nexport interface BadgeProps\n  extends React.HTMLAttributes<HTMLDivElement>,\n    VariantProps<typeof badgeVariants> {}\n\nfunction Badge({ className, variant, ...props }: BadgeProps) {\n  return <div className={cn(badgeVariants({ variant }), className)} {...props} />\n}\n\nexport { Badge, badgeVariants }\n", "components/ui/button.tsx": "import * as React from 'react'\nimport { Slot } from '@radix-ui/react-slot'\nimport { cva, type VariantProps } from 'class-variance-authority'\nimport { cn } from '@/lib/utils'\n\nconst buttonVariants = cva(\n  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',\n  {\n    variants: {\n      variant: {\n        default: 'bg-primary text-primary-foreground shadow hover:bg-primary/90',\n        destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',\n        outline: 'border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground',\n        secondary: 'bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80',\n        ghost: 'hover:bg-accent hover:text-accent-foreground',\n        link: 'text-primary underline-offset-4 hover:underline',\n      },\n      size: {\n        default: 'h-9 px-4 py-2',\n        sm: 'h-8 rounded-md px-3 text-xs',\n        lg: 'h-10 rounded-md px-8',\n        icon: 'h-9 w-9',\n      },\n    },\n    defaultVariants: {\n      variant: 'default',\n      size: 'default',\n    },\n  }\n)\n\nexport interface ButtonProps\n  extends React.ButtonHTMLAttributes<HTMLButtonElement>,\n    VariantProps<typeof buttonVariants> {\n  asChild?: boolean\n}\n\nconst Button = React.forwardRef<HTMLButtonElement, ButtonProps>(\n  ({ className, variant, size, asChild = false, ...props }, ref) => {\n    const Comp = asChild ? Slot : 'button'\n    return (\n      <Comp\n        className={cn(buttonVariants({ variant, size, className }))}\n        ref={ref}\n        {...props}\n      />\n    )\n  }\n)\nButton.displayName = 'Button'\n\nexport { Button, buttonVariants }\n", "components/ui/card.tsx": "import * as React from 'react'\nimport { cn } from '@/lib/utils'\n\nconst Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(\n  ({ className, ...props }, ref) => (\n    <div\n      ref={ref}\n      className={cn('rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm', className)}\n      {...props}\n    />\n  )\n)\nCard.displayName = 'Card'\n\nconst CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(\n  ({ className, ...props }, ref) => (\n    <div ref={ref} className={cn('flex flex-col space-y-1.5 p-6', className)} {...props} />\n  )\n)\nCardHeader.displayName = 'CardHeader'\n\nconst CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(\n  ({ className, ...props }, ref) => (\n    <h3 ref={ref} className={cn('font-semibold leading-none tracking-tight text-lg', className)} {...props} />\n  )\n)\nCardTitle.displayName = 'CardTitle'\n\nconst CardDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(\n  ({ className, ...props }, ref) => (\n    <p ref={ref} className={cn('text-sm text-muted-foreground', className)} {...props} />\n  )\n)\nCardDescription.displayName = 'CardDescription'\n\nconst CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(\n  ({ className, ...props }, ref) => (\n    <div ref={ref} className={cn('p-6 pt-0', className)} {...props} />\n  )\n)\nCardContent.displayName = 'CardContent'\n\nconst CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(\n  ({ className, ...props }, ref) => (\n    <div ref={ref} className={cn('flex items-center p-6 pt-0', className)} {...props} />\n  )\n)\nCardFooter.displayName = 'CardFooter'\n\nexport { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }\n", "components/ui/dialog.tsx": "import * as React from 'react'\nimport * as DialogPrimitive from '@radix-ui/react-dialog'\nimport { X } from 'lucide-react'\nimport { cn } from '@/lib/utils'\n\nconst Dialog = DialogPrimitive.Root\nconst DialogTrigger = DialogPrimitive.Trigger\nconst DialogPortal = DialogPrimitive.Portal\nconst DialogClose = DialogPrimitive.Close\n\nconst DialogOverlay = React.forwardRef<\n  React.ElementRef<typeof DialogPrimitive.Overlay>,\n  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>\n>(({ className, ...props }, ref) => (\n  <DialogPrimitive.Overlay\n    ref={ref}\n    className={cn(\n      'fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',\n      className\n    )}\n    {...props}\n  />\n))\nDialogOverlay.displayName = DialogPrimitive.Overlay.displayName\n\nconst DialogContent = React.forwardRef<\n  React.ElementRef<typeof DialogPrimitive.Content>,\n  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>\n>(({ className, children, ...props }, ref) => (\n  <DialogPortal>\n    <DialogOverlay />\n    <DialogPrimitive.Content\n      ref={ref}\n      className={cn(\n        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg',\n        className\n      )}\n      {...props}\n    >\n      {children}\n      <DialogPrimitive.Close className=\"absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground\">\n        <X className=\"h-4 w-4\" />\n        <span className=\"sr-only\">Close</span>\n      </DialogPrimitive.Close>\n    </DialogPrimitive.Content>\n  </DialogPortal>\n))\nDialogContent.displayName = DialogPrimitive.Content.displayName\n\nconst DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (\n  <div className={cn('flex flex-col space-y-1.5 text-center sm:text-left', className)} {...props} />\n)\nDialogHeader.displayName = 'DialogHeader'\n\nconst DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (\n  <div className={cn('flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2', className)} {...props} />\n)\nDialogFooter.displayName = 'DialogFooter'\n\nconst DialogTitle = React.forwardRef<\n  React.ElementRef<typeof DialogPrimitive.Title>,\n  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>\n>(({ className, ...props }, ref) => (\n  <DialogPrimitive.Title\n    ref={ref}\n    className={cn('text-lg font-semibold leading-none tracking-tight', className)}\n    {...props}\n  />\n))\nDialogTitle.displayName = DialogPrimitive.Title.displayName\n\nconst DialogDescription = React.forwardRef<\n  React.ElementRef<typeof DialogPrimitive.Description>,\n  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>\n>(({ className, ...props }, ref) => (\n  <DialogPrimitive.Description\n    ref={ref}\n    className={cn('text-sm text-muted-foreground', className)}\n    {...props}\n  />\n))\nDialogDescription.displayName = DialogPrimitive.Description.displayName\n\nexport {\n  Dialog,\n  DialogPortal,\n  DialogOverlay,\n  DialogTrigger,\n  DialogClose,\n  DialogContent,\n  DialogHeader,\n  DialogFooter,\n  DialogTitle,\n  DialogDescription,\n}\n", "components/ui/input.tsx": "import * as React from 'react'\nimport { cn } from '@/lib/utils'\n\nconst Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(\n  ({ className, type, ...props }, ref) => {\n    return (\n      <input\n        type={type}\n        className={cn(\n          'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',\n          className\n        )}\n        ref={ref}\n        {...props}\n      />\n    )\n  }\n)\nInput.displayName = 'Input'\n\nexport { Input }\n", "components/ui/separator.tsx": "import * as React from 'react'\nimport * as SeparatorPrimitive from '@radix-ui/react-separator'\nimport { cn } from '@/lib/utils'\n\nconst Separator = React.forwardRef<\n  React.ElementRef<typeof SeparatorPrimitive.Root>,\n  React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root>\n>(({ className, orientation = 'horizontal', decorative = true, ...props }, ref) => (\n  <SeparatorPrimitive.Root\n    ref={ref}\n    decorative={decorative}\n    orientation={orientation}\n    className={cn(\n      'shrink-0 bg-border',\n      orientation === 'horizontal' ? 'h-[1px] w-full' : 'h-full w-[1px]',\n      className\n    )}\n    {...props}\n  />\n))\nSeparator.displayName = SeparatorPrimitive.Root.displayName\n\nexport { Separator }\n", "components/ui/table.tsx": "import * as React from 'react'\nimport { cn } from '@/lib/utils'\n\nconst Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(\n  ({ className, ...props }, ref) => (\n    <div className=\"relative w-full overflow-auto\">\n      <table ref={ref} className={cn('w-full caption-bottom text-sm', className)} {...props} />\n    </div>\n  )\n)\nTable.displayName = 'Table'\n\nconst TableHeader = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(\n  ({ className, ...props }, ref) => <thead ref={ref} className={cn('[&_tr]:border-b', className)} {...props} />\n)\nTableHeader.displayName = 'TableHeader'\n\nconst TableBody = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(\n  ({ className, ...props }, ref) => (\n    <tbody ref={ref} className={cn('[&_tr:last-child]:border-0', className)} {...props} />\n  )\n)\nTableBody.displayName = 'TableBody'\n\nconst TableFooter = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(\n  ({ className, ...props }, ref) => (\n    <tfoot ref={ref} className={cn('border-t bg-muted/50 font-medium [&>tr]:last:border-b-0', className)} {...props} />\n  )\n)\nTableFooter.displayName = 'TableFooter'\n\nconst TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTMLTableRowElement>>(\n  ({ className, ...props }, ref) => (\n    <tr\n      ref={ref}\n      className={cn(\n        'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted',\n        className\n      )}\n      {...props}\n    />\n  )\n)\nTableRow.displayName = 'TableRow'\n\nconst TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<HTMLTableCellElement>>(\n  ({ className, ...props }, ref) => (\n    <th\n      ref={ref}\n      className={cn(\n        'h-10 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0',\n        className\n      )}\n      {...props}\n    />\n  )\n)\nTableHead.displayName = 'TableHead'\n\nconst TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(\n  ({ className, ...props }, ref) => (\n    <td ref={ref} className={cn('p-4 align-middle [&:has([role=checkbox])]:pr-0', className)} {...props} />\n  )\n)\nTableCell.displayName = 'TableCell'\n\nconst TableCaption = React.forwardRef<HTMLTableCaptionElement, React.HTMLAttributes<HTMLTableCaptionElement>>(\n  ({ className, ...props }, ref) => (\n    <caption ref={ref} className={cn('mt-4 text-sm text-muted-foreground', className)} {...props} />\n  )\n)\nTableCaption.displayName = 'TableCaption'\n\nexport {\n  Table,\n  TableHeader,\n  TableBody,\n  TableFooter,\n  TableHead,\n  TableRow,\n  TableCell,\n  TableCaption,\n}\n", "components/ui/tabs.tsx": "import * as React from 'react'\nimport * as TabsPrimitive from '@radix-ui/react-tabs'\nimport { cn } from '@/lib/utils'\n\nconst Tabs = TabsPrimitive.Root\n\nconst TabsList = React.forwardRef<\n  React.ElementRef<typeof TabsPrimitive.List>,\n  React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>\n>(({ className, ...props }, ref) => (\n  <TabsPrimitive.List\n    ref={ref}\n    className={cn(\n      'inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground',\n      className\n    )}\n    {...props}\n  />\n))\nTabsList.displayName = TabsPrimitive.List.displayName\n\nconst TabsTrigger = React.forwardRef<\n  React.ElementRef<typeof TabsPrimitive.Trigger>,\n  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>\n>(({ className, ...props }, ref) => (\n  <TabsPrimitive.Trigger\n    ref={ref}\n    className={cn(\n      'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow',\n      className\n    )}\n    {...props}\n  />\n))\nTabsTrigger.displayName = TabsPrimitive.Trigger.displayName\n\nconst TabsContent = React.forwardRef<\n  React.ElementRef<typeof TabsPrimitive.Content>,\n  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>\n>(({ className, ...props }, ref) => (\n  <TabsPrimitive.Content\n    ref={ref}\n    className={cn(\n      'mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',\n      className\n    )}\n    {...props}\n  />\n))\nTabsContent.displayName = TabsPrimitive.Content.displayName\n\nexport { Tabs, TabsList, TabsTrigger, TabsContent }\n"};
-
-const UTILS_TS = `import { type ClassValue, clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}`
-
-const QUERY_CLIENT_TS = `import { QueryClient } from "@tanstack/react-query"
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 60 * 1000, retry: 1 },
-  },
-})`
-
 // Writes `body` to `path` inside the image via a single-line base64 decode.
-const writeFile = (path: string, body: string): string => {
+export const writeFileCommand = (path: string, body: string): string => {
   const b64 = Buffer.from(body, 'utf8').toString('base64')
-  return `RUN mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
+  return `mkdir -p "$(dirname ${path})" && echo '${b64}' | base64 -d > ${path}`
 }
+
+const writeFile = (path: string, body: string): string =>
+  `RUN ${writeFileCommand(path, body)}`
 
 // Headless-Chromium render check (build.ts's finishPreview(), after the
 // backend-crash and typecheck fix loops) — navigates to the live Vite dev
@@ -334,51 +236,38 @@ const writeFile = (path: string, body: string): string => {
 // errors / an empty #root as a single JSON line on stdout. Kept as a static
 // file baked into the image (like the scaffold files below) rather than
 // written per-build, since its content never depends on the generated app.
-const CHECK_RENDER_MJS = `import { chromium } from "playwright"
+export const CHECK_RENDER_MJS = `import { chromium } from "playwright"
 
 const url = process.argv[2] || "http://localhost:5173"
 const errors = []
 let result
-
 try {
   const browser = await chromium.launch()
   const page = await browser.newPage()
   page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()) })
   page.on("pageerror", (err) => errors.push(String(err)))
   try {
-    await page.goto(url, { waitUntil: "networkidle", timeout: 15000 })
-    await page.waitForTimeout(500) // let async errors surface after load
-    const rootHasChildren = await page.evaluate(() => {
-      const root = document.getElementById("root")
-      return !!root && root.children.length > 0
+    await page.goto(url, { waitUntil: "networkidle", timeout: 20000 })
+    await page.waitForTimeout(500)
+    const inspection = await page.evaluate(() => {
+      const root = document.querySelector("#root, #__next, [data-nextjs-scroll-focus-boundary]")
+      const main = document.querySelector("main, [role=main]")
+      const text = (document.body?.innerText || "").replace(/\\s+/g, " ").trim()
+      const hasRoot = root ? (root.textContent || "").trim().length > 0 : false
+      const hasMain = main ? (main.textContent || "").trim().length > 0 : false
+      const hasContent = hasRoot || hasMain || text.length > 20
+      const readOverlay = (el) => el ? ((el.shadowRoot?.textContent || el.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500) || null) : null
+      const portal = document.querySelector("nextjs-portal")
+      const nextError = portal?.shadowRoot?.querySelector("[data-nextjs-dialog-overlay]")
+      const nextOverlay = nextError
+        ? ((nextError.textContent || "Next.js development error overlay is visible").replace(/\\s+/g, " ").trim().slice(0, 500) || "Next.js development error overlay is visible")
+        : null
+      return { hasContent, overlay: readOverlay(document.querySelector("vite-error-overlay")) || nextOverlay }
     })
-    // Vite's error overlay is a CUSTOM ELEMENT appended to document.body, not
-    // a child of #root, and a module-resolution failure never reaches the
-    // console as an error — so neither of the two checks above can see it.
-    // Measured 2026-10-04: three builds shipped with a full-screen
-    // "Failed to resolve import" overlay while the agent reported the page
-    // rendering without errors. Reading its own message text matters as much
-    // as detecting it: that is the one string that says what to fix.
-    const overlay = await page.evaluate(() => {
-      const el = document.querySelector("vite-error-overlay")
-      if (!el) return null
-      const text = (el.shadowRoot ? el.shadowRoot.textContent : el.textContent) || ""
-      return text.replace(/\\s+/g, " ").trim().slice(0, 500)
-    })
-    if (overlay) errors.push("Vite error overlay: " + overlay)
-    result = {
-      ok: errors.length === 0 && rootHasChildren && !overlay,
-      blank: !rootHasChildren,
-      overlay: overlay || undefined,
-      errors,
-    }
-  } finally {
-    await browser.close()
-  }
-} catch (err) {
-  result = { ok: false, blank: true, errors: [String(err)] }
-}
-
+    if (inspection.overlay) errors.push("Development error overlay: " + inspection.overlay)
+    result = { ok: errors.length === 0 && inspection.hasContent && !inspection.overlay, blank: !inspection.hasContent, overlay: inspection.overlay || undefined, errors }
+  } finally { await browser.close() }
+} catch (err) { result = { ok: false, blank: true, errors: [String(err)] } }
 console.log(JSON.stringify(result))
 `
 
@@ -397,7 +286,7 @@ console.log(JSON.stringify(result))
 // No passWithNoTests: a run with no test files must exit non-zero, because
 // "the agent wrote no tests" and "the tests pass" are different facts and
 // runTests in e2b-service.ts reports them differently.
-const VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
+export const VITEST_CONFIG = `import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -422,7 +311,7 @@ export default defineConfig({
 // here because models reach for them by habit, and without the import they
 // fail as "not a function", which reads like a broken test rather than a
 // missing matcher.
-const VITEST_SETUP = `import '@testing-library/jest-dom/vitest'`
+export const VITEST_SETUP = `import '@testing-library/jest-dom/vitest'`
 
 // Minimal manifest for the internal tooling directory — see the note beside
 // the WORKDIR below for why this is not `npm init -y`.
@@ -432,74 +321,179 @@ const TOOLS_PKG_JSON = JSON.stringify(
   2,
 )
 
-const dockerfile = [
-  'FROM node:20-slim',
-  'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
-  'RUN npm install -g vite tsx typescript',
-  // Python backends (FastAPI) run on the same :3001 the frontend proxies /api to.
-  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn',
+// App scaffold and QA tooling are deliberately separate. Both framework images
+// reuse the same Playwright/Chromium evidence tools, while only Vite receives
+// Vite-specific config and entry-point files.
+export const COMMON_VITE_SCAFFOLD_COMMANDS = [
+  writeFileCommand('/home/user/app/package.json', VITE_PKG_JSON),
+  writeFileCommand('/home/user/app/vite.config.ts', VITE_CONFIG),
+  writeFileCommand('/home/user/app/vitest.config.ts', VITEST_CONFIG),
+  writeFileCommand('/home/user/app/vitest.setup.ts', VITEST_SETUP),
+  writeFileCommand('/home/user/app/tsconfig.json', TSCONFIG),
+  writeFileCommand('/home/user/app/index.html', INDEX_HTML),
+  writeFileCommand('/home/user/app/src/index.tsx', INDEX_TSX),
+  writeFileCommand('/home/user/app/src/vite-env.d.ts', VITE_ENV_DTS),
+  writeFileCommand('/home/user/app/src/App.tsx', APP_TSX),
+  writeFileCommand('/home/user/app/src/styles.css', STYLES_CSS),
+  ...Object.entries(PREBAKED_UI_PRIMITIVES).map(([filePath, fileContent]) =>
+    writeFileCommand(`/home/user/app/src/${filePath}`, fileContent),
+  ),
+  writeFileCommand('/home/user/app/src/lib/utils.ts', UTILS_TS),
+  writeFileCommand('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
+  'cd /home/user/app && npm install --legacy-peer-deps',
+  'chown -R user:user /home/user/app',
+]
+
+export const COMMON_QA_COMMANDS = [
+  writeFileCommand('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
+  'mkdir -p /home/user/.lampcode-tools',
+  'cd /home/user/.lampcode-tools && npm install playwright && npx playwright install --with-deps chromium',
+  writeFileCommand('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
+  'chown -R user:user /home/user/.lampcode-tools',
+]
+
+// Compatibility export used by the legacy Dockerfile and existing template tests.
+export const COMMON_SCAFFOLD_COMMANDS = [...COMMON_VITE_SCAFFOLD_COMMANDS, ...COMMON_QA_COMMANDS]
+
+const commonScaffoldDockerfile = [
   'WORKDIR /home/user/app',
-  writeFile('/home/user/app/package.json', PKG_JSON),
-  writeFile('/home/user/app/vite.config.ts', VITE_CONFIG),
-  writeFile('/home/user/app/vitest.config.ts', VITEST_CONFIG),
-  writeFile('/home/user/app/vitest.setup.ts', VITEST_SETUP),
-  writeFile('/home/user/app/tsconfig.json', TSCONFIG),
-  writeFile('/home/user/app/index.html', INDEX_HTML),
-  writeFile('/home/user/app/src/index.tsx', INDEX_TSX),
-  writeFile('/home/user/app/src/vite-env.d.ts', VITE_ENV_DTS),
-  writeFile('/home/user/app/src/App.tsx', APP_TSX),
-  writeFile('/home/user/app/src/styles.css', STYLES_CSS),
-  ...Object.entries(PREBAKED_UI_PRIMITIVES).map(([filePath, fileContent]) => writeFile(`/home/user/app/src/${filePath}`, fileContent)),
-  writeFile('/home/user/app/src/lib/utils.ts', UTILS_TS),
-  writeFile('/home/user/app/src/lib/queryClient.ts', QUERY_CLIENT_TS),
-  // Install once at build time so per-project cold start is just a fast
-  // `npm install` of whatever extra deps the generated app declares.
-  // --legacy-peer-deps: React 19 conflicts with peer deps on some packages
-  // (three.js ecosystem, particles, spline) that still declare react ^18.
-  'RUN npm install --legacy-peer-deps',
-  // Belt and braces, NOT load-bearing — do not reason from its presence.
-  // The image is built as root but run as `user`, so everything above this line
-  // is written root-owned, and vitest needs to write a transform cache under
-  // node_modules. That looked like it needed fixing. It does not: E2B's own
-  // `[config]` phase ends every build with "Give 'user' ownership to
-  // /home/user", so ownership is already correct without this step — confirmed
-  // in the 2026-10-02 build log and by a live sandbox writing into
-  // node_modules. Kept because it costs one cached layer and states the
-  // requirement explicitly where the next person will look for it.
-  'RUN chown -R user:user /home/user/app',
-  // ── Internal tooling, deliberately OUTSIDE /home/user/app ─────────────────
-  // Headless Chromium for the post-build render check (verifyBrowserRender in
-  // e2b-service.ts) — kept in its own directory with its own node_modules so
-  // it never touches the generated app's package.json/dependency tree (that
-  // list is what the build prompt tells the model is "allowed" — see CLAUDE.md's
-  // "Prompt-vs-reality drift" warning). `playwright install --with-deps` pulls
-  // the exact OS packages its bundled Chromium build needs for this Debian
-  // base — baked here (build time) so per-project cold start never re-fetches
-  // a browser.
-  //
-  // The package.json is written explicitly rather than generated with
-  // `npm init -y`, which names the package after its directory. npm rejects a
-  // name beginning with a dot, so in `.lampcode-tools` it exits with
-  //   npm error Invalid name: ".lampcode-tools"
-  // taking the whole && chain with it. That failed every template build since
-  // this step was added on 2026-09-09 — so playwright and check-render.mjs
-  // never reached the image, and check_page could never have worked.
-  //
-  // PLAYWRIGHT_BROWSERS_PATH is set because the image is BUILT as root but RUN
-  // as `user`, and playwright resolves its browser directory from the running
-  // user's home. Left at the default, chromium downloads into /root/.cache and
-  // check_page dies at launch with "Executable doesn't exist at
-  // /home/user/.cache/ms-playwright/..." — confirmed in a live sandbox, with
-  // playwright and check-render.mjs both present and correct. The path is
-  // repeated on the commands in e2b-service.ts, so this does not depend on
-  // Docker ENV surviving into E2B's runtime.
-  'WORKDIR /home/user/.lampcode-tools',
-  writeFile('/home/user/.lampcode-tools/package.json', TOOLS_PKG_JSON),
-  'ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
-  'RUN npm install playwright && npx playwright install --with-deps chromium ' +
-    '&& chown -R user:user /home/user/.lampcode-tools',
-  writeFile('/home/user/.lampcode-tools/check-render.mjs', CHECK_RENDER_MJS),
+  ...COMMON_SCAFFOLD_COMMANDS.map((command) => `RUN ${command}`),
   'WORKDIR /home/user/app',
 ].join('\n')
+
+const NODE_GLOBAL_TOOLS = 'RUN npm install -g vite tsx typescript'
+const PYTHON_RUNTIME_PACKAGES =
+  'RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" supabase python-dotenv crewai langgraph langchain-anthropic apscheduler exa-py pandas numpy scikit-learn'
+
+// Preserve the existing production image and its runtime versions.
+export const dockerfile = [
+  'FROM node:20-slim',
+  'RUN apt-get update && apt-get install -y git curl ca-certificates python3 python3-pip && rm -rf /var/lib/apt/lists/*',
+  NODE_GLOBAL_TOOLS,
+  PYTHON_RUNTIME_PACKAGES,
+  'ENV PLAYWRIGHT_BROWSERS_PATH=/home/user/.lampcode-tools/browsers',
+  commonScaffoldDockerfile,
+].join('\n')
+
+// Ubuntu candidate is built with E2B's native image builder API. Its SDK
+// Dockerfile parser intentionally does not support multi-stage Dockerfiles.
+export const UBUNTU_BASE_IMAGE = '24.04'
+export const UBUNTU_APT_PACKAGES = [
+  'ca-certificates',
+  'coreutils',
+  'curl',
+  'git',
+  'python3-full',
+  'python3-pip',
+  'python3-venv',
+  'python3-dev',
+  'build-essential',
+  'pkg-config',
+  'libffi-dev',
+  'libssl-dev',
+  'libpq-dev',
+  'libatomic1',
+  'less',
+  'unzip',
+  'zip',
+  'jq',
+  'ripgrep',
+  'procps',
+  'sqlite3',
+  'sudo',
+  'xz-utils',
+] as const
+
+
+/**
+ * Narrow OS package manager for the unprivileged project user.
+ *
+ * The E2B VM is the security boundary. Inside that VM, the project user can
+ * request repository packages through this root-owned validator. It cannot
+ * run arbitrary sudo commands, edit apt sources, install local .deb files,
+ * remove packages, or execute a root shell. The shell policy separately
+ * requires user approval before either operation reaches this wrapper.
+ */
+export const LAMPCODE_APT_WRAPPER_SCRIPT = "#!/usr/bin/env bash\nset -euo pipefail\n\naction=\"${1:-}\"\nif [[ $# -gt 0 ]]; then shift; fi\n\ncase \"$action\" in\n  update)\n    if [[ $# -ne 0 ]]; then\n      echo \"Usage: lampcode-apt update\" >&2\n      exit 2\n    fi\n    exec /usr/bin/apt-get update\n    ;;\n  install)\n    if [[ $# -lt 1 ]]; then\n      echo \"Usage: lampcode-apt install <package> [package ...]\" >&2\n      exit 2\n    fi\n    for package in \"$@\"; do\n      if [[ ! \"$package\" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?(=[A-Za-z0-9:~.+-]+)?$ ]]; then\n        echo \"Rejected package argument: $package\" >&2\n        exit 2\n      fi\n    done\n    exec /usr/bin/apt-get install -y --no-install-recommends \"$@\"\n    ;;\n  *)\n    echo \"Only apt metadata refresh and repository package installation are allowed.\" >&2\n    echo \"Usage: lampcode-apt update | lampcode-apt install <package> [package ...]\" >&2\n    exit 2\n    ;;\nesac\n"
+
+export const LAMPCODE_APT_SETUP_COMMAND = [
+  writeFileCommand('/usr/local/bin/lampcode-apt', LAMPCODE_APT_WRAPPER_SCRIPT),
+  'chown root:root /usr/local/bin/lampcode-apt && chmod 0755 /usr/local/bin/lampcode-apt',
+  'printf "%s\\n" "user ALL=(root) NOPASSWD: /usr/local/bin/lampcode-apt *" > /etc/sudoers.d/90-lampcode-apt',
+  'chown root:root /etc/sudoers.d/90-lampcode-apt && chmod 0440 /etc/sudoers.d/90-lampcode-apt',
+  'visudo -cf /etc/sudoers.d/90-lampcode-apt',
+].join(' && ')
+
+/**
+ * Put the Python venv first only in the generated-project user's shell.
+ *
+ * Do not set PATH as a template-wide image environment variable: E2B's envd
+ * updater also runs inside the image and requires the unmodified Ubuntu PATH
+ * to resolve core commands such as chmod and mv while updating its daemon.
+ * The project user gets Python from /opt/lampcode-python in both login and
+ * interactive bash shells, without changing root's or envd's environment.
+ */
+export const LAMPCODE_LOGIN_ENV_SCRIPT = 'export PATH="/opt/lampcode-python/bin:$PATH"'
+
+export const LAMPCODE_LOGIN_ENV_SETUP_COMMAND = [
+  `grep -Fqx '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' /home/user/.profile || printf '\\n%s\\n' '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' >> /home/user/.profile`,
+  `grep -Fqx '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' /home/user/.bashrc || printf '\\n%s\\n' '${LAMPCODE_LOGIN_ENV_SCRIPT.trim()}' >> /home/user/.bashrc`,
+  'chown user:user /home/user/.profile /home/user/.bashrc',
+].join(' && ')
+
+export const NODE_VERSION = '22.23.5'
+export const NODE_SHA256_BY_ARCH = {
+  amd64: 'cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8',
+  arm64: '2babb9eb5264860d540849f4b064a6fbdebcdc323657d9d382ce23d313fd5e09',
+} as const
+
+// Download the exact official Node LTS binary and verify it against the
+// SHA-256 published in Node.js's signed release checksum manifest.
+export const NODE_INSTALL_COMMAND = `set -eu
+case "$(dpkg --print-architecture)" in
+  amd64) NODE_ARCH=x64; NODE_SHA256=${NODE_SHA256_BY_ARCH.amd64} ;;
+  arm64) NODE_ARCH=arm64; NODE_SHA256=${NODE_SHA256_BY_ARCH.arm64} ;;
+  *) echo "Unsupported architecture for pinned Node.js ${NODE_VERSION}" >&2; exit 1 ;;
+esac
+NODE_ARCHIVE="/tmp/node-v${NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz"
+curl -fsSLo "$NODE_ARCHIVE" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz"
+printf "%s  %s\\n" "$NODE_SHA256" "$NODE_ARCHIVE" | sha256sum -c -
+tar -xJf "$NODE_ARCHIVE" -C /usr/local --strip-components=1
+rm -f "$NODE_ARCHIVE"
+test "$(node --version)" = "v${NODE_VERSION}"`
+
+export const PYTHON_BASE_PACKAGES = ['fastapi', 'uvicorn[standard]', 'supabase', 'python-dotenv'] as const
+
+export const PYTHON_SETUP_COMMAND =
+  'python3 -m venv /opt/lampcode-python && ' +
+  '/opt/lampcode-python/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && ' +
+  "/opt/lampcode-python/bin/pip install --no-cache-dir fastapi 'uvicorn[standard]' supabase python-dotenv"
+
+export const UBUNTU_TEMPLATE_ENVS = {
+  // Do not replace the image-wide PATH: E2B's envd updater also runs inside
+  // the image and needs the untouched Ubuntu system command path. Python's
+  // project-user PATH is set in that user's profile below instead.
+  PYTHONUNBUFFERED: '1',
+  PIP_DISABLE_PIP_VERSION_CHECK: '1',
+  PLAYWRIGHT_BROWSERS_PATH: '/home/user/.lampcode-tools/browsers',
+} as const
+
+export function createUbuntuBaseTemplate() {
+  return Template()
+    .fromUbuntuImage(UBUNTU_BASE_IMAGE)
+    .aptInstall([...UBUNTU_APT_PACKAGES], { noInstallRecommends: true })
+    .runCmd(LAMPCODE_APT_SETUP_COMMAND, { user: 'root' })
+    .runCmd(LAMPCODE_LOGIN_ENV_SETUP_COMMAND, { user: 'root' })
+    .runCmd(NODE_INSTALL_COMMAND, { user: 'root' })
+    .runCmd(PYTHON_SETUP_COMMAND, { user: 'root' })
+    .setEnvs({ ...UBUNTU_TEMPLATE_ENVS, NEXT_TELEMETRY_DISABLED: '1' })
+    .npmInstall(['tsx', 'typescript'], { g: true })
+    .runCmd(COMMON_QA_COMMANDS, { user: 'root' })
+}
+
+export const ubuntuTemplate = createUbuntuBaseTemplate()
+  .npmInstall(['vite'], { g: true })
+  .runCmd(COMMON_VITE_SCAFFOLD_COMMANDS, { user: 'root' })
+  .setWorkdir('/home/user/app')
 
 export const template = Template().fromDockerfile(dockerfile)

@@ -1,35 +1,31 @@
 ---
 name: agent-architecture
-description: Decision tree for choosing CrewAI, LangGraph, plain Anthropic SDK, or n8n for an AI agent build, plus code-quality rules for agent builds.
+description: Choose a simple SDK loop, CrewAI, LangGraph or n8n for agent products; production reliability, state, permissions and observability.
 ---
 
-# When to Use Which Framework
+# Agent architecture — choose the least complex design that meets the workflow
 
-## Decision Tree:
-```
-Simple task (1 agent, no pipeline)
-  → Use Anthropic SDK directly (no framework)
+## Framework choice
 
-Multi-step pipeline (Research → Analyze → Write)
-  → Use CrewAI (simplest, most readable)
+- One agent, a few tools, one short task: use the provider SDK/tool-calling loop.
+- Several role-specialised agents delegating tasks: consider CrewAI.
+- Branching, looping, bounded retries, resumable state or human approval: consider LangGraph.
+- Business-event automation across connected services: use n8n when the user has that service connected.
+- Do not combine frameworks by default. Add a second orchestration layer only when a concrete capability is missing and tests justify it.
 
-Complex with branching/retry/memory
-  → Use LangGraph
+## Production structure
 
-Visual automation (trigger, transform, notify)
-  → Use n8n workflow (if user has n8n connected)
-```
+Separate the request/API boundary (auth, validation, rate limits, idempotency), orchestration (typed state and allowed transitions), least-privilege tool adapters, optional persistence/checkpoints, durable workers for long jobs, and observability (run ID, step status, latency, redacted errors, cost/iteration budgets).
 
-## Always include in agent builds:
-- FastAPI: POST /run, GET /results, GET /status
-- APScheduler for time-based triggers
-- Supabase: store every run output with timestamp
-- React dashboard: show results, manual run button
-- Environment variables: never hardcode API keys
+## Reliability and safety
 
-## Code quality for agent builds:
-- Type hints on every function
-- try/except on every LLM call
-- Log errors to Supabase with full traceback
-- Timeout handling (agents can hang)
-- Result validation before storing
+- Bound every model/tool call with timeouts, retry limits and cost/iteration budgets.
+- Use backoff only for transient failures; do not retry auth/validation failures.
+- Make side effects idempotent and request approval for external/destructive writes.
+- Validate structured model/tool output at every trust boundary.
+- Treat retrieved documents, memory, logs and tool output as untrusted data.
+- Keep secrets server-side, redact logs and scope agent tools to the data/actions needed.
+- Persist only task-relevant state; never store credentials in graph checkpoints.
+- Test happy path, retry exhaustion, cancellation, permission denial, resume and partial failure.
+
+Do not add a database, scheduler, dashboard, FastAPI endpoints or a vector store unless the request requires them.

@@ -629,8 +629,12 @@ export const AGENTIC_BUILD_TOOLS: ToolDefinition[] = [
       "environment or .env, anything that sends data out of the sandbox, anything outside the " +
       "project directory, and anything acting as the user elsewhere. The sandbox's .env holds " +
       "live database keys; you do not need them and output is redacted either way.\n" +
-      "Commands that delete, install or change things in the project PAUSE THE BUILD while the " +
-      "user approves them, so prefer a narrower tool when one exists.",
+      "Project writes and dependency installs PAUSE THE BUILD while the user approves them, " +
+      "so prefer a narrower tool when one exists. On Ubuntu runtime candidates, OS packages can " +
+      "be installed only through `sudo -n /usr/local/bin/lampcode-apt update` or " +
+      "`sudo -n /usr/local/bin/lampcode-apt install <package> [package ...]`. These commands " +
+      "also require explicit approval. The root-owned wrapper allows repository package names " +
+      "only; arbitrary sudo/root commands, local .deb files and apt removals remain refused.",
     input_schema: {
       type: "object",
       properties: {

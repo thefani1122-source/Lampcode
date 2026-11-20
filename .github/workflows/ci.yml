@@ -11,7 +11,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/e2b-ubuntu24-template-poc]
   pull_request:
   workflow_dispatch:
 
@@ -65,5 +65,14 @@ jobs:
           node-version: '20.18.1'
           cache: npm
       - run: npm ci
-      - name: Audit dependencies
+
+      # Build tooling is installed on trusted CI/build hosts but is not part
+      # of the deployed application runtime. Keep production dependency audit
+      # as an explicit independent gate.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+      # Also audit the full build/test toolchain. This remains strict: a
+      # development-only upstream advisory is still surfaced, not suppressed.
+      - name: Audit all dependencies
         run: npm audit

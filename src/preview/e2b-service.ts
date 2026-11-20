@@ -9,6 +9,7 @@ import { db } from "../db/client.js";
 import { projectEnvVars } from "../db/schema.js";
 import { decrypt } from "../server/env-crypto.js";
 import type { FullstackFramework } from "../agents/prompt-builder.js";
+import { canReuseSandboxForFramework } from "./framework-compat.js";
 import { INTERACTION_SCRIPT, parseInteractionReport } from "../verify/interactions.js";
 import type { InteractionFinding } from "../verify/interactions.js";
 import { RENDER_SCRIPT, parseRenderReport } from "../verify/render.js";
@@ -85,50 +86,27 @@ async function runSandboxScriptWithJsonInput(
 //
 // Railway Env Var: E2B_TEMPLATE_ID=lampcode-vite
 const TEMPLATE_ID = process.env["E2B_TEMPLATE_ID"] ?? "lampcode-vite";
+const NEXTJS_TEMPLATE_ID_RE = /^lampcode-nextjs-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
 
 /**
- * Returns the E2B sandbox template ID for the given fullstack framework.
- *
- * It ALWAYS returns the React/Vite template, and deliberately ignores
- * NEXTJS_TEMPLATE_ID / TANSTACK_TEMPLATE_ID even when they are set — which on
- * Railway they are, as of 2026-10-10.
- *
- * The reason is the opposite of what it looks like. `lampcode-nextjs` and
- * `lampcode-tanstack` are REAL templates on the E2B account (15 and 13 builds)
- * and they boot fine, which is exactly what makes routing to them dangerous
- * rather than merely broken. Both were last built on 2026-09-09, before every
- * October fix, and `template-nextjs.ts` contains NONE of `.lampcode-tools`,
- * playwright, `check-render.mjs`, `PLAYWRIGHT_BROWSERS_PATH` or vitest — the
- * live `template.ts` has all five. A build routed there loses `check_page`,
- * `check_types` AND `run_tests` in one step, silently: the sandbox comes up,
- * the app renders, and all three gates report `unavailable` with nothing
- * anywhere saying why. A template that fails to boot is loud; this is not.
- *
- * It is also very unlikely such a build is genuinely Next.js. `classifyBuild`
- * pins `framework` to "react" for new builds, so the only route to another
- * value is `detectFrameworkFromFiles` on an EDIT — and the project it is
- * inspecting was itself produced on this Vite template, so an `app/layout.tsx`
- * in it is a stray file rather than a Next.js app. Returning the Vite template
- * is therefore the correct answer for that project, not just the safe one.
- *
- * To re-enable: port the October fixes into `template-nextjs.ts` (tools dir,
- * playwright + browser path, check-render.mjs, vitest and its config), rebuild,
- * verify in a live sandbox the way `e2b-template/verify-template.ts` does, and
- * only then read the env vars here again.
+ * Framework template selection is fail-closed. A stale legacy Next template
+ * must never be used simply because NEXTJS_TEMPLATE_ID happens to be set.
  */
 export function selectTemplate(framework: FullstackFramework): string {
-  if (framework === "nextjs" || framework === "tanstack") {
-    const configured = process.env[
-      framework === "nextjs" ? "NEXTJS_TEMPLATE_ID" : "TANSTACK_TEMPLATE_ID"
-    ];
-    if (configured) {
-      console.warn(
-        `[e2b] ${framework} template id is configured (${configured}) but IGNORED — ` +
-        `that image predates the October fixes and has no check_page/check_types/run_tests. ` +
-        `Using ${TEMPLATE_ID}. See selectTemplate() for how to re-enable.`,
+  if (framework === "nextjs") {
+    const configured = process.env["NEXTJS_TEMPLATE_ID"] ?? "";
+    if (!NEXTJS_TEMPLATE_ID_RE.test(configured)) {
+      throw new Error(
+        "Next.js was requested, but NEXTJS_TEMPLATE_ID is not set to a verified Ubuntu candidate. " +
+        "Build and verify lampcode-nextjs-ubuntu24, then set NEXTJS_TEMPLATE_ID to that exact template ID.",
       );
     }
-    return TEMPLATE_ID;
+    return configured;
+  }
+  if (framework === "tanstack") {
+    throw new Error(
+      "TanStack Start is not enabled in the current E2B runtime. Use Next.js App Router or React/Vite + Hono until a TanStack Ubuntu template is built and verified.",
+    );
   }
   return TEMPLATE_ID;
 }
@@ -987,7 +965,7 @@ export async function checkRender(
   try {
     const r = await runSandboxScriptWithJsonInput(
       sandbox, "lampcode-render.mjs", RENDER_SCRIPT,
-      { base: "http://localhost:5173", routes, requireInitialContent, requireCollectionSurface }, 90_000,
+      { base: `http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`, routes, requireInitialContent, requireCollectionSurface }, 90_000,
     );
     const report = parseRenderReport(r.stdout);
     // Unparseable output means the pages were never actually looked at. Saying
@@ -1027,7 +1005,7 @@ export async function checkInteractions(
   try {
     const r = await runSandboxScriptWithJsonInput(
       sandbox, "lampcode-interact.mjs", INTERACTION_SCRIPT,
-      { base: "http://localhost:5173", routes }, 90_000,
+      { base: `http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`, routes }, 90_000,
     );
     // The probe prints its findings, then — on a second line behind a marker —
     // what the app had persisted at the moment it finished clicking. Split
@@ -1208,7 +1186,7 @@ async function saveSandboxId(projectId: string, sandboxId: string, framework: Fu
 async function loadFramework(projectId: string): Promise<FullstackFramework | null> {
   try {
     const f = await withRedisTimeout(redis.get(frameworkRedisKey(projectId)), "get framework");
-    return (f as FullstackFramework) ?? null;
+    return f === "react" || f === "nextjs" || f === "tanstack" ? f : null;
   } catch {
     return null;
   }
@@ -1326,10 +1304,16 @@ async function startDevServer(
   framework: FullstackFramework,
 ): Promise<void> {
   const cmd = devStartCommand(framework);
+  // Next.js blocks dev-only asset/HMR requests from unknown hostnames. Give
+  // it this sandbox's exact public E2B hostname, never a provider-wide wildcard.
+  const envs = framework === "nextjs"
+    ? { LAMPCODE_PREVIEW_HOST: sandbox.getHost(devPort(framework)) }
+    : undefined;
   try {
     log(`Starting dev server (${framework})...`);
     await sandbox.commands.run(cmd, {
       cwd: PROJECT_DIR,
+      ...(envs ? { envs } : {}),
       background: true,
       // CRITICAL: the SDK's default command timeout is 60s and it applies to
       // background commands too — without this, E2B killed the dev server one
@@ -1388,7 +1372,10 @@ async function ensureDevServer(
   // Also (re)start the app's own Hono/Node backend if it ships one — no-op for
   // Next.js/TanStack (Route Handlers / createServerFn are served by the framework).
   if (framework === "react") {
-    await ensureBackendServer(sandbox, log).catch(() => {});
+    // A frontend preview is not healthy when its declared backend failed to
+    // start. Let the failure reach the build/repair flow instead of silently
+    // handing out a URL whose /api requests cannot work.
+    await ensureBackendServer(sandbox, log);
   }
 }
 
@@ -1405,17 +1392,13 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   // or Python/FastAPI (src/server/main.py). Either runs on :3001.
   let runtime: "node" | "python" | null = null;
   let envText = "";
-  try {
-    const r = await sandbox.commands.run(
-      "test -f src/server/index.ts && echo NODE; test -f src/server/main.py && echo PY; cat .env 2>/dev/null || true",
-      { cwd: PROJECT_DIR, timeoutMs: 10_000 },
-    );
-    if (r.stdout.includes("PY")) runtime = "python";
-    else if (r.stdout.includes("NODE")) runtime = "node";
-    envText = r.stdout;
-  } catch {
-    return;
-  }
+  const detected = await sandbox.commands.run(
+    "test -f src/server/index.ts && echo NODE; test -f src/server/main.py && echo PY; cat .env 2>/dev/null || true",
+    { cwd: PROJECT_DIR, timeoutMs: 10_000 },
+  );
+  if (detected.stdout.includes("PY")) runtime = "python";
+  else if (detected.stdout.includes("NODE")) runtime = "node";
+  envText = detected.stdout;
   if (!runtime) return;
 
   // Parse .env (KEY=VALUE lines) so we can pass Supabase creds to BOTH runtimes
@@ -1427,12 +1410,12 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
   }
   if (runtime === "node") {
     envs.NODE_OPTIONS = envs.NODE_OPTIONS
-      ? `${envs.NODE_OPTIONS} --experimental-websocket`
+      ? envs.NODE_OPTIONS + " --experimental-websocket"
       : "--experimental-websocket";
   }
 
   await sandbox.commands.run("pkill -f 'src/server/index' || true; pkill -f uvicorn || true", { timeoutMs: 10_000 }).catch(() => {});
-  log(`Starting ${runtime} backend server on :3001...`);
+  log("Starting " + runtime + " backend server on :3001...");
   const buf: string[] = [];
   backendLogs.set(sandbox.sandboxId, buf);
   const capture = (line: string): void => {
@@ -1441,11 +1424,11 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
     if (buf.length > 80) buf.shift();
   };
 
-  // Node: tsx runs the Hono server. Python: uvicorn serves the FastAPI `app`
-  // from src/server/main.py (run from that dir so `main:app` resolves).
+  // Node: tsx runs the Hono server. Python: use the dedicated Ubuntu venv
+  // explicitly so non-login E2B command shells cannot fall back to system Python.
   const cmd =
     runtime === "python"
-      ? "cd src/server && python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
+      ? "cd src/server && /opt/lampcode-python/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 3001"
       : "NODE_OPTIONS='--experimental-websocket' tsx src/server/index.ts";
   try {
     await sandbox.commands.run(cmd, {
@@ -1457,8 +1440,32 @@ async function ensureBackendServer(sandbox: Sandbox, log: PreviewLogCallback): P
       onStderr: capture,
     });
   } catch (err) {
-    logger.warn({ err }, "[e2b] Failed to start backend server");
+    const detail = extractBackendError(buf);
+    logger.warn({ err, projectLog: detail }, "[e2b] Failed to start backend server");
+    throw new Error("Failed to start the " + runtime + " backend on port 3001. " + detail);
   }
+
+  // A background command being accepted does not prove the process survived
+  // startup. Wait for an HTTP response (any status, including 404) so apps are
+  // not reported preview-ready while their /api proxy points at a dead port.
+  let readyOutput = "";
+  try {
+    const ready = await sandbox.commands.run(
+      "for i in $(seq 1 20); do code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 1 http://127.0.0.1:3001/ 2>/dev/null || true); if [ -n \"$code\" ] && [ \"$code\" != \"000\" ]; then echo \"BACKEND_READY_HTTP_$code\"; exit 0; fi; sleep 1; done; echo BACKEND_NOT_READY; exit 1",
+      { cwd: PROJECT_DIR, timeoutMs: 45_000 },
+    );
+    readyOutput = ready.stdout + "\n" + ready.stderr;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    readyOutput = detail;
+  }
+
+  if (!readyOutput.includes("BACKEND_READY_HTTP_")) {
+    const detail = extractBackendError(buf) || readyOutput || "No HTTP response on port 3001.";
+    logger.warn({ runtime, projectLog: detail, probe: readyOutput }, "[e2b] Backend did not become ready");
+    throw new Error("The " + runtime + " backend did not respond on port 3001 after startup. " + detail);
+  }
+  log(runtime + " backend is responding on port 3001 (" + (readyOutput.match(/BACKEND_READY_HTTP_\d+/)?.[0] ?? "HTTP response") + ")");
 }
 
 // Recent backend stdout/stderr per sandbox, for the agentic verify-and-fix step.
@@ -1809,7 +1816,7 @@ export async function verifyBrowserRender(projectId: string): Promise<GateResult
   let stdout = "";
   try {
     const r = await sandbox.commands.run(
-      `${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://localhost:5173`,
+      `${TOOLS_ENV} node ${TOOLS_DIR}/check-render.mjs http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`,
       { timeoutMs: 30_000 },
     );
     stdout = r.stdout;
@@ -1980,22 +1987,34 @@ async function acquireRunningSandbox(
   log: PreviewLogCallback,
   framework: FullstackFramework = "react",
 ): Promise<Sandbox> {
+  // Validate the requested template before resuming or disposing of any
+  // existing sandbox. A missing Next.js candidate must never destroy a working
+  // Vite preview before the fail-closed configuration error is reported.
+  const templateId = selectTemplate(framework);
   const savedSandboxId = await loadSandboxId(projectId);
   if (savedSandboxId) {
-    const resumed = await tryResumeSandbox(projectId, savedSandboxId);
-    if (resumed) {
-      sandboxes.set(projectId, resumed);
-      sandboxFrameworks.set(projectId, framework);
-      // A resumed snapshot's dev server may not have survived the pause —
-      // verify and restart it if needed rather than assuming.
-      await ensureDevServer(resumed, log, framework);
-      log("Resumed existing sandbox");
-      return resumed;
+    const savedFramework = await loadFramework(projectId);
+    if (canReuseSandboxForFramework(savedFramework, framework)) {
+      const resumed = await tryResumeSandbox(projectId, savedSandboxId);
+      if (resumed) {
+        sandboxes.set(projectId, resumed);
+        sandboxFrameworks.set(projectId, framework);
+        // A resumed snapshot's dev server may not have survived the pause —
+        // verify and restart it if needed rather than assuming.
+        await ensureDevServer(resumed, log, framework);
+        log("Resumed existing sandbox");
+        return resumed;
+      }
+    } else {
+      log(`Replacing stored ${savedFramework ?? "legacy/unknown"} sandbox with ${framework} runtime`);
+      const stale = await tryResumeSandbox(projectId, savedSandboxId);
+      if (stale) await stale.kill().catch(() => {});
+      await deleteSandboxId(projectId);
     }
   }
 
   log("Creating fresh sandbox from template...");
-  const sandbox = await Sandbox.create(selectTemplate(framework), {
+  const sandbox = await Sandbox.create(templateId, {
     ...(config.E2B_API_KEY ? { apiKey: config.E2B_API_KEY } : {}),
     timeoutMs: SANDBOX_TIMEOUT_MS,
   });
@@ -2266,6 +2285,10 @@ export async function createPreviewSandbox(
     throw new Error("E2B_API_KEY is not configured on the server");
   }
 
+  // Fail closed before touching a currently working preview if the requested
+  // framework has no verified template configured.
+  selectTemplate(framework);
+
   const log = (line: string): void => {
     onLog?.(line);
     logger.debug({ sessionId, projectId, line }, "[e2b]");
@@ -2282,18 +2305,33 @@ export async function createPreviewSandbox(
     // concurrent callers (prewarm vs completion, double builds) always share
     // ONE sandbox instead of leaking a second one.
     await awaitWarming(projectId);
-    sandbox = sandboxes.get(projectId);
-    if (sandbox) {
-      console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
-    } else {
-      let warm = warmingSandboxes.get(projectId);
-      if (!warm) {
-        warm = acquireRunningSandbox(projectId, log, framework).finally(() => {
+    let warm = warmingSandboxes.get(projectId);
+    if (!warm) {
+      const live = sandboxes.get(projectId);
+      const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
+      if (live && liveFramework === framework) {
+        sandbox = live;
+        console.log("[E2B] Reusing live in-process sandbox for project:", projectId);
+      } else {
+        // Put framework replacement inside the same promise lock as cold
+        // creation. Concurrent build turns then share one kill/recreate cycle
+        // rather than racing into multiple new E2B sandboxes.
+        warm = (async () => {
+          if (live) {
+            log(`Replacing live ${liveFramework} sandbox with ${framework} runtime`);
+            await killSandbox(projectId);
+          }
+          return acquireRunningSandbox(projectId, log, framework);
+        })().finally(() => {
           warmingSandboxes.delete(projectId);
         });
         warmingSandboxes.set(projectId, warm);
       }
-      sandbox = await warm;
+    }
+    if (!sandbox) {
+      const activeWarm = warm ?? warmingSandboxes.get(projectId);
+      if (!activeWarm) throw new Error("Preview sandbox acquisition lost its in-flight promise");
+      sandbox = await activeWarm;
     }
 
     // Each build turn extends the sandbox lifetime — a long iterate session

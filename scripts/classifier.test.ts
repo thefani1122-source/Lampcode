@@ -16,6 +16,8 @@
  */
 
 import { classifyBuild, hasPositiveDatabaseRequirement, hasPositiveMongoRequirement } from "../src/agents/build-classifier.js";
+import { detectFullstackFramework } from "../src/agents/framework-selection.js";
+import { canReuseSandboxForFramework } from "../src/preview/framework-compat.js";
 import { inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 import { EVAL_TASKS } from "./eval/tasks.js";
 
@@ -118,6 +120,23 @@ await expectType(
   true,
 );
 await expectType("next.js still routes fullstack", "Build a Next.js marketing site.", "fullstack");
+
+expectValue("explicit Next.js request selects Next runtime", detectFullstackFramework("Build a Next.js SaaS with Supabase"), "nextjs");
+expectValue("explicit Hono API preserves React/Vite + Hono runtime", detectFullstackFramework("Build a React frontend with a Hono API"), "react");
+expectValue("explicit Python backend preserves React/Vite + FastAPI runtime", detectFullstackFramework("Build a React frontend with a Python FastAPI backend"), "react");
+expectValue("TanStack is never mistaken for Next.js", detectFullstackFramework("Build a TanStack Start app"), "tanstack");
+expectValue("legacy Vite sandbox can be reused for React", canReuseSandboxForFramework(null, "react"), true);
+expectValue("legacy Vite sandbox is not reused for Next.js", canReuseSandboxForFramework(null, "nextjs"), false);
+expectValue("Next.js sandbox is reused for Next.js", canReuseSandboxForFramework("nextjs", "nextjs"), true);
+expectValue("Next.js sandbox is replaced for React", canReuseSandboxForFramework("nextjs", "react"), false);
+expectValue("Vite sandbox is replaced for Next.js", canReuseSandboxForFramework("react", "nextjs"), false);
+{
+  const oldNextId = process.env["NEXTJS_TEMPLATE_ID"];
+  process.env["NEXTJS_TEMPLATE_ID"] = "lampcode-nextjs-ubuntu24";
+  expectValue("verified Next candidate makes full-stack default Next.js", detectFullstackFramework("Build a multi-user CRM with shared data"), "nextjs");
+  if (oldNextId === undefined) delete process.env["NEXTJS_TEMPLATE_ID"];
+  else process.env["NEXTJS_TEMPLATE_ID"] = oldNextId;
+}
 
 // ── A hard server signal beats a client-only marker ───────────────────────────
 

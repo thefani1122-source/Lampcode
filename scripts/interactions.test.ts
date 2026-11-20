@@ -86,7 +86,7 @@ ok(
 );
 ok(
   "runtime passes routes as JSON file data",
-  service.includes('{ base: "http://localhost:5173", routes }') && service.includes("sandbox.files.write(inputPath, JSON.stringify(input))"),
+  service.includes('{ base: `http://localhost:${devPort(sandboxFrameworks.get(projectId) ?? "react")}`, routes }') && service.includes("sandbox.files.write(inputPath, JSON.stringify(input))"),
 );
 
 // The probe used to open "/" and nothing else, so a multi-page app's own

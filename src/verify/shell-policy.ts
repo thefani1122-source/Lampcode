@@ -80,6 +80,16 @@ const OUT_OF_BOUNDS = [
   /~\/\.ssh\b|\/root\b/,
 ];
 
+/**
+ * The one approved privilege boundary in an Ubuntu project sandbox.
+ *
+ * This is not arbitrary sudo: the root-owned lampcode-apt wrapper accepts only
+ * apt metadata refreshes and repository package names. It rejects shell flags,
+ * paths, local deb files, source edits, removals and arbitrary root commands.
+ * These operations still pause for explicit user approval.
+ */
+const SANDBOX_APT = /^sudo\s+-n\s+\/usr\/local\/bin\/lampcode-apt\s+(?:update|install(?:\s+[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9:~.+-]+)?)+)$/;
+
 /** Privilege, persistence, and getting out. */
 const ESCALATION = [
   /\b(?:sudo|su|doas)\b/,
@@ -165,6 +175,12 @@ function classifyOne(segment: string): ShellVerdict {
   }
   if (OUT_OF_BOUNDS.some((re) => re.test(s))) {
     return { tier: "refused", reason: "that reaches outside the project directory, or removes the harness's own tooling." };
+  }
+  if (SANDBOX_APT.test(s)) {
+    return {
+      tier: "approval",
+      reason: "it installs operating-system packages inside this isolated project sandbox, and requires your approval",
+    };
   }
   if (ESCALATION.some((re) => re.test(s))) {
     return { tier: "refused", reason: "that changes privileges or the machine itself, which no build needs." };
