@@ -82,6 +82,43 @@ console.log("\n— refused, with a reason —");
     Array.from({ length: 10 }, (_, i) => criterion(`c${i}`)),
     Array.from({ length: 10 }, (_, i) => verdict(`c${i}`, "unverified")),
   );
+  const leadScoreCriteria = Array.from({ length: 7 }, (_, i) => criterion(`LS${i + 1}`));
+  const leadScoreAudit = audit(
+    leadScoreCriteria,
+    [
+      verdict("LS1", "proven"),
+      verdict("LS2", "contradicted"),
+      verdict("LS3", "contradicted"),
+      verdict("LS4", "contradicted"),
+      verdict("LS5", "contradicted"),
+      verdict("LS6", "contradicted"),
+      verdict("LS7", "unverified"),
+    ],
+  );
+  const leadScoreFirstBatch = planAuditRepair(leadScoreAudit);
+  ok("the real LeadScore shape (1 proven, 6 unmet) starts a five-item repair batch",
+    leadScoreFirstBatch?.items.length === 5 && leadScoreFirstBatch.remaining === 1);
+  ok("the first LeadScore batch contains only the six unmet items, not the proven one",
+    leadScoreFirstBatch?.items[0]?.criterion.id === "LS2" &&
+    leadScoreFirstBatch?.items[4]?.criterion.id === "LS6");
+  const leadScoreAfterFirstRepair = audit(
+    leadScoreCriteria,
+    [
+      verdict("LS1", "proven"),
+      verdict("LS2", "proven"),
+      verdict("LS3", "proven"),
+      verdict("LS4", "proven"),
+      verdict("LS5", "proven"),
+      verdict("LS6", "proven"),
+      verdict("LS7", "unverified"),
+    ],
+  );
+  const leadScoreSecondBatch = planAuditRepair(leadScoreAfterFirstRepair);
+  ok("a re-audit after the first LeadScore batch schedules the final unmet item",
+    leadScoreSecondBatch?.items.length === 1 &&
+    leadScoreSecondBatch.items[0]?.criterion.id === "LS7" &&
+    leadScoreSecondBatch.remaining === 0);
+
   const firstBatch = planAuditRepair(many);
   ok("ten unmet requirements start in a bounded batch", firstBatch?.items.length === MAX_REPAIRABLE);
   ok("the rest are retained for later batches", firstBatch?.remaining === 5);
