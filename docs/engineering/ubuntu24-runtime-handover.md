@@ -244,44 +244,70 @@ Only after staging canaries succeed should the same two selectors be updated in 
 
 ## 9. Verification state on this branch
 
-Latest full CI on current candidate branch head \`00a0cea86932b49f7452e38f672570bea5a7cb3d\`: [run #44485241562](https://github.com/thefani1122-source/Lampcode/actions/runs/44485241562). Both CI jobs passed.
+**Current implementation branch:** `feat/e2b-ubuntu24-template-poc`  
+**Current PR:** [#44 — isolated Ubuntu 24.04 E2B runtime candidates](https://github.com/thefani1122-source/Lampcode/pull/44)  
+**Status:** Draft / not merged. The main branch and production selectors remain unchanged.
 
-- \`npm ci\`: passed.
-- TypeScript typecheck: passed.
-- Full repository Cases suite: passed, including deploy smoke-verification, backend preview readiness and Ubuntu verifier contract tests.
-- Backend production bundle: passed.
-- Production dependency audit: passed.
-- Full root dependency audit: passed, 0 vulnerabilities.
-- Latest MCP CI [#44485077447](https://github.com/thefani1122-source/Lampcode/actions/runs/44485077447) passed at head \`9831e7f\`; no MCP implementation sources changed in the later runtime/deploy commits.
-- Both E2B candidates passed the updated \`e2b@2.64.0\` template-builder dependency audit.
+### CI and E2B candidate evidence
 
-### E2B image-build and sandbox verification status
+The original Ubuntu candidate work is verified by successful real E2B build-and-sandbox runs:
 
-- **Base candidate verification passed:** [run #44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463) completed successfully for both \`lampcode-vite-ubuntu24\` and \`lampcode-nextjs-ubuntu24\`. Both image builds and their original real-sandbox checks passed.
-- **Expanded backend API verification:** [run #44483250785](https://github.com/thefani1122-source/Lampcode/actions/runs/44483250785) passed the Vite candidate, including Hono and FastAPI HTTP checks and the Vite \`/api\` proxy. The Next.js candidate passed its Next Route Handler, FastAPI, browser, Vitest and TypeScript checks, but that run failed one apt package-install check because the Ubuntu mirror was mid-sync and returned a transient Packages index size/hash mismatch. No apt signature/hash verification was disabled.
-- **Backend lifecycle fix rerun passed:** [run #44485029355](https://github.com/thefani1122-source/Lampcode/actions/runs/44485029355) completed successfully for both Vite and Next.js candidates. Both real sandboxes passed apt package install and rejection of local .deb paths, Ubuntu 24.04, Node/Python toolchain, Chromium, Vitest, TypeScript, browser rendering and FastAPI API checks. Vite also passed Hono startup/API and the Vite \`/api\` proxy; Next.js passed its real App Router API Route Handler.
-- Final apt-metadata retry validation [#44485233954](https://github.com/thefani1122-source/Lampcode/actions/runs/44485233954) **passed for both candidates**. Both real sandboxes completed all verifier checks, including approved package installation and package-file rejection.
-- The apt retry only retries \`apt-get update\` three times with a 15-second delay when the Ubuntu mirror metadata is temporarily inconsistent. It does not disable GPG, repository signature checks or package hash verification.
-- Current candidate branch head at the latest full CI pass: \`00a0cea86932b49f7452e38f672570bea5a7cb3d\`.
+- [Run #44479352463](https://github.com/thefani1122-source/Lampcode/actions/runs/44479352463) — both Vite and Next.js Ubuntu 24.04 candidate images built and their real E2B sandbox verifiers passed.
+- [Run #44485029355](https://github.com/thefani1122-source/Lampcode/actions/runs/44485029355) — expanded API checks passed for both candidates, including FastAPI, Hono, Vite `/api` proxy and Next.js Route Handler checks.
+- [Run #44485233954](https://github.com/thefani1122-source/Lampcode/actions/runs/44485233954) — final apt-metadata retry matrix passed for both candidates, including package install and local-`.deb` rejection.
 
-### Backend preview and deployment reliability changes
+The apt retry only retries Ubuntu repository metadata refresh for transient mirror-sync inconsistencies. It does not disable GPG signatures or package-hash verification.
 
-- The Ubuntu verifier writes a test FastAPI app and serves it using \`/opt/lampcode-python/bin/python3 -m uvicorn\`, then calls its real HTTP endpoint on port 3002.
-- For Vite, it writes a Hono app, launches it through the same \`tsx src/server/index.ts\` entrypoint used by LampCode preview, checks the API on port 3001 and checks that Vite's \`/api\` proxy forwards correctly.
-- For Next.js, it writes and calls an actual App Router \`GET\` Route Handler.
-- In \`src/preview/e2b-service.ts\`, FastAPI now launches with the explicit \`/opt/lampcode-python/bin/python3\` interpreter. The preview manager waits for an HTTP response on port 3001 and propagates startup/readiness failures instead of swallowing them and returning a frontend-only green preview.
-- Regression coverage for backend process readiness is in \`scripts/backend-preview.test.ts\`; the test is part of \`npm test\` and passed in CI run #44485241562.
-- Post-deploy smoke verification fails closed if the checker throws. A Vercel READY URL may still be shown, but LampCode reports it as unverified rather than as a successful deployment.
-- Static apps are checked by the homepage only. Hono/FastAPI checks are enabled only when the optional health/auth endpoint is declared in generated server source. Next.js route detection supports TypeScript and JavaScript Route Handler files.
-- Removed the duplicate \`/api/health\` request that had been described as "DB connectivity" without proof that the handler actually checks the database.
-- Deploy regression cases in \`scripts/deploy.test.ts\` passed as part of CI run #44485241562.
+The full repository CI was also rerun after the deployment and regression-test changes:
 
-### Remaining external verification before merge / rollout
+- [Run #44650769538](https://github.com/thefani1122-source/Lampcode/actions/runs/44650769538) — TypeScript typecheck, the complete Cases suite, backend bundle build, production dependency audit and full dependency audit all passed. This run is on commit `ac62b611cfef5b14d2262d6b1f9ac5b16c0effde`; a subsequent test-only commit adds explicit lazy 3D dependency-install contract coverage and must receive its own green CI result before merge.
 
-- Confirm final result of the apt-retry matrix [#44485233954](https://github.com/thefani1122-source/Lampcode/actions/runs/44485233954).
-- Run provider-backed staging canaries for Vite + Hono, Vite + FastAPI and Next.js with a staging-connected Vercel account. E2B canaries verify sandbox runtimes, but do not replace real provider deployment and live URL checks.
-- Keep production selectors unchanged until the final E2B matrix and all provider canaries pass.
+### Generated-app Vercel staging canaries
 
+These are isolated test projects in the user's Vercel team. They are not the LampCode platform frontend, are not the AWS backend, and were not deployed to the user's production domain.
+
+| Scenario | Deployment | Verified result |
+|---|---|---|
+| Vite + Hono | [Staging canary](https://lampcode-ubuntu24-vite-hono-canary-1r7qcgsql.vercel.app) | Homepage and Hono API returned HTTP 200 |
+| Next.js App Router | [Staging canary](https://lampcode-ubuntu24-nextjs-canary-aufjdb5ol-lampcode-s-projects.vercel.app) | Homepage and Route Handler returned HTTP 200 |
+| Standalone FastAPI | [Staging canary](https://lampcode-ubuntu24-fastapi-canary-28yg3tgbv-lampcode-s-projects.vercel.app) | Homepage and FastAPI endpoint returned HTTP 200 with a valid Python project manifest |
+| Vite + FastAPI Services | [Staging canary](https://lampcode-ubuntu24-vite-fastapi-services-canary-j2ylrg2cx.vercel.app) | Vite build and separate FastAPI environment both completed; homepage and `/api/health` returned HTTP 200 |
+| Vite + FastAPI + 3D dependencies | [Staging canary](https://lampcode-ubuntu24-vite-fastapi-services-canary-r3jhdsahy.vercel.app) | React 19, Three.js, React Three Fiber v9 and Drei v10 compiled together; homepage and FastAPI health endpoint returned HTTP 200 |
+
+The last two canaries directly validate the provider-side Services layout used by the new `vite-fastapi` deployment shape. The Services config uses the documented Vercel shape: a top-level `services` map with per-service `root` (and the Python `entrypoint`), plus rewrites that send `/api/:path*` to FastAPI and the remaining paths to Vite. The project framework is `services`; per-service `framework` properties are intentionally omitted. See [Vercel Services](https://vercel.com/docs/services), [Services routing](https://vercel.com/docs/services/routing) and [rewrites](https://vercel.com/docs/routing/rewrites).
+
+The 3D canary build transformed 593 modules and produced a roughly 1.1 MB minified JavaScript bundle (about 306 KB gzip). Vercel emitted its normal large-chunk warning; the build still completed successfully. The canary confirms dependency compatibility and deployment packaging, but it was not a screenshot-based visual/interaction test of a rendered 3D scene. For production-sized 3D experiences, lazy-load the Canvas/scene and split the bundle.
+
+### FastAPI + Vite deployment changes now covered
+
+The additional deployment gap found during staging review is fixed in `src/deploy/vercel.ts`:
+
+- A generated project with both a Vite UI and `src/server/main.py` now resolves to `vite-fastapi`, rather than incorrectly treating the entire project as FastAPI-only.
+- The scaffold isolates frontend files under `frontend/` and Python files under `backend/`.
+- It generates a Vercel Services config with the API rewrite before the frontend catch-all.
+- Root `requirements.txt` and `src/server/requirements.txt` entries in the supported PEP 508 subset are merged into the backend `[project].dependencies` in `pyproject.toml`. Existing project metadata and an app-owned Vercel entrypoint are preserved.
+- Pip directives, direct URLs/local paths, unsupported TOML dependency shapes and conflicting global Vercel build settings fail closed rather than being silently discarded or overwritten.
+- Standalone FastAPI deployments also receive requirement-to-`pyproject.toml` mapping.
+- Regression tests assert that Three.js, React Three Fiber and Drei dependencies survive the frontend scaffold and that the Python requirement files are not uploaded as competing raw manifests.
+
+### Agent, skill and 3D behaviour
+
+The tool-selection path was reviewed in the branch:
+
+- The user request is first classified by a model as a query/inspection or a build; the deterministic fallback only applies after classifier failure.
+- `AGENTIC_BUILD_ENABLED` defaults to enabled unless explicitly set to `false` or `0`. `BUILD_PLANNING_ENABLED` also defaults to enabled. The planner prepares a product blueprint and file plan; the agentic generator then gets the tools needed to build and verify its work.
+- The gateway does not force a fixed tool. It exposes the eligible tool definitions and lets the provider's automatic tool-choice behaviour select among them. Dispatcher executes requested tools, passes their results back to the model, and continues until the model finishes or reaches the configured turn/cost budget.
+- Connected MCP servers are filtered for relevance to the user's request. Read-only tools may be called directly; writes/destructive actions pass through the approval boundary. Query mode has a separate read-only allowlist.
+- Specialist skill descriptions are indexed in the prompt; the model decides semantically when to load a full skill with `load_skill`. The animation/3D skill is still present and describes Motion, GSAP, Lenis, Three.js/React Three Fiber/Drei and Spline.
+- Heavy optional 3D/animation packages are not installed in every base app. Generated imports and declared dependencies are scanned and missing package names are installed before the preview server starts, with name validation and a per-build cap. A new regression case pins the scoped-package detection and install-before-server ordering.
+
+This means the model can decide which *available* tools and skills best fit a request; it cannot call tools that were filtered out, are not connected, or are denied by the safety/approval policy.
+
+### What remains after this code handover
+
+- The user still needs to deploy the backend branch to the AWS staging environment and run one end-to-end build from the live LampCode UI through the AWS API to E2B and the user's Vercel account. No AWS deployment was done here.
+- Keep `E2B_TEMPLATE_ID=lampcode-vite` and `NEXTJS_TEMPLATE_ID` unset in production until the user completes that rollout decision.
+- The feature branch must receive a green CI run after the most recent lazy-3D-install test commit before merge. The PR remains Draft until that CI is green and the AWS staging end-to-end request is checked.
 
 ## 10. What this PR does not claim
 
