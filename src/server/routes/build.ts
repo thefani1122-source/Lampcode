@@ -2083,7 +2083,7 @@ export async function runFastBuild(
             },
           }
         : {}),
-      costUsd: result.costUsd + planCostUsd + result.review.costUsd,
+      costUsd: result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd,
       durationMs: Date.now() - buildStartedMs,
     };
 
