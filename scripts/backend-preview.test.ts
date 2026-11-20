@@ -41,4 +41,33 @@ assert.ok(
   "frontend preview must not be reported ready after backend startup failure",
 );
 
+
+// Optional animation/3D imports are installed only when a generated project
+// actually uses them. These contracts stop a refactor from dropping scoped
+// package detection or starting the dev server before the install completes.
+const importScannerStart = source.indexOf("export function importedPackages(");
+const importScannerEnd = source.indexOf("async function installExtraDependencies(", importScannerStart);
+assert.ok(importScannerStart >= 0 && importScannerEnd > importScannerStart, "generated import scanner must exist");
+const importScanner = source.slice(importScannerStart, importScannerEnd);
+assert.ok(importScanner.includes("spec.startsWith(\"@\") ? parts.slice(0, 2).join(\"/\") : parts[0]"), "scoped imports such as @react-three/fiber must resolve to the package name");
+assert.ok(importScanner.includes("spec.startsWith(\"node:\")"), "Node built-ins must not be installed from npm");
+assert.ok(importScanner.includes("spec.startsWith(\".\")"), "relative imports must not be installed from npm");
+
+const installerStart = source.indexOf("async function installExtraDependencies(");
+const installerEnd = source.indexOf("// NOTE: no runtime `npm install`", installerStart);
+assert.ok(installerStart >= 0 && installerEnd > installerStart, "optional dependency installer must exist");
+const installer = source.slice(installerStart, installerEnd);
+assert.ok(installer.includes("[...new Set([...declaredNames, ...importedPackages(files)])]"), "both declared dependencies and actual imports must be considered");
+assert.ok(installer.includes("valid.slice(0, MAX_EXTRA_DEPS)"), "optional npm installs must be capped");
+assert.ok(source.includes("const MAX_EXTRA_DEPS = 12;"), "optional installs must have a finite per-build package cap");
+assert.ok(source.includes("const NPM_NAME_RE = /^(@[a-z0-9~]"), "scoped package names must be validated before shell execution");
+
+const firstWrite = source.indexOf("await writeFiles(sandbox, files, log);");
+const firstInstall = source.indexOf("await installExtraDependencies(sandbox, files, log);", firstWrite);
+const firstDev = source.indexOf("await ensureDevServer(sandbox, log, framework);", firstWrite);
+assert.ok(firstWrite >= 0 && firstInstall > firstWrite && firstDev > firstInstall, "initial boot must install optional dependencies before starting the dev server");
+const updateWrite = source.indexOf("await writeFiles(sandbox, files, log);", firstWrite + 1);
+const updateInstall = source.indexOf("await installExtraDependencies(sandbox, files, log);", updateWrite);
+const updateDev = source.indexOf("await ensureDevServer(sandbox, log, framework);", updateWrite);
+assert.ok(updateWrite > firstWrite && updateInstall > updateWrite && updateDev > updateInstall, "follow-up edits must install optional dependencies before restarting the dev server");
 console.log("Backend preview readiness contract tests passed.");
