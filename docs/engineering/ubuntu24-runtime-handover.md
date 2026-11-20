@@ -258,9 +258,9 @@ The original Ubuntu candidate work is verified by successful real E2B build-and-
 
 The apt retry only retries Ubuntu repository metadata refresh for transient mirror-sync inconsistencies. It does not disable GPG signatures or package-hash verification.
 
-The full repository CI was also rerun after the deployment and regression-test changes:
+The latest full repository CI also passed after the lazy 3D dependency-install contract tests and this handover refresh:
 
-- [Run #44650769538](https://github.com/thefani1122-source/Lampcode/actions/runs/44650769538) — TypeScript typecheck, the complete Cases suite, backend bundle build, production dependency audit and full dependency audit all passed. This run is on commit `ac62b611cfef5b14d2262d6b1f9ac5b16c0effde`; a subsequent test-only commit adds explicit lazy 3D dependency-install contract coverage and must receive its own green CI result before merge.
+- [Run #44651633925](https://github.com/thefani1122-source/Lampcode/actions/runs/44651633925) — TypeScript typecheck, the complete Cases suite, backend bundle build, production dependency audit and full dependency audit all passed on commit `49949d7ea73d03c8f3f6c59417f77fa82b7fca4a`.
 
 ### Generated-app Vercel staging canaries
 
