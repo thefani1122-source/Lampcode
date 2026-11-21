@@ -2082,6 +2082,7 @@ export function prewarmSandbox(projectId: string, framework: FullstackFramework 
   const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
   const activeWarm = warmingSandboxes.get(projectId);
   if (activeWarm && warmingFrameworks.get(projectId) === framework) return;
+  if (!activeWarm && live && liveFramework === framework) return;
 
   // Validate the target before killing or replacing a healthy preview. A
   // missing candidate template must never destroy the user's current runtime.
