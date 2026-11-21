@@ -1894,8 +1894,8 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("database-rls");
   }
   const needsSupabaseRls =
-    (opts?.buildType === "fullstack" || opts?.buildType === "fullstack-existing") &&
-    databaseChoice === "supabase";
+    (opts?.buildType === "fullstack" && databaseChoice === "supabase") ||
+    (opts?.buildType === "fullstack-existing" && selectedDatabase === "supabase");
   if (needsSupabaseRls) {
     skillsToLoad.add("supabase-rls");
   }
