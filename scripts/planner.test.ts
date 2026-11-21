@@ -596,7 +596,12 @@ check(
 async function runPromptModeChecks(): Promise<void> {
   const builder = new PromptBuilder();
   const mongoSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to this MongoDB app.",
+    [
+      "Add login and row-level protection to this MongoDB app.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: mongodb",
+    ].join("\\n"),
     "fullstack-mongodb",
   );
   check(
@@ -618,7 +623,12 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const supabaseSkills = await loadRelevantSkillsForPrompt(
-    "Build a Supabase-backed task app.",
+    [
+      "Build a Supabase-backed task app.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\\n"),
     "fullstack",
   );
   check(
@@ -628,7 +638,12 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const nextSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
+    [
+      "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\\n"),
     "fullstack",
   );
   check(
@@ -637,7 +652,12 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const tanstackSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
+    [
+      "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
+      "LAMPCode_SELECTED_FRAMEWORK: tanstack",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\\n"),
     "fullstack",
   );
   check(
@@ -646,7 +666,12 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const pythonSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
+    [
+      "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: python",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\\n"),
     "fullstack",
   );
   check(
@@ -655,7 +680,14 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const frontendSkills = await loadRelevantSkillsForPrompt(
-    "Build a single-user task tracker.",
+    [
+      "Build a single-user task tracker.",
+      "LAMPCode_SELECTED_BUILD_TYPE: frontend",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: none",
+      "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_PERSISTENCE: browser-local",
+    ].join("\\n"),
     "frontend",
   );
   check(
@@ -674,7 +706,13 @@ async function runPromptModeChecks(): Promise<void> {
   const newSupabaseBuild = await builder.build(
     "frontend",
     {
-      description: "FULLSTACK BUILD:\\nBuild a Supabase-backed task app with real API routes.",
+      description: [
+        "FULLSTACK BUILD: Build a Supabase-backed task app with real API routes.",
+        "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+        "LAMPCode_SELECTED_FRAMEWORK: react",
+        "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+        "LAMPCode_SELECTED_DATABASE: supabase",
+      ].join("\\n"),
       outputFormat: "code",
     },
     {
@@ -764,7 +802,13 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const unknownProviderSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to the existing app.",
+    [
+      "Add login and row-level protection to the existing app.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: unknown",
+    ].join("\\n"),
     "fullstack-existing",
   );
   check(
@@ -784,6 +828,10 @@ async function runPromptModeChecks(): Promise<void> {
       description:
         "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
         "USER REQUEST: Add an API field.\\n" +
+        "LAMPCode_SELECTED_BUILD_TYPE: fullstack\\n" +
+        "LAMPCode_SELECTED_FRAMEWORK: react\\n" +
+        "LAMPCode_SELECTED_BACKEND_RUNTIME: node\\n" +
+        "LAMPCode_SELECTED_DATABASE: unknown\\n" +
         "AUTHORITATIVE BUILD CONTEXT\\n- Project mode: edit an existing application.\\n" +
         "- Existing data provider: unknown.",
       outputFormat: "code",
