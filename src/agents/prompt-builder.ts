@@ -1457,8 +1457,11 @@ export const NEXTJS_INSTRUCTION = `
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
 
 This is a full-stack Next.js App Router application. Use Route Handlers in app/api/**/route.ts
-for HTTP APIs. There is no separate Hono process; the preview runs one Node.js process on port 3000.
-The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
+for HTTP APIs. Always include app/api/health/route.ts as the internal readiness endpoint, returning
+a small truthful JSON response such as { ok: true, runtime: "nextjs" }. Do not put credentials or
+private diagnostics in this endpoint. There is no separate Hono process; the preview runs one
+Node.js process on port 3000. The same app remains a standard Next.js project for Vercel,
+Node self-hosting or Docker.
 
 IMPLEMENT IN THIS ORDER:
 1. If a database is selected, implement server-only data access and shared types/models before app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested; do not invent database models or persistence.
@@ -1491,7 +1494,7 @@ SERVER/CLIENT BOUNDARIES:
   for user-specific and rapidly-changing reads; revalidate only when the product permits it.
 
 FILES AND DEPLOYABILITY:
-- Generate app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts as required.
+- Generate app/layout.tsx, app/page.tsx, app/globals.css, app/api/health/route.ts and the requested app/api/**/route.ts endpoints.
 - The environment owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs,
   components.json, app/providers.tsx, vitest.config.ts and vitest.setup.ts. Do not replace those files.
 - lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Add extra components with
