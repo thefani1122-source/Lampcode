@@ -568,7 +568,7 @@ export function findMissingFullstackFiles(
             ...(database === "supabase" ? ["src/db/types.ts", "src/db/schema.sql"] : []),
           ]
         : (database === "none"
-            ? ["src/App.tsx", "src/server/index.ts"]
+            ? ["src/App.tsx", "src/server/app.ts", "src/server/index.ts", "src/server/routes/api.ts"]
             : REQUIRED_FULLSTACK_FILES); // react: src/server/index.ts + src/server/routes/api.ts
   return required.filter((path) => isEffectivelyEmpty(files[path]));
 }
