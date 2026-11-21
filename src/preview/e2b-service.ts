@@ -908,6 +908,7 @@ export async function fetchReferenceDesign(
   projectId: string,
   url: string,
 ): Promise<Record<string, unknown>> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
 
@@ -962,6 +963,7 @@ export async function checkRender(
   requireInitialContent = true,
   requireCollectionSurface = false,
 ): Promise<{ report: RenderReport | null; ran: boolean }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { report: null, ran: false };
   try {
@@ -1002,6 +1004,7 @@ export async function checkInteractions(
   projectId: string,
   routes: string[] = ["/"],
 ): Promise<{ findings: InteractionFinding[]; ran: boolean; storage: StorageSnapshot }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { findings: [], ran: false, storage: EMPTY_STORAGE };
   try {
@@ -1050,6 +1053,7 @@ export function splitInteractionStdout(stdout: string): { report: string; storag
  * the same fact. Never throws, never fails a build.
  */
 export async function captureStorage(projectId: string, route = "/"): Promise<StorageSnapshot> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return EMPTY_STORAGE;
   try {
@@ -1080,6 +1084,7 @@ export async function runJourney(
   projectId: string,
   steps: JourneyStep[],
 ): Promise<JourneyReport> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "there is no live preview" };
   try {
@@ -1111,6 +1116,7 @@ export async function runShellCommand(
   command: string,
   timeoutMs = 60_000,
 ): Promise<{ ran: boolean; exitCode: number | null; stdout: string; stderr: string; secrets: string[] }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   const secrets = [...(sandboxSecrets.get(projectId) ?? [])];
   if (!sandbox) {
@@ -1520,6 +1526,7 @@ function skippedGate(projectId: string, gate: string): GateResult {
  * the model to fix src/server and try again. No-op for frontend-only apps.
  */
 export async function verifyPreview(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyPreview");
 
@@ -1644,6 +1651,7 @@ function summarizeFailure(raw: string): string {
  * appear and the file would end up in the user's project.
  */
 export async function runTests(projectId: string): Promise<TestRunResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) {
     logger.warn({ projectId, gate: "runTests" }, "[e2b] gate skipped — no live sandbox");
@@ -1764,6 +1772,7 @@ const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
  * same silent-skip behavior as verifyPreview.
  */
 export async function runTypeCheck(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "runTypeCheck");
 
@@ -1812,6 +1821,7 @@ export async function runTypeCheck(projectId: string): Promise<GateResult> {
  * in-process sandbox exists, same silent-skip behavior as the other checks.
  */
 export async function verifyBrowserRender(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyBrowserRender");
 
@@ -1913,6 +1923,7 @@ function safeProjectPath(raw: unknown): string | null {
 
 /** Read one project file out of the live sandbox. Throws with a readable reason. */
 export async function readProjectFile(projectId: string, path: string): Promise<string> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
   const safe = safeProjectPath(path);
@@ -1934,6 +1945,7 @@ export async function deleteProjectFileFromSandbox(projectId: string, path: stri
 
 /** List the project's source files (excludes deps, build output and env files). */
 export async function listProjectFiles(projectId: string): Promise<string[]> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
   const r = await sandbox.commands.run(
@@ -1949,7 +1961,8 @@ export async function listProjectFiles(projectId: string): Promise<string[]> {
  * Recent dev-server and app-backend output for this project's sandbox.
  * Both are ring buffers captured as the processes run — nothing is re-executed.
  */
-export function readSandboxLogs(projectId: string): { dev: string[]; backend: string[] } | null {
+export async function readSandboxLogs(projectId: string): Promise<{ dev: string[]; backend: string[] } | null> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return null;
   return {
