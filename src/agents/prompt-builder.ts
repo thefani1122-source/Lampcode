@@ -587,17 +587,19 @@ export type Database = "supabase" | "mongodb";
  * Detect which frontend framework the user is requesting.
  * React is the default when no specific framework keyword is found.
  */
-export function detectFramework(prompt: string, fallback: Framework = "react"): Framework {
-  if (/\bpreact\b/i.test(prompt)) return "preact";
-  if (/\bvue\b/i.test(prompt)) return "vue";
-  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
-  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
-  if (/\bsvelte\b/i.test(prompt)) return "svelte";
-  if (/\bsolid\.?js\b|\bsolidjs\b|\bsolid[- ]?js\b/i.test(prompt)) return "solid";
-  // React/Vite, and Python/FastAPI/Django prompts (which pair a React+Vite
-  // frontend with a non-Node backend) all use the React frontend template.
-  if (/\breact\b|\bvite\b|\bpython\b|\bfastapi\b|\bdjango\b/i.test(prompt)) return "react";
-  return fallback;
+/**
+ * Backward-compatible framework accessor. It reads trusted server metadata or
+ * a caller-supplied fallback only; user wording is never regex-classified.
+ */
+export function detectFramework(
+  description: string,
+  fallback: Framework = DEFAULT_BUILD_FRAMEWORK,
+): Framework {
+  return selectedBuildMarker(
+    description,
+    "FRAMEWORK",
+    ["react", "nextjs", "tanstack"] as const,
+  ) ?? fallback;
 }
 
 export type FullstackFramework = "react" | "nextjs" | "tanstack";
@@ -1913,10 +1915,18 @@ async function loadSkillsForPrompt(
   // framework; that would bias the decision back toward the default.
   if (opts?.buildType && selectedFramework === "nextjs") {
     skillsToLoad.add("nextjs-production");
-  } else if (opts?.buildType && isFullstack && backendRuntime === "node") {
-    skillsToLoad.add("fullstack-hono");
-  } else if (opts?.buildType === "frontend") {
-    skillsToLoad.add("frontend-sandbox");
+  } else if (opts?.buildType && selectedFramework === "react") {
+    // Hono rules belong only to the selected React/Vite + Node/Hono path.
+    // Mongo uses its own server/data-access contract; Python uses FastAPI.
+    if (isFullstack && backendRuntime === "node" && selectedDatabase !== "mongodb") {
+      skillsToLoad.add("fullstack-hono");
+    } else if (
+      opts?.buildType === "frontend" ||
+      (isFullstack && backendRuntime === "python") ||
+      (isFullstack && selectedDatabase === "mongodb")
+    ) {
+      skillsToLoad.add("frontend-sandbox");
+    }
   }
 
   if (opts?.buildType) {
