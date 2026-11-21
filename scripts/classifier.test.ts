@@ -106,9 +106,9 @@ expectValue("the current FastAPI scaffold rejects MongoDB instead of receiving H
     reason: "The model attempted an unsupported Python/MongoDB combination.",
   }))), null);
 
-expectValue("unknown tool names are discarded, not granted", parseClassification(JSON.stringify(decision({
+expectValue("unknown tool names invalidate the model decision instead of becoming tool grants", parseClassification(JSON.stringify(decision({
   requiredTools: ["filesystem", "sudo", "delete-account", "browser"],
-})))?.requiredTools, ["filesystem", "browser"]);
+}))), null);
 expectValue("legacy needsServer classifier output is rejected", parseClassification('{"needsServer":true,"needsSignIn":false,"why":"legacy"}'), null);
 expectValue("malformed JSON is rejected", parseClassification('{"buildType":'), null);
 expectValue("empty model response is rejected", parseClassification(""), null);
