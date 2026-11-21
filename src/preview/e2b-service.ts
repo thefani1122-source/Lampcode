@@ -219,6 +219,8 @@ export function setProjectPreviewEnv(
 // preview-write path awaits this so it never races into creating a second
 // sandbox for the same project.
 const warmingSandboxes = new Map<string, Promise<Sandbox>>();
+/** Framework each in-flight warm will produce; used to serialize runtime switches. */
+const warmingFrameworks = new Map<string, FullstackFramework>();
 
 /**
  * Polls the preview URL until it responds or the timeout elapses. The dev
@@ -2057,25 +2059,90 @@ async function acquireRunningSandbox(
  */
 export function prewarmSandbox(projectId: string, framework: FullstackFramework = "react", onLog?: PreviewLogCallback): void {
   if (!config.E2B_API_KEY) return;
-  if (sandboxes.has(projectId) || warmingSandboxes.has(projectId)) return;
 
   const log = (line: string): void => {
     onLog?.(line);
     logger.debug({ projectId, line }, "[e2b:prewarm]");
   };
 
-  const promise = acquireRunningSandbox(projectId, log, framework)
+  const live = sandboxes.get(projectId);
+  const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
+  if (live && liveFramework === framework) return;
+
+  // Validate the target before killing or replacing a healthy preview. A
+  // missing candidate template must never destroy the user's current runtime.
+  try {
+    selectTemplate(framework);
+  } catch (err) {
+    logger.warn({ projectId, framework, err }, "[e2b] prewarm skipped: target runtime is not configured");
+    return;
+  }
+
+  const activeWarm = warmingSandboxes.get(projectId);
+  if (activeWarm) {
+    if (warmingFrameworks.get(projectId) === framework) return;
+
+    // A different framework is already warming. Queue this runtime switch
+    // behind it, rather than returning and letting the agent use the wrong VM.
+    let queued!: Promise<Sandbox>;
+    queued = activeWarm
+      .then(() => undefined, (err: unknown) => {
+        logger.warn({ projectId, err }, "[e2b] previous prewarm failed before runtime switch");
+        return undefined;
+      })
+      .then(async () => {
+        const current = sandboxes.get(projectId);
+        const currentFramework = current ? sandboxFrameworks.get(projectId) ?? "react" : null;
+        if (current && currentFramework === framework) return current;
+        if (current) {
+          log(`Replacing warmed ${currentFramework} sandbox with ${framework} runtime`);
+          await killSandbox(projectId);
+        }
+        return acquireRunningSandbox(projectId, log, framework);
+      })
+      .catch((err) => {
+        logger.warn({ projectId, framework, err }, "[e2b] queued prewarm failed (completion will retry)");
+        throw err;
+      })
+      .finally(() => {
+        // An earlier warm must not delete a newer queued replacement.
+        if (warmingSandboxes.get(projectId) === queued) {
+          warmingSandboxes.delete(projectId);
+          warmingFrameworks.delete(projectId);
+        }
+      });
+
+    warmingSandboxes.set(projectId, queued);
+    warmingFrameworks.set(projectId, framework);
+    void queued.catch(() => {});
+    return;
+  }
+
+  let promise!: Promise<Sandbox>;
+  promise = (async () => {
+    const current = sandboxes.get(projectId);
+    const currentFramework = current ? sandboxFrameworks.get(projectId) ?? "react" : null;
+    if (current && currentFramework !== framework) {
+      log(`Replacing live ${currentFramework} sandbox with ${framework} runtime`);
+      await killSandbox(projectId);
+    }
+    return acquireRunningSandbox(projectId, log, framework);
+  })()
     .catch((err) => {
       // Don't let a prewarm failure kill anything — the complete path will
       // fall back to a full create. Just surface it and clear the entry.
-      logger.warn({ projectId, err }, "[e2b] prewarm failed (will cold-start on complete)");
+      logger.warn({ projectId, framework, err }, "[e2b] prewarm failed (will cold-start on complete)");
       throw err;
     })
     .finally(() => {
-      warmingSandboxes.delete(projectId);
+      if (warmingSandboxes.get(projectId) === promise) {
+        warmingSandboxes.delete(projectId);
+        warmingFrameworks.delete(projectId);
+      }
     });
 
   warmingSandboxes.set(projectId, promise);
+  warmingFrameworks.set(projectId, framework);
   void promise.catch(() => {});
 }
 
@@ -2242,8 +2309,14 @@ export async function ensurePreviewForProject(
       sandboxFrameworks.set(projectId, framework);
       await ensureDevServer(resumed, log, framework);
       return resumed;
-    })().finally(() => warmingSandboxes.delete(projectId));
+    })().finally(() => {
+      if (warmingSandboxes.get(projectId) === warm) {
+        warmingSandboxes.delete(projectId);
+        warmingFrameworks.delete(projectId);
+      }
+    });
     warmingSandboxes.set(projectId, warm);
+    warmingFrameworks.set(projectId, persistedFramework ?? "react");
   }
 
   try {
@@ -2323,9 +2396,13 @@ export async function createPreviewSandbox(
           }
           return acquireRunningSandbox(projectId, log, framework);
         })().finally(() => {
-          warmingSandboxes.delete(projectId);
+          if (warmingSandboxes.get(projectId) === warm) {
+            warmingSandboxes.delete(projectId);
+            warmingFrameworks.delete(projectId);
+          }
         });
         warmingSandboxes.set(projectId, warm);
+        warmingFrameworks.set(projectId, framework);
       }
     }
     if (!sandbox) {
