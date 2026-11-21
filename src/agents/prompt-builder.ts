@@ -676,7 +676,7 @@ export type DatabaseChoice = Database | "none";
  */
 function selectedBuildMarker<T extends string>(
   description: string,
-  marker: "FRAMEWORK" | "DATABASE" | "BUILD_TYPE" | "BACKEND_RUNTIME" | "AUTH",
+  marker: "FRAMEWORK" | "DATABASE" | "BUILD_TYPE" | "BACKEND_RUNTIME" | "AUTH" | "PERSISTENCE" | "REQUIRED_TOOLS",
   allowed: readonly T[],
 ): T | undefined {
   const prefix = `LAMPCode_SELECTED_${marker}:`;
@@ -1845,12 +1845,13 @@ export function inferPromptBuildType(
   description: string,
 ): PromptBuildType | undefined {
   if (agentType !== "frontend") return undefined;
-  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
   const selected = selectedBuildMarker(description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+  // Server-appended metadata outranks even a legacy task prefix.
+  if (selected === "frontend") return "frontend";
   if (selected === "fullstack") {
     return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
   }
-  if (selected === "frontend") return "frontend";
+  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
   if (description.startsWith("FULLSTACK BUILD:") || description.startsWith("FULLSTACK AUTH BUILD:")) {
     return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
   }
@@ -2017,17 +2018,18 @@ export class PromptBuilder {
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
-    const isExistingFullstackEdit = task.description.startsWith("EXISTING FULLSTACK EDIT:");
-    const selectedFramework = selectedFullstackFramework(task.description);
     const selectedBuildType = selectedBuildMarker(task.description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+    const hasExistingFullstackEditPrefix = task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const isExistingFullstackEdit = hasExistingFullstackEditPrefix && selectedBuildType !== "frontend";
+    const selectedFramework = selectedFullstackFramework(task.description);
     const isFullstackMode =
       agentType === "frontend" &&
       (selectedBuildType === "fullstack" ||
         (!selectedBuildType && (
           task.description.startsWith("FULLSTACK BUILD:") ||
-          task.description.startsWith("FULLSTACK AUTH BUILD:")
-        )) ||
-        isExistingFullstackEdit);
+          task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+          hasExistingFullstackEditPrefix
+        )));
     const fullstackFramework: FullstackFramework = selectedFramework;
     const db = isFullstackMode ? detectDatabase(task.description) : "none";
     const backendRuntime = selectedBackendRuntime(task.description);
@@ -2070,8 +2072,8 @@ export class PromptBuilder {
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
-      (task.description.startsWith("FULLSTACK AUTH BUILD:") ||
-        selectedBuildMarker(task.description, "AUTH", ["required"] as const) === "required");
+      (selectedBuildMarker(task.description, "AUTH", ["required", "not-required"] as const) === "required" ||
+        (!selectedBuildType && task.description.startsWith("FULLSTACK AUTH BUILD:")));
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
         ? (db === "none" ? "" : NEXTJS_AUTH_INSTRUCTIONS[db])
