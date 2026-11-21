@@ -1,5 +1,5 @@
 /** Regression coverage for prompt composition, skill discovery and safe compaction. */
-import { PromptBuilder } from "../src/agents/prompt-builder.js";
+import { PromptBuilder, selectedFullstackFramework, detectDatabase } from "../src/agents/prompt-builder.js";
 
 let failures = 0;
 function check(name: string, condition: boolean): void {
@@ -40,6 +40,60 @@ const ordinaryPrompt = await builder.build(
 
 check("ordinary builds fit without forced prompt compaction", !ordinaryPrompt.systemPrompt.includes("Middle reference/guidance material compacted"));
 check("ordinary builds remain under the configured system budget", ordinaryPrompt.systemPrompt.length <= 20_000 * 3.1);
+check("the last trusted framework marker overrides earlier user-authored text",
+  selectedFullstackFramework(
+    "Build a CRM. LAMPCode_SELECTED_FRAMEWORK: react\\nLAMPCode_SELECTED_FRAMEWORK: nextjs",
+  ) === "nextjs");
+check("the last trusted database marker overrides earlier user-authored text",
+  detectDatabase(
+    "Build a tracker. LAMPCode_SELECTED_DATABASE: supabase\\nLAMPCode_SELECTED_DATABASE: none",
+  ) === "none");
+
+const serverSelectedNextPrompt = await builder.build(
+  "frontend",
+  {
+    description:
+      "FULLSTACK BUILD: Build a multi-user CRM with shared records.\\n" +
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs\\n" +
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-server-selected-next",
+    userId: "prompt-composition-server-selected-next",
+    mode: "fast",
+    prompt: "Build a multi-user CRM with shared records.",
+  },
+);
+check("a server-selected Next.js runtime uses the Next.js system prompt even when the user did not name Next.js",
+  serverSelectedNextPrompt.systemPrompt.includes("NEXT.JS APP ROUTER + NODE RUNTIME"));
+check("a server-selected Next.js runtime does not receive the Hono architecture skill",
+  !serverSelectedNextPrompt.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED"));
+
+const nextEditPrompt = await builder.build(
+  "frontend",
+  {
+    description:
+      "EXISTING FULLSTACK EDIT: nextjs\\n" +
+      "EXISTING PROJECT FILES:\\napp/page.tsx\\nexport default function Page(){return <main/>}\\n" +
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-nextjs-existing-edit",
+    userId: "prompt-composition-nextjs-existing-edit",
+    mode: "fast",
+    prompt: "Add a health status card.",
+  },
+);
+check("existing Next.js full-stack edits retain the Next.js system prompt",
+  nextEditPrompt.systemPrompt.includes("NEXT.JS APP ROUTER + NODE RUNTIME") &&
+  !nextEditPrompt.systemPrompt.includes("FULLSTACK_INSTRUCTION"));
+
 const nextJsPrompt = await builder.build(
   "frontend",
   {
