@@ -24,7 +24,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { applyParsedFiles, parseFilesFromContent, type ParsedFile } from "../src/agents/file-parser.js";
+import { applyParsedFiles, parseFilesFromContent, findMissingFullstackFiles, type ParsedFile } from "../src/agents/file-parser.js";
 
 let checks = 0;
 let failures = 0;
@@ -35,6 +35,30 @@ function ok(name: string, condition: boolean): void {
 }
 
 const f = (path: string, code: string): ParsedFile => ({ path, code });
+
+// ── Framework-aware scaffold requirements ────────────────────────────────────
+
+{
+  const nextNoDb = {
+    "app/page.tsx": "export default function Page() { return <main>Health</main>; }",
+    "app/layout.tsx": "export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }",
+    "app/api/health/route.ts": "export async function GET() { return Response.json({ status: 'ok' }); }",
+  };
+  ok(
+    "Next.js database-free builds require App Router files, not src/App.tsx or DB files",
+    findMissingFullstackFiles(nextNoDb, "nextjs", "none").length === 0,
+  );
+  ok(
+    "Next.js Supabase builds still require schema and types",
+    findMissingFullstackFiles(nextNoDb, "nextjs", "supabase").includes("src/db/schema.sql") &&
+    findMissingFullstackFiles(nextNoDb, "nextjs", "supabase").includes("src/db/types.ts"),
+  );
+  ok(
+    "Next.js database-free builds do not request Supabase schema files",
+    !findMissingFullstackFiles(nextNoDb, "nextjs", "none").some((path) => path.startsWith("src/db/")),
+  );
+}
+
 
 // ── It writes, which is the whole point ─────────────────────────────────────
 
