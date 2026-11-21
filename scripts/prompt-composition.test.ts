@@ -95,6 +95,27 @@ check("existing Next.js full-stack edits retain the Next.js system prompt",
 check("existing Next.js edits do not receive the React/Hono scaffold contract",
   !nextEditPrompt.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED"));
 
+const existingSupabaseEditSkills = await builder.build(
+  "frontend",
+  {
+    description:
+      "EXISTING FULLSTACK EDIT: nextjs\\n" +
+      "EXISTING PROJECT FILES:\\napp/page.tsx\\nLAMPCode_SELECTED_FRAMEWORK: nextjs\\n" +
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-existing-supabase-edit",
+    userId: "prompt-composition-existing-supabase-edit",
+    mode: "fast",
+    prompt: "Fix an existing data loading issue.",
+  },
+);
+check("existing Supabase full-stack edits receive the selected RLS skill",
+  existingSupabaseEditSkills.systemPrompt.includes("## Skill: supabase-rls"));
+
 const nextJsPrompt = await builder.build(
   "frontend",
   {
