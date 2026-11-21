@@ -393,8 +393,10 @@ const BAKED_FILES = new Set([
   "vitest.config.ts",
   "vitest.config.js",
   "vitest.setup.ts",
-  // Next.js template config
+  // Next.js template config and shadcn CLI contract
   "next.config.ts",
+  "postcss.config.mjs",
+  "components.json",
   "next.config.js",
   "next.config.mjs",
   // TanStack Start / Vinxi config (controls server port — must stay as baked)
