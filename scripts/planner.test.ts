@@ -494,7 +494,7 @@ const frontendShape: PlanningBuildShape = {
 const frontendContext = formatBuildShapeForPrompt(frontendShape);
 check(
   "new frontend-only builds receive an explicit no-backend shape",
-  frontendContext.includes("new frontend-only application") &&
+  frontendContext.includes("model-selected frontend-only application") &&
     frontendContext.includes("No application server or database"),
   true,
 );
