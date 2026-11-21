@@ -1722,7 +1722,7 @@ export async function runFastBuild(
         ? {
             projectMode: "new-fullstack",
             framework: fullstackFramework,
-            database: fullstackDb === "none" ? "unknown" : fullstackDb,
+            database: fullstackDb,
             backendRuntime: wantsPython ? "python" : "node",
             databaseAccess: databaseSetupState,
             auth: classification?.needsAuth ? "required" : "not-required",
@@ -2307,7 +2307,7 @@ export async function runFastBuild(
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
-      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework);
+      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework, fullstackDb);
       if (missing.length > 0) {
         logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
         server?.thinking(sessionId, {
@@ -2391,6 +2391,7 @@ export async function runFastBuild(
           const stillMissing = findMissingFullstackFiles(
             Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
             fullstackFramework,
+            fullstackDb,
           );
           if (stillMissing.length > 0) {
             logger.warn({ sessionId, stillMissing }, "Fullstack retry: files still missing after retry");
