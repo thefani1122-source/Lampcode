@@ -679,7 +679,7 @@ TOUCH TARGETS:
  * Resolve the database selected by the build pipeline, or infer it when this
  * helper is used outside a full-stack build. Server runtime alone is not a DB.
  */
-export type DatabaseChoice = Database | "none";
+export type DatabaseChoice = Database | "none" | "unknown";
 
 /**
  * The build route appends trusted runtime/database markers after the raw user
@@ -714,7 +714,7 @@ export function selectedBackendRuntime(description: string): "none" | "node" | "
 
 export function detectDatabase(description: string): DatabaseChoice {
   // Parse the server-appended model decision only; never infer a provider from user text.
-  return selectedBuildMarker(description, "DATABASE", ["supabase", "mongodb", "none"] as const) ?? "none";
+  return selectedBuildMarker(description, "DATABASE", ["supabase", "mongodb", "none", "unknown"] as const) ?? "none";
 }
 
 export const DB_INSTRUCTIONS: Record<Database, string> = {
@@ -1916,7 +1916,10 @@ async function loadSkillsForPrompt(
   }
 
   const hasDatabaseSecurityIntent =
-    Boolean(isFullstack || isExistingFullstack) && selectedDatabase !== "none";
+    Boolean(isFullstack || isExistingFullstack) &&
+    selectedDatabase !== "none";
+  // "unknown" is used only for existing projects: retain generic database
+  // security guidance without guessing Supabase/MongoDB-specific instructions.
   if (hasDatabaseSecurityIntent) skillsToLoad.add("database-rls");
   if (
     (isFullstack && selectedDatabase === "supabase") ||
@@ -2090,7 +2093,8 @@ export class PromptBuilder {
           : TANSTACK_INSTRUCTION;
 
     const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit && db !== "none"
+      isFullstackMode && !isExistingFullstackEdit &&
+      (db === "supabase" || db === "mongodb")
         ? fullstackFramework === "nextjs"
           ? NEXTJS_DATABASE_INSTRUCTIONS[db]
           : wantsPython
