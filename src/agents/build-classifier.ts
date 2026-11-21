@@ -58,6 +58,7 @@ ARCHITECTURE DECISIONS:
 - Choose "browser-local" for frontend-only data that should remain in that browser/device (localStorage or IndexedDB as appropriate).
 - Choose "supabase" for real shared/cross-device application data or authentication when Supabase is the suitable supported provider. Do not choose it merely because the user said "database" in an example or mentioned Supabase as something to avoid.
 - Choose "mongodb" only when the user explicitly needs/prefers MongoDB or the data model makes it the appropriate requested provider.
+- The current Python/FastAPI scaffold supports Supabase or no application database. For MongoDB, choose the React/Vite Node/Hono runtime; do not combine Python with MongoDB.
 - Never invent a database connection. The runtime will separately verify whether the user's provider is connected.
 - "persistence" must match the database: Supabase -> supabase; MongoDB -> mongodb; no database -> none or browser-local.
 - If a fullstack server is required for non-persistent operations, "database":"none" and "persistence":"none" are valid.
@@ -149,6 +150,7 @@ export function parseClassification(raw: string): BuildClassification | null {
        (persistence !== "none" && persistence !== "browser-local") || needsAuth)) return null;
   if (buildType === "fullstack" && backendRuntime === "none") return null;
   if (framework === "nextjs" && backendRuntime === "python") return null;
+  if (backendRuntime === "python" && database === "mongodb") return null;
   if (database === "supabase" && persistence !== "supabase") return null;
   if (database === "mongodb" && persistence !== "mongodb") return null;
   if (database === "none" && persistence !== "none" && persistence !== "browser-local") return null;
