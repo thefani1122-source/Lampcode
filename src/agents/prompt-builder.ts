@@ -1891,9 +1891,12 @@ async function loadSkillsForPrompt(
   const isFullstack = opts?.buildType === "fullstack" || opts?.buildType === "fullstack-mongodb";
   const isExistingFullstack = opts?.buildType === "fullstack-existing";
 
-  if (selectedFramework === "nextjs") {
+  // Architecture-decision planning has no implementation framework yet.
+  // Do not inject the Next.js default skill into the model that is choosing the
+  // framework; that would bias the decision back toward the default.
+  if (opts?.buildType && selectedFramework === "nextjs") {
     skillsToLoad.add("nextjs-production");
-  } else if (isFullstack && backendRuntime === "node") {
+  } else if (opts?.buildType && isFullstack && backendRuntime === "node") {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
