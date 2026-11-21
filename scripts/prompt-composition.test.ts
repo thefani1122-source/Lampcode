@@ -141,9 +141,15 @@ check("existing Supabase full-stack edits receive the selected RLS skill",
 const nextJsPrompt = await builder.build(
   "frontend",
   {
-    description:
-      "FULLSTACK BUILD: Build a small full-stack System Health Dashboard using Next.js App Router. " +
-      "Use Route Handlers for /api/health. No external database or authentication is required.",
+    description: [
+      "FULLSTACK BUILD: Build a small full-stack System Health Dashboard using Next.js App Router. Use Route Handlers for /api/health. No external database or authentication is required.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_AUTH: not-required",
+      "LAMPCode_SELECTED_PERSISTENCE: none",
+    ].join("\n"),
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
@@ -176,9 +182,15 @@ check("Next.js build prompt does not request a database when none was selected",
 const noDatabaseHonoPrompt = await builder.build(
   "frontend",
   {
-    description:
-      "FULLSTACK BUILD: Build a React frontend with a Hono API for a simple health route.\n" +
+    description: [
+      "FULLSTACK BUILD: Build a React frontend with a Hono API for a simple health route.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
       "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_AUTH: not-required",
+      "LAMPCode_SELECTED_PERSISTENCE: none",
+    ].join("\n"),
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
@@ -203,9 +215,15 @@ check("a database-free Hono build does not receive database security skills",
 const inferredSupabasePrompt = await builder.build(
   "frontend",
   {
-    description:
-      "FULLSTACK BUILD: Build a multi-user collaboration app where teams share records.\n" +
+    description: [
+      "FULLSTACK BUILD: Build a multi-user collaboration app where teams share records.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
       "LAMPCode_SELECTED_DATABASE: supabase",
+      "LAMPCode_SELECTED_AUTH: not-required",
+      "LAMPCode_SELECTED_PERSISTENCE: supabase",
+    ].join("\n"),
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
