@@ -80,6 +80,16 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
     findMissingFullstackFiles(nextNoDb, "nextjs", "supabase").includes("src/db/types.ts"),
   );
   ok(
+    "Next.js full-stack builds require the internal App Router health endpoint",
+    findMissingFullstackFiles(nextNoDb, "nextjs", "none").includes("app/api/health/route.ts"),
+  );
+  ok(
+    "Next.js MongoDB builds require lib/db.ts, not Vite-era src/lib/db.ts or an invented SQL schema",
+    findMissingFullstackFiles(nextNoDb, "nextjs", "mongodb").includes("lib/db.ts") &&
+      !findMissingFullstackFiles(nextNoDb, "nextjs", "mongodb").includes("src/db/schema.ts") &&
+      !findMissingFullstackFiles(nextNoDb, "nextjs", "mongodb").includes("src/lib/db.ts"),
+  );
+  ok(
     "Next.js database-free builds do not request Supabase schema files",
     !findMissingFullstackFiles(nextNoDb, "nextjs", "none").some((path) => path.startsWith("src/db/")),
   );
