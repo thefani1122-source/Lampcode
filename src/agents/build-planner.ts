@@ -40,15 +40,14 @@ export type PlanningBuildShape = {
   existingBackendArtifacts: boolean;
 };
 
-/** React/Hono edits need the full-stack prompt path too; only Next/TanStack
- *  were previously recognised as full-stack edits by the build route. */
+/** An existing project uses the full-stack edit path only when its source
+ *  contains server/data artifacts. Next.js can also be a frontend-only app. */
 export function shouldUseFullstackEdit(opts: {
   hasExistingCode: boolean;
   framework: PlanningBuildShape["framework"];
   existingBackendArtifacts: boolean;
 }): boolean {
-  return opts.hasExistingCode &&
-    (opts.framework !== "react" || opts.existingBackendArtifacts);
+  return opts.hasExistingCode && opts.existingBackendArtifacts;
 }
 
 /** Infer only what loaded source proves. Missing keywords do not prove a browser-only app. */
@@ -71,22 +70,22 @@ export function inferExistingDatabase(
 export function formatBuildShapeForPrompt(shape: PlanningBuildShape): string {
   const lines = [
     "",
-    "AUTHORITATIVE BUILD CONTEXT — decided by the build pipeline, not by the planning model",
+    "TRUSTED BUILD CONTEXT — architecture selected by the build-intent model and validated by runtime policy",
   ];
 
   if (shape.projectMode === "new-frontend") {
     lines.push(
-      "- Project mode: new frontend-only application.",
+      "- Project mode: model-selected frontend-only application.",
       "- Framework: " + shape.framework + ".",
       "- No application server or database is part of this build. Do not add one just because it seems more professional.",
       "- Data scope: browser-local only when the user's requested behaviour needs persistence. Do not describe browser storage as multi-user or cross-device storage.",
     );
   } else if (shape.projectMode === "new-fullstack") {
     lines.push(
-      "- Project mode: new full-stack application. A real server-side implementation is required by the build pipeline; do not generate a browser-only substitute.",
+      "- Project mode: model-selected full-stack application. A real server-side implementation is required; do not generate a browser-only substitute.",
       "- Framework: " + shape.framework + ".",
       "- Backend runtime: " + shape.backendRuntime + ".",
-      "- Database provider selected by the build pipeline: " + shape.database + ". Do not silently switch providers.",
+      "- Database provider selected by the build-intent model: " + shape.database + ". Do not silently switch providers.",
       "- Authentication requirement: " + shape.auth + ".",
     );
     if (shape.database === "none") {
