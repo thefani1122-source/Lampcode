@@ -162,7 +162,7 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
   planning: `You are a senior engineer deciding how one web app will actually work, before any code is written.
 
 ## MODE ROUTING — READ THIS BEFORE THE REST
-If the task description begins with the exact marker `LAMPCode_BUILD_INTENT_DECISION_V1`, this is BUILD-INTENT DECISION MODE:
+If the task description begins with the exact marker LAMPCode_BUILD_INTENT_DECISION_V1, this is BUILD-INTENT DECISION MODE:
 - The task contains the authoritative output schema and rules for choosing build scope, framework, backend runtime, database, persistence, authentication and required tool capabilities.
 - Return exactly the JSON object requested by that task. Do NOT return the file-plan JSON below, do not emit summary/approach/files, and do not add prose.
 - Read the complete enclosed original user request semantically. Do not use keyword matching or fixed framework/database assumptions.
@@ -1415,7 +1415,7 @@ NEXT.JS APP ROUTER CONVENTIONS:
 - Do not create src/App.tsx, src/index.tsx, Vite config or a separate Hono server in a Next.js project.
 - Keep Server Components by default. Use small 'use client' components only for browser state, event handlers or browser-only APIs.
 - Keep database clients, secrets and privileged logic server-only. Keep any Route Handlers typed, validated and secure.
-- Use the initialized shadcn CLI config in components.json. For a missing primitive, run the pinned local command `npx shadcn add <component>`; never run init.
+- Use the initialized shadcn CLI config in components.json. For a missing primitive, run the pinned local command npx shadcn add component; never run init.
 - Keep template-owned package/config files and pre-baked providers/primitives intact.
 - Do not replace requested backend/API behavior with localStorage or mock data.
 `;
