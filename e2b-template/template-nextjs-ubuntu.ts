@@ -138,7 +138,7 @@ export const NEXTJS_COMPONENTS_JSON = `{
 
 export const NEXTJS_STYLES_CSS = STYLES_CSS.replace(
   '@import "tailwindcss";',
-  '@import "tailwindcss";\\n@import "tw-animate-css";',
+  '@import "tailwindcss";\n@import "tw-animate-css";',
 )
 
 const NEXT_LAYOUT = `import type { Metadata } from 'next'
