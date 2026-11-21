@@ -608,8 +608,20 @@ function buildNewBuildPrompt(prompt: string, decision: BuildClassification): str
   const prefix = decision.buildType === "fullstack"
     ? decision.needsAuth ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:"
     : "FRONTEND BUILD:";
+  const tools = decision.requiredTools.length > 0 ? decision.requiredTools.join(", ") : "none identified";
   return [
     `${prefix}\n${expandUserPrompt(prompt)}`,
+    "",
+    "LAMPCode MODEL-SELECTED ARCHITECTURE (trusted build context):",
+    `- Project scope: ${decision.buildType}.`,
+    `- Framework: ${decision.framework}.`,
+    `- Backend runtime: ${decision.backendRuntime}.`,
+    `- Database: ${decision.database}.`,
+    `- Persistence: ${decision.persistence}.`,
+    `- Real authentication: ${decision.needsAuth ? "required" : "not required"}.`,
+    `- Tool capabilities identified during planning: ${tools}.`,
+    "- The tool-capability list is a recommendation, not an authorization grant. Choose actual available tools as needed; the tool registry, user connections and security policy remain authoritative.",
+    "- Preserve this selected architecture unless the user's explicit request changes. Do not silently swap framework, runtime, database or persistence.",
     "",
     `LAMPCode_SELECTED_BUILD_TYPE: ${decision.buildType}`,
     `LAMPCode_SELECTED_FRAMEWORK: ${decision.framework}`,
