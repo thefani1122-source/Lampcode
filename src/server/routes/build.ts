@@ -822,11 +822,9 @@ function buildFullstackEditPrompt(
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
-    `Keep everything that does not need to change. ${writeInstruction}
-
-` +
+    `Keep everything that does not need to change. ${writeInstruction}\n\n` +
+    `LAMPCode_SELECTED_FRAMEWORK: ${framework}` +
     (existingDatabase === "unknown" ? "" : `\nLAMPCode_SELECTED_DATABASE: ${existingDatabase}`)
-    `LAMPCode_SELECTED_FRAMEWORK: ${framework}`
   );
 }
 
