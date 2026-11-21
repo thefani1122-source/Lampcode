@@ -4,8 +4,7 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
-import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
-import { detectFullstackFramework as detectFullstackRuntime } from "./framework-selection.js";
+import { DEFAULT_BUILD_FRAMEWORK } from "./framework-selection.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -676,33 +675,34 @@ export type DatabaseChoice = Database | "none";
  * authoritative decision made by classification and the runtime selector.
  */
 function selectedBuildMarker<T extends string>(
-  prompt: string,
-  marker: "FRAMEWORK" | "DATABASE",
+  description: string,
+  marker: "FRAMEWORK" | "DATABASE" | "BUILD_TYPE" | "BACKEND_RUNTIME" | "AUTH",
   allowed: readonly T[],
 ): T | undefined {
-  const expression = new RegExp(
-    "LAMPCode_SELECTED_" + marker + "\\s*:\\s*(" + allowed.join("|") + ")\\b",
-    "gi",
-  );
-  const values = Array.from(prompt.matchAll(expression));
-  const last = values.at(-1)?.[1];
-  return last?.toLowerCase() as T | undefined;
+  const prefix = `LAMPCode_SELECTED_${marker}:`;
+  let selected: string | undefined;
+  for (const line of description.split(/\r?\n/)) {
+    const at = line.lastIndexOf(prefix);
+    if (at < 0) continue;
+    selected = line.slice(at + prefix.length).trim().toLowerCase().split(/\s+/)[0];
+  }
+  return selected !== undefined && (allowed as readonly string[]).includes(selected)
+    ? selected as T
+    : undefined;
 }
 
-export function selectedFullstackFramework(prompt: string): FullstackFramework {
-  return selectedBuildMarker(prompt, "FRAMEWORK", ["react", "nextjs", "tanstack"] as const)
-    ?? detectFullstackFramework(prompt);
+export function selectedFullstackFramework(description: string): FullstackFramework {
+  return selectedBuildMarker(description, "FRAMEWORK", ["react", "nextjs", "tanstack"] as const)
+    ?? DEFAULT_BUILD_FRAMEWORK;
 }
 
-export function detectDatabase(prompt: string): DatabaseChoice {
-  // The build route's deterministic classification is authoritative. Pass it
-  // explicitly so model inference (e.g. shared multi-user data) cannot diverge
-  // from the planner, DB gate, or required-file validator.
-  const selected = selectedBuildMarker(prompt, "DATABASE", ["supabase", "mongodb", "none"] as const);
-  if (selected) return selected;
-  if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
-  if (hasPositiveDatabaseRequirement(prompt) || readSignals(prompt).authSystem) return "supabase";
-  return "none";
+export function selectedBackendRuntime(description: string): "none" | "node" | "python" {
+  return selectedBuildMarker(description, "BACKEND_RUNTIME", ["none", "node", "python"] as const) ?? "none";
+}
+
+export function detectDatabase(description: string): DatabaseChoice {
+  // Parse the server-appended model decision only; never infer a provider from user text.
+  return selectedBuildMarker(description, "DATABASE", ["supabase", "mongodb", "none"] as const) ?? "none";
 }
 
 export const DB_INSTRUCTIONS: Record<Database, string> = {
@@ -1409,6 +1409,35 @@ NEXT.JS APP ROUTER CONVENTIONS:
 - Do not overwrite template-owned package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest files or pre-baked UI primitives.
 `;
 
+export const NEXTJS_FRONTEND_INSTRUCTION = `
+
+## NEXT.JS APP ROUTER — FRONTEND-ONLY BUILD
+
+This project uses the Next.js App Router template on port 3000. It is a frontend-only
+product scope unless the trusted build context explicitly selects a full-stack backend.
+Do not add Hono, Express, FastAPI, database clients, authentication or Route Handlers by default.
+
+PROJECT FILES:
+- app/layout.tsx: root HTML layout, metadata and shared providers.
+- app/page.tsx: home route.
+- app/<route>/page.tsx: additional route pages.
+- app/globals.css: Tailwind CSS v4 design tokens and global styles; keep its import in app/layout.tsx.
+- components/**: reusable app and UI components.
+- lib/**: utilities and client-safe shared logic.
+- public/**: static assets.
+
+IMPLEMENTATION:
+- Prefer React Server Components. Use small 'use client' components only for interactive state,
+  event handlers, browser APIs, charts, animations or WebGL.
+- Use accessible primitives from @/components/ui and cn() from @/lib/utils.
+- Use Tailwind CSS v4 utilities and the existing CSS variables. Do not add Tailwind v3 directives,
+  a second CSS framework, or rewrite template-owned package/config files.
+- Use localStorage/IndexedDB only when the trusted model decision selects browser-local persistence.
+  Be explicit that browser storage does not sync across devices or users.
+- Do not invent APIs, databases, external services or fake persistence.
+- Keep routes responsive and verify the rendered app at desktop and mobile widths.
+`
+
 export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
@@ -1810,26 +1839,22 @@ async function buildPipManifest(): Promise<string> {
 
 export type PromptBuildType = "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
 
-/**
- * The build task prefix determines whether the frontend agent is doing a new
- * browser build, a new Hono build, or an edit to an existing full-stack app.
- * MongoDB is detected from the same negation-aware signals as classification,
- * so a sentence such as "do not use MongoDB" cannot switch providers.
- */
+/** Resolve build scope only from server-appended metadata, never prompt keywords. */
 export function inferPromptBuildType(
   agentType: AgentTaskType,
   description: string,
 ): PromptBuildType | undefined {
-  const isFullstackBuildDescription =
-    description.startsWith("FULLSTACK BUILD:") ||
-    description.startsWith("FULLSTACK AUTH BUILD:");
-  const isExistingFullstackEdit = description.startsWith("EXISTING FULLSTACK EDIT:");
-  const isMongoBuildDescription = hasPositiveMongoRequirement(description);
-
   if (agentType !== "frontend") return undefined;
-  if (isExistingFullstackEdit) return "fullstack-existing";
-  if (!isFullstackBuildDescription) return "frontend";
-  return isMongoBuildDescription ? "fullstack-mongodb" : "fullstack";
+  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
+  const selected = selectedBuildMarker(description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+  if (selected === "fullstack") {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  if (selected === "frontend") return "frontend";
+  if (description.startsWith("FULLSTACK BUILD:") || description.startsWith("FULLSTACK AUTH BUILD:")) {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  return "frontend";
 }
 
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
@@ -1845,70 +1870,33 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
-  // actually start. "fullstack" is not synonymous with Hono: Next.js and
-  // TanStack use their own server runtimes, while FastAPI replaces Hono.
   const selectedFramework = selectedFullstackFramework(prompt);
-  const explicitlySelectedFramework = selectedBuildMarker(
-    prompt,
-    "FRAMEWORK",
-    ["react", "nextjs", "tanstack"] as const,
-  );
-  const isFreshFullstack = opts?.buildType === "fullstack";
-  const isProvenExistingFramework =
-    opts?.buildType === "fullstack-existing" && explicitlySelectedFramework !== undefined;
-  if ((isFreshFullstack || (isProvenExistingFramework && selectedFramework === "react")) &&
-      selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
+  const selectedDatabase = detectDatabase(prompt);
+  const backendRuntime = selectedBackendRuntime(prompt);
+  const isFullstack = opts?.buildType === "fullstack" || opts?.buildType === "fullstack-mongodb";
+  const isExistingFullstack = opts?.buildType === "fullstack-existing";
+
+  if (selectedFramework === "nextjs") {
+    skillsToLoad.add("nextjs-production");
+  } else if (isFullstack && backendRuntime === "node") {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
   }
-  if ((isFreshFullstack || (isProvenExistingFramework && selectedFramework === "nextjs")) &&
-      selectedFramework === "nextjs") {
-    skillsToLoad.add("nextjs-production");
-  }
-  // Optional specialist guidance is deliberately NOT injected by keyword
-  // matching. The metadata-only catalogue is always available to tool-enabled
-  // builds; the model decides semantically whether to call load_skill. This
-  // avoids carrying large CrewAI/LangGraph/animation references through every
-  // prompt merely because a provider name appears in the request.
 
-  // Core implementation AND product-design skills — always for any frontend/fullstack build.
-  // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
   if (opts?.buildType) {
     skillsToLoad.add("react-production");
     skillsToLoad.add("typescript-strict");
     skillsToLoad.add("product-ui-design");
   }
 
-  // Database security is useful across providers, but the generic skill must
-  // stay provider-neutral. Supabase policy syntax is a separate skill and may
-  // only be injected when this build is actually using the Supabase path.
-  // Raw excluded terms ("without Supabase") and browser-local persistence must
-  // never cause either database skill to leak into a frontend-only build.
-  const requestSignals = readSignals(prompt);
-  const selectedDatabase = selectedBuildMarker(
-    prompt,
-    "DATABASE",
-    ["supabase", "mongodb", "none"] as const,
-  );
-  const databaseChoice = selectedDatabase ?? (
-    hasPositiveMongoRequirement(prompt)
-      ? "mongodb"
-      : hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem
-        ? "supabase"
-        : "none"
-  );
   const hasDatabaseSecurityIntent =
-    Boolean(opts?.buildType && opts.buildType !== "frontend") &&
-    databaseChoice !== "none";
-  if (hasDatabaseSecurityIntent) {
-    skillsToLoad.add("database-rls");
-  }
-  const needsSupabaseRls =
-    (opts?.buildType === "fullstack" && databaseChoice === "supabase") ||
-    (opts?.buildType === "fullstack-existing" && selectedDatabase === "supabase");
-  if (needsSupabaseRls) {
+    Boolean(isFullstack || isExistingFullstack) && selectedDatabase !== "none";
+  if (hasDatabaseSecurityIntent) skillsToLoad.add("database-rls");
+  if (
+    (isFullstack && selectedDatabase === "supabase") ||
+    (isExistingFullstack && selectedDatabase === "supabase")
+  ) {
     skillsToLoad.add("supabase-rls");
   }
 
@@ -1920,7 +1908,7 @@ async function loadSkillsForPrompt(
       const { body } = parseSkillFrontmatter(raw, skill);
       skillContents.push(`\n\n---\n## Skill: ${skill}\n${body}`);
     } catch {
-      // skill file not found — skip silently
+      // Missing optional skills never stop a build.
     }
   }
 
@@ -1928,11 +1916,6 @@ async function loadSkillsForPrompt(
   return [projectSkillIndex, skillContents.join("")].filter(Boolean).join("\n");
 }
 
-/**
- * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
-because follow-up edits are usually frontend React/Vite apps in the E2B runtime —
- * this ensures the frontend-sandbox skill is injected on the stream path.
- */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
   buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" = "frontend",
@@ -1958,9 +1941,7 @@ export class PromptBuilder {
     projectFiles?: Record<string, string> | undefined,
     projectSkillDir?: string | undefined,
   ): Promise<BuiltPrompt> {
-    // Detect the build mode using the same negation-aware signals as the
-    // architecture classifier. A negative MongoDB mention must not select its
-    // provider-specific generation path.
+    // Scope/provider comes only from trusted model-decision markers.
     const buildType = inferPromptBuildType(agentType, task.description);
 
     const [baseSystemPrompt, skillsBlock, contextBlock, builtinSkillIndex] = await Promise.all([
@@ -1969,10 +1950,7 @@ export class PromptBuilder {
       agentType === "query"
         ? Promise.resolve("")
         : this.loadRelevantSkills(
-            [
-              context.prompt,
-              ...(task.description.match(/LAMPCode_SELECTED_(?:FRAMEWORK|DATABASE)\s*:\s*(?:react|nextjs|tanstack|supabase|mongodb|none)\b/gi) ?? []),
-            ].join("\n"),
+            task.description,
             buildType,
             workspaceDir,
             projectFiles,
@@ -2039,35 +2017,26 @@ export class PromptBuilder {
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
-    const nextFullstackPrompt =
-      agentType === "frontend" &&
-      (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
-       task.description.startsWith("EXISTING FULLSTACK EDIT:")) &&
-      selectedFullstackFramework(task.description) === "nextjs";
-    const base = nextFullstackPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
-
-    const isExistingFullstackEdit =
-      task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const isExistingFullstackEdit = task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const selectedFramework = selectedFullstackFramework(task.description);
+    const selectedBuildType = selectedBuildMarker(task.description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
     const isFullstackMode =
       agentType === "frontend" &&
-      (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
-       isExistingFullstackEdit);
-    // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
-    // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
-    const fullstackFramework: FullstackFramework = isFullstackMode
-      ? selectedFullstackFramework(task.description)
-      : "react";
-    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
+      (selectedBuildType === "fullstack" ||
+        (!selectedBuildType && (
+          task.description.startsWith("FULLSTACK BUILD:") ||
+          task.description.startsWith("FULLSTACK AUTH BUILD:")
+        )) ||
+        isExistingFullstackEdit);
+    const fullstackFramework: FullstackFramework = selectedFramework;
+    const db = isFullstackMode ? detectDatabase(task.description) : "none";
+    const backendRuntime = selectedBackendRuntime(task.description);
+    const wantsPython =
+      isFullstackMode && fullstackFramework === "react" && backendRuntime === "python";
 
-    // FASTAPI_OVERRIDE only applies to react fullstack (Hono → FastAPI swap).
-    // Next.js and TanStack have their own backend model (API routes / server functions).
-    const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
+    const nextFrameworkPrompt = agentType === "frontend" && fullstackFramework === "nextjs";
+    const base = nextFrameworkPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
-    // Existing-project edits need the correct runtime/DB context, but
-    // must not receive new-app scaffolding instructions that demand rewriting
-    // the project's file layout and backend from scratch.
     let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
@@ -2078,8 +2047,6 @@ export class PromptBuilder {
               : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
       : "";
 
-    // Only the react/hono path maps to e2b-template/template.ts — Next.js and
-    // TanStack route to their own separate templates (out of scope this session).
     if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "nextjs") {
       fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNextNpmManifest());
     }
@@ -2088,22 +2055,14 @@ export class PromptBuilder {
       if (wantsPython) fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
     }
 
-    // framework detection for frameworkInstruction (Sandpack rules):
-    // - For fullstack nextjs/tanstack: skip FRAMEWORK_RULES (their instruction covers everything).
-    // - For fullstack react: use FRAMEWORK_RULES.react (gives sandbox restrictions + fetch exception).
-    // - For Sandpack builds: detect from prompt, can be any framework.
-    const framework = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react"
-          ? fullstackFramework  // nextjs or tanstack — frameworkInstruction will be "" below
-          : detectFramework(task.description, "react"))
-      : "react";
-    const frameworkInstruction = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react" ? "" : FRAMEWORK_RULES[framework])
-      : "";
+    const frameworkInstruction = agentType !== "frontend"
+      ? ""
+      : fullstackFramework === "nextjs"
+        ? (isFullstackMode ? "" : NEXTJS_FRONTEND_INSTRUCTION)
+        : fullstackFramework === "react"
+          ? FRAMEWORK_RULES.react
+          : TANSTACK_INSTRUCTION;
 
-    // Provider-specific database instructions describe a new scaffold and
-    // fixed file layout. Existing projects must follow their own code/schema
-    // conventions instead of being migrated to the current template.
     const dbInstruction =
       isFullstackMode && !isExistingFullstackEdit && db !== "none"
         ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
@@ -2111,8 +2070,8 @@ export class PromptBuilder {
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
-      task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // Next uses SSR-safe cookies/HttpOnly sessions; Vite uses its existing auth contract.
+      (task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+        selectedBuildMarker(task.description, "AUTH", ["required"] as const) === "required");
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
         ? (db === "none" ? "" : NEXTJS_AUTH_INSTRUCTIONS[db])
