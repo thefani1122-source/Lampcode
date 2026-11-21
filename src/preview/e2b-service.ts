@@ -2085,14 +2085,10 @@ export function prewarmSandbox(projectId: string, framework: FullstackFramework 
   if (!activeWarm && live && liveFramework === framework) return;
 
   // Validate the target before killing or replacing a healthy preview. A
-  // missing candidate template must never destroy the user's current runtime.
+  // missing candidate template must fail the build immediately; silently
+  // returning here could leave tools attached to an old, incompatible runtime.
   if (activeWarm || !live || liveFramework !== framework) {
-    try {
-      selectTemplate(framework);
-    } catch (err) {
-      logger.warn({ projectId, framework, err }, "[e2b] prewarm skipped: target runtime is not configured");
-      return;
-    }
+    selectTemplate(framework);
   }
 
   if (activeWarm) {
