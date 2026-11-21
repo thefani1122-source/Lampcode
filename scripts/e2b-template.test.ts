@@ -113,7 +113,7 @@ assert.equal(nextPkg.devDependencies['tw-animate-css'], '1.4.0', 'pin Tailwind v
 assert.ok(NEXTJS_COMPONENTS_JSON.includes('"$schema": "https://ui.shadcn.com/schema.json"'))
 assert.ok(NEXTJS_COMPONENTS_JSON.includes('"css": "app/globals.css"'))
 assert.ok(NEXTJS_COMPONENTS_JSON.includes('"ui": "@/components/ui"'))
-assert.ok(NEXTJS_STYLES_CSS.includes('@import "tailwindcss";\\n@import "tw-animate-css";'))
+assert.ok(NEXTJS_STYLES_CSS.includes('@import "tailwindcss";\n@import "tw-animate-css";'))
 assert.ok(NEXTJS_SCAFFOLD_COMMANDS.some((command) => command.includes('/home/user/app/components.json')))
 assert.ok(NEXTJS_SCAFFOLD_COMMANDS.some((command) => command.includes('/home/user/app/app/globals.css')))
 assert.equal(nextPkg.devDependencies.vitest, '^5.0.0', 'Vitest 5 uses the same Vite major/minor line')
