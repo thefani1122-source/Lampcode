@@ -2120,9 +2120,13 @@ export class PromptBuilder {
         (!selectedBuildType && task.description.startsWith("FULLSTACK AUTH BUILD:")));
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
-        ? (db === "none" ? "" : NEXTJS_AUTH_INSTRUCTIONS[db])
+        ? (db === "supabase" || db === "mongodb" ? NEXTJS_AUTH_INSTRUCTIONS[db] : "")
         : (fullstackFramework === "react" || fullstackFramework === "tanstack")
-          ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
+          ? db === "mongodb"
+            ? MONGODB_AUTH_INSTRUCTION
+            : db === "supabase"
+              ? FULLSTACK_AUTH_INSTRUCTION
+              : ""
           : ""
       : "";
 
