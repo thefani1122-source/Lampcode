@@ -44,6 +44,20 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
     "app/layout.tsx": "export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }",
     "app/api/health/route.ts": "export async function GET() { return Response.json({ status: 'ok' }); }",
   };
+  const reactNoDatabase = {
+    "src/App.tsx": "export default function App() { return null; }",
+    "src/server/app.ts": "const app = new Hono(); export default app;",
+    "src/server/index.ts": "serve({ fetch: app.fetch, port: 3001 });",
+    "src/server/routes/api.ts": "export const api = new Hono();",
+  };
+  ok(
+    "React/Hono database-free builds still require the real app, server and API routes",
+    findMissingFullstackFiles(reactNoDatabase, "react", "none").length === 0,
+  );
+  ok(
+    "React/Hono database-free builds do not require schema files",
+    !findMissingFullstackFiles(reactNoDatabase, "react", "none").some((path) => path.startsWith("src/db/")),
+  );
   ok(
     "Next.js database-free builds require App Router files, not src/App.tsx or DB files",
     findMissingFullstackFiles(nextNoDb, "nextjs", "none").length === 0,
