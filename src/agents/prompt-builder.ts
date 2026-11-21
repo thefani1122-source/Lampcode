@@ -665,8 +665,8 @@ TOUCH TARGETS:
 // ── Database detection + per-database rules ───────────────────────────────────
 
 /**
- * Detect which cloud database the user is requesting.
- * Supabase is the default when no specific DB keyword is found.
+ * Resolve the database selected by the build pipeline, or infer it when this
+ * helper is used outside a full-stack build. Server runtime alone is not a DB.
  */
 export type DatabaseChoice = Database | "none";
 
@@ -1418,7 +1418,7 @@ for HTTP APIs. There is no separate Hono process; the preview runs one Node.js p
 The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
 
 IMPLEMENT IN THIS ORDER:
-1. If a database is selected, server-only data access, shared types/models and app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested.
+1. If a database is selected, implement server-only data access and shared types/models before app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested; do not invent database models or persistence.
 2. app/layout.tsx, app/globals.css and shared providers.
 3. app/page.tsx and all requested route pages.
 4. Small Client Components only where browser state, event handlers, animations or WebGL are required.
