@@ -1632,15 +1632,23 @@ export async function runFastBuild(
                     "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
                     "Do NOT generate package.json or .env — the environment provides them.",
                   ]
-                : [
-                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
-                    "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
-                    "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
-                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
-                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
-                    "Do NOT generate package.json or .env — the environment provides them.",
-                  ]
+                : fullstackDb === "none"
+                  ? [
+                      "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                      "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css and app.config.ts.",
+                      "No application database is selected. Do NOT generate src/db/*, schemas, migrations or database clients.",
+                      "Use TanStack Start server functions only for the actual server behavior the user requested; do not invent persistent data storage.",
+                      "Do NOT generate package.json or .env — the environment provides them.",
+                    ]
+                  : [
+                      "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                      "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
+                      "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                      "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
+                      "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                      "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                      "Do NOT generate package.json or .env — the environment provides them.",
+                    ]
               : fullstackDb === "mongodb"
                 ? [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
@@ -1652,15 +1660,32 @@ export async function runFastBuild(
                     "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
                   ]
                 : wantsPython
-                ? [
-                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
-                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-                    "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
-                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
-                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
-                  ]
-                : [
+                  ? fullstackDb === "none"
+                    ? [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate src/server/main.py, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "Backend: Python FastAPI from the provided Ubuntu Python runtime. No database was selected; do not generate schema, database clients or migrations.",
+                        "Do NOT claim API data survives server restarts; use only the server behavior the user actually requested.",
+                        "Do NOT generate package.json or .env — the preview environment provides them.",
+                      ]
+                    : [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
+                        "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                        "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
+                        "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                        "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+                      ]
+                  : fullstackDb === "none"
+                    ? [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate src/server/app.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "Backend: Hono.js on Node.js with Zod validation. There is no application database.",
+                        "Do NOT generate src/db/*, database clients, Supabase/Mongo schemas, migrations or fake persistent storage.",
+                        "The Vite frontend runs on :5173 and proxies /api to the Hono server on :3001. Use same-origin /api calls.",
+                        "Do NOT generate package.json or .env — the preview environment provides them.",
+                      ]
+                    : [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
                     "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
