@@ -670,12 +670,36 @@ TOUCH TARGETS:
  */
 export type DatabaseChoice = Database | "none";
 
+/**
+ * The build route appends trusted runtime/database markers after the raw user
+ * request. Read the LAST marker so user-authored text cannot override the
+ * authoritative decision made by classification and the runtime selector.
+ */
+function selectedBuildMarker<T extends string>(
+  prompt: string,
+  marker: "FRAMEWORK" | "DATABASE",
+  allowed: readonly T[],
+): T | undefined {
+  const expression = new RegExp(
+    String.raw\`LAMPCode_SELECTED_\${marker}\s*:\s*(\${allowed.join("|")})\b\`,
+    "gi",
+  );
+  const values = Array.from(prompt.matchAll(expression));
+  const last = values.at(-1)?.[1];
+  return last?.toLowerCase() as T | undefined;
+}
+
+export function selectedFullstackFramework(prompt: string): FullstackFramework {
+  return selectedBuildMarker(prompt, "FRAMEWORK", ["react", "nextjs", "tanstack"] as const)
+    ?? detectFullstackFramework(prompt);
+}
+
 export function detectDatabase(prompt: string): DatabaseChoice {
   // The build route's deterministic classification is authoritative. Pass it
   // explicitly so model inference (e.g. shared multi-user data) cannot diverge
   // from the planner, DB gate, or required-file validator.
-  const selected = /LAMPCode_SELECTED_DATABASE\s*:\s*(supabase|mongodb|none)\b/i.exec(prompt);
-  if (selected?.[1]) return selected[1].toLowerCase() as DatabaseChoice;
+  const selected = selectedBuildMarker(prompt, "DATABASE", ["supabase", "mongodb", "none"] as const);
+  if (selected) return selected;
   if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
   if (hasPositiveDatabaseRequirement(prompt) || readSignals(prompt).authSystem) return "supabase";
   return "none";
@@ -1824,7 +1848,7 @@ async function loadSkillsForPrompt(
   // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
   // actually start. "fullstack" is not synonymous with Hono: Next.js and
   // TanStack use their own server runtimes, while FastAPI replaces Hono.
-  const selectedFramework = detectFullstackFramework(prompt);
+  const selectedFramework = selectedFullstackFramework(prompt);
   if (opts?.buildType === "fullstack" && selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
@@ -1986,7 +2010,7 @@ export class PromptBuilder {
       (task.description.startsWith("FULLSTACK BUILD:") ||
        task.description.startsWith("FULLSTACK AUTH BUILD:") ||
        task.description.startsWith("EXISTING FULLSTACK EDIT:")) &&
-      detectFullstackFramework(task.description) === "nextjs";
+      selectedFullstackFramework(task.description) === "nextjs";
     const base = nextFullstackPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
     const isExistingFullstackEdit =
@@ -1999,7 +2023,7 @@ export class PromptBuilder {
     // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
     // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
     const fullstackFramework: FullstackFramework = isFullstackMode
-      ? detectFullstackFramework(task.description)
+      ? selectedFullstackFramework(task.description)
       : "react";
     const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
 
