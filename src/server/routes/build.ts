@@ -1289,7 +1289,15 @@ export async function runFastBuild(
     const promptWordCount = prompt.trim().split(/\s+/).length;
     const isShortFollowUp = hasExistingCode && promptWordCount <= 20;
 
-    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
+    const existingBackendPaths = Object.keys(existingFiles).filter((path) => {
+      const code = existingFiles[path] ?? "";
+      return (
+        isBackendFile(path) ||
+        /^app\\/api\\/.+\\/route\\.[cm]?[jt]sx?$/.test(path) ||
+        /(^|\\n)\\s*["']use server["']/.test(code) ||
+        /from\\s+["']server-only["']/.test(code)
+      );
+    });
     const existingHasPython = Object.keys(existingFiles).some(
       (path) => path.endsWith(".py") || path === "requirements.txt",
     );
