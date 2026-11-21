@@ -608,9 +608,14 @@ function buildFullstackPrompt(
   prompt: string,
   authWanted: boolean | undefined,
   selectedDatabase: "supabase" | "mongodb" | "none",
+  selectedFramework: FullstackFramework,
 ): string {
   const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return `${prefix}\n${expandUserPrompt(prompt)}\n\nLAMPCode_SELECTED_DATABASE: ${selectedDatabase}`;
+  return (
+    \`\${prefix}\n\${expandUserPrompt(prompt)}\` +
+    \`\n\nLAMPCode_SELECTED_FRAMEWORK: \${selectedFramework}\` +
+    \`\nLAMPCode_SELECTED_DATABASE: \${selectedDatabase}\`
+  );
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -816,7 +821,10 @@ function buildFullstackEditPrompt(
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
-    `Keep everything that does not need to change. ${writeInstruction}`
+    `Keep everything that does not need to change. ${writeInstruction}
+
+` +
+    `LAMPCode_SELECTED_FRAMEWORK: ${framework}`
   );
 }
 
@@ -1517,7 +1525,7 @@ export async function runFastBuild(
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
-            ? buildFullstackPrompt(prompt, classification?.needsAuth, fullstackDb)
+            ? buildFullstackPrompt(prompt, classification?.needsAuth, fullstackDb, fullstackFramework)
             : expandUserPrompt(prompt);
 
     const requirements = isTokenOnlyEdit
