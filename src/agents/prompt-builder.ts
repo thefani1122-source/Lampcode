@@ -667,9 +667,12 @@ TOUCH TARGETS:
  * Detect which cloud database the user is requesting.
  * Supabase is the default when no specific DB keyword is found.
  */
-export function detectDatabase(prompt: string): Database {
+export type DatabaseChoice = Database | "none";
+
+export function detectDatabase(prompt: string): DatabaseChoice {
   if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
-  return "supabase";
+  if (hasPositiveDatabaseRequirement(prompt) || readSignals(prompt).authSystem) return "supabase";
+  return "none";
 }
 
 export const DB_INSTRUCTIONS: Record<Database, string> = {
@@ -1305,6 +1308,25 @@ custom JWT auth in the Hono backend. Generate:
    No social/OAuth (custom auth is email/password).`;
 
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
+const NEXTJS_FRONTEND_BASE = `You are LampCode, a senior full-stack Next.js engineer and product designer.
+Build a complete, polished, production-usable application from the user's request. Treat the user's explicit architecture and product requirements as authoritative.
+
+PRODUCT AND VISUAL QUALITY:
+- Understand the product, actors, data, requested routes, user journeys and success criteria before coding.
+- Establish a product-specific design system: visual identity, accessible palette, typography, spacing, surface hierarchy and responsive layout.
+- Build the actual working surface, not a heading with generic cards. Use domain-appropriate content, useful hierarchy and functional primary actions.
+- Distinguish loading, real-empty, error and populated states. Do not fabricate live database records.
+- Inspect the rendered browser at desktop and mobile sizes. A successful compile is not visual verification.
+
+NEXT.JS APP ROUTER CONVENTIONS:
+- The selected runtime is Next.js App Router on Ubuntu, served by the Next.js Node server on port 3000.
+- Use app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts. Do not create src/App.tsx, src/index.tsx, Vite config or a separate Hono server.
+- Keep Server Components by default. Use small 'use client' components only for browser state, event handlers or browser-only APIs.
+- Keep database clients, secrets and privileged logic server-only. Keep Route Handlers typed, validated and secure.
+- Do not replace a requested backend/API with localStorage or mock data to make the preview appear functional.
+- Do not overwrite template-owned package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest files or pre-baked UI primitives.
+`;
+
 export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
@@ -1899,7 +1921,13 @@ export class PromptBuilder {
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
-    const base = SYSTEM_PROMPTS[agentType];
+    const nextFullstackPrompt =
+      agentType === "frontend" &&
+      (task.description.startsWith("FULLSTACK BUILD:") ||
+       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+       task.description.startsWith("EXISTING FULLSTACK EDIT:")) &&
+      detectFullstackFramework(task.description) === "nextjs";
+    const base = nextFullstackPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
     const isExistingFullstackEdit =
       task.description.startsWith("EXISTING FULLSTACK EDIT:");
@@ -1957,7 +1985,7 @@ export class PromptBuilder {
     // fixed file layout. Existing projects must follow their own code/schema
     // conventions instead of being migrated to the current template.
     const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit
+      isFullstackMode && !isExistingFullstackEdit && db !== "none"
         ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
         : "";
 
