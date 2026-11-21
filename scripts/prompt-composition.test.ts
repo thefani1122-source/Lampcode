@@ -96,7 +96,8 @@ check("Hono with no selected database receives a database-free scaffold",
   noDatabaseHonoPrompt.systemPrompt.includes("REACT + VITE FRONTEND WITH A REAL HONO API, NO DATABASE"));
 check("Hono with no selected database does not receive Supabase schema instructions",
   !noDatabaseHonoPrompt.systemPrompt.includes("DATABASE: Supabase") &&
-  !noDatabaseHonoPrompt.systemPrompt.includes("src/db/schema.sql"));
+  !noDatabaseHonoPrompt.systemPrompt.includes("Generate ALL of: src/db/types.ts") &&
+  !noDatabaseHonoPrompt.systemPrompt.includes("CREATE TABLE + RLS"));
 
 const inferredSupabasePrompt = await builder.build(
   "frontend",
