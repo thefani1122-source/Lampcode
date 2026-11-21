@@ -550,10 +550,11 @@ export function findMissingFullstackFiles(
   files: Record<string, string>,
   framework: string = "react",
   database: "supabase" | "mongodb" | "none" = "supabase",
+  backendRuntime: "node" | "python" = "node",
 ): string[] {
-  // Python/FastAPI apps ship src/server/main.py instead of the .ts backend —
-  // don't demand the Node files (or we'd trigger a wrong retry).
-  const required = !isEffectivelyEmpty(files["src/server/main.py"])
+  // Backend runtime is selected by the build pipeline. Do not infer Python
+  // from the presence of main.py: the point of this gate is to catch it missing.
+  const required = backendRuntime === "python"
     ? (database === "none" ? ["src/server/main.py"] : ["src/db/types.ts", "src/server/main.py"])
     : framework === "nextjs"
       ? [
@@ -566,10 +567,11 @@ export function findMissingFullstackFiles(
         ? [
             "app/routes/index.tsx",
             ...(database === "supabase" ? ["src/db/types.ts", "src/db/schema.sql"] : []),
+            ...(database === "mongodb" ? ["src/db/schema.ts", "src/lib/db.ts"] : []),
           ]
         : (database === "none"
             ? ["src/App.tsx", "src/server/app.ts", "src/server/index.ts", "src/server/routes/api.ts"]
-            : REQUIRED_FULLSTACK_FILES); // react: src/server/index.ts + src/server/routes/api.ts
+            : REQUIRED_FULLSTACK_FILES);
   return required.filter((path) => isEffectivelyEmpty(files[path]));
 }
 
