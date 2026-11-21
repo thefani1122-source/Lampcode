@@ -18,7 +18,7 @@
 import { classifyBuild, hasPositiveDatabaseRequirement, hasPositiveMongoRequirement } from "../src/agents/build-classifier.js";
 import { detectFullstackFramework } from "../src/agents/framework-selection.js";
 import { canReuseSandboxForFramework } from "../src/preview/framework-compat.js";
-import { inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
+import { detectDatabase, inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
 import { EVAL_TASKS } from "./eval/tasks.js";
 
 let failures = 0;
@@ -139,6 +139,22 @@ expectValue("Vite sandbox is replaced for Next.js", canReuseSandboxForFramework(
   if (oldNextId === undefined) delete process.env["NEXTJS_TEMPLATE_ID"];
   else process.env["NEXTJS_TEMPLATE_ID"] = oldNextId;
 }
+
+expectValue(
+  "Next.js health dashboard does not require an application database",
+  detectDatabase("FULLSTACK BUILD: Build a Next.js App Router health dashboard. No external database or authentication is required."),
+  "none",
+);
+expectValue(
+  "Next.js with explicit Supabase selects Supabase",
+  detectDatabase("FULLSTACK BUILD: Build a Next.js CRM using Supabase."),
+  "supabase",
+);
+expectValue(
+  "MongoDB remains selected when explicitly requested for Next.js",
+  detectDatabase("FULLSTACK BUILD: Build a Next.js app with MongoDB."),
+  "mongodb",
+);
 
 // ── A hard server signal beats a client-only marker ───────────────────────────
 
