@@ -1,327 +1,196 @@
 /**
- * Cases for classifyBuild. Run by `npm test`.
+ * Model-owned build architecture contract.
  *
- * This decides whether a build gets a Hono backend and a Supabase schema, from
- * the prompt alone. The 2026-10-03 eval measured what it was getting wrong:
- * half the smoke set asked for a browser-only app and got a database. With the
- * preview Supabase project paused, those apps ship and their writes fail.
- *
- * The cost is asymmetric in both directions, so both are pinned here:
- *  - false fullstack: an over-built app with storage that cannot work;
- *  - false frontend: someone asks for real auth and gets a UI with no backend.
- *
- * The real prompts from HISTORY.md (Atlas, ForgeFlow) and all twenty
- * eval prompts are included, so a future narrowing cannot quietly break the
- * cases that were already right.
+ * These tests validate the model-output schema and the trusted metadata path.
+ * They deliberately do not call the live model: the build-intent prompt is
+ * exercised separately in staging with real prompts.
  */
-
-import { classifyBuild, hasPositiveDatabaseRequirement, hasPositiveMongoRequirement } from "../src/agents/build-classifier.js";
+import assert from "node:assert/strict";
+import {
+  BUILD_INTENT_INSTRUCTION,
+  BuildClassificationError,
+  buildClassificationDescription,
+  classifyBuild,
+  parseClassification,
+} from "../src/agents/build-classifier.js";
 import { detectFullstackFramework } from "../src/agents/framework-selection.js";
 import { canReuseSandboxForFramework } from "../src/preview/framework-compat.js";
-import { inferPromptBuildType, loadRelevantSkillsForPrompt } from "../src/agents/prompt-builder.js";
-import { EVAL_TASKS } from "./eval/tasks.js";
+import {
+  detectDatabase,
+  inferPromptBuildType,
+  loadRelevantSkillsForPrompt,
+  selectedBackendRuntime,
+  selectedFullstackFramework,
+} from "../src/agents/prompt-builder.js";
 
-let failures = 0;
+function decision(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    buildType: "frontend",
+    framework: "nextjs",
+    backendRuntime: "none",
+    database: "none",
+    persistence: "browser-local",
+    needsAuth: false,
+    requiredTools: ["filesystem", "shell", "browser"],
+    reason: "A browser-local application does not need a separate server.",
+    ...overrides,
+  };
+}
+
 function expectValue(name: string, got: unknown, want: unknown): void {
-  if (got === want) {
-    console.log(`✔ ${name}`);
-    return;
-  }
-  failures++;
-  console.log(`✘ ${name}\n    got:  ${JSON.stringify(got)}\n    want: ${JSON.stringify(want)}`);
+  assert.deepEqual(got, want, name);
+  console.log("✔ " + name);
 }
 
-async function expectType(
-  name: string,
-  prompt: string,
-  want: "frontend" | "fullstack",
-  wantAuth?: boolean,
-  wantDatabase?: "supabase" | "mongodb" | "none",
-): Promise<void> {
-  const c = await classifyBuild(prompt);
-  const okType = c.buildType === want;
-  const okAuth = wantAuth === undefined || c.needsAuth === wantAuth;
-  const okDatabase = wantDatabase === undefined || c.database === wantDatabase;
-  if (okType && okAuth && okDatabase) {
-    console.log(`✔ ${name}`);
-    return;
-  }
-  failures++;
-  console.log(
-    `✘ ${name}\n    got:  ${c.buildType}, auth=${c.needsAuth}, db=${c.database} (${c.reason})` +
-    `\n    want: ${want}${wantAuth === undefined ? "" : `, auth=${wantAuth}`}`,
-  );
+function valid(raw: Record<string, unknown>) {
+  const parsed = parseClassification(JSON.stringify(raw));
+  assert.ok(parsed, "expected a valid model architecture decision");
+  return parsed;
 }
 
-// ── The two the eval caught ───────────────────────────────────────────────────
+console.log("\n— model output validation —");
 
-await expectType(
-  "\"tasks persist across reloads\" is localStorage, not a database",
-  "Build a todo list. Add a task, mark it done, delete it, and filter by all / active / done. " +
-  "Tasks persist across reloads. Show an empty state when there are no tasks.",
-  "frontend",
-  false,
-);
-await expectType(
-  "a three-step signup FORM is UI, not an auth system",
-  "Build a three-step signup form: account details, profile, confirm. Validate each step " +
-  "before allowing Next — email format, password at least 8 characters, required fields. " +
-  "The final step shows a summary of everything entered.",
-  "frontend",
-  false,
-);
+const nextFrontend = valid(decision());
+expectValue("Next.js frontend-only decision is preserved", nextFrontend.framework, "nextjs");
+expectValue("Next.js frontend-only decision has no backend", nextFrontend.backendRuntime, "none");
+expectValue("local browser persistence is distinct from a database", nextFrontend.persistence, "browser-local");
+expectValue("model tool needs are retained for the agent", nextFrontend.requiredTools, ["filesystem", "shell", "browser"]);
 
-// Regression from the 2026-11-12 TaskFlow build: a provider named only inside
-// an explicit exclusion must not override browser-local architecture.
-await expectType(
-  "TaskFlow's localStorage build stays frontend when Supabase, external APIs and MCP are excluded",
-  "Build TaskFlow, a personal task manager. Persist task data using browser localStorage " +
-  "so it works without Supabase, external APIs, or MCP integrations. " +
-  "Do not create fake backend integrations.",
-  "frontend",
-  false,
-  "none",
-);
-await expectType(
-  "a list of excluded providers does not become a backend request",
-  "Build a single-user notes app with localStorage. Do not use Supabase, Firebase, or MongoDB.",
-  "frontend",
-  false,
-  "none",
-);
-await expectType(
-  "an explicitly rejected database does not replace the requested Supabase provider",
-  "Build a full-stack notes app that saves notes in Supabase. Do not use MongoDB.",
-  "fullstack",
-  false,
-  "supabase",
-);
+const nextFullstackNoDb = valid(decision({
+  buildType: "fullstack",
+  backendRuntime: "node",
+  persistence: "none",
+  requiredTools: ["filesystem", "shell", "browser", "package-install"],
+  reason: "Next.js Route Handlers provide the requested API without a database.",
+}));
+expectValue("Next.js Route Handlers can be full-stack without Supabase", nextFullstackNoDb.database, "none");
+expectValue("Next.js server APIs use its Node runtime", nextFullstackNoDb.backendRuntime, "node");
 
-// ── Genuine fullstack must still be detected ──────────────────────────────────
+const reactFrontend = valid(decision({
+  framework: "react",
+  persistence: "browser-local",
+  reason: "The requested Vite SPA is local to one browser and needs no server.",
+}));
+expectValue("React/Vite frontend can be selected by the model", reactFrontend.framework, "react");
 
-await expectType("an explicit database is fullstack", "Build a blog that saves posts to Supabase.", "fullstack");
-await expectType("mongodb is fullstack", "A recipe app backed by MongoDB.", "fullstack");
-await expectType("a named backend is fullstack", "Build a Hono API with a React frontend.", "fullstack");
-await expectType("a REST API is fullstack", "Build a notes app with a REST API.", "fullstack");
-await expectType("multi-user is fullstack", "A team chat where multiple users see the same messages.", "fullstack");
-await expectType("payments are fullstack", "A store with Stripe checkout.", "fullstack");
-await expectType("file uploads are fullstack", "A gallery with file uploads.", "fullstack");
-await expectType("real-time is fullstack", "A real-time collaborative whiteboard.", "fullstack");
-await expectType(
-  "real authentication is fullstack and needs auth",
-  "Build a dashboard where users log in with their email and password and only see their own data.",
-  "fullstack",
-  true,
-);
-await expectType(
-  "oauth is real auth",
-  "Users sign in with Google OAuth, then manage their saved items.",
-  "fullstack",
-  true,
-);
-await expectType("next.js still routes fullstack", "Build a Next.js marketing site.", "fullstack");
+const reactHonoSupabase = valid(decision({
+  buildType: "fullstack",
+  framework: "react",
+  backendRuntime: "node",
+  database: "supabase",
+  persistence: "supabase",
+  requiredTools: ["filesystem", "shell", "package-install", "mcp"],
+  reason: "Shared cross-device records require a server and a real database.",
+}));
+expectValue("React/Hono full-stack with Supabase is supported", reactHonoSupabase.database, "supabase");
 
-expectValue("explicit Next.js request selects Next runtime", detectFullstackFramework("Build a Next.js SaaS with Supabase"), "nextjs");
-expectValue("explicit Hono API preserves React/Vite + Hono runtime", detectFullstackFramework("Build a React frontend with a Hono API"), "react");
-expectValue("explicit Python backend preserves React/Vite + FastAPI runtime", detectFullstackFramework("Build a React frontend with a Python FastAPI backend"), "react");
-expectValue("TanStack is never mistaken for Next.js", detectFullstackFramework("Build a TanStack Start app"), "tanstack");
+const fastApiMongo = valid(decision({
+  buildType: "fullstack",
+  framework: "react",
+  backendRuntime: "python",
+  database: "mongodb",
+  persistence: "mongodb",
+  reason: "The requested Python API uses MongoDB for durable shared records.",
+}));
+expectValue("React/Vite can use the Python backend when the model selects it", fastApiMongo.backendRuntime, "python");
+expectValue("MongoDB remains separate from Supabase", fastApiMongo.database, "mongodb");
+
+expectValue("unknown tool names are discarded, not granted", parseClassification(JSON.stringify(decision({
+  requiredTools: ["filesystem", "sudo", "delete-account", "browser"],
+})))?.requiredTools, ["filesystem", "browser"]);
+expectValue("legacy needsServer classifier output is rejected", parseClassification('{"needsServer":true,"needsSignIn":false,"why":"legacy"}'), null);
+expectValue("malformed JSON is rejected", parseClassification('{"buildType":'), null);
+expectValue("empty model response is rejected", parseClassification(""), null);
+expectValue("Next.js with Python backend is rejected", parseClassification(JSON.stringify(decision({
+  buildType: "fullstack",
+  backendRuntime: "python",
+  persistence: "none",
+  reason: "This combination is unsupported by the current Next runtime.",
+}))), null);
+expectValue("frontend-only with Supabase is rejected", parseClassification(JSON.stringify(decision({
+  database: "supabase",
+  persistence: "supabase",
+  reason: "Frontend projects cannot directly own a database connection.",
+}))), null);
+expectValue("full-stack with no backend runtime is rejected", parseClassification(JSON.stringify(decision({
+  buildType: "fullstack",
+  persistence: "none",
+  reason: "A full-stack build needs a server runtime.",
+}))), null);
+expectValue("Supabase cannot be paired with browser-local persistence", parseClassification(JSON.stringify(decision({
+  buildType: "fullstack",
+  backendRuntime: "node",
+  database: "supabase",
+  persistence: "browser-local",
+  reason: "The database and persistence choices conflict.",
+}))), null);
+
+console.log("\n— model invocation and original prompt preservation —");
+assert.ok(BUILD_INTENT_INSTRUCTION.includes("LAMPCode_BUILD_INTENT_DECISION_V1"));
+assert.ok(BUILD_INTENT_INSTRUCTION.includes("Next.js App Router is LampCode's DEFAULT"));
+assert.ok(BUILD_INTENT_INSTRUCTION.includes("Do not choose fullstack just because a server is fashionable"));
+assert.ok(BUILD_INTENT_INSTRUCTION.includes("requiredTools"));
+const original = "Build a full-stack health dashboard. Include the phrase Supabase only as an excluded option.";
+const modelInput = buildClassificationDescription(original);
+expectValue("model receives the exact original user request", modelInput.includes(original), true);
+expectValue("original prompt is enclosed as user data", modelInput.includes("<user_request>") && modelInput.includes("</user_request>"), true);
+await assert.rejects(
+  classifyBuild(original),
+  (error: unknown) => error instanceof BuildClassificationError,
+);
+console.log("✔ missing architecture dispatcher fails closed without guessing");
+
+console.log("\n— metadata, not keyword matching, controls prompt/runtime selection —");
+expectValue("new projects default to Next.js without reading prompt vocabulary", detectFullstackFramework("Build a React dashboard with Vite"), "nextjs");
+expectValue("React is selected by a trusted framework marker", selectedFullstackFramework("Build a Next app.\nLAMPCode_SELECTED_FRAMEWORK: react"), "react");
+expectValue("Next.js is selected by a trusted framework marker", detectFullstackFramework("Build using React.\nLAMPCode_SELECTED_FRAMEWORK: nextjs"), "nextjs");
+expectValue("TanStack remains readable as an explicit trusted marker", detectFullstackFramework("LAMPCode_SELECTED_FRAMEWORK: tanstack"), "tanstack");
+expectValue("database words in raw user text do not select Supabase", detectDatabase("Use Supabase if you need a database"), "none");
+expectValue("database words in raw user text do not select MongoDB", detectDatabase("Use MongoDB for storage"), "none");
+expectValue("database marker selects Supabase", detectDatabase("LAMPCode_SELECTED_DATABASE: supabase"), "supabase");
+expectValue("database marker selects MongoDB", detectDatabase("LAMPCode_SELECTED_DATABASE: mongodb"), "mongodb");
+expectValue("backend runtime comes from model metadata", selectedBackendRuntime("LAMPCode_SELECTED_BACKEND_RUNTIME: python"), "python");
+expectValue("no database keyword means no inferred full-stack prompt", inferPromptBuildType("frontend", "Build an API with Supabase"), "frontend");
+expectValue("trusted full-stack marker selects full-stack prompt", inferPromptBuildType("frontend", "LAMPCode_SELECTED_BUILD_TYPE: fullstack\nLAMPCode_SELECTED_DATABASE: none"), "fullstack");
+expectValue("explicit frontend metadata overrides a legacy full-stack prefix", inferPromptBuildType("frontend", "EXISTING FULLSTACK EDIT: nextjs\nLAMPCode_SELECTED_BUILD_TYPE: frontend"), "frontend");
+
 expectValue("legacy Vite sandbox can be reused for React", canReuseSandboxForFramework(null, "react"), true);
 expectValue("legacy Vite sandbox is not reused for Next.js", canReuseSandboxForFramework(null, "nextjs"), false);
 expectValue("Next.js sandbox is reused for Next.js", canReuseSandboxForFramework("nextjs", "nextjs"), true);
 expectValue("Next.js sandbox is replaced for React", canReuseSandboxForFramework("nextjs", "react"), false);
-expectValue("Vite sandbox is replaced for Next.js", canReuseSandboxForFramework("react", "nextjs"), false);
-{
-  const oldNextId = process.env["NEXTJS_TEMPLATE_ID"];
-  process.env["NEXTJS_TEMPLATE_ID"] = "lampcode-nextjs-ubuntu24";
-  expectValue("verified Next candidate makes full-stack default Next.js", detectFullstackFramework("Build a multi-user CRM with shared data"), "nextjs");
-  if (oldNextId === undefined) delete process.env["NEXTJS_TEMPLATE_ID"];
-  else process.env["NEXTJS_TEMPLATE_ID"] = oldNextId;
-}
 
-// ── A hard server signal beats a client-only marker ───────────────────────────
+console.log("\n— skill routing follows trusted architecture markers —");
+const nextFrontendSkills = await loadRelevantSkillsForPrompt([
+  "FRONTEND BUILD: Build a local dashboard.",
+  "LAMPCode_SELECTED_BUILD_TYPE: frontend",
+  "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+  "LAMPCode_SELECTED_DATABASE: none",
+  "LAMPCode_SELECTED_BACKEND_RUNTIME: none",
+].join("\n"), "frontend");
+expectValue("Next.js production skill is available for frontend-only Next builds", nextFrontendSkills.includes("## Skill: nextjs-production"), true);
+expectValue("frontend-only Next build does not receive Supabase RLS", nextFrontendSkills.includes("## Skill: supabase-rls"), false);
+expectValue("frontend-only Next build does not receive database RLS", nextFrontendSkills.includes("## Skill: database-rls"), false);
 
-await expectType(
-  "supabase plus localStorage caching is still fullstack",
-  "Store the records in Supabase and cache them in localStorage for offline reads.",
-  "fullstack",
-);
-await expectType(
-  "an explicit no-backend instruction is honoured",
-  "A kanban board with no backend — keep everything in localStorage.",
-  "frontend",
-  false,
-);
-// The negation bug these cases caught: "no backend" contains the word
-// "backend", so an instruction NOT to build one read as an instruction to
-// build one.
-await expectType(
-  "\"without a backend\" is honoured",
-  "A notes app without a backend, everything in browser storage.",
-  "frontend",
-);
-await expectType(
-  "\"no database\" is honoured",
-  "A budget tracker with no database — keep the numbers in localStorage.",
-  "frontend",
-);
-await expectType(
-  "\"doesn't need a server\" is honoured",
-  "A unit converter that doesn't need a server.",
-  "frontend",
-);
-// Negation-stripping must not swallow a real request sitting next to it.
-await expectType(
-  "a real backend request is untouched by the negation strip",
-  "Build a backend with Hono that stores submissions.",
-  "fullstack",
-);
+const reactNoDbSkills = await loadRelevantSkillsForPrompt([
+  "FULLSTACK BUILD: React with a Hono API.",
+  "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+  "LAMPCode_SELECTED_FRAMEWORK: react",
+  "LAMPCode_SELECTED_DATABASE: none",
+  "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+].join("\n"), "fullstack");
+expectValue("React/Hono skill follows a React backend decision", reactNoDbSkills.includes("## Skill: fullstack-hono"), true);
+expectValue("database-free Hono does not receive Supabase RLS", reactNoDbSkills.includes("## Skill: supabase-rls"), false);
 
-await expectType(
-  "mock data means frontend",
-  "An analytics dashboard with four KPI cards and a revenue chart using mock data.",
-  "frontend",
-);
+const supabaseSkills = await loadRelevantSkillsForPrompt([
+  "FULLSTACK BUILD: a SaaS app.",
+  "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+  "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+  "LAMPCode_SELECTED_DATABASE: supabase",
+  "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+].join("\n"), "fullstack");
+expectValue("Next.js Supabase build receives Supabase RLS skill", supabaseSkills.includes("## Skill: supabase-rls"), true);
+expectValue("Next.js Supabase build receives database security guidance", supabaseSkills.includes("## Skill: database-rls"), true);
 
-// ── 3D and animation no longer imply a database ───────────────────────────────
-// They used to force fullstack to route the build to E2B, where Three.js is
-// pre-installed. build.ts now sends every build to E2B regardless, so all that
-// remained was giving a landing page a Supabase schema.
-
-await expectType("a three.js landing page is frontend", "A Three.js landing page with a rotating globe.", "frontend");
-await expectType("webgl shaders are frontend", "An immersive WebGL shader background with scroll parallax.", "frontend");
-await expectType("a spline scene is frontend", "A product page with a Spline 3D scene.", "frontend");
-await expectType("gsap scroll animation is frontend", "A site with GSAP ScrollTrigger animations.", "frontend");
-await expectType(
-  "3D plus a real database is still fullstack",
-  "A Three.js product configurator that saves each configuration to Supabase.",
-  "fullstack",
-);
-
-// ── The historical prompts from HISTORY.md ────────────────────────────────────
-
-await expectType(
-  "Atlas (the 2026-10-01 build) is frontend",
-  "Atlas, a 4-view client/project tracker: dashboard with KPI cards and a revenue chart, a " +
-  "searchable client table with a detail panel, a drag-and-drop kanban, and settings. " +
-  "localStorage persistence, validation, empty states, Escape-to-close, responsive to 390px.",
-  "frontend",
-  false,
-);
-
-// ── The whole eval set, as a regression net ───────────────────────────────────
-// Not asserting a verdict for each — asserting that the ones meant to be
-// browser-only are, since that is what the eval found broken.
-
-const expectedFrontend = new Set([
-  "counter", "todo", "pricing-page", "form-validation", "kanban", "dashboard",
-  "data-table", "calendar", "file-explorer", "settings-tabs", "search-filter",
-  "theme-system", "crm", "project-tracker", "form-builder", "spreadsheet", "editor-undo",
-]);
-for (const task of EVAL_TASKS) {
-  if (!expectedFrontend.has(task.id)) continue;
-  await expectType(`eval task "${task.id}" is frontend`, task.prompt, "frontend");
-}
-// And the ones that genuinely are fullstack.
-for (const id of ["python-api"]) {
-  const task = EVAL_TASKS.find((t) => t.id === id);
-  if (task) await expectType(`eval task "${id}" is fullstack`, task.prompt, "fullstack");
-}
-
-// ── Architecture-aware skill selection ───────────────────────────────────────
-// A correct classifier decision is not enough if the prompt builder injects
-// vendor instructions from words that appear only in a user exclusion.
-const taskFlowPrompt =
-  "Build TaskFlow, a personal task manager. Persist task data using browser localStorage " +
-  "so it works without Supabase, external APIs, or MCP integrations. " +
-  "Do not create fake backend integrations.";
-
-expectValue(
-  "TaskFlow's excluded Supabase mention is not a positive database request",
-  hasPositiveDatabaseRequirement(taskFlowPrompt),
-  false,
-);
-
-const frontendSkills = await loadRelevantSkillsForPrompt(taskFlowPrompt, "frontend");
-expectValue(
-  "frontend localStorage builds do not receive Supabase database rules",
-  frontendSkills.includes("## Skill: database-rls"),
-  false,
-);
-expectValue(
-  "frontend localStorage builds do not receive Supabase RLS rules",
-  frontendSkills.includes("## Skill: supabase-rls"),
-  false,
-);
-expectValue(
-  "frontend localStorage builds still receive frontend sandbox guidance",
-  frontendSkills.includes("## Skill: frontend-sandbox"),
-  true,
-);
-
-const backendWithoutDatabase = "Build a Hono API for webhook delivery. Do not use Supabase or a database.";
-const backendSkills = await loadRelevantSkillsForPrompt(backendWithoutDatabase, "fullstack");
-expectValue(
-  "a backend without a database does not receive Supabase RLS instructions",
-  backendSkills.includes("## Skill: supabase-rls"),
-  false,
-);
-
-const supabaseSkills = await loadRelevantSkillsForPrompt("Build a full-stack app that stores user data in Supabase and authenticates each user.", "fullstack");
-expectValue(
-  "a Supabase full-stack app still receives its database RLS skill",
-  supabaseSkills.includes("## Skill: database-rls"),
-  true,
-);
-expectValue(
-  "a Supabase full-stack app still receives its provider-specific RLS skill",
-  supabaseSkills.includes("## Skill: supabase-rls"),
-  true,
-);
-
-const mongoSkills = await loadRelevantSkillsForPrompt("Build an API backed by MongoDB.", "fullstack-mongodb");
-expectValue(
-  "MongoDB builds receive provider-neutral database security guidance",
-  mongoSkills.includes("## Skill: database-rls"),
-  true,
-);
-expectValue(
-  "MongoDB builds do not receive Supabase-specific RLS rules",
-  mongoSkills.includes("## Skill: supabase-rls"),
-  false,
-);
-
-const existingSkills = await loadRelevantSkillsForPrompt("Extend the existing PostgreSQL-backed app and preserve its current database provider.", "fullstack-existing");
-expectValue(
-  "existing full-stack edits preserve their own provider-specific instructions",
-  existingSkills.includes("## Skill: supabase-rls"),
-  false,
-);
-
-expectValue(
-  "a negative MongoDB mention does not switch a full-stack task to MongoDB",
-  inferPromptBuildType("frontend", "FULLSTACK BUILD: Build a Hono API. Do not use MongoDB; use Supabase."),
-  "fullstack",
-);
-expectValue(
-  "a positive MongoDB request still selects the MongoDB provider",
-  inferPromptBuildType("frontend", "FULLSTACK BUILD: Build a MongoDB-backed API."),
-  "fullstack-mongodb",
-);
-expectValue(
-  "an explicit MongoDB URI still selects MongoDB",
-  hasPositiveMongoRequirement("FULLSTACK BUILD: Use MONGODB_URI for persistence."),
-  true,
-);
-expectValue(
-  "Mongoose remains a supported positive MongoDB signal",
-  hasPositiveMongoRequirement("FULLSTACK BUILD: Use mongoose models."),
-  true,
-);
-expectValue(
-  "a negative MongoDB provider mention does not select MongoDB",
-  hasPositiveMongoRequirement("FULLSTACK BUILD: Use Supabase. Do not use MongoDB or mongoose."),
-  false,
-);
-
-console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
-process.exit(failures === 0 ? 0 : 1);
+console.log("\nAll model-owned build architecture cases passed.");

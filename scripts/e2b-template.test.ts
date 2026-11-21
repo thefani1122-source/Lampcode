@@ -126,6 +126,20 @@ assert.ok(!NEXT_VITEST_CONFIG.includes('__dirname'), 'Vitest config does not rel
 assert.match(NEXT_CONFIG, /allowedDevOrigins: previewHost \? \[previewHost\] : \[\]/)
 assert.ok(NEXT_CONFIG.includes('process.env.LAMPCODE_PREVIEW_HOST'), 'Next.js only allows the exact runtime preview hostname')
 
+
+const previewService = readFileSync(new URL('../src/preview/e2b-service.ts', import.meta.url), 'utf8')
+const prewarmStart = previewService.indexOf('export function prewarmSandbox(')
+const prewarmEnd = previewService.indexOf('/** Awaits an in-flight prewarm', prewarmStart)
+assert.ok(prewarmStart >= 0 && prewarmEnd > prewarmStart, 'framework-aware prewarm function is present')
+const prewarmSource = previewService.slice(prewarmStart, prewarmEnd)
+assert.ok(prewarmSource.includes('liveFramework === framework'), 'prewarm reuses only a live sandbox for the requested framework')
+assert.ok(prewarmSource.includes('selectTemplate(framework)'), 'prewarm validates the target template before replacing a working runtime')
+assert.ok(!prewarmSource.includes('prewarm skipped: target runtime is not configured'), 'a missing target template cannot silently leave tools on a stale runtime')
+assert.ok(prewarmSource.includes('warmingFrameworks.get(projectId) === framework'), 'prewarm recognises an in-flight warm for the same framework')
+assert.ok(prewarmSource.includes('Replacing live') && prewarmSource.includes('Replacing warmed'), 'prewarm replaces live and in-flight mismatched frameworks')
+assert.ok(prewarmSource.includes('warmingSandboxes.get(projectId) === promise'), 'older warm cleanup cannot delete a newer queued framework switch')
+assert.ok(previewService.includes('warmingFrameworks.set(projectId, framework)'), 'normal preview acquisition records its in-flight framework')
+
 const e2bBuilderPackage = JSON.parse(readFileSync(new URL('../e2b-template/package.json', import.meta.url), 'utf8')) as { devDependencies: Record<string, string> }
 assert.equal(e2bBuilderPackage.devDependencies.e2b, '2.64.0', 'E2B SDK pin includes the current glob/undici security fixes')
 

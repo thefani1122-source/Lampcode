@@ -4,8 +4,7 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
-import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
-import { detectFullstackFramework as detectFullstackRuntime } from "./framework-selection.js";
+import { DEFAULT_BUILD_FRAMEWORK } from "./framework-selection.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -189,13 +188,14 @@ in localStorage" is a decision someone can build against.
   calculation, a reducer, validation rules, a formula evaluator — goes in its own module
   under src/lib/, so it can be tested on its own. Give each of those a sibling
   <name>.test.ts in the list.
-- src/App.tsx is routing, layout and shared state ONLY. It is never where a view lives.
+- Follow the AUTHORITATIVE BUILD CONTEXT supplied with each planning request. React/Vite uses src/App.tsx and src/index.tsx; Next.js App Router uses app/layout.tsx and app/page.tsx; TanStack Start uses its route tree. Never mix these entrypoint conventions.
 - Order the list so nothing imports a file that comes later in it.
+- For Next.js App Router, plan app/page.tsx, app/layout.tsx and app/api/**/route.ts as needed; do not plan src/App.tsx, src/index.tsx or a separate Hono server.
+- For React/Vite + Hono, use src/App.tsx/src/index.tsx and src/server/** only when the authoritative build context selects that runtime.
 
 ## WHAT YOU MUST NOT DO
 - Do not write any code, not even a snippet or a type.
-- Do not plan files the template already owns: src/styles.css, src/index.tsx,
-  package.json, vite.config.ts, tsconfig.json, index.html, vitest.config.ts.
+- Do not plan files owned by the selected runtime template. Read the AUTHORITATIVE BUILD CONTEXT before choosing entrypoints or configuration. React/Vite owns src/styles.css, src/index.tsx, package.json, vite.config.ts, tsconfig.json, index.html and Vitest config. Next.js owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest config and pre-baked UI primitives; Next.js apps use the app/ directory. Do not apply the Vite ownership list to Next.js or TanStack.
 - Do not invent features the user did not ask for. If they asked for three views, plan three.
 - Do not plan more than 25 files. If the request is bigger than that, plan the files that
   make the app work end to end and list the rest under outOfScope.
@@ -664,12 +664,45 @@ TOUCH TARGETS:
 // ── Database detection + per-database rules ───────────────────────────────────
 
 /**
- * Detect which cloud database the user is requesting.
- * Supabase is the default when no specific DB keyword is found.
+ * Resolve the database selected by the build pipeline, or infer it when this
+ * helper is used outside a full-stack build. Server runtime alone is not a DB.
  */
-export function detectDatabase(prompt: string): Database {
-  if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
-  return "supabase";
+export type DatabaseChoice = Database | "none";
+
+/**
+ * The build route appends trusted runtime/database markers after the raw user
+ * request. Read the LAST marker so user-authored text cannot override the
+ * authoritative decision made by classification and the runtime selector.
+ */
+function selectedBuildMarker<T extends string>(
+  description: string,
+  marker: "FRAMEWORK" | "DATABASE" | "BUILD_TYPE" | "BACKEND_RUNTIME" | "AUTH" | "PERSISTENCE" | "REQUIRED_TOOLS",
+  allowed: readonly T[],
+): T | undefined {
+  const prefix = `LAMPCode_SELECTED_${marker}:`;
+  let selected: string | undefined;
+  for (const line of description.split(/\r?\n/)) {
+    const at = line.lastIndexOf(prefix);
+    if (at < 0) continue;
+    selected = line.slice(at + prefix.length).trim().toLowerCase().split(/\s+/)[0];
+  }
+  return selected !== undefined && (allowed as readonly string[]).includes(selected)
+    ? selected as T
+    : undefined;
+}
+
+export function selectedFullstackFramework(description: string): FullstackFramework {
+  return selectedBuildMarker(description, "FRAMEWORK", ["react", "nextjs", "tanstack"] as const)
+    ?? DEFAULT_BUILD_FRAMEWORK;
+}
+
+export function selectedBackendRuntime(description: string): "none" | "node" | "python" {
+  return selectedBuildMarker(description, "BACKEND_RUNTIME", ["none", "node", "python"] as const) ?? "none";
+}
+
+export function detectDatabase(description: string): DatabaseChoice {
+  // Parse the server-appended model decision only; never infer a provider from user text.
+  return selectedBuildMarker(description, "DATABASE", ["supabase", "mongodb", "none"] as const) ?? "none";
 }
 
 export const DB_INSTRUCTIONS: Record<Database, string> = {
@@ -1305,6 +1338,106 @@ custom JWT auth in the Hono backend. Generate:
    No social/OAuth (custom auth is email/password).`;
 
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
+export const FULLSTACK_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH A REAL HONO API, NO DATABASE
+
+This build requires a real Node/Hono server, but the selected build context says
+there is NO application database. Do not invent Supabase, MongoDB, schema files,
+migrations, credentials, or fake persistent writes.
+
+Generate these files:
+- src/server/app.ts — Hono app, mounts the route module at /api, does not listen.
+- src/server/index.ts — starts the Hono app on port 3001.
+- src/server/routes/api.ts — the requested real API routes with Zod validation.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+
+The preview uses Vite on :5173 and Hono on :3001; Vite proxies same-origin /api
+requests to Hono. Do not hardcode localhost in browser code.
+
+No database means the server cannot promise durable or shared records. Implement
+the requested server behavior that does not require persistence. If the request
+requires durable records, be explicit that a database connection is needed;
+never create a pretend database with module-level in-memory arrays or localStorage.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, or .env.
+Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+`;
+
+export const FASTAPI_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH PYTHON FASTAPI, NO DATABASE
+
+This build uses the Ubuntu Python runtime and a real FastAPI server, but no
+application database was selected. Do not invent Supabase/MongoDB, schema files,
+migrations or credentials.
+
+Generate:
+- src/server/main.py — FastAPI application and the requested real HTTP routes.
+- src/lib/api.ts — same-origin API client.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+
+The preview runs Vite on :5173 and FastAPI on :3001; Vite proxies /api to FastAPI.
+Use the provided Python virtual environment and start command from the runtime.
+Validate request bodies and return truthful errors. Do not claim durable storage
+or replace a requested server API with a browser-only mock.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, migrations
+or .env. Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+`;
+
+const NEXTJS_FRONTEND_BASE = `You are LampCode, a senior full-stack Next.js engineer and product designer.
+Build a complete, polished, production-usable application from the user's request. Treat the user's explicit architecture and product requirements as authoritative.
+
+PRODUCT AND VISUAL QUALITY:
+- Understand the product, actors, data, requested routes, user journeys and success criteria before coding.
+- Establish a product-specific design system: visual identity, accessible palette, typography, spacing, surface hierarchy and responsive layout.
+- Build the actual working surface, not a heading with generic cards. Use domain-appropriate content, useful hierarchy and functional primary actions.
+- Distinguish loading, real-empty, error and populated states. Do not fabricate live database records.
+- Inspect the rendered browser at desktop and mobile sizes. A successful compile is not visual verification.
+
+NEXT.JS APP ROUTER CONVENTIONS:
+- The selected runtime is Next.js App Router on Ubuntu, served by the Next.js Node server on port 3000.
+- Use app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts. Do not create src/App.tsx, src/index.tsx, Vite config or a separate Hono server.
+- Keep Server Components by default. Use small 'use client' components only for browser state, event handlers or browser-only APIs.
+- Keep database clients, secrets and privileged logic server-only. Keep Route Handlers typed, validated and secure.
+- Do not replace a requested backend/API with localStorage or mock data to make the preview appear functional.
+- Do not overwrite template-owned package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest files or pre-baked UI primitives.
+`;
+
+export const NEXTJS_FRONTEND_INSTRUCTION = `
+
+## NEXT.JS APP ROUTER — FRONTEND-ONLY BUILD
+
+This project uses the Next.js App Router template on port 3000. It is a frontend-only
+product scope unless the trusted build context explicitly selects a full-stack backend.
+Do not add Hono, Express, FastAPI, database clients, authentication or Route Handlers by default.
+
+PROJECT FILES:
+- app/layout.tsx: root HTML layout, metadata and shared providers.
+- app/page.tsx: home route.
+- app/<route>/page.tsx: additional route pages.
+- app/globals.css: Tailwind CSS v4 design tokens and global styles; keep its import in app/layout.tsx.
+- components/**: reusable app and UI components.
+- lib/**: utilities and client-safe shared logic.
+- public/**: static assets.
+
+IMPLEMENTATION:
+- Prefer React Server Components. Use small 'use client' components only for interactive state,
+  event handlers, browser APIs, charts, animations or WebGL.
+- Use accessible primitives from @/components/ui and cn() from @/lib/utils.
+- Use Tailwind CSS v4 utilities and the existing CSS variables. Do not add Tailwind v3 directives,
+  a second CSS framework, or rewrite template-owned package/config files.
+- Use localStorage/IndexedDB only when the trusted model decision selects browser-local persistence.
+  Be explicit that browser storage does not sync across devices or users.
+- Do not invent APIs, databases, external services or fake persistence.
+- Keep routes responsive and verify the rendered app at desktop and mobile widths.
+`
+
 export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
@@ -1314,7 +1447,7 @@ for HTTP APIs. There is no separate Hono process; the preview runs one Node.js p
 The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
 
 IMPLEMENT IN THIS ORDER:
-1. Server-only data access, shared types/models and app/api/<resource>/route.ts handlers.
+1. If a database is selected, implement server-only data access and shared types/models before app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested; do not invent database models or persistence.
 2. app/layout.tsx, app/globals.css and shared providers.
 3. app/page.tsx and all requested route pages.
 4. Small Client Components only where browser state, event handlers, animations or WebGL are required.
@@ -1336,8 +1469,10 @@ SERVER/CLIENT BOUNDARIES:
   own Route Handler over HTTP. Client Components may use same-origin fetch('/api/...') or Server Actions.
 - Mark browser-only animation, Canvas and window/document code with 'use client'. Lazy-load WebGL and
   give it a usable fallback.
-- Use session-aware Supabase SSR and RLS, or server-only Mongo connections with per-request ownership
-  checks. Never use a service-role key as a shortcut around user permissions.
+- When the selected build context includes Supabase, use session-aware Supabase SSR and RLS;
+  when it includes MongoDB, use server-only Mongo connections with per-request ownership checks.
+  When no database is selected, do not add a database client, schema, migration or persistence claim.
+  Never use a service-role key as a shortcut around user permissions.
 - Treat caching deliberately: personalised data must not be shared between users. Opt out of caching
   for user-specific and rapidly-changing reads; revalidate only when the product permits it.
 
@@ -1704,26 +1839,23 @@ async function buildPipManifest(): Promise<string> {
 
 export type PromptBuildType = "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
 
-/**
- * The build task prefix determines whether the frontend agent is doing a new
- * browser build, a new Hono build, or an edit to an existing full-stack app.
- * MongoDB is detected from the same negation-aware signals as classification,
- * so a sentence such as "do not use MongoDB" cannot switch providers.
- */
+/** Resolve build scope only from server-appended metadata, never prompt keywords. */
 export function inferPromptBuildType(
   agentType: AgentTaskType,
   description: string,
 ): PromptBuildType | undefined {
-  const isFullstackBuildDescription =
-    description.startsWith("FULLSTACK BUILD:") ||
-    description.startsWith("FULLSTACK AUTH BUILD:");
-  const isExistingFullstackEdit = description.startsWith("EXISTING FULLSTACK EDIT:");
-  const isMongoBuildDescription = hasPositiveMongoRequirement(description);
-
   if (agentType !== "frontend") return undefined;
-  if (isExistingFullstackEdit) return "fullstack-existing";
-  if (!isFullstackBuildDescription) return "frontend";
-  return isMongoBuildDescription ? "fullstack-mongodb" : "fullstack";
+  const selected = selectedBuildMarker(description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+  // Server-appended metadata outranks even a legacy task prefix.
+  if (selected === "frontend") return "frontend";
+  if (selected === "fullstack") {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
+  if (description.startsWith("FULLSTACK BUILD:") || description.startsWith("FULLSTACK AUTH BUILD:")) {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  return "frontend";
 }
 
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
@@ -1739,45 +1871,33 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
-  // actually start. "fullstack" is not synonymous with Hono: Next.js and
-  // TanStack use their own server runtimes, while FastAPI replaces Hono.
-  const selectedFramework = detectFullstackFramework(prompt);
-  if (opts?.buildType === "fullstack" && selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
+  const selectedFramework = selectedFullstackFramework(prompt);
+  const selectedDatabase = detectDatabase(prompt);
+  const backendRuntime = selectedBackendRuntime(prompt);
+  const isFullstack = opts?.buildType === "fullstack" || opts?.buildType === "fullstack-mongodb";
+  const isExistingFullstack = opts?.buildType === "fullstack-existing";
+
+  if (selectedFramework === "nextjs") {
+    skillsToLoad.add("nextjs-production");
+  } else if (isFullstack && backendRuntime === "node") {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
   }
-  if (opts?.buildType === "fullstack" && selectedFramework === "nextjs") skillsToLoad.add("nextjs-production");
-  // Optional specialist guidance is deliberately NOT injected by keyword
-  // matching. The metadata-only catalogue is always available to tool-enabled
-  // builds; the model decides semantically whether to call load_skill. This
-  // avoids carrying large CrewAI/LangGraph/animation references through every
-  // prompt merely because a provider name appears in the request.
 
-  // Core implementation AND product-design skills — always for any frontend/fullstack build.
-  // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
   if (opts?.buildType) {
     skillsToLoad.add("react-production");
     skillsToLoad.add("typescript-strict");
     skillsToLoad.add("product-ui-design");
   }
 
-  // Database security is useful across providers, but the generic skill must
-  // stay provider-neutral. Supabase policy syntax is a separate skill and may
-  // only be injected when this build is actually using the Supabase path.
-  // Raw excluded terms ("without Supabase") and browser-local persistence must
-  // never cause either database skill to leak into a frontend-only build.
-  const requestSignals = readSignals(prompt);
   const hasDatabaseSecurityIntent =
-    Boolean(opts?.buildType && opts.buildType !== "frontend") &&
-    (hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem);
-  if (hasDatabaseSecurityIntent) {
-    skillsToLoad.add("database-rls");
-  }
-  const needsSupabaseRls =
-    opts?.buildType === "fullstack" && hasDatabaseSecurityIntent;
-  if (needsSupabaseRls) {
+    Boolean(isFullstack || isExistingFullstack) && selectedDatabase !== "none";
+  if (hasDatabaseSecurityIntent) skillsToLoad.add("database-rls");
+  if (
+    (isFullstack && selectedDatabase === "supabase") ||
+    (isExistingFullstack && selectedDatabase === "supabase")
+  ) {
     skillsToLoad.add("supabase-rls");
   }
 
@@ -1789,7 +1909,7 @@ async function loadSkillsForPrompt(
       const { body } = parseSkillFrontmatter(raw, skill);
       skillContents.push(`\n\n---\n## Skill: ${skill}\n${body}`);
     } catch {
-      // skill file not found — skip silently
+      // Missing optional skills never stop a build.
     }
   }
 
@@ -1797,11 +1917,6 @@ async function loadSkillsForPrompt(
   return [projectSkillIndex, skillContents.join("")].filter(Boolean).join("\n");
 }
 
-/**
- * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
-because follow-up edits are usually frontend React/Vite apps in the E2B runtime —
- * this ensures the frontend-sandbox skill is injected on the stream path.
- */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
   buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" = "frontend",
@@ -1827,9 +1942,7 @@ export class PromptBuilder {
     projectFiles?: Record<string, string> | undefined,
     projectSkillDir?: string | undefined,
   ): Promise<BuiltPrompt> {
-    // Detect the build mode using the same negation-aware signals as the
-    // architecture classifier. A negative MongoDB mention must not select its
-    // provider-specific generation path.
+    // Scope/provider comes only from trusted model-decision markers.
     const buildType = inferPromptBuildType(agentType, task.description);
 
     const [baseSystemPrompt, skillsBlock, contextBlock, builtinSkillIndex] = await Promise.all([
@@ -1837,7 +1950,13 @@ export class PromptBuilder {
       // Query chat never loads code-generation skills.
       agentType === "query"
         ? Promise.resolve("")
-        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
+        : this.loadRelevantSkills(
+            task.description,
+            buildType,
+            workspaceDir,
+            projectFiles,
+            projectSkillDir,
+          ),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
       // Show the skill catalogue only when the load_skill tool is available.
       agentType !== "query" && task.toolsEnabled === true ? buildSkillIndex() : Promise.resolve(""),
@@ -1899,38 +2018,37 @@ export class PromptBuilder {
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
-    const base = SYSTEM_PROMPTS[agentType];
-
-    const isExistingFullstackEdit =
-      task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const selectedBuildType = selectedBuildMarker(task.description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+    const hasExistingFullstackEditPrefix = task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const isExistingFullstackEdit = hasExistingFullstackEditPrefix && selectedBuildType !== "frontend";
+    const selectedFramework = selectedFullstackFramework(task.description);
     const isFullstackMode =
       agentType === "frontend" &&
-      (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
-       isExistingFullstackEdit);
-    // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
-    // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
-    const fullstackFramework: FullstackFramework = isFullstackMode
-      ? detectFullstackFramework(task.description)
-      : "react";
+      (selectedBuildType === "fullstack" ||
+        (!selectedBuildType && (
+          task.description.startsWith("FULLSTACK BUILD:") ||
+          task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+          hasExistingFullstackEditPrefix
+        )));
+    const fullstackFramework: FullstackFramework = selectedFramework;
+    const db = isFullstackMode ? detectDatabase(task.description) : "none";
+    const backendRuntime = selectedBackendRuntime(task.description);
+    const wantsPython =
+      isFullstackMode && fullstackFramework === "react" && backendRuntime === "python";
 
-    // FASTAPI_OVERRIDE only applies to react fullstack (Hono → FastAPI swap).
-    // Next.js and TanStack have their own backend model (API routes / server functions).
-    const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
+    const nextFrameworkPrompt = agentType === "frontend" && fullstackFramework === "nextjs";
+    const base = nextFrameworkPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
-    // Existing-project edits need the correct runtime/DB context, but
-    // must not receive new-app scaffolding instructions that demand rewriting
-    // the project's file layout and backend from scratch.
     let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
             ? TANSTACK_INSTRUCTION
-            : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
+            : db === "none"
+              ? (wantsPython ? FASTAPI_NO_DATABASE_INSTRUCTION : FULLSTACK_NO_DATABASE_INSTRUCTION)
+              : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
       : "";
 
-    // Only the react/hono path maps to e2b-template/template.ts — Next.js and
-    // TanStack route to their own separate templates (out of scope this session).
     if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "nextjs") {
       fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNextNpmManifest());
     }
@@ -1939,35 +2057,26 @@ export class PromptBuilder {
       if (wantsPython) fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
     }
 
-    // framework detection for frameworkInstruction (Sandpack rules):
-    // - For fullstack nextjs/tanstack: skip FRAMEWORK_RULES (their instruction covers everything).
-    // - For fullstack react: use FRAMEWORK_RULES.react (gives sandbox restrictions + fetch exception).
-    // - For Sandpack builds: detect from prompt, can be any framework.
-    const framework = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react"
-          ? fullstackFramework  // nextjs or tanstack — frameworkInstruction will be "" below
-          : detectFramework(task.description, "react"))
-      : "react";
-    const frameworkInstruction = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react" ? "" : FRAMEWORK_RULES[framework])
-      : "";
+    const frameworkInstruction = agentType !== "frontend"
+      ? ""
+      : fullstackFramework === "nextjs"
+        ? (isFullstackMode ? "" : NEXTJS_FRONTEND_INSTRUCTION)
+        : fullstackFramework === "react"
+          ? FRAMEWORK_RULES.react
+          : TANSTACK_INSTRUCTION;
 
-    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
-    // Provider-specific database instructions describe a new scaffold and
-    // fixed file layout. Existing projects must follow their own code/schema
-    // conventions instead of being migrated to the current template.
     const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit
+      isFullstackMode && !isExistingFullstackEdit && db !== "none"
         ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
         : "";
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
-      task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // Next uses SSR-safe cookies/HttpOnly sessions; Vite uses its existing auth contract.
+      (selectedBuildMarker(task.description, "AUTH", ["required", "not-required"] as const) === "required" ||
+        (!selectedBuildType && task.description.startsWith("FULLSTACK AUTH BUILD:")));
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
-        ? NEXTJS_AUTH_INSTRUCTIONS[db]
+        ? (db === "none" ? "" : NEXTJS_AUTH_INSTRUCTIONS[db])
         : (fullstackFramework === "react" || fullstackFramework === "tanstack")
           ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
           : ""
@@ -2080,12 +2189,9 @@ export class PromptBuilder {
         "- FIRST-RUN CONTENT CONTRACT: Unless the user explicitly requests an empty first launch, a new frontend/mock-data app must render with 5–8 realistic records and meaningful populated metrics. For localStorage, use a versioned first-run marker: if the marker is absent, seed when the saved collection is missing OR empty, persist the records, then set the marker; once marked, preserve a user's deliberately empty [] after they delete everything. Never reseed on every reload. Do not rely only on saved ?? SAMPLE because [] is not null.\n" +
         "- REAL BACKEND DATA IS DIFFERENT: never insert fake sample rows into the user's real database or silently replace a failing API with localStorage/demo mode. Use the real API as source of truth; report a real empty/error state honestly when the backend has no records or is unavailable.\n" +
         "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route.\n" +
-        "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
-        "the backend's own output and check_page shows the browser's. The preview always runs " +
-        "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
-        "http://localhost:3001 in frontend code — the preview is served from a different " +
-        "origin, so that address resolves to nothing and every call fails exactly as if no " +
-        "backend existed. Calls must go through API_BASE + '/api/...'.\n" +
+        (fullstackFramework === "nextjs"
+          ? "- A runtime failure is a claim you must CHECK, not assume: the Next.js app runs as one Node process on port 3000; inspect its logs and Route Handler responses. Do not expect a Vite proxy or separate Hono process.\\n"
+          : "- A runtime failure is a claim you must CHECK, not assume: React/Vite runs on :5173 and its selected Hono/FastAPI backend runs on :3001; only those projects use the Vite /api proxy. Never hardcode localhost in browser code.\\n") +
         "- If you truly cannot fix it, say so plainly and leave the real code in place. " +
         "'Sign-up is not working because X' is a result. A working-looking fake is not.\n" +
         "- write_files(files): writes whole files into the running project — use it for files " +
@@ -2170,11 +2276,13 @@ export class PromptBuilder {
         "wrong, and the file grows every time anyone touches it. Replacing is a deletion plus " +
         "an insertion, not an insertion.\n" +
         "   Split the app across files the way you would in a real project. Anything with " +
-        "more than one screen gets a file per screen under src/components/ or src/views/, " +
-        "with shared types and seed data in their own modules, and src/App.tsx left as " +
-        "routing and layout. A single file holding every screen still renders, but every " +
-        "later edit then has to rewrite the whole app, and one bad line takes all of it " +
-        "down. Keep a file you would be willing to open again.\n" +
+        "more than one screen gets a file per screen under the selected framework's normal " +
+        "component/view directories, with shared types and domain logic in their own modules. " +
+        (fullstackFramework === "nextjs"
+          ? "Keep app/layout.tsx and app/page.tsx as the App Router shell and route; do not create src/App.tsx or src/index.tsx. "
+          : "For React/Vite, keep src/App.tsx as routing/layout and src/index.tsx as the entry point. ") +
+        "A single file holding every screen still renders, but every later edit then has to rewrite " +
+        "the whole app, and one bad line takes all of it down. Keep a file you would be willing to open again.\\n" +
         "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
@@ -2185,10 +2293,8 @@ export class PromptBuilder {
         "is available. Inspect hierarchy, spacing, contrast, alignment, clipping and visual " +
         "consistency; fix visible issues and re-run the relevant checks. If the tool refuses " +
         "because the model cannot accept images, do not retry it.\n" +
-        "5. Call check_types. The dev server does NOT type-check — Vite strips types and " +
-        "serves the file, so a type error renders a perfectly normal-looking page and ships " +
-        "broken. check_page cannot see it. It costs one round; run it before you finish, " +
-        "every time, and fix what it reports.\n" +
+        "5. Call check_types. A dev-server render is not a TypeScript check. Run " +
+        "the project's real type-check before finishing, every time, and fix all errors it reports.\\n" +
         "6. If the app has logic whose correctness you cannot see by reading it — a " +
         "reducer, a running total, a date or currency calculation, validation rules, a " +
         "formula evaluator, sorting or filtering with edge cases — put that logic in its " +
