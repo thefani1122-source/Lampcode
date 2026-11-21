@@ -1849,12 +1849,24 @@ async function loadSkillsForPrompt(
   // actually start. "fullstack" is not synonymous with Hono: Next.js and
   // TanStack use their own server runtimes, while FastAPI replaces Hono.
   const selectedFramework = selectedFullstackFramework(prompt);
-  if ((opts?.buildType === "fullstack" || opts?.buildType === "fullstack-existing") && selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
+  const explicitlySelectedFramework = selectedBuildMarker(
+    prompt,
+    "FRAMEWORK",
+    ["react", "nextjs", "tanstack"] as const,
+  );
+  const isFreshFullstack = opts?.buildType === "fullstack";
+  const isProvenExistingFramework =
+    opts?.buildType === "fullstack-existing" && explicitlySelectedFramework !== undefined;
+  if ((isFreshFullstack || (isProvenExistingFramework && selectedFramework === "react")) &&
+      selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
     skillsToLoad.add("fullstack-hono");
   } else if (opts?.buildType === "frontend") {
     skillsToLoad.add("frontend-sandbox");
   }
-  if ((opts?.buildType === "fullstack" || opts?.buildType === "fullstack-existing") && selectedFramework === "nextjs") skillsToLoad.add("nextjs-production");
+  if ((isFreshFullstack || (isProvenExistingFramework && selectedFramework === "nextjs")) &&
+      selectedFramework === "nextjs") {
+    skillsToLoad.add("nextjs-production");
+  }
   // Optional specialist guidance is deliberately NOT injected by keyword
   // matching. The metadata-only catalogue is always available to tool-enabled
   // builds; the model decides semantically whether to call load_skill. This
