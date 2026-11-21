@@ -601,7 +601,10 @@ export function detectFramework(prompt: string, fallback: Framework = "react"): 
 }
 
 export type FullstackFramework = "react" | "nextjs" | "tanstack";
-export const detectFullstackFramework = detectFullstackRuntime;
+/** Backward-compatible helper: reads trusted metadata/default only, never prompt keywords. */
+export function detectFullstackFramework(description: string): FullstackFramework {
+  return selectedFullstackFramework(description);
+}
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
   react: `
