@@ -69,8 +69,9 @@ const serverSelectedNextPrompt = await builder.build(
 );
 check("a server-selected Next.js runtime uses the Next.js system prompt even when the user did not name Next.js",
   serverSelectedNextPrompt.systemPrompt.includes("NEXT.JS APP ROUTER + NODE RUNTIME"));
-check("a server-selected Next.js runtime does not receive the Hono architecture skill",
-  !serverSelectedNextPrompt.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED"));
+check("a server-selected Next.js runtime loads the Next.js production skill, not the Hono skill",
+  serverSelectedNextPrompt.systemPrompt.includes("## Skill: nextjs-production") &&
+  !serverSelectedNextPrompt.systemPrompt.includes("## Skill: fullstack-hono"));
 
 const nextEditPrompt = await builder.build(
   "frontend",
@@ -92,8 +93,9 @@ const nextEditPrompt = await builder.build(
 );
 check("existing Next.js full-stack edits retain the Next.js system prompt",
   nextEditPrompt.systemPrompt.includes("NEXT.JS APP ROUTER CONVENTIONS"));
-check("existing Next.js edits do not receive the React/Hono scaffold contract",
-  !nextEditPrompt.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED"));
+check("existing Next.js edits receive framework-specific production guidance",
+  nextEditPrompt.systemPrompt.includes("## Skill: nextjs-production") &&
+  !nextEditPrompt.systemPrompt.includes("## Skill: fullstack-hono"));
 
 const existingSupabaseEditSkills = await builder.build(
   "frontend",
