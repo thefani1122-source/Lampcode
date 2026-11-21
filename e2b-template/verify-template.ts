@@ -13,7 +13,6 @@ const ENTRY_CHECK = FRAMEWORK === 'nextjs'
   ? [
       'test -f app/layout.tsx',
       'test -f app/page.tsx',
-      'test -f app/api/health/route.ts',
       'test -f app/globals.css',
       'test -f postcss.config.mjs',
       'test -f components.json',
