@@ -50,6 +50,18 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
     "src/server/index.ts": "serve({ fetch: app.fetch, port: 3001 });",
     "src/server/routes/api.ts": "export const api = new Hono();",
   };
+  const pythonNoDatabase = {
+    "src/App.tsx": "export default function App() { return null; }",
+    "src/server/main.py": "from fastapi import FastAPI\\napp = FastAPI()",
+  };
+  ok(
+    "FastAPI database-free builds require main.py and do not request Hono entrypoints",
+    findMissingFullstackFiles(pythonNoDatabase, "react", "none", "python").length === 0,
+  );
+  ok(
+    "a missing FastAPI entrypoint asks for main.py, not Hono app.ts/index.ts",
+    findMissingFullstackFiles({ "src/App.tsx": "export default function App(){return null}" }, "react", "none", "python").join(",") === "src/server/main.py",
+  );
   ok(
     "React/Hono database-free builds still require the real app, server and API routes",
     findMissingFullstackFiles(reactNoDatabase, "react", "none").length === 0,
