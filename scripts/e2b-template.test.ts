@@ -21,7 +21,8 @@ import {
   LAMPCODE_LOGIN_ENV_SETUP_COMMAND,
   LAMPCODE_LOGIN_ENV_SCRIPT,
 } from '../e2b-template/template.js'
-import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, NEXT_CONFIG, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
+import { NEXTJS_PKG_JSON, NEXTJS_VERSION, NEXTJS_REACT_VERSION, NEXTJS_SCAFFOLD_COMMANDS, NEXT_QUERY_CLIENT_TS, NEXT_PROVIDERS_TS, NEXT_VITEST_CONFIG, NEXT_CONFIG, NEXTJS_COMPONENTS_JSON, NEXTJS_STYLES_CSS, ubuntuNextTemplate } from '../e2b-template/template-nextjs-ubuntu.js'
+import { nextjsVercelScaffold } from '../src/deploy/nextjs-scaffold.js'
 
 // Existing production Node 20 image stays unchanged and remains Vite.
 assert.match(dockerfile, /^FROM node:20-slim/m)
@@ -107,6 +108,14 @@ const nextPkg = JSON.parse(NEXTJS_PKG_JSON) as {
 }
 assert.equal(nextPkg.dependencies.next, NEXTJS_VERSION)
 assert.equal(nextPkg.dependencies.react, NEXTJS_REACT_VERSION)
+assert.equal(nextPkg.devDependencies.shadcn, '4.23.0', 'pin the shadcn CLI used by generated projects')
+assert.equal(nextPkg.devDependencies['tw-animate-css'], '1.4.0', 'pin Tailwind v4 animation utilities')
+assert.ok(NEXTJS_COMPONENTS_JSON.includes('"$schema": "https://ui.shadcn.com/schema.json"'))
+assert.ok(NEXTJS_COMPONENTS_JSON.includes('"css": "app/globals.css"'))
+assert.ok(NEXTJS_COMPONENTS_JSON.includes('"ui": "@/components/ui"'))
+assert.ok(NEXTJS_STYLES_CSS.includes('@import "tailwindcss";\\n@import "tw-animate-css";'))
+assert.ok(NEXTJS_SCAFFOLD_COMMANDS.some((command) => command.includes('/home/user/app/components.json')))
+assert.ok(NEXTJS_SCAFFOLD_COMMANDS.some((command) => command.includes('/home/user/app/app/globals.css')))
 assert.equal(nextPkg.devDependencies.vitest, '^5.0.0', 'Vitest 5 uses the same Vite major/minor line')
 assert.equal(nextPkg.devDependencies.vite, '^6.4.0', 'Vitest 5 requires Vite 6.4+ and Node 22.12+')
 assert.ok(CHECK_RENDER_MJS.includes('[data-nextjs-dialog-overlay]'))
@@ -128,6 +137,34 @@ assert.ok(NEXT_CONFIG.includes('process.env.LAMPCODE_PREVIEW_HOST'), 'Next.js on
 
 
 const previewService = readFileSync(new URL('../src/preview/e2b-service.ts', import.meta.url), 'utf8')
+const bakedStart = previewService.indexOf('const BAKED_FILES')
+const bakedEnd = previewService.indexOf(']);', bakedStart)
+const bakedFiles = previewService.slice(bakedStart, bakedEnd)
+for (const path of ['postcss.config.mjs', 'components.json', 'app/providers.tsx', 'components/ui/button.tsx']) {
+  assert.ok(bakedFiles.includes(path), `Next.js template-owned file ${path} is protected from generated overwrites`)
+}
+
+const deployed = nextjsVercelScaffold({
+  'app/page.tsx': 'export default function Page() { return <main /> }',
+  'app/layout.tsx': 'export default function Layout({ children }) { return <html><body>{children}</body></html> }',
+})
+const deployedPackage = JSON.parse(deployed['package.json'] ?? '{}') as {
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+}
+assert.equal(deployedPackage.devDependencies.shadcn, '4.23.0', 'Vercel scaffold preserves the pinned shadcn CLI')
+assert.equal(deployedPackage.dependencies['tw-animate-css'], '1.4.0', 'Vercel scaffold includes Tailwind animation utilities')
+const deployedComponents = JSON.parse(deployed['components.json'] ?? '{}') as { tailwind?: { css?: string } }
+assert.equal(deployedComponents.tailwind?.css, 'app/globals.css', 'Vercel shadcn CSS path matches the App Router location')
+assert.ok(deployed['app/globals.css']?.includes('@import "tw-animate-css";'))
+assert.ok(deployed['postcss.config.mjs']?.includes('@tailwindcss/postcss'))
+
+const deployedSrcApp = nextjsVercelScaffold({
+  'src/app/page.tsx': 'export default function Page() { return <main /> }',
+})
+const deployedSrcComponents = JSON.parse(deployedSrcApp['components.json'] ?? '{}') as { tailwind?: { css?: string } }
+assert.equal(deployedSrcComponents.tailwind?.css, 'src/app/globals.css', 'src/app projects get a matching shadcn CSS path')
+
 const prewarmStart = previewService.indexOf('export function prewarmSandbox(')
 const prewarmEnd = previewService.indexOf('/** Awaits an in-flight prewarm', prewarmStart)
 assert.ok(prewarmStart >= 0 && prewarmEnd > prewarmStart, 'framework-aware prewarm function is present')
