@@ -2067,20 +2067,21 @@ export function prewarmSandbox(projectId: string, framework: FullstackFramework 
 
   const live = sandboxes.get(projectId);
   const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
-  if (live && liveFramework === framework) return;
+  const activeWarm = warmingSandboxes.get(projectId);
+  if (activeWarm && warmingFrameworks.get(projectId) === framework) return;
 
   // Validate the target before killing or replacing a healthy preview. A
   // missing candidate template must never destroy the user's current runtime.
-  try {
-    selectTemplate(framework);
-  } catch (err) {
-    logger.warn({ projectId, framework, err }, "[e2b] prewarm skipped: target runtime is not configured");
-    return;
+  if (activeWarm || !live || liveFramework !== framework) {
+    try {
+      selectTemplate(framework);
+    } catch (err) {
+      logger.warn({ projectId, framework, err }, "[e2b] prewarm skipped: target runtime is not configured");
+      return;
+    }
   }
 
-  const activeWarm = warmingSandboxes.get(projectId);
   if (activeWarm) {
-    if (warmingFrameworks.get(projectId) === framework) return;
 
     // A different framework is already warming. Queue this runtime switch
     // behind it, rather than returning and letting the agent use the wrong VM.
@@ -2148,16 +2149,21 @@ export function prewarmSandbox(projectId: string, framework: FullstackFramework 
 
 /** Awaits an in-flight prewarm (if any) so we never race into a 2nd sandbox. */
 async function awaitWarming(projectId: string): Promise<void> {
-  const warming = warmingSandboxes.get(projectId);
-  if (warming) {
+  // A framework switch can replace an in-flight warm with a queued promise.
+  // Keep waiting until the promise currently registered for this project is
+  // the one that just settled; otherwise callers may resume the stale runtime.
+  while (true) {
+    const warming = warmingSandboxes.get(projectId);
+    if (!warming) return;
     try {
       await warming;
     } catch (err) {
       // prewarm failed — fall through; caller's own create path handles it.
-      // Logged (was previously silent) so a stuck/failed prewarm is visible
+      // Logged (was previously silent) so a stuck/failed warm is visible
       // in Railway logs instead of looking like an unexplained hang.
       logger.warn({ projectId, err }, "[e2b] awaited prewarm failed");
     }
+    if (warmingSandboxes.get(projectId) === warming) return;
   }
 }
 
