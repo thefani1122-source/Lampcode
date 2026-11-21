@@ -2088,7 +2088,11 @@ export class PromptBuilder {
 
     const dbInstruction =
       isFullstackMode && !isExistingFullstackEdit && db !== "none"
-        ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
+        ? fullstackFramework === "nextjs"
+          ? NEXTJS_DATABASE_INSTRUCTIONS[db]
+          : wantsPython
+            ? "" // FASTAPI_OVERRIDE contains the Python/Supabase request-scoped client contract.
+            : DB_INSTRUCTIONS[db]
         : "";
 
     const isFullstackAuthMode =
