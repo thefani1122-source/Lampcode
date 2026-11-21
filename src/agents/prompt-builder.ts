@@ -1418,7 +1418,7 @@ for HTTP APIs. There is no separate Hono process; the preview runs one Node.js p
 The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
 
 IMPLEMENT IN THIS ORDER:
-1. Server-only data access, shared types/models and app/api/<resource>/route.ts handlers.
+1. If a database is selected, server-only data access, shared types/models and app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested.
 2. app/layout.tsx, app/globals.css and shared providers.
 3. app/page.tsx and all requested route pages.
 4. Small Client Components only where browser state, event handlers, animations or WebGL are required.
@@ -1894,7 +1894,8 @@ async function loadSkillsForPrompt(
     skillsToLoad.add("database-rls");
   }
   const needsSupabaseRls =
-    opts?.buildType === "fullstack" && databaseChoice === "supabase";
+    (opts?.buildType === "fullstack" || opts?.buildType === "fullstack-existing") &&
+    databaseChoice === "supabase";
   if (needsSupabaseRls) {
     skillsToLoad.add("supabase-rls");
   }
