@@ -161,6 +161,15 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
   // the build and is wrong by the second file.
   planning: `You are a senior engineer deciding how one web app will actually work, before any code is written.
 
+## MODE ROUTING — READ THIS BEFORE THE REST
+If the task description begins with the exact marker `LAMPCode_BUILD_INTENT_DECISION_V1`, this is BUILD-INTENT DECISION MODE:
+- The task contains the authoritative output schema and rules for choosing build scope, framework, backend runtime, database, persistence, authentication and required tool capabilities.
+- Return exactly the JSON object requested by that task. Do NOT return the file-plan JSON below, do not emit summary/approach/files, and do not add prose.
+- Read the complete enclosed original user request semantically. Do not use keyword matching or fixed framework/database assumptions.
+- Your output is a decision proposal that LampCode validates against supported runtime/security constraints; it does not grant tools or credentials.
+
+For all other planning tasks, use PRODUCT / FILE PLAN MODE and follow the file-planning instructions below.
+
 A file list is NOT a plan. Work out the thing first, then the files.
 
 ## WORK OUT WHAT IT IS — before you list a single file
