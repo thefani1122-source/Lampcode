@@ -1955,7 +1955,16 @@ export class PromptBuilder {
       // Query chat never loads code-generation skills.
       agentType === "query"
         ? Promise.resolve("")
-        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
+        : this.loadRelevantSkills(
+            [
+              context.prompt,
+              ...(task.description.match(/LAMPCode_SELECTED_(?:FRAMEWORK|DATABASE)\\s*:\\s*(?:react|nextjs|tanstack|supabase|mongodb|none)\\b/gi) ?? []),
+            ].join("\\n"),
+            buildType,
+            workspaceDir,
+            projectFiles,
+            projectSkillDir,
+          ),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
       // Show the skill catalogue only when the load_skill tool is available.
       agentType !== "query" && task.toolsEnabled === true ? buildSkillIndex() : Promise.resolve(""),
