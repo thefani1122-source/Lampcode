@@ -434,6 +434,9 @@ const BAKED_FILES = new Set([
   "src/components/ui/separator.tsx",
   "src/components/ui/table.tsx",
   "src/components/ui/tabs.tsx",
+  // The Next.js root stylesheet owns Tailwind v4 imports and design tokens.
+  "app/globals.css",
+  "src/app/globals.css",
 ]);
 
 /**
