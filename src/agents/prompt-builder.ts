@@ -1875,14 +1875,26 @@ async function loadSkillsForPrompt(
   // Raw excluded terms ("without Supabase") and browser-local persistence must
   // never cause either database skill to leak into a frontend-only build.
   const requestSignals = readSignals(prompt);
+  const selectedDatabase = selectedBuildMarker(
+    prompt,
+    "DATABASE",
+    ["supabase", "mongodb", "none"] as const,
+  );
+  const databaseChoice = selectedDatabase ?? (
+    hasPositiveMongoRequirement(prompt)
+      ? "mongodb"
+      : hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem
+        ? "supabase"
+        : "none"
+  );
   const hasDatabaseSecurityIntent =
     Boolean(opts?.buildType && opts.buildType !== "frontend") &&
-    (hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem);
+    databaseChoice !== "none";
   if (hasDatabaseSecurityIntent) {
     skillsToLoad.add("database-rls");
   }
   const needsSupabaseRls =
-    opts?.buildType === "fullstack" && hasDatabaseSecurityIntent;
+    opts?.buildType === "fullstack" && databaseChoice === "supabase";
   if (needsSupabaseRls) {
     skillsToLoad.add("supabase-rls");
   }
