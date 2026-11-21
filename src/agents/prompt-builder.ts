@@ -1869,10 +1869,12 @@ export function inferPromptBuildType(
   const selected = selectedBuildMarker(description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
   // Server-appended metadata outranks even a legacy task prefix.
   if (selected === "frontend") return "frontend";
+  // The source project has already established its framework/data contract.
+  // Keep it in edit mode even when the route appends its trusted fullstack scope.
+  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
   if (selected === "fullstack") {
     return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
   }
-  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
   if (description.startsWith("FULLSTACK BUILD:") || description.startsWith("FULLSTACK AUTH BUILD:")) {
     return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
   }
