@@ -681,7 +681,7 @@ function selectedBuildMarker<T extends string>(
   allowed: readonly T[],
 ): T | undefined {
   const expression = new RegExp(
-    String.raw\`LAMPCode_SELECTED_\${marker}\s*:\s*(\${allowed.join("|")})\b\`,
+    "LAMPCode_SELECTED_" + marker + "\\s*:\\s*(" + allowed.join("|") + ")\\b",
     "gi",
   );
   const values = Array.from(prompt.matchAll(expression));
