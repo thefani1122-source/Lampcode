@@ -10,8 +10,8 @@ const TEMPLATE = process.env['E2B_VERIFY_TEMPLATE_ID'] ?? process.env['E2B_TEMPL
 const CANDIDATE_RE = /^lampcode-(?:vite|nextjs)-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/
 const PORT = FRAMEWORK === 'nextjs' ? 3000 : 5173
 const ENTRY_CHECK = FRAMEWORK === 'nextjs'
-  ? 'test -f app/layout.tsx && test -f app/page.tsx && test -f postcss.config.mjs && grep -q \"next\" package.json'
-  : 'test -f src/App.tsx && test -f vite.config.ts && test -f index.html && grep -q \"vite\" package.json'
+  ? 'test -f app/layout.tsx && test -f app/page.tsx && test -f postcss.config.mjs && test -f components.json && grep -q \\"next\\" package.json && grep -q \\"shadcn\\": \\"4.23.0\\" package.json'
+  : 'test -f src/App.tsx && test -f vite.config.ts && test -f index.html && grep -q \\"vite\\" package.json'
 
 let failures = 0
 function report(name: string, ok: boolean, detail = ''): void {
