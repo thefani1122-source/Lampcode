@@ -42,19 +42,19 @@ check("ordinary builds fit without forced prompt compaction", !ordinaryPrompt.sy
 check("ordinary builds remain under the configured system budget", ordinaryPrompt.systemPrompt.length <= 20_000 * 3.1);
 check("the last trusted framework marker overrides earlier user-authored text",
   selectedFullstackFramework(
-    "Build a CRM. LAMPCode_SELECTED_FRAMEWORK: react\\nLAMPCode_SELECTED_FRAMEWORK: nextjs",
+    "Build a CRM. LAMPCode_SELECTED_FRAMEWORK: react\nLAMPCode_SELECTED_FRAMEWORK: nextjs",
   ) === "nextjs");
 check("the last trusted database marker overrides earlier user-authored text",
   detectDatabase(
-    "Build a tracker. LAMPCode_SELECTED_DATABASE: supabase\\nLAMPCode_SELECTED_DATABASE: none",
+    "Build a tracker. LAMPCode_SELECTED_DATABASE: supabase\nLAMPCode_SELECTED_DATABASE: none",
   ) === "none");
 
 const serverSelectedNextPrompt = await builder.build(
   "frontend",
   {
     description:
-      "FULLSTACK BUILD: Build a multi-user CRM with shared records.\\n" +
-      "LAMPCode_SELECTED_FRAMEWORK: nextjs\\n" +
+      "FULLSTACK BUILD: Build a multi-user CRM with shared records.\n" +
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs\n" +
       "LAMPCode_SELECTED_DATABASE: supabase",
     outputFormat: "prose",
     toolsEnabled: true,
@@ -77,8 +77,8 @@ const nextEditPrompt = await builder.build(
   "frontend",
   {
     description:
-      "EXISTING FULLSTACK EDIT: nextjs\\n" +
-      "EXISTING PROJECT FILES:\\napp/page.tsx\\nexport default function Page(){return <main/>}\\n" +
+      "EXISTING FULLSTACK EDIT: nextjs\n" +
+      "EXISTING PROJECT FILES:\napp/page.tsx\nexport default function Page(){return <main/>}\n" +
       "LAMPCode_SELECTED_FRAMEWORK: nextjs",
     outputFormat: "prose",
     toolsEnabled: true,
@@ -100,8 +100,8 @@ const unknownFrameworkExisting = await builder.build(
   "frontend",
   {
     description:
-      "EXISTING FULLSTACK EDIT: Modify the existing application.\\n" +
-      "EXISTING PROJECT FILES:\\nREADME.md\\nAn existing full-stack application.",
+      "EXISTING FULLSTACK EDIT: Modify the existing application.\n" +
+      "EXISTING PROJECT FILES:\nREADME.md\nAn existing full-stack application.",
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
@@ -121,8 +121,8 @@ const existingSupabaseEditSkills = await builder.build(
   "frontend",
   {
     description:
-      "EXISTING FULLSTACK EDIT: nextjs\\n" +
-      "EXISTING PROJECT FILES:\\napp/page.tsx\\nLAMPCode_SELECTED_FRAMEWORK: nextjs\\n" +
+      "EXISTING FULLSTACK EDIT: nextjs\n" +
+      "EXISTING PROJECT FILES:\napp/page.tsx\nLAMPCode_SELECTED_FRAMEWORK: nextjs\n" +
       "LAMPCode_SELECTED_DATABASE: supabase",
     outputFormat: "prose",
     toolsEnabled: true,
@@ -177,7 +177,7 @@ const noDatabaseHonoPrompt = await builder.build(
   "frontend",
   {
     description:
-      "FULLSTACK BUILD: Build a React frontend with a Hono API for a simple health route.\\n" +
+      "FULLSTACK BUILD: Build a React frontend with a Hono API for a simple health route.\n" +
       "LAMPCode_SELECTED_DATABASE: none",
     outputFormat: "prose",
     toolsEnabled: true,
@@ -204,7 +204,7 @@ const inferredSupabasePrompt = await builder.build(
   "frontend",
   {
     description:
-      "FULLSTACK BUILD: Build a multi-user collaboration app where teams share records.\\n" +
+      "FULLSTACK BUILD: Build a multi-user collaboration app where teams share records.\n" +
       "LAMPCode_SELECTED_DATABASE: supabase",
     outputFormat: "prose",
     toolsEnabled: true,
@@ -227,10 +227,10 @@ const nextPlanningPrompt = await builder.build(
   "planning",
   {
     description:
-      "Build a Next.js App Router health dashboard.\\n" +
-      "AUTHORITATIVE BUILD CONTEXT — decided by the build pipeline\\n" +
-      "- Project mode: new full-stack application.\\n" +
-      "- Framework: nextjs.\\n" +
+      "Build a Next.js App Router health dashboard.\n" +
+      "AUTHORITATIVE BUILD CONTEXT — decided by the build pipeline\n" +
+      "- Project mode: new full-stack application.\n" +
+      "- Framework: nextjs.\n" +
       "- Database provider selected by the build pipeline: none.",
     outputFormat: "json",
   },
