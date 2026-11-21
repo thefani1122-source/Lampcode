@@ -134,6 +134,7 @@ assert.ok(prewarmStart >= 0 && prewarmEnd > prewarmStart, 'framework-aware prewa
 const prewarmSource = previewService.slice(prewarmStart, prewarmEnd)
 assert.ok(prewarmSource.includes('liveFramework === framework'), 'prewarm reuses only a live sandbox for the requested framework')
 assert.ok(prewarmSource.includes('selectTemplate(framework)'), 'prewarm validates the target template before replacing a working runtime')
+assert.ok(!prewarmSource.includes('prewarm skipped: target runtime is not configured'), 'a missing target template cannot silently leave tools on a stale runtime')
 assert.ok(prewarmSource.includes('warmingFrameworks.get(projectId) === framework'), 'prewarm recognises an in-flight warm for the same framework')
 assert.ok(prewarmSource.includes('Replacing live') && prewarmSource.includes('Replacing warmed'), 'prewarm replaces live and in-flight mismatched frameworks')
 assert.ok(prewarmSource.includes('warmingSandboxes.get(projectId) === promise'), 'older warm cleanup cannot delete a newer queued framework switch')
