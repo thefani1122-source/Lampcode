@@ -1415,7 +1415,8 @@ NEXT.JS APP ROUTER CONVENTIONS:
 - Keep Server Components by default. Use small 'use client' components only for browser state, event handlers or browser-only APIs.
 - Keep database clients, secrets and privileged logic server-only. Keep Route Handlers typed, validated and secure.
 - Do not replace a requested backend/API with localStorage or mock data to make the preview appear functional.
-- Do not overwrite template-owned package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest files or pre-baked UI primitives.
+- Do not overwrite template-owned package.json, next.config.ts, tsconfig.json, postcss.config.mjs, components.json,
+  app/providers.tsx, Vitest files or pre-baked UI primitives. Use `npx shadcn add <component>` to add components.
 `;
 
 export const NEXTJS_FRONTEND_INSTRUCTION = `
@@ -1438,9 +1439,12 @@ PROJECT FILES:
 IMPLEMENTATION:
 - Prefer React Server Components. Use small 'use client' components only for interactive state,
   event handlers, browser APIs, charts, animations or WebGL.
-- Use accessible primitives from @/components/ui and cn() from @/lib/utils.
-- Use Tailwind CSS v4 utilities and the existing CSS variables. Do not add Tailwind v3 directives,
+- Use the initialized shadcn CLI config in components.json. When a required primitive is missing,
+  run the pinned local CLI: npx shadcn add <component>. Do not run shadcn init or overwrite components.json.
+- The template provides accessible primitives in @/components/ui and cn() from @/lib/utils.
+- Use Tailwind CSS v4 utilities, the existing CSS variables and tw-animate-css. Do not add Tailwind v3 directives,
   a second CSS framework, or rewrite template-owned package/config files.
+- Keep the existing @import "tailwindcss" and @import "tw-animate-css" lines in app/globals.css.
 - Use localStorage/IndexedDB only when the trusted model decision selects browser-local persistence.
   Be explicit that browser storage does not sync across devices or users.
 - Do not invent APIs, databases, external services or fake persistence.
@@ -1488,8 +1492,9 @@ SERVER/CLIENT BOUNDARIES:
 FILES AND DEPLOYABILITY:
 - Generate app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts as required.
 - The environment owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs,
-  vitest.config.ts and vitest.setup.ts. Do not replace those files.
-- lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Use the existing accessible
+  components.json, app/providers.tsx, vitest.config.ts and vitest.setup.ts. Do not replace those files.
+- lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Add extra components with
+  npx shadcn add <component>; do not regenerate or overwrite template-owned primitives. Use the existing accessible
   Radix/shadcn-style primitives, cn() helper, Tailwind CSS v4 tokens and lucide-react.
 - Do not use Tailwind v3 directives or add a second CSS framework.
 - Do not generate src/App.tsx, src/index.tsx, src/styles.css, Vite config or a Hono server.
