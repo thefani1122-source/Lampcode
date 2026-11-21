@@ -109,7 +109,7 @@ ok(
     "it tells the model to CHECK the backend claim, not assume it",
     /read_logs/.test(agentic) && /check_page/.test(agentic),
   );
-  ok("it names the hardcoded-host trap", /localhost:3001/.test(agentic));
+  ok("it warns against hardcoded localhost browser calls", /Never hardcode localhost in browser code/i.test(agentic));
   ok("and says an honest failure is a result", /is a result/i.test(agentic));
 }
 
