@@ -91,8 +91,9 @@ const nextEditPrompt = await builder.build(
   },
 );
 check("existing Next.js full-stack edits retain the Next.js system prompt",
-  nextEditPrompt.systemPrompt.includes("NEXT.JS APP ROUTER + NODE RUNTIME") &&
-  !nextEditPrompt.systemPrompt.includes("FULLSTACK_INSTRUCTION"));
+  nextEditPrompt.systemPrompt.includes("NEXT.JS APP ROUTER CONVENTIONS"));
+check("existing Next.js edits do not receive the React/Hono scaffold contract",
+  !nextEditPrompt.systemPrompt.includes("BACKEND FILES MUST BE FULLY GENERATED"));
 
 const nextJsPrompt = await builder.build(
   "frontend",
