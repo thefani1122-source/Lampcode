@@ -1659,18 +1659,18 @@ export async function runFastBuild(
             ? fullstackDb === "mongodb"
               ? [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/schema.ts, src/lib/db.ts.",
-                  "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
-                  "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
-                  "app/api/*/route.ts: call connectDB() then use Mongoose models — server-side only.",
-                  "app/page.tsx is a Server Component — it can call connectDB() + Mongoose directly. Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "Generate app/page.tsx, app/layout.tsx, app/globals.css, app/api/health/route.ts, one app/api/<resource>/route.ts per requested resource, lib/db.ts and lib/models/<resource>.ts.",
+                  "Do NOT generate src/db/schema.ts, src/lib/db.ts, src/index.tsx, src/App.tsx, next.config.ts or next.config.js — use the Next.js root-level lib/ and app/ conventions.",
+                  "lib/db.ts must export a server-only connectDB() helper; lib/models/<resource>.ts must export each Mongoose model described by the DATABASE section.",
+                  "app/api/*/route.ts: call connectDB() then use the matching Mongoose model — server-side only.",
+                  "app/page.tsx is a Server Component — it may read through the server-only lib/db.ts and lib/models layer directly. Mark sub-components 'use client' only when they need browser interactions.",
                   "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
                   "Do NOT generate package.json or .env — the environment provides them.",
                 ]
               : fullstackDb === "none"
                 ? [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate app/page.tsx, app/layout.tsx and app/globals.css, plus only the Route Handlers required by the user's explicit API requirements.",
+                    "Generate app/page.tsx, app/layout.tsx, app/globals.css and app/api/health/route.ts, plus only the additional Route Handlers required by the user's explicit API requirements.",
                     "No application database was requested. Do NOT generate src/db/*, database clients, Supabase/MongoDB schemas, migrations, or a database connection gate.",
                     "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                     "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
@@ -1678,7 +1678,7 @@ export async function runFastBuild(
                   ]
                 : [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/types.ts, src/db/schema.sql.",
+                  "Generate app/page.tsx, app/layout.tsx, app/globals.css, app/api/health/route.ts, one app/api/<resource>/route.ts per requested resource, src/db/types.ts and src/db/schema.sql.",
                   "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                   "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
                   "app/api/*/route.ts: build a Supabase client PER REQUEST with SUPABASE_ANON_KEY and the caller's Authorization header forwarded in global.headers — that header is what makes auth.uid() resolve inside RLS. Never a service key, never a module-level client, and NEVER import supabase-js in 'use client' components.",
