@@ -56,6 +56,8 @@ export const NEXTJS_PKG_JSON = `{
     "tailwindcss": "^4.0.0",
     "@tailwindcss/postcss": "^4.0.0",
     "postcss": "^8.4.0",
+    "shadcn": "4.23.0",
+    "tw-animate-css": "1.4.0",
     "vitest": "^5.0.0",
     "jsdom": "^25.0.1",
     "@testing-library/react": "^16.1.0",
@@ -111,6 +113,33 @@ const POSTCSS_CONFIG = `const config = {
 }
 export default config
 `
+
+export const NEXTJS_COMPONENTS_JSON = `{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@/components",
+    "ui": "@/components/ui",
+    "utils": "@/lib/utils",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  }
+}`
+
+export const NEXTJS_STYLES_CSS = STYLES_CSS.replace(
+  '@import "tailwindcss";',
+  '@import "tailwindcss";\\n@import "tw-animate-css";',
+)
 
 const NEXT_LAYOUT = `import type { Metadata } from 'next'
 import './globals.css'
@@ -196,10 +225,11 @@ export const NEXTJS_SCAFFOLD_COMMANDS = [
   writeFileCommand('/home/user/app/next.config.ts', NEXT_CONFIG),
   writeFileCommand('/home/user/app/tsconfig.json', NEXT_TSCONFIG),
   writeFileCommand('/home/user/app/postcss.config.mjs', POSTCSS_CONFIG),
+  writeFileCommand('/home/user/app/components.json', NEXTJS_COMPONENTS_JSON),
   writeFileCommand('/home/user/app/app/layout.tsx', NEXT_LAYOUT),
   writeFileCommand('/home/user/app/app/providers.tsx', NEXT_PROVIDERS_TS),
   writeFileCommand('/home/user/app/app/page.tsx', NEXT_PAGE),
-  writeFileCommand('/home/user/app/app/globals.css', STYLES_CSS),
+  writeFileCommand('/home/user/app/app/globals.css', NEXTJS_STYLES_CSS),
   writeFileCommand('/home/user/app/vitest.config.ts', NEXT_VITEST_CONFIG),
   writeFileCommand('/home/user/app/vitest.setup.ts', NEXT_VITEST_SETUP),
   ...Object.entries(PREBAKED_UI_PRIMITIVES).map(([filePath, fileContent]) =>
