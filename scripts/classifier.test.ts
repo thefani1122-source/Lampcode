@@ -87,16 +87,24 @@ const reactHonoSupabase = valid(decision({
 }));
 expectValue("React/Hono full-stack with Supabase is supported", reactHonoSupabase.database, "supabase");
 
-const fastApiMongo = valid(decision({
+const fastApiSupabase = valid(decision({
   buildType: "fullstack",
   framework: "react",
   backendRuntime: "python",
-  database: "mongodb",
-  persistence: "mongodb",
-  reason: "The requested Python API uses MongoDB for durable shared records.",
+  database: "supabase",
+  persistence: "supabase",
+  reason: "The requested Python API uses Supabase for durable shared records.",
 }));
-expectValue("React/Vite can use the Python backend when the model selects it", fastApiMongo.backendRuntime, "python");
-expectValue("MongoDB remains separate from Supabase", fastApiMongo.database, "mongodb");
+expectValue("React/Vite can use the Python backend when the model selects it", fastApiSupabase.backendRuntime, "python");
+expectValue("FastAPI can select the supported Supabase persistence path", fastApiSupabase.database, "supabase");
+expectValue("the current FastAPI scaffold rejects MongoDB instead of receiving Hono-only instructions",
+  parseClassification(JSON.stringify(decision({
+    buildType: "fullstack",
+    backendRuntime: "python",
+    database: "mongodb",
+    persistence: "mongodb",
+    reason: "The model attempted an unsupported Python/MongoDB combination.",
+  }))), null);
 
 expectValue("unknown tool names are discarded, not granted", parseClassification(JSON.stringify(decision({
   requiredTools: ["filesystem", "sudo", "delete-account", "browser"],
