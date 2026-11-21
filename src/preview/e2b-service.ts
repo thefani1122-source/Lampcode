@@ -397,6 +397,7 @@ const BAKED_FILES = new Set([
   "next.config.ts",
   "postcss.config.mjs",
   "components.json",
+  "app/providers.tsx",
   "next.config.js",
   "next.config.mjs",
   // TanStack Start / Vinxi config (controls server port — must stay as baked)
