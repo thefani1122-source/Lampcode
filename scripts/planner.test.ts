@@ -356,11 +356,20 @@ check(
   false,
 );
 check(
-  "existing Next.js/TanStack projects keep the full-stack edit route",
+  "a frontend-only Next.js App Router project keeps the frontend edit route",
   shouldUseFullstackEdit({
     hasExistingCode: true,
     framework: "nextjs",
     existingBackendArtifacts: false,
+  }),
+  false,
+);
+check(
+  "a Next.js project with Route Handlers uses the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "nextjs",
+    existingBackendArtifacts: true,
   }),
   true,
 );
