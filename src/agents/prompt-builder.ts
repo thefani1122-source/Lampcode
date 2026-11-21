@@ -2108,12 +2108,9 @@ export class PromptBuilder {
         "- FIRST-RUN CONTENT CONTRACT: Unless the user explicitly requests an empty first launch, a new frontend/mock-data app must render with 5–8 realistic records and meaningful populated metrics. For localStorage, use a versioned first-run marker: if the marker is absent, seed when the saved collection is missing OR empty, persist the records, then set the marker; once marked, preserve a user's deliberately empty [] after they delete everything. Never reseed on every reload. Do not rely only on saved ?? SAMPLE because [] is not null.\n" +
         "- REAL BACKEND DATA IS DIFFERENT: never insert fake sample rows into the user's real database or silently replace a failing API with localStorage/demo mode. Use the real API as source of truth; report a real empty/error state honestly when the backend has no records or is unavailable.\n" +
         "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route.\n" +
-        "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
-        "the backend's own output and check_page shows the browser's. The preview always runs " +
-        "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
-        "http://localhost:3001 in frontend code — the preview is served from a different " +
-        "origin, so that address resolves to nothing and every call fails exactly as if no " +
-        "backend existed. Calls must go through API_BASE + '/api/...'.\n" +
+        (fullstackFramework === "nextjs"
+          ? "- A runtime failure is a claim you must CHECK, not assume: the Next.js app runs as one Node process on port 3000; inspect its logs and Route Handler responses. Do not expect a Vite proxy or separate Hono process.\\n"
+          : "- A runtime failure is a claim you must CHECK, not assume: React/Vite runs on :5173 and its selected Hono/FastAPI backend runs on :3001; only those projects use the Vite /api proxy. Never hardcode localhost in browser code.\\n") +
         "- If you truly cannot fix it, say so plainly and leave the real code in place. " +
         "'Sign-up is not working because X' is a result. A working-looking fake is not.\n" +
         "- write_files(files): writes whole files into the running project — use it for files " +
@@ -2198,11 +2195,13 @@ export class PromptBuilder {
         "wrong, and the file grows every time anyone touches it. Replacing is a deletion plus " +
         "an insertion, not an insertion.\n" +
         "   Split the app across files the way you would in a real project. Anything with " +
-        "more than one screen gets a file per screen under src/components/ or src/views/, " +
-        "with shared types and seed data in their own modules, and src/App.tsx left as " +
-        "routing and layout. A single file holding every screen still renders, but every " +
-        "later edit then has to rewrite the whole app, and one bad line takes all of it " +
-        "down. Keep a file you would be willing to open again.\n" +
+        "more than one screen gets a file per screen under the selected framework's normal " +
+        "component/view directories, with shared types and domain logic in their own modules. " +
+        (fullstackFramework === "nextjs"
+          ? "Keep app/layout.tsx and app/page.tsx as the App Router shell and route; do not create src/App.tsx or src/index.tsx. "
+          : "For React/Vite, keep src/App.tsx as routing/layout and src/index.tsx as the entry point. ") +
+        "A single file holding every screen still renders, but every later edit then has to rewrite " +
+        "the whole app, and one bad line takes all of it down. Keep a file you would be willing to open again.\\n" +
         "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
@@ -2213,10 +2212,8 @@ export class PromptBuilder {
         "is available. Inspect hierarchy, spacing, contrast, alignment, clipping and visual " +
         "consistency; fix visible issues and re-run the relevant checks. If the tool refuses " +
         "because the model cannot accept images, do not retry it.\n" +
-        "5. Call check_types. The dev server does NOT type-check — Vite strips types and " +
-        "serves the file, so a type error renders a perfectly normal-looking page and ships " +
-        "broken. check_page cannot see it. It costs one round; run it before you finish, " +
-        "every time, and fix what it reports.\n" +
+        "5. Call check_types. A dev-server render is not a TypeScript check. Run " +
+        "the project's real type-check before finishing, every time, and fix all errors it reports.\\n" +
         "6. If the app has logic whose correctness you cannot see by reading it — a " +
         "reducer, a running total, a date or currency calculation, validation rules, a " +
         "formula evaluator, sorting or filtering with edge cases — put that logic in its " +
