@@ -2325,21 +2325,30 @@ export async function runFastBuild(
         });
 
         try {
+          const isNextJsRetry = fullstackFramework === "nextjs";
           const dbLabel = fullstackDb === "mongodb"
             ? "MongoDB (Mongoose — use mongoose models, connectDB() from src/lib/db.ts)"
-            : "Supabase PostgreSQL (@supabase/supabase-js — use createClient with env vars)";
+            : fullstackDb === "supabase"
+              ? "Supabase PostgreSQL with caller-session/RLS semantics"
+              : "No application database was requested; do not add one.";
 
-          const retryDescription =
-            `The following backend/db files were empty or missing from the first build pass and must be generated now:\n` +
-            missing.map((f) => `- ${f}`).join("\n") + "\n\n" +
-            `App description: ${prompt}\n` +
-            `Backend framework: Hono.js on Node.js, port 3001\n` +
-            `Database: ${dbLabel}\n\n` +
-            `Per-file requirements:\n` +
-            (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\n" : "") +
-            (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\n" : "") +
-            (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\n" : "") +
-            (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\n" : "");
+          const retryDescription = isNextJsRetry
+            ? `FULLSTACK BUILD: Next.js App Router. Repair only the missing Next.js files listed below.\\n` +
+              `App description: ${prompt}\\n` +
+              `Runtime: Next.js App Router on Ubuntu, one Node process on port 3000.\\n` +
+              `Database: ${dbLabel}\\n` +
+              `Missing files:\\n` + missing.map((f) => `- ${f}`).join("\\n") + "\\n\\n" +
+              "Use Next.js App Router conventions only. Do not generate Vite entry points, src/App.tsx, src/index.tsx, a Hono server, or a Vite proxy."
+            : `The following backend/db files were empty or missing from the first build pass and must be generated now:\\n` +
+              missing.map((f) => `- ${f}`).join("\\n") + "\\n\\n" +
+              `App description: ${prompt}\\n` +
+              `Backend framework: Hono.js on Node.js, port 3001\\n` +
+              `Database: ${dbLabel}\\n\\n` +
+              `Per-file requirements:\\n` +
+              (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\\n" : "") +
+              (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\\n" : "") +
+              (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\\n" : "") +
+              (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\\n" : "");
 
           if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
             logger.warn(
@@ -2365,18 +2374,24 @@ export async function runFastBuild(
           }
 
           const retryResult = await dispatcher.dispatch({
-            agentType: "backend",
+            agentType: isNextJsRetry ? "frontend" : "backend",
             usageCategory: "missing_files_retry",
             provider,
             task: {
               description: retryDescription,
-              requirements: [
-                `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
-                "Each file must be complete, non-empty, and production-ready.",
-                "Use the exact format: \`\`\`filename:<path> for each file.",
-                "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
-              ],
-              outputFormat: "code",
+              requirements: isNextJsRetry
+                ? [
+                    `Output ONLY these missing Next.js files: ${missing.join(", ")} — nothing else.`,
+                    "Each file must be complete, non-empty, and production-ready.",
+                    "Use the exact format: ```filename:<path> for each file.",
+                    "Use Next.js App Router conventions; no Vite, src/App.tsx, src/index.tsx or Hono.",
+                  ]
+                : [
+                    `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
+                    "Each file must be complete, non-empty, and production-ready.",
+                    "Use the exact format: ```filename:<path> for each file.",
+                    "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
+                  ],
             },
             sessionId,
             userId,
