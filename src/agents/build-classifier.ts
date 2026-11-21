@@ -154,13 +154,14 @@ export function parseClassification(raw: string): BuildClassification | null {
   if (database === "supabase" && persistence !== "supabase") return null;
   if (database === "mongodb" && persistence !== "mongodb") return null;
   if (database === "none" && persistence !== "none" && persistence !== "browser-local") return null;
-  if (needsAuth && buildType !== "fullstack") return null;
+  if (needsAuth && (buildType !== "fullstack" || database === "none")) return null;
 
-  const rawTools = Array.isArray(obj["requiredTools"]) ? obj["requiredTools"] : [];
+  const rawTools = obj["requiredTools"];
+  if (!Array.isArray(rawTools) || rawTools.some((tool) =>
+    typeof tool !== "string" || !ALLOWED_TOOLS.has(tool.trim().toLowerCase())
+  )) return null;
   const requiredTools = [...new Set(rawTools
-    .filter((tool): tool is string => typeof tool === "string")
-    .map((tool) => tool.trim().toLowerCase())
-    .filter((tool) => ALLOWED_TOOLS.has(tool)))].slice(0, ALLOWED_TOOLS.size);
+    .map((tool: string) => tool.trim().toLowerCase()))].slice(0, ALLOWED_TOOLS.size);
 
   const reason = typeof obj["reason"] === "string" ? obj["reason"].trim().slice(0, 500) : "";
   if (reason.length < 8) return null;
