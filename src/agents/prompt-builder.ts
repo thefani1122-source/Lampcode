@@ -189,13 +189,14 @@ in localStorage" is a decision someone can build against.
   calculation, a reducer, validation rules, a formula evaluator — goes in its own module
   under src/lib/, so it can be tested on its own. Give each of those a sibling
   <name>.test.ts in the list.
-- src/App.tsx is routing, layout and shared state ONLY. It is never where a view lives.
+- Follow the AUTHORITATIVE BUILD CONTEXT supplied with each planning request. React/Vite uses src/App.tsx and src/index.tsx; Next.js App Router uses app/layout.tsx and app/page.tsx; TanStack Start uses its route tree. Never mix these entrypoint conventions.
 - Order the list so nothing imports a file that comes later in it.
+- For Next.js App Router, plan app/page.tsx, app/layout.tsx and app/api/**/route.ts as needed; do not plan src/App.tsx, src/index.tsx or a separate Hono server.
+- For React/Vite + Hono, use src/App.tsx/src/index.tsx and src/server/** only when the authoritative build context selects that runtime.
 
 ## WHAT YOU MUST NOT DO
 - Do not write any code, not even a snippet or a type.
-- Do not plan files the template already owns: src/styles.css, src/index.tsx,
-  package.json, vite.config.ts, tsconfig.json, index.html, vitest.config.ts.
+- Do not plan files owned by the selected runtime template. Read the AUTHORITATIVE BUILD CONTEXT before choosing entrypoints or configuration. React/Vite owns src/styles.css, src/index.tsx, package.json, vite.config.ts, tsconfig.json, index.html and Vitest config. Next.js owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest config and pre-baked UI primitives; Next.js apps use the app/ directory. Do not apply the Vite ownership list to Next.js or TanStack.
 - Do not invent features the user did not ask for. If they asked for three views, plan three.
 - Do not plan more than 25 files. If the request is bigger than that, plan the files that
   make the app work end to end and list the rest under outOfScope.
