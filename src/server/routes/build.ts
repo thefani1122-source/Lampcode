@@ -64,7 +64,7 @@ import { generateFileManifest, findOrphanExports, type OrphanExport } from "../.
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
-import { classifyBuild } from "../../agents/build-classifier.js";
+import { classifyBuild, type BuildClassification } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
@@ -603,19 +603,44 @@ function needsAuth(prompt: string): boolean {
   );
 }
 
-/** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
-function buildFullstackPrompt(
-  prompt: string,
-  authWanted: boolean | undefined,
-  selectedDatabase: "supabase" | "mongodb" | "none",
-  selectedFramework: FullstackFramework,
+/** The model has already chosen the architecture; append trusted metadata after user text. */
+function buildNewBuildPrompt(prompt: string, decision: BuildClassification): string {
+  const prefix = decision.buildType === "fullstack"
+    ? decision.needsAuth ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:"
+    : "FRONTEND BUILD:";
+  return [
+    `${prefix}\n${expandUserPrompt(prompt)}`,
+    "",
+    `LAMPCode_SELECTED_BUILD_TYPE: ${decision.buildType}`,
+    `LAMPCode_SELECTED_FRAMEWORK: ${decision.framework}`,
+    `LAMPCode_SELECTED_DATABASE: ${decision.database}`,
+    `LAMPCode_SELECTED_BACKEND_RUNTIME: ${decision.backendRuntime}`,
+    `LAMPCode_SELECTED_AUTH: ${decision.needsAuth ? "required" : "not-required"}`,
+    `LAMPCode_SELECTED_PERSISTENCE: ${decision.persistence}`,
+    `LAMPCode_REQUIRED_TOOLS: ${decision.requiredTools.join(",") || "none"}`,
+  ].join("\n");
+}
+
+/** Existing projects keep their proven runtime/provider; only metadata is appended. */
+function appendExistingBuildMetadata(
+  description: string,
+  options: {
+    buildType: "frontend" | "fullstack";
+    framework: FullstackFramework;
+    backendRuntime: "none" | "node" | "python";
+    database: "supabase" | "mongodb" | "none" | "unknown";
+  },
 ): string {
-  const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return (
-    `${prefix}\n${expandUserPrompt(prompt)}` +
-    `\n\nLAMPCode_SELECTED_FRAMEWORK: ${selectedFramework}` +
-    `\nLAMPCode_SELECTED_DATABASE: ${selectedDatabase}`
-  );
+  const lines = [
+    "",
+    "LAMPCode_SELECTED_BUILD_TYPE: " + options.buildType,
+    "LAMPCode_SELECTED_FRAMEWORK: " + options.framework,
+    "LAMPCode_SELECTED_BACKEND_RUNTIME: " + options.backendRuntime,
+  ];
+  if (options.database !== "unknown") {
+    lines.push("LAMPCode_SELECTED_DATABASE: " + options.database);
+  }
+  return description + "\n" + lines.join("\n");
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -1333,31 +1358,33 @@ export async function runFastBuild(
       );
     }
 
-    // ── Full-stack detection (new builds only) ────────────────────────────
-    // Edits and follow-ups keep their existing flows untouched; only a fresh
-    // build with no prior code can be promoted to a full-stack generation.
-    // classifier was started concurrently above — await result here.
+    // The model decides build scope, framework, backend runtime, persistence and auth.
+    // Existing projects do not get reclassified: their proven source structure wins.
     const classification = await classificationPromise;
-    // Logged on every fresh build, including the frontend ones. This one
-    // decision silently governs whether a backend is written at all, whether
-    // the database gate fires, and what the prompt tells the model — and when
-    // it is wrong nothing downstream can recover. `source` says whether a word
-    // decided it, a model read it, or it was a lean.
+    if (!hasExistingCode && !classification) {
+      throw new Error("The build architecture was not decided by the planning model; refusing to guess a framework or database.");
+    }
     if (classification) {
       console.log(
-        `[build] classified session=${sessionId} type=${classification.buildType} ` +
-        `source=${classification.source} auth=${classification.needsAuth} ` +
-        `db=${classification.database} reason="${classification.reason}"`,
+        `[build] model-selected session=${sessionId} scope=${classification.buildType} ` +
+        `framework=${classification.framework} runtime=${classification.backendRuntime} ` +
+        `database=${classification.database} persistence=${classification.persistence} ` +
+        `auth=${classification.needsAuth} tools=[${classification.requiredTools.join(",")}]`,
       );
     }
     const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
-    const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
-    // On the edit path, detect framework from existing files so E2B gets the right
-    // template and the AI gets the right instruction (NEXTJS_INSTRUCTION etc.).
-    // Falls back to "react" for new builds (hasExistingCode = false).
-    const editDetectedFramework: FullstackFramework = hasExistingCode ? detectFrameworkFromFiles(existingFiles) : "react";
-    const fullstackFramework: FullstackFramework = ((isFullstackBuild ? classification?.framework : null) as FullstackFramework | null) ?? editDetectedFramework;
-    const wantsPython = isFullstackBuild && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(prompt);
+    const editDetectedFramework: FullstackFramework = hasExistingCode
+      ? detectFrameworkFromFiles(existingFiles)
+      : classification!.framework;
+    // Runtime selection follows the model decision for new projects and the
+    // existing project's source artifacts for edits.
+    const fullstackFramework: FullstackFramework = editDetectedFramework;
+    const fullstackDb: "supabase" | "mongodb" | "none" | "unknown" = hasExistingCode
+      ? inferExistingDatabase(existingFiles)
+      : classification!.database;
+    const wantsPython = hasExistingCode
+      ? existingHasPython && existingBackendPaths.some((path) => path === "src/server/main.py")
+      : classification!.backendRuntime === "python";
     // Whether the generated schema has anywhere to land. Hoisted out of the
     // block below because the data-layer check at the end of the build needs
     // it: applying `schema.sql` only ever happens against a Supabase the user
@@ -1516,7 +1543,7 @@ export async function runFastBuild(
       ? extractRootBlock(existingFiles["src/styles.css"] ?? "")
       : null;
 
-    const taskDescription = rootBlock
+    const rawTaskDescription = rootBlock
       ? buildTokenEditPrompt(rootBlock, prompt)
       : isFeatureAddition
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
@@ -1524,9 +1551,19 @@ export async function runFastBuild(
           ? fullstackEditMode
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
-          : isFullstackBuild
-            ? buildFullstackPrompt(prompt, classification?.needsAuth, fullstackDb, fullstackFramework)
-            : expandUserPrompt(prompt);
+          : buildNewBuildPrompt(prompt, classification!);
+    const taskDescription = hasExistingCode
+      ? appendExistingBuildMetadata(rawTaskDescription, {
+          buildType: existingBackendPaths.length > 0 || fullstackDb === "supabase" || fullstackDb === "mongodb"
+            ? "fullstack"
+            : "frontend",
+          framework: editDetectedFramework,
+          backendRuntime: existingHasPython && existingBackendPaths.some((path) => path === "src/server/main.py")
+            ? "python"
+            : existingBackendPaths.length > 0 ? "node" : "none",
+          database: fullstackDb,
+        })
+      : rawTaskDescription;
 
     const requirements = isTokenOnlyEdit
       ? [
@@ -1780,8 +1817,8 @@ export async function runFastBuild(
           }
         : {
             projectMode: "new-frontend",
-            framework: "react",
-            database: "browser",
+            framework: fullstackFramework,
+            database: classification?.persistence === "browser-local" ? "browser" : "none",
             backendRuntime: "none",
             databaseAccess: "not-applicable",
             auth: "not-applicable",
@@ -1881,7 +1918,8 @@ export async function runFastBuild(
     // Only for builds that store or guard something. A landing page has no
     // threat model worth a dispatch, and asking for one produces exactly the
     // boilerplate the filter exists to throw away.
-    const wantsThreatModel = shouldAudit() && (isFullstackBuild || needsAuth(prompt));
+    const authIntentForReview = hasExistingCode ? needsAuth(prompt) : classification?.needsAuth === true;
+    const wantsThreatModel = shouldAudit() && (isFullstackBuild || authIntentForReview);
     const threatsPromise: Promise<ThreatExtractResult> = wantsThreatModel
       ? extractThreats({ dispatcher, prompt, sessionId, userId, projectId, provider })
           .catch(() => ({ threats: [], costUsd: 0, reason: "extraction threw" }))
@@ -5361,11 +5399,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (A follow-up edit is also never classified "fullstack" — that flag is
     // new-builds-only by design — so an edit to an app that HAS a backend has
     // always needed the second clause.)
-    const fullstackRequested = isFullstackBuild || backendFileCount > 0 || needsAuth(prompt);
+    const authWanted = hasExistingCode ? needsAuth(prompt) : classification?.needsAuth === true;
+    const fullstackRequested = isFullstackBuild || backendFileCount > 0 || authWanted;
     const fakeFiles = fullstackRequested ? fakePersistence(allFiles).map((f) => f.path) : [];
     const declared = fullstackRequested ? declaredTables(allFiles) : new Set<string>();
-    const queried = fullstackRequested ? queriedTables(allFiles) : [];
-    const authWanted = needsAuth(prompt);
+    const queried = fullstackRequested ? queriedTables(allFiles) : new Set<string>();
     // A real auth call, not a mocked one: the shapes the prompt actually tells
     // the model to use, and never counted from a file the fake detector flagged.
     const authReal = Object.entries(allFiles).some(
