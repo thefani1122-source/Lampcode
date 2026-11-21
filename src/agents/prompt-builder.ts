@@ -1995,7 +1995,7 @@ export class PromptBuilder {
     // Next uses SSR-safe cookies/HttpOnly sessions; Vite uses its existing auth contract.
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
-        ? NEXTJS_AUTH_INSTRUCTIONS[db]
+        ? (db === "none" ? "" : NEXTJS_AUTH_INSTRUCTIONS[db])
         : (fullstackFramework === "react" || fullstackFramework === "tanstack")
           ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
           : ""
