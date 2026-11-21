@@ -444,6 +444,28 @@ const unconfirmedShape: PlanningBuildShape = {
   databaseAccess: "not-confirmed",
 };
 const unconfirmedContext = formatBuildShapeForPrompt(unconfirmedShape);
+const nextNoDatabaseShape: PlanningBuildShape = {
+  projectMode: "new-fullstack",
+  framework: "nextjs",
+  database: "none",
+  backendRuntime: "node",
+  databaseAccess: "not-applicable",
+  auth: "not-required",
+  existingBackendArtifacts: false,
+};
+const nextNoDatabaseContext = formatBuildShapeForPrompt(nextNoDatabaseShape);
+check(
+  "Next.js planner context names the App Router as its framework",
+  nextNoDatabaseContext.includes("Framework: nextjs"),
+  true,
+);
+check(
+  "Next.js server runtime without a database does not invent a Supabase setup",
+  nextNoDatabaseContext.includes("No application database is required") &&
+    nextNoDatabaseContext.includes("do not invent a Supabase/MongoDB schema"),
+  true,
+);
+
 check(
   "an unconfirmed database connection is not falsely reported as declined",
   unconfirmedContext.includes("not confirmed") &&
