@@ -27,7 +27,7 @@ const MAX_PLANNED_FILES = 25;
 export type PlanningBuildShape = {
   projectMode: "new-frontend" | "new-fullstack" | "existing-project";
   framework: "react" | "nextjs" | "tanstack" | "unknown";
-  database: "browser" | "supabase" | "mongodb" | "unknown";
+  database: "browser" | "supabase" | "mongodb" | "none" | "unknown";
   backendRuntime: "none" | "node" | "python" | "unknown";
   databaseAccess:
     | "not-applicable"
@@ -89,7 +89,9 @@ export function formatBuildShapeForPrompt(shape: PlanningBuildShape): string {
       "- Database provider selected by the build pipeline: " + shape.database + ". Do not silently switch providers.",
       "- Authentication requirement: " + shape.auth + ".",
     );
-    if (shape.databaseAccess === "user-connected") {
+    if (shape.database === "none") {
+      lines.push("- No application database is required for this build. Implement the requested server routes without inventing a Supabase/MongoDB schema, connection gate, or browser-storage substitute.");
+    } else if (shape.databaseAccess === "user-connected") {
       lines.push("- The user's own database connection is confirmed. Use the selected provider and keep the real database as the source of truth.");
     } else if (shape.databaseAccess === "declined") {
       lines.push(
