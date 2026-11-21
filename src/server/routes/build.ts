@@ -816,6 +816,7 @@ function buildFullstackEditPrompt(
   const writeInstruction = agenticBuild
     ? "Use the agentic sandbox tools to make the change. Prefer edit_file for existing files and write_files for new files; do not print fenced code in the reply."
     : "Output complete updated files using filename fences for every changed file.";
+  const existingDatabase = inferExistingDatabase(files);
   return (
     `${prefix}\n${framework}\n\n` +
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
@@ -824,6 +825,7 @@ function buildFullstackEditPrompt(
     `Keep everything that does not need to change. ${writeInstruction}
 
 ` +
+    (existingDatabase === "unknown" ? "" : `\nLAMPCode_SELECTED_DATABASE: ${existingDatabase}`)
     `LAMPCode_SELECTED_FRAMEWORK: ${framework}`
   );
 }
