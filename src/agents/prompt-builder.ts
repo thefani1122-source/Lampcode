@@ -1959,8 +1959,8 @@ export class PromptBuilder {
         : this.loadRelevantSkills(
             [
               context.prompt,
-              ...(task.description.match(/LAMPCode_SELECTED_(?:FRAMEWORK|DATABASE)\\s*:\\s*(?:react|nextjs|tanstack|supabase|mongodb|none)\\b/gi) ?? []),
-            ].join("\\n"),
+              ...(task.description.match(/LAMPCode_SELECTED_(?:FRAMEWORK|DATABASE)\s*:\s*(?:react|nextjs|tanstack|supabase|mongodb|none)\b/gi) ?? []),
+            ].join("\n"),
             buildType,
             workspaceDir,
             projectFiles,
