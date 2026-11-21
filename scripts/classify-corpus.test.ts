@@ -47,8 +47,10 @@ const corpus = EVAL_TASKS as Array<{ id: string; prompt: string }>;
 ok("the historical evaluation corpus still contains 21 tasks", corpus.length === 21);
 for (const task of corpus) {
   const modelInput = buildClassificationDescription(task.prompt);
-  ok(`model architecture input preserves the exact original prompt: ${task.id}`, modelInput.includes(task.prompt));
-  ok(`model architecture input scopes the original prompt as user data: ${task.id}`, modelInput.includes("<user_request>") && modelInput.includes("</user_request>"));
+  const encodedStart = modelInput.lastIndexOf("\\n") + 2;
+  const encoded = modelInput.slice(encodedStart);
+  ok(`model architecture input JSON-encodes the exact original prompt: ${task.id}`, encoded === JSON.stringify(task.prompt));
+  ok(`model architecture input keeps the original request after the architecture contract: ${task.id}`, modelInput.endsWith(JSON.stringify(task.prompt)));
 }
 
 console.log("\n— classifier implementation has no prompt-keyword decision layer —");
