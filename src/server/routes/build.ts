@@ -649,9 +649,7 @@ function appendExistingBuildMetadata(
     "LAMPCode_SELECTED_FRAMEWORK: " + options.framework,
     "LAMPCode_SELECTED_BACKEND_RUNTIME: " + options.backendRuntime,
   ];
-  if (options.database !== "unknown") {
     lines.push("LAMPCode_SELECTED_DATABASE: " + options.database);
-  }
   return description + "\n" + lines.join("\n");
 }
 
