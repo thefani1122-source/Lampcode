@@ -242,7 +242,7 @@ function decide(
       ? "none"
       : signals.mentionsMongo
         ? "mongodb"
-        : signals.namedDatabase || needsAuth
+        : signals.namedDatabase || needsAuth || signals.multiPerson || signals.crossDevice
           ? "supabase"
           : "none",
     needsAuth: buildType === "fullstack" && needsAuth,
