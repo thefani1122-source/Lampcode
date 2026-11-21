@@ -1314,6 +1314,58 @@ custom JWT auth in the Hono backend. Generate:
    No social/OAuth (custom auth is email/password).`;
 
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
+export const FULLSTACK_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH A REAL HONO API, NO DATABASE
+
+This build requires a real Node/Hono server, but the selected build context says
+there is NO application database. Do not invent Supabase, MongoDB, schema files,
+migrations, credentials, or fake persistent writes.
+
+Generate these files:
+- src/server/app.ts — Hono app, mounts the route module at /api, does not listen.
+- src/server/index.ts — starts the Hono app on port 3001.
+- src/server/routes/api.ts — the requested real API routes with Zod validation.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+
+The preview uses Vite on :5173 and Hono on :3001; Vite proxies same-origin /api
+requests to Hono. Do not hardcode localhost in browser code.
+
+No database means the server cannot promise durable or shared records. Implement
+the requested server behavior that does not require persistence. If the request
+requires durable records, be explicit that a database connection is needed;
+never create a pretend database with module-level in-memory arrays or localStorage.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, or .env.
+Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+`;
+
+export const FASTAPI_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH PYTHON FASTAPI, NO DATABASE
+
+This build uses the Ubuntu Python runtime and a real FastAPI server, but no
+application database was selected. Do not invent Supabase/MongoDB, schema files,
+migrations or credentials.
+
+Generate:
+- src/server/main.py — FastAPI application and the requested real HTTP routes.
+- src/lib/api.ts — same-origin API client.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+
+The preview runs Vite on :5173 and FastAPI on :3001; Vite proxies /api to FastAPI.
+Use the provided Python virtual environment and start command from the runtime.
+Validate request bodies and return truthful errors. Do not claim durable storage
+or replace a requested server API with a browser-only mock.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, migrations
+or .env. Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+`;
+
 const NEXTJS_FRONTEND_BASE = `You are LampCode, a senior full-stack Next.js engineer and product designer.
 Build a complete, polished, production-usable application from the user's request. Treat the user's explicit architecture and product requirements as authoritative.
 
@@ -1949,6 +2001,7 @@ export class PromptBuilder {
     const fullstackFramework: FullstackFramework = isFullstackMode
       ? detectFullstackFramework(task.description)
       : "react";
+    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
 
     // FASTAPI_OVERRIDE only applies to react fullstack (Hono → FastAPI swap).
     // Next.js and TanStack have their own backend model (API routes / server functions).
@@ -1962,7 +2015,9 @@ export class PromptBuilder {
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
             ? TANSTACK_INSTRUCTION
-            : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
+            : db === "none"
+              ? (wantsPython ? FASTAPI_NO_DATABASE_INSTRUCTION : FULLSTACK_NO_DATABASE_INSTRUCTION)
+              : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
       : "";
 
     // Only the react/hono path maps to e2b-template/template.ts — Next.js and
@@ -1988,7 +2043,6 @@ export class PromptBuilder {
       ? (isFullstackMode && fullstackFramework !== "react" ? "" : FRAMEWORK_RULES[framework])
       : "";
 
-    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
     // Provider-specific database instructions describe a new scaffold and
     // fixed file layout. Existing projects must follow their own code/schema
     // conventions instead of being migrated to the current template.
