@@ -2088,7 +2088,8 @@ export function prewarmSandbox(projectId: string, framework: FullstackFramework 
   // missing candidate template must fail the build immediately; silently
   // returning here could leave tools attached to an old, incompatible runtime.
   if (activeWarm || !live || liveFramework !== framework) {
-    selectTemplate(framework);
+    const templateId = selectTemplate(framework);
+    log(`Selected ${framework} runtime template: ${templateId}`);
   }
 
   if (activeWarm) {
