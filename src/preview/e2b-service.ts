@@ -415,6 +415,25 @@ const BAKED_FILES = new Set([
   // Next.js equivalent (root-level lib, no src/ prefix)
   "lib/utils.ts",
   "lib/queryClient.ts",
+  // shadcn-style primitives are template-owned; add new ones with the shadcn CLI.
+  "components/ui/avatar.tsx",
+  "components/ui/badge.tsx",
+  "components/ui/button.tsx",
+  "components/ui/card.tsx",
+  "components/ui/dialog.tsx",
+  "components/ui/input.tsx",
+  "components/ui/separator.tsx",
+  "components/ui/table.tsx",
+  "components/ui/tabs.tsx",
+  "src/components/ui/avatar.tsx",
+  "src/components/ui/badge.tsx",
+  "src/components/ui/button.tsx",
+  "src/components/ui/card.tsx",
+  "src/components/ui/dialog.tsx",
+  "src/components/ui/input.tsx",
+  "src/components/ui/separator.tsx",
+  "src/components/ui/table.tsx",
+  "src/components/ui/tabs.tsx",
 ]);
 
 /**
