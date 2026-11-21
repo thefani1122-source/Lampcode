@@ -121,7 +121,7 @@ await expectType(
 );
 await expectType("Next.js selects a server runtime without inventing a database", "Build a Next.js marketing site.", "fullstack", false, "none");
 await expectType("the Next.js App Router health check does not require a database", "Build a small full-stack System Health Dashboard using Next.js App Router. Use Route Handlers for /api/health. No external database or authentication is required.", "fullstack", false, "none");
-await expectType("Next.js plus an explicitly requested Supabase database remains database-backed", "Build a Next.js CRM with Supabase and protected Route Handlers.", "fullstack", true, "supabase");
+await expectType("Next.js with explicit Supabase selects Supabase without inventing auth", "Build a Next.js CRM with Supabase and protected Route Handlers.", "fullstack", false, "supabase");
 
 expectValue("explicit Next.js request selects Next runtime", detectFullstackFramework("Build a Next.js SaaS with Supabase"), "nextjs");
 expectValue("explicit Hono API preserves React/Vite + Hono runtime", detectFullstackFramework("Build a React frontend with a Hono API"), "react");
