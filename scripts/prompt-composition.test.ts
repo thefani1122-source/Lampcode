@@ -96,6 +96,26 @@ check("existing Next.js full-stack edits retain the Next.js system prompt",
 check("existing Next.js edits receive framework-specific production guidance",
   nextEditPrompt.systemPrompt.includes("## Skill: nextjs-production") &&
   !nextEditPrompt.systemPrompt.includes("## Skill: fullstack-hono"));
+const unknownFrameworkExisting = await builder.build(
+  "frontend",
+  {
+    description:
+      "EXISTING FULLSTACK EDIT: Modify the existing application.\\n" +
+      "EXISTING PROJECT FILES:\\nREADME.md\\nAn existing full-stack application.",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-existing-framework-unknown",
+    userId: "prompt-composition-existing-framework-unknown",
+    mode: "fast",
+    prompt: "Add a protected settings endpoint.",
+  },
+);
+check("existing full-stack edits without a proven framework do not receive Hono/Next scaffolding skills",
+  !unknownFrameworkExisting.systemPrompt.includes("## Skill: fullstack-hono") &&
+  !unknownFrameworkExisting.systemPrompt.includes("## Skill: nextjs-production"));
 
 const existingSupabaseEditSkills = await builder.build(
   "frontend",
