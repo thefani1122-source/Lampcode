@@ -604,9 +604,13 @@ function needsAuth(prompt: string): boolean {
 }
 
 /** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
-function buildFullstackPrompt(prompt: string, authWanted?: boolean): string {
+function buildFullstackPrompt(
+  prompt: string,
+  authWanted: boolean | undefined,
+  selectedDatabase: "supabase" | "mongodb" | "none",
+): string {
   const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return `${prefix}\n${expandUserPrompt(prompt)}`;
+  return `${prefix}\n${expandUserPrompt(prompt)}\n\nLAMPCode_SELECTED_DATABASE: ${selectedDatabase}`;
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -1359,11 +1363,15 @@ export async function runFastBuild(
       // If the user has connected their OWN Supabase (via MCP or integration), point this
       // project's preview at THEIR project; else fall back to the shared
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
-      let isConnected = await isUserSupabaseConnected(userId).catch(() => false);
-      let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
-      databaseSetupState = fullstackDb === "supabase"
-        ? (isConnected || userSupa ? "user-connected" : "not-confirmed")
-        : "unknown";
+      let isConnected = false;
+      let userSupa: Awaited<ReturnType<typeof getUserSupabasePreviewCreds>> = null;
+      if (fullstackDb === "supabase") {
+        isConnected = await isUserSupabaseConnected(userId).catch(() => false);
+        userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+        databaseSetupState = isConnected || userSupa ? "user-connected" : "not-confirmed";
+      } else {
+        databaseSetupState = fullstackDb === "none" ? "not-applicable" : "unknown";
+      }
 
       // No database of their own, and a full-stack app is about to be built on
       // top of nothing. Ask now, because the sandbox .env is written during
@@ -1443,8 +1451,8 @@ export async function runFastBuild(
         }
       }
 
-      setProjectPreviewEnv(projectId, userSupa);
-      ownSupabaseConnected = isConnected || userSupa !== null;
+      setProjectPreviewEnv(projectId, fullstackDb === "supabase" ? userSupa : null);
+      ownSupabaseConnected = fullstackDb === "supabase" && (isConnected || userSupa !== null);
       if (fullstackDb === "supabase") {
         databaseSetupState = ownSupabaseConnected
           ? "user-connected"
@@ -1509,7 +1517,7 @@ export async function runFastBuild(
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
           : isFullstackBuild
-            ? buildFullstackPrompt(prompt, classification?.needsAuth)
+            ? buildFullstackPrompt(prompt, classification?.needsAuth, fullstackDb)
             : expandUserPrompt(prompt);
 
     const requirements = isTokenOnlyEdit
