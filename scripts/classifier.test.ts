@@ -13,6 +13,7 @@ import {
   classifyBuild,
   parseClassification,
 } from "../src/agents/build-classifier.js";
+import { PromptBuilder } from "../src/agents/prompt-builder.js";
 import { detectFullstackFramework } from "../src/agents/framework-selection.js";
 import { canReuseSandboxForFramework } from "../src/preview/framework-compat.js";
 import {
@@ -135,12 +136,24 @@ assert.ok(BUILD_INTENT_INSTRUCTION.includes("requiredTools"));
 const original = "Build a full-stack health dashboard. Include the phrase Supabase only as an excluded option.";
 const modelInput = buildClassificationDescription(original);
 expectValue("model receives the exact original user request", modelInput.includes(original), true);
-expectValue("original prompt is enclosed as user data", modelInput.includes("<user_request>") && modelInput.includes("</user_request>"), true);
+expectValue("original prompt is passed as a JSON-encoded data string", modelInput.includes(JSON.stringify(original)), true);
 await assert.rejects(
   classifyBuild(original),
   (error: unknown) => error instanceof BuildClassificationError,
 );
 console.log("✔ missing architecture dispatcher fails closed without guessing");
+const architecturePrompt = await new PromptBuilder().build(
+  "planning",
+  { description: modelInput, outputFormat: "json" },
+  { projectId: "classifier-planning-contract", userId: "classifier-planning-contract", mode: "fast", prompt: original },
+);
+expectValue("architecture planning prompt advertises its dedicated decision mode",
+  architecturePrompt.systemPrompt.includes("BUILD-INTENT DECISION MODE"), true);
+expectValue("architecture planning is not biased by the default Next.js implementation skill",
+  architecturePrompt.systemPrompt.includes("## Skill: nextjs-production"), false);
+expectValue("architecture planning does not receive Vite/Hono implementation skills",
+  architecturePrompt.systemPrompt.includes("## Skill: fullstack-hono"), false);
+
 
 console.log("\n— metadata, not keyword matching, controls prompt/runtime selection —");
 expectValue("new projects default to Next.js without reading prompt vocabulary", detectFullstackFramework("Build a React dashboard with Vite"), "nextjs");
