@@ -75,6 +75,33 @@ check("Next.js agentic prompt does not assume Hono on port 3001",
 check("Next.js build prompt does not request a database when none was selected",
   !nextJsPrompt.systemPrompt.includes("DATABASE: Supabase") &&
   !nextJsPrompt.systemPrompt.includes("NEXT.JS + SUPABASE SSR"));
+const nextPlanningPrompt = await builder.build(
+  "planning",
+  {
+    description:
+      "Build a Next.js App Router health dashboard.\\n" +
+      "AUTHORITATIVE BUILD CONTEXT — decided by the build pipeline\\n" +
+      "- Project mode: new full-stack application.\\n" +
+      "- Framework: nextjs.\\n" +
+      "- Database provider selected by the build pipeline: none.",
+    outputFormat: "json",
+  },
+  {
+    projectId: "prompt-composition-nextjs-plan",
+    userId: "prompt-composition-nextjs-plan",
+    mode: "fast",
+    prompt: "Build a Next.js App Router health dashboard.",
+  },
+);
+
+check("planner system prompt chooses framework-specific entrypoints",
+  nextPlanningPrompt.systemPrompt.includes("Next.js App Router uses app/layout.tsx and app/page.tsx"));
+check("planner system prompt no longer treats src/App.tsx as universal",
+  !nextPlanningPrompt.systemPrompt.includes("src/App.tsx is routing, layout and shared state"));
+check("planner system prompt documents Next.js-owned config instead of Vite-only ownership",
+  nextPlanningPrompt.systemPrompt.includes("Next.js owns package.json") &&
+  nextPlanningPrompt.systemPrompt.includes("Do not apply the Vite ownership list to Next.js"));
+
 
 
 const prompt = await builder.build(
