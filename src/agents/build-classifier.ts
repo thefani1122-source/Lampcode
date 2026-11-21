@@ -192,6 +192,8 @@ export type DeterministicSignals = {
   namedBrowserStore: boolean;
   /** The user NAMED a database or a backend framework. Likewise theirs. */
   namedServerThing: boolean;
+  /** A database provider was explicitly requested, distinct from naming a server framework such as Next.js. */
+  namedDatabase: boolean;
   /** The prompt itself says the data is mock, sample, or not really processed. */
   notReal: boolean;
   /** An auth word describing a PIECE OF INTERFACE — "a login page", "a signup
@@ -211,6 +213,7 @@ export function readSignals(prompt: string): DeterministicSignals {
   return {
     namedBrowserStore: CLIENT_ONLY_RE.test(text),
     namedServerThing: SERVER_THING_RE.test(deNegated),
+    namedDatabase: POSITIVE_DATABASE_REQUEST_RE.test(deNegated),
     notReal: NOT_REAL_RE.test(text),
     authAsUi: AUTH_AS_UI_RE.test(text),
     authSystem: AUTH_SYSTEM_RE.test(deNegated) && !AUTH_AS_UI_RE.test(text),
@@ -232,7 +235,16 @@ function decide(
   return {
     buildType,
     framework: buildType === 'fullstack' ? signals.framework : 'react',
-    database: buildType === "fullstack" ? (signals.mentionsMongo ? "mongodb" : "supabase") : "none",
+    // A server framework (for example Next.js Route Handlers) does not imply
+    // that the app needs a database. Only select Supabase when the request names
+    // a database/provider or the app requires real authentication.
+    database: buildType !== "fullstack"
+      ? "none"
+      : signals.mentionsMongo
+        ? "mongodb"
+        : signals.namedDatabase || needsAuth
+          ? "supabase"
+          : "none",
     needsAuth: buildType === "fullstack" && needsAuth,
     reason,
     source,
