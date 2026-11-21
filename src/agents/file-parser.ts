@@ -560,8 +560,9 @@ export function findMissingFullstackFiles(
       ? [
           "app/page.tsx",
           "app/layout.tsx",
+          "app/api/health/route.ts",
           ...(database === "supabase" ? ["src/db/types.ts", "src/db/schema.sql"] : []),
-          ...(database === "mongodb" ? ["src/db/schema.ts", "src/lib/db.ts"] : []),
+          ...(database === "mongodb" ? ["lib/db.ts"] : []),
         ]
       : framework === "tanstack"
         ? [
