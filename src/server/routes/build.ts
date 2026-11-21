@@ -2392,6 +2392,7 @@ export async function runFastBuild(
                     "Use the exact format: ```filename:<path> for each file.",
                     "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
                   ],
+              outputFormat: "code",
             },
             sessionId,
             userId,
