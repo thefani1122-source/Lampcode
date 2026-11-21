@@ -671,6 +671,11 @@ TOUCH TARGETS:
 export type DatabaseChoice = Database | "none";
 
 export function detectDatabase(prompt: string): DatabaseChoice {
+  // The build route's deterministic classification is authoritative. Pass it
+  // explicitly so model inference (e.g. shared multi-user data) cannot diverge
+  // from the planner, DB gate, or required-file validator.
+  const selected = /LAMPCode_SELECTED_DATABASE\s*:\s*(supabase|mongodb|none)\b/i.exec(prompt);
+  if (selected?.[1]) return selected[1].toLowerCase() as DatabaseChoice;
   if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
   if (hasPositiveDatabaseRequirement(prompt) || readSignals(prompt).authSystem) return "supabase";
   return "none";
@@ -1359,8 +1364,10 @@ SERVER/CLIENT BOUNDARIES:
   own Route Handler over HTTP. Client Components may use same-origin fetch('/api/...') or Server Actions.
 - Mark browser-only animation, Canvas and window/document code with 'use client'. Lazy-load WebGL and
   give it a usable fallback.
-- Use session-aware Supabase SSR and RLS, or server-only Mongo connections with per-request ownership
-  checks. Never use a service-role key as a shortcut around user permissions.
+- When the selected build context includes Supabase, use session-aware Supabase SSR and RLS;
+  when it includes MongoDB, use server-only Mongo connections with per-request ownership checks.
+  When no database is selected, do not add a database client, schema, migration or persistence claim.
+  Never use a service-role key as a shortcut around user permissions.
 - Treat caching deliberately: personalised data must not be shared between users. Opt out of caching
   for user-specific and rapidly-changing reads; revalidate only when the product permits it.
 
