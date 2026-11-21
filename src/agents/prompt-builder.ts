@@ -2067,8 +2067,16 @@ export class PromptBuilder {
     }
     const selectedBuildType = selectedBuildMarker(task.description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
     const hasExistingFullstackEditPrefix = task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const hasExistingProjectContext = task.description.includes("EXISTING PROJECT FILES:");
     const isExistingFullstackEdit = hasExistingFullstackEditPrefix && selectedBuildType !== "frontend";
-    const selectedFramework = selectedFullstackFramework(task.description);
+    const explicitlySelectedFramework = selectedBuildMarker(
+      task.description,
+      "FRAMEWORK",
+      ["react", "nextjs", "tanstack"] as const,
+    );
+    const hasTrustedFramework = explicitlySelectedFramework !== undefined;
+    const selectedFramework = explicitlySelectedFramework
+      ?? (hasExistingProjectContext ? "react" : DEFAULT_BUILD_FRAMEWORK);
     const isFullstackMode =
       agentType === "frontend" &&
       (selectedBuildType === "fullstack" ||
@@ -2083,7 +2091,10 @@ export class PromptBuilder {
     const wantsPython =
       isFullstackMode && fullstackFramework === "react" && backendRuntime === "python";
 
-    const nextFrameworkPrompt = agentType === "frontend" && fullstackFramework === "nextjs";
+    const nextFrameworkPrompt =
+      agentType === "frontend" &&
+      fullstackFramework === "nextjs" &&
+      (!hasExistingProjectContext || hasTrustedFramework);
     const base = nextFrameworkPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
     let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
@@ -2104,7 +2115,7 @@ export class PromptBuilder {
       if (wantsPython) fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
     }
 
-    const frameworkInstruction = agentType !== "frontend"
+    const frameworkInstruction = agentType !== "frontend" || (hasExistingProjectContext && !hasTrustedFramework)
       ? ""
       : fullstackFramework === "nextjs"
         ? (isFullstackMode ? "" : NEXTJS_FRONTEND_INSTRUCTION)
