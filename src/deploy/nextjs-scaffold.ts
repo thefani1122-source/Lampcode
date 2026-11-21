@@ -28,6 +28,7 @@ const NEXT_DEPENDENCIES: Record<string, string> = {
   "class-variance-authority": "^0.7.1",
   clsx: "^2.1.1",
   "tailwind-merge": "^2.5.4",
+  "tw-animate-css": "1.4.0",
   "@supabase/supabase-js": "^2.45.0",
   "@supabase/ssr": "^0.5.1",
   mongoose: "^8.7.0",
@@ -46,6 +47,7 @@ const NEXT_DEV_DEPENDENCIES: Record<string, string> = {
   tailwindcss: "^4.0.0",
   "@tailwindcss/postcss": "^4.0.0",
   postcss: "^8.4.0",
+  shadcn: "4.23.0",
 }
 
 const NEXT_QUERY_CLIENT = `import { QueryClient } from "@tanstack/react-query"
@@ -140,6 +142,35 @@ const NEXT_ENV = `/// <reference types="next" />
 /// <reference types="next/image-types/global" />
 `
 
+function nextComponentsJson(appDir: string): string {
+  return `${JSON.stringify({
+    $schema: "https://ui.shadcn.com/schema.json",
+    style: "new-york",
+    rsc: true,
+    tsx: true,
+    tailwind: {
+      config: "",
+      css: `${appDir}/globals.css`,
+      baseColor: "neutral",
+      cssVariables: true,
+      prefix: "",
+    },
+    iconLibrary: "lucide",
+    aliases: {
+      components: "@/components",
+      ui: "@/components/ui",
+      utils: "@/lib/utils",
+      lib: "@/lib",
+      hooks: "@/hooks",
+    },
+  }, null, 2)}\\n`
+}
+
+const NEXT_STYLES_CSS = STYLES_CSS.replace(
+  '@import "tailwindcss";',
+  '@import "tailwindcss";\\n@import "tw-animate-css";',
+)
+
 function declaredDependencies(files: Record<string, string>, key: "dependencies" | "devDependencies"): Record<string, string> {
   try {
     const parsed: unknown = JSON.parse(files["package.json"] ?? "{}")
@@ -194,7 +225,8 @@ export function nextjsVercelScaffold(files: Record<string, string>): Record<stri
     [`${appDir}/providers.tsx`, NEXT_PROVIDERS],
     ["lib/queryClient.ts", NEXT_QUERY_CLIENT],
     ["lib/utils.ts", UTILS_TS],
-    [`${appDir}/globals.css`, STYLES_CSS],
+    [`${appDir}/globals.css`, NEXT_STYLES_CSS],
+    ["components.json", nextComponentsJson(appDir)],
   ] as const) {
     if (!has(files, path)) output[path] = content
   }
