@@ -1894,11 +1894,19 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  const selectedFramework = selectedFullstackFramework(prompt);
   const selectedDatabase = detectDatabase(prompt);
   const backendRuntime = selectedBackendRuntime(prompt);
   const isFullstack = opts?.buildType === "fullstack" || opts?.buildType === "fullstack-mongodb";
   const isExistingFullstack = opts?.buildType === "fullstack-existing";
+  const explicitlySelectedFramework = selectedBuildMarker(
+    prompt,
+    "FRAMEWORK",
+    ["react", "nextjs", "tanstack"] as const,
+  );
+  // New projects default to Next.js. Existing projects with unknown source
+  // framework stay provider/framework-neutral until their files are inspected.
+  const selectedFramework = explicitlySelectedFramework
+    ?? (isExistingFullstack ? "unknown" : DEFAULT_BUILD_FRAMEWORK);
 
   // Architecture-decision planning has no implementation framework yet.
   // Do not inject the Next.js default skill into the model that is choosing the
