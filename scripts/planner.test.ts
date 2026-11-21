@@ -462,7 +462,7 @@ check(
 check(
   "Next.js server runtime without a database does not invent a Supabase setup",
   nextNoDatabaseContext.includes("No application database is required") &&
-    nextNoDatabaseContext.includes("do not invent a Supabase/MongoDB schema"),
+    nextNoDatabaseContext.includes("without inventing a Supabase/MongoDB schema"),
   true,
 );
 
