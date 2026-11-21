@@ -75,6 +75,49 @@ check("Next.js agentic prompt does not assume Hono on port 3001",
 check("Next.js build prompt does not request a database when none was selected",
   !nextJsPrompt.systemPrompt.includes("DATABASE: Supabase") &&
   !nextJsPrompt.systemPrompt.includes("NEXT.JS + SUPABASE SSR"));
+const noDatabaseHonoPrompt = await builder.build(
+  "frontend",
+  {
+    description:
+      "FULLSTACK BUILD: Build a React frontend with a Hono API for a simple health route.\\n" +
+      "LAMPCode_SELECTED_DATABASE: none",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-hono-no-db",
+    userId: "prompt-composition-hono-no-db",
+    mode: "fast",
+    prompt: "Build a React frontend with a Hono API for a simple health route.",
+  },
+);
+check("Hono with no selected database receives a database-free scaffold",
+  noDatabaseHonoPrompt.systemPrompt.includes("REACT + VITE FRONTEND WITH A REAL HONO API, NO DATABASE"));
+check("Hono with no selected database does not receive Supabase schema instructions",
+  !noDatabaseHonoPrompt.systemPrompt.includes("DATABASE: Supabase") &&
+  !noDatabaseHonoPrompt.systemPrompt.includes("src/db/schema.sql"));
+
+const inferredSupabasePrompt = await builder.build(
+  "frontend",
+  {
+    description:
+      "FULLSTACK BUILD: Build a multi-user collaboration app where teams share records.\\n" +
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-selected-supabase",
+    userId: "prompt-composition-selected-supabase",
+    mode: "fast",
+    prompt: "Build a multi-user collaboration app where teams share records.",
+  },
+);
+check("the build pipeline's selected database provider reaches the generator",
+  inferredSupabasePrompt.systemPrompt.includes("DATABASE: Supabase (PostgreSQL)"));
+
 const nextPlanningPrompt = await builder.build(
   "planning",
   {
