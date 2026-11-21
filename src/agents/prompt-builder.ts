@@ -2102,15 +2102,17 @@ export class PromptBuilder {
           ? FRAMEWORK_RULES.react
           : TANSTACK_INSTRUCTION;
 
-    const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit &&
-      (db === "supabase" || db === "mongodb")
-        ? fullstackFramework === "nextjs"
-          ? NEXTJS_DATABASE_INSTRUCTIONS[db]
-          : wantsPython
-            ? "" // FASTAPI_OVERRIDE contains the Python/Supabase request-scoped client contract.
-            : DB_INSTRUCTIONS[db]
-        : "";
+    let dbInstruction = "";
+    if (isFullstackMode && !isExistingFullstackEdit) {
+      if (db === "supabase" || db === "mongodb") {
+        if (fullstackFramework === "nextjs") {
+          dbInstruction = NEXTJS_DATABASE_INSTRUCTIONS[db];
+        } else if (!wantsPython) {
+          // FASTAPI_OVERRIDE contains the Python/Supabase request-scoped client contract.
+          dbInstruction = DB_INSTRUCTIONS[db];
+        }
+      }
+    }
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
