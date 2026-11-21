@@ -1293,9 +1293,9 @@ export async function runFastBuild(
       const code = existingFiles[path] ?? "";
       return (
         isBackendFile(path) ||
-        /^app\\/api\\/.+\\/route\\.[cm]?[jt]sx?$/.test(path) ||
-        /(^|\\n)\\s*["']use server["']/.test(code) ||
-        /from\\s+["']server-only["']/.test(code)
+        /^app\/api\/.+\/route\.[cm]?[jt]sx?$/.test(path) ||
+        /(^|\n)\s*["']use server["']/.test(code) ||
+        /from\s+["']server-only["']/.test(code)
       );
     });
     const existingHasPython = Object.keys(existingFiles).some(
