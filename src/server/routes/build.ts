@@ -612,9 +612,9 @@ function buildFullstackPrompt(
 ): string {
   const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
   return (
-    \`\${prefix}\n\${expandUserPrompt(prompt)}\` +
-    \`\n\nLAMPCode_SELECTED_FRAMEWORK: \${selectedFramework}\` +
-    \`\nLAMPCode_SELECTED_DATABASE: \${selectedDatabase}\`
+    `${prefix}\n${expandUserPrompt(prompt)}` +
+    `\n\nLAMPCode_SELECTED_FRAMEWORK: ${selectedFramework}` +
+    `\nLAMPCode_SELECTED_DATABASE: ${selectedDatabase}`
   );
 }
 
