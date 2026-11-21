@@ -103,7 +103,7 @@ await expectType("an explicit database is fullstack", "Build a blog that saves p
 await expectType("mongodb is fullstack", "A recipe app backed by MongoDB.", "fullstack");
 await expectType("a named backend is fullstack", "Build a Hono API with a React frontend.", "fullstack");
 await expectType("a REST API is fullstack", "Build a notes app with a REST API.", "fullstack");
-await expectType("multi-user is fullstack", "A team chat where multiple users see the same messages.", "fullstack");
+await expectType("multi-user shared data selects a database", "A team chat where multiple users see the same messages.", "fullstack", false, "supabase");
 await expectType("payments are fullstack", "A store with Stripe checkout.", "fullstack");
 await expectType("file uploads are fullstack", "A gallery with file uploads.", "fullstack");
 await expectType("real-time is fullstack", "A real-time collaborative whiteboard.", "fullstack");
