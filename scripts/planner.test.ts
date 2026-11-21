@@ -274,6 +274,8 @@ check("the primary journeys are treated as a required deliverable", /primary use
 check("the first screen must have meaningful product-specific content and a primary action", /first screen meaningful, product-specific content and a clear primary action/.test(block), true);
 check("loading, failures and genuinely empty data are kept distinct", /loading, failure\/error, and genuinely empty data states/.test(block), true);
 check("the one-file habit is still ruled out", /one large file/.test(block), true);
+check("business logic and persistence require focused tests", /focused unit\/integration tests/.test(block), true);
+check("the builder must execute tests rather than only create them", /test file that was never executed is not verification/.test(block), true);
 
 const noScope = formatPlanForPrompt({ summary: "s", files: [{ path: "src/a.ts", purpose: "p" }] });
 check("no out-of-scope section when there is nothing to exclude", /Planner-suggested out-of-scope items/.test(noScope), false);

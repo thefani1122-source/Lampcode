@@ -35,7 +35,9 @@ export type DataLayerKind =
   /** The app queries tables and no database is configured at all. */
   | "no-database"
   /** The app fakes persistence so a broken feature LOOKS like it works. */
-  | "fake-persistence";
+  | "fake-persistence"
+  /** A database was configured, but the generated schema application failed. */
+  | "schema-apply-failed";
 
 export type DataLayerFinding = {
   kind: DataLayerKind;
@@ -50,9 +52,10 @@ export type DataLayerFinding = {
 export interface DatabaseState {
   /** Credentials for some database were injected into the sandbox. */
   configured: boolean;
-  /** The generated schema is applied somewhere — today, only true when the
-   *  user connected their own Supabase project. */
+  /** True only after the generated schema was successfully applied. */
   schemaApplied: boolean;
+  /** Sanitised provider error when schema application was attempted and failed. */
+  schemaError?: string;
 }
 
 /** Cap on what is PRINTED, not on what is found — same split as `wiring.ts`. */
@@ -294,14 +297,17 @@ export function findDataLayerGaps(
   }
 
   if (declared.size > 0 && !database.schemaApplied) {
+    const applicationFailed = Boolean(database.schemaError?.trim());
     findings.push({
-      kind: "schema-never-applied",
+      kind: applicationFailed ? "schema-apply-failed" : "schema-never-applied",
       path: "src/db/schema.sql",
       symbol: `${declared.size} table(s)`,
-      detail:
-        `The schema declares ${declared.size} table(s), but nothing will run this SQL — the generated schema ` +
-        `is only applied to a Supabase project the user connected themselves, and this build has none. ` +
-        `The tables will not exist, and the app's reads will come back empty instead of failing loudly.`,
+      detail: applicationFailed
+        ? `The database credentials/integration were present, but applying the generated schema failed: ${database.schemaError!.slice(0, 240)}. ` +
+          `Do not claim that saving works until the connection is repaired and this schema is successfully applied.`
+        : `The schema declares ${declared.size} table(s), but nothing will run this SQL — the generated schema ` +
+          `is only applied to a Supabase project the user connected themselves, and this build has none. ` +
+          `The tables will not exist, and the app's reads will come back empty instead of failing loudly.`,
     });
   }
 
@@ -354,6 +360,12 @@ export function formatDataLayerForUser(findings: DataLayerFinding[]): string[] {
     lines.push(
       "⚠️ This app's tables were written but never created. Connect your own Supabase project so they can be, " +
         "or the app will show empty lists however much you add.",
+    );
+  }
+
+  if (findings.some((f) => f.kind === "schema-apply-failed")) {
+    lines.push(
+      "⚠️ Your database connection was present, but Supabase rejected the table setup. The app is not verified to save data yet; repair the connection and apply the schema before relying on it.",
     );
   }
 

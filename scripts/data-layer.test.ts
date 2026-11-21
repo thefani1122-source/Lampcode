@@ -158,6 +158,36 @@ check(
 );
 
 check(
+  "a configured database whose schema migration fails is reported separately",
+  kinds(
+    findDataLayerGaps(
+      {
+        "src/server/routes/api.ts": `db.from("riders").select("*")`,
+        "src/db/schema.sql": `CREATE TABLE riders (id uuid primary key);`,
+      },
+      { configured: true, schemaApplied: false, schemaError: "Supabase MCP failed (http_401): Invalid access token" },
+    ),
+  ),
+  ["schema-apply-failed"],
+);
+
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("an unattempted migration is not misreported as a Supabase rejection",
+    build.includes("schemaApply?.ran === true && schemaApply.ok === false && schemaApply.error"));
+}
+
+ok(
+  "a migration failure does not tell the user the database was disconnected",
+  formatDataLayerForUser([{
+    kind: "schema-apply-failed",
+    path: "src/db/schema.sql",
+    symbol: "1 table(s)",
+    detail: "Invalid access token",
+  }])[0]?.includes("connection was present") === true,
+);
+
+check(
   "no database at all outranks the schema finding",
   kinds(
     findDataLayerGaps(

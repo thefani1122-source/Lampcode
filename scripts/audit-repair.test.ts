@@ -15,6 +15,8 @@
 import { readFileSync } from "node:fs";
 import {
   MAX_REPAIRABLE,
+  MAX_REPAIR_BATCHES,
+  MAX_REPAIR_TOTAL,
   repairStatusLine,
   auditRepairInstruction,
   describeRepair,
@@ -76,16 +78,66 @@ console.log("\n— refused, with a reason —");
   ok("and it says so", whyNoRepair(allGood).includes("every requirement was proven"));
 }
 {
-  // The important refusal. A build with ten unmet requirements is not nearly
-  // finished, and one dispatch cannot rescue it — trying costs real money to
-  // produce a worse mess, and the honest move is to report.
   const many = audit(
     Array.from({ length: 10 }, (_, i) => criterion(`c${i}`)),
     Array.from({ length: 10 }, (_, i) => verdict(`c${i}`, "unverified")),
   );
-  ok(`more than ${MAX_REPAIRABLE} unmet is not repaired`, planAuditRepair(many) === null);
-  ok("and the reason names the count", whyNoRepair(many).includes("10 requirements are unmet"));
-  ok("the boundary itself is repaired", planAuditRepair(audit(
+  const leadScoreCriteria = Array.from({ length: 7 }, (_, i) => criterion(`LS${i + 1}`));
+  const leadScoreAudit = audit(
+    leadScoreCriteria,
+    [
+      verdict("LS1", "proven"),
+      verdict("LS2", "contradicted"),
+      verdict("LS3", "contradicted"),
+      verdict("LS4", "contradicted"),
+      verdict("LS5", "contradicted"),
+      verdict("LS6", "contradicted"),
+      verdict("LS7", "unverified"),
+    ],
+  );
+  const leadScoreFirstBatch = planAuditRepair(leadScoreAudit);
+  ok("the real LeadScore shape (1 proven, 6 unmet) starts a five-item repair batch",
+    leadScoreFirstBatch?.items.length === 5 && leadScoreFirstBatch.remaining === 1);
+  ok("the first LeadScore batch contains only the six unmet items, not the proven one",
+    leadScoreFirstBatch?.items[0]?.criterion.id === "LS2" &&
+    leadScoreFirstBatch?.items[4]?.criterion.id === "LS6");
+  const leadScoreAfterFirstRepair = audit(
+    leadScoreCriteria,
+    [
+      verdict("LS1", "proven"),
+      verdict("LS2", "proven"),
+      verdict("LS3", "proven"),
+      verdict("LS4", "proven"),
+      verdict("LS5", "proven"),
+      verdict("LS6", "proven"),
+      verdict("LS7", "unverified"),
+    ],
+  );
+  const leadScoreSecondBatch = planAuditRepair(leadScoreAfterFirstRepair);
+  ok("a re-audit after the first LeadScore batch schedules the final unmet item",
+    leadScoreSecondBatch?.items.length === 1 &&
+    leadScoreSecondBatch.items[0]?.criterion.id === "LS7" &&
+    leadScoreSecondBatch.remaining === 0);
+
+  const firstBatch = planAuditRepair(many);
+  ok("ten unmet requirements start in a bounded batch", firstBatch?.items.length === MAX_REPAIRABLE);
+  ok("the rest are retained for later batches", firstBatch?.remaining === 5);
+  ok("batch selection preserves audit order", firstBatch?.items[0]?.criterion.id === "c0");
+  ok("repair is bounded to three batches", MAX_REPAIR_BATCHES === 3);
+  ok("total automatic-repair cap is 15 requirements", MAX_REPAIR_TOTAL === 15);
+  ok("sets above five are described as batchable", whyNoRepair(many).includes("focused batches"));
+  const atLimit = audit(
+    Array.from({ length: MAX_REPAIR_TOTAL }, (_, i) => criterion(`c${i}`)),
+    Array.from({ length: MAX_REPAIR_TOTAL }, (_, i) => verdict(`c${i}`, "unverified")),
+  );
+  ok("the total safety boundary is accepted", planAuditRepair(atLimit)?.remaining === 10);
+  const beyond = audit(
+    Array.from({ length: MAX_REPAIR_TOTAL + 1 }, (_, i) => criterion(`c${i}`)),
+    Array.from({ length: MAX_REPAIR_TOTAL + 1 }, (_, i) => verdict(`c${i}`, "unverified")),
+  );
+  ok("beyond the cap is reported instead of broadly rewritten", planAuditRepair(beyond) === null);
+  ok("the refusal explains the total limit", whyNoRepair(beyond).includes(String(MAX_REPAIR_TOTAL)));
+  ok("a batch at its five-item boundary contains five requirements", planAuditRepair(audit(
     Array.from({ length: MAX_REPAIRABLE }, (_, i) => criterion(`c${i}`)),
     Array.from({ length: MAX_REPAIRABLE }, (_, i) => verdict(`c${i}`, "unverified")),
   ))?.items.length === MAX_REPAIRABLE);
@@ -239,7 +291,7 @@ console.log("\n— the wiring —");
 
   ok("the repair runs AFTER the audit it acts on",
     build.indexOf("formatAuditForUser(completionAudit)") < build.indexOf("planAuditRepair(completionAudit)"));
-  ok("it needs a live, known sandbox state", build.includes("hasSandbox(projectId) && !sandboxWriteFailed ? planAuditRepair"));
+  ok("it needs a live, known sandbox state", build.includes("const canRepair = hasSandbox(projectId) && !sandboxWriteFailed;"));
   ok("and it respects the cost ceiling", build.includes("cumulativeCostUsd < MAX_BUILD_COST_USD"));
   ok("a skipped repair is logged with its reason", build.includes("skipped=${whyNoRepair(completionAudit)}"));
 
@@ -258,10 +310,20 @@ console.log("\n— the wiring —");
   ok("the re-audit reuses the SAME criteria", build.includes("criteria: before.criteria"));
   ok("stale gate verdicts are labelled to the re-audit", build.includes("(STALE — a repair landed after it)"));
   ok("template-owned files are still refused", build.includes("!isTemplateOwnedFile(file.path)"));
-  ok("a failed dispatch does not fail the build", build.includes("Completion-audit repair dispatch failed"));
+  ok("a failed dispatch does not fail the build", build.includes("Completion-audit repair batch failed"));
   ok("tools are off — this is one shot at a file set", build.includes("enableTools: false"));
-  ok("the outcome is logged with its numbers", build.includes("[build] audit repair session="));
+  ok("the outcome is logged with its numbers", build.includes("[build] audit repair complete session="));
 
+  ok("reverting new files deletes them from the E2B project before restoring the snapshot",
+    build.includes("await deleteProjectFileFromSandbox(projectId, path)"));
+  ok("the rollback helper restores memory and sandbox files together",
+    build.includes("const restoreRepairSnapshot = async"));
+  ok("a failed sandbox write restores the in-memory snapshot even if sandbox state is uncertain",
+    build.includes("await restoreRepairSnapshot(snapshot, written, true)"));
+  ok("the batch loop has a hard three-pass ceiling",
+    build.includes("repairBatches < MAX_REPAIR_BATCHES"));
+  ok("repair stops when an independent re-audit sees no progress",
+    build.includes("stopping=no-measurable-progress"));
   ok("repair writes use the fail-closed sandbox apply helper", build.includes("const applyRepairWriteToSandbox = async"));
   ok("a failed apply is logged with its affected paths", build.includes("Repair files could not be fully applied to the live sandbox"));
   ok("a failed apply marks page, type and test evidence unavailable", build.includes('gate, status: "unavailable"'));
@@ -273,7 +335,7 @@ console.log("\n— the wiring —");
   // nothing has to be visible later — an unchanged audit alone would read as
   // if no repair had ever run.
   ok("the repair is stored in build_outcome", build.includes("...(auditRepair ? { auditRepair } : {})"));
-  ok("with how many it attempted", build.includes("attempted: repairPlan.items.length"));
+  ok("with how many it attempted", build.includes("attempted: repairAttempted"));
   const schema = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
   ok("the field is declared optional, so absent means never attempted", schema.includes("auditRepair?: {"));
   ok("and it records the cost", /auditRepair\?: \{[^}]*costUsd: number/s.test(schema));

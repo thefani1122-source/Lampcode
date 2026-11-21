@@ -326,6 +326,8 @@ export function formatPlanForPrompt(plan: BuildPlan): string {
     "- The user's original request, explicit acceptance requirements, this build's authoritative runtime/framework context, and the existing project's proven conventions take priority over any planner assumption. If the approach conflicts with one of those, follow the higher-priority source and preserve the conflict in the build notes rather than guessing.",
     "- The file list is a proposed decomposition, not an exhaustive or immutable manifest. Add framework-required files, preserve existing files, and adjust paths when the actual project structure requires it. Do not collapse a multi-screen product into one large file.",
     "- Planner out-of-scope items must never be used to drop something the user explicitly requested.",
+    "- For non-trivial business rules, scoring, calculations, validation and data access, plan focused unit/integration tests; keep those tests next to the logic and cover boundary/failure cases.",
+    "- Run the relevant tests, type checks and browser journeys after implementation. A test file that was never executed is not verification.",
     "- Verify the resulting screens and primary journeys in the running application; a plan is not proof that the feature exists.",
   );
   return lines.join("\n");

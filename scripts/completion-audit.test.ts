@@ -23,9 +23,11 @@ import {
   unverifiedAudit,
   formatAuditForUser,
   formatCriteriaForUser,
+  formatAcceptanceCriteriaForBuild,
   formatFilesForAudit,
 } from "../src/verify/completion-audit.js";
 import type { AcceptanceCriterion } from "../src/db/schema.js";
+import { readFileSync } from "node:fs";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -511,6 +513,32 @@ check(
 );
 
 // ── formatCriteriaForUser ──────────────────────────────────────────────────
+
+check("generation checklist is empty when no requirements were extracted", formatAcceptanceCriteriaForBuild([]), "");
+
+const generationChecklist = formatAcceptanceCriteriaForBuild(CRITERIA);
+ok("generation checklist preserves ids and exact original wording",
+  generationChecklist.includes("- [R1] (data) Notes persist across reloads") &&
+  generationChecklist.includes("- [R2] (behaviour) Cmd+Z undoes the last edit"));
+ok("generator is told UI placeholders are not end-to-end features",
+  generationChecklist.includes("A screen, button, placeholder, mock row or unconnected helper"));
+ok("business logic and persistence receive focused test guidance",
+  generationChecklist.includes("focused unit or integration tests"));
+ok("broken integrations cannot be hidden behind mock persistence",
+  generationChecklist.includes("console.log, fabricated data or localStorage"));
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  const awaited = build.indexOf("const extractedCriteria = await criteriaPromise");
+  const generator = build.indexOf("const result = await dispatcher.dispatch({", awaited);
+  ok("independent criteria are awaited before generation", awaited >= 0 && generator > awaited);
+  ok("generation prompt includes the acceptance checklist",
+    build.includes("formatAcceptanceCriteriaForBuild(extractedCriteria.criteria)"));
+  ok("final audit reuses the same extraction result",
+    build.includes("const extracted = extractedCriteria;"));
+  ok("acceptance extraction cost is included in both completion and failure evidence",
+    build.includes("costUsd: result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd") &&
+    build.includes("cumulativeCostUsd = result.costUsd + planCostUsd + result.review.costUsd + extractedCriteria.costUsd"));
+}
 
 const understood = (texts: string[], dropped = 0) => formatCriteriaForUser({
   criteria: texts.map((text, index) => ({ id: `R${index + 1}`, text, kind: "behaviour" as const })),

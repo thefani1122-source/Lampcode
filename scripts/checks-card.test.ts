@@ -7,6 +7,7 @@
  */
 
 import { buildChecksCard, type ChecksInput } from "../src/verify/checks-card.js";
+import { readFileSync } from "node:fs";
 
 let failures = 0;
 let checks = 0;
@@ -163,6 +164,13 @@ eq("a journey that could not run remains visibly unverified",
   "warn");
 eq("products that do not require a journey get no journey row",
   row(base, "journey"), undefined);
+
+{
+  const build = readFileSync(new URL("../src/server/routes/build.ts", import.meta.url), "utf8");
+  ok("an executed failing test suite prevents a success build status",
+    build.includes('const testsFailed = outcome.checkTests === "fail";') &&
+    /gatesFailed \|\| testsFailed \|\| pageUnverified/.test(build));
+}
 
 console.log(`\n${checks} checks-card checks, ${failures} failed`);
 if (failures > 0) process.exit(1);
