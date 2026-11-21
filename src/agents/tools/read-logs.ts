@@ -5,7 +5,7 @@ import { NOT_READY } from "./shared.js";
 export const readLogsHandler: ToolHandler = async (args: Record<string, unknown>, ctx: ToolExecutionContext) => {
   const projectId = ctx.projectId!;
 
-      const logs = readSandboxLogs(projectId);
+      const logs = await readSandboxLogs(projectId);
       if (!logs) return NOT_READY;
       const parts: string[] = [];
       if (logs.dev.length > 0) parts.push(`Dev server output:\n${logs.dev.join("\n")}`);
