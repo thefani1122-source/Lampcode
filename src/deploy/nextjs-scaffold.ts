@@ -163,12 +163,12 @@ function nextComponentsJson(appDir: string): string {
       lib: "@/lib",
       hooks: "@/hooks",
     },
-  }, null, 2)}\\n`
+  }, null, 2)}\n`
 }
 
 const NEXT_STYLES_CSS = STYLES_CSS.replace(
   '@import "tailwindcss";',
-  '@import "tailwindcss";\\n@import "tw-animate-css";',
+  '@import "tailwindcss";\n@import "tw-animate-css";',
 )
 
 function declaredDependencies(files: Record<string, string>, key: "dependencies" | "devDependencies"): Record<string, string> {
