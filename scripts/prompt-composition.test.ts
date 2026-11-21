@@ -40,6 +40,42 @@ const ordinaryPrompt = await builder.build(
 
 check("ordinary builds fit without forced prompt compaction", !ordinaryPrompt.systemPrompt.includes("Middle reference/guidance material compacted"));
 check("ordinary builds remain under the configured system budget", ordinaryPrompt.systemPrompt.length <= 20_000 * 3.1);
+const nextJsPrompt = await builder.build(
+  "frontend",
+  {
+    description:
+      "FULLSTACK BUILD: Build a small full-stack System Health Dashboard using Next.js App Router. " +
+      "Use Route Handlers for /api/health. No external database or authentication is required.",
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-nextjs",
+    userId: "prompt-composition-nextjs",
+    mode: "fast",
+    prompt:
+      "Build a small full-stack System Health Dashboard using Next.js App Router. " +
+      "Use Route Handlers for /api/health. No external database or authentication is required.",
+  },
+);
+
+check("explicit Next.js receives the dedicated App Router system prompt",
+  nextJsPrompt.systemPrompt.includes("NEXT.JS APP ROUTER + NODE RUNTIME"));
+check("Next.js build prompt includes the App Router entrypoint contract",
+  nextJsPrompt.systemPrompt.includes("app/layout.tsx") &&
+  nextJsPrompt.systemPrompt.includes("app/page.tsx"));
+check("Next.js build prompt does not include React/Vite system defaults",
+  !nextJsPrompt.systemPrompt.includes("Vite strips types") &&
+  !nextJsPrompt.systemPrompt.includes("src/App.tsx is routing") &&
+  !nextJsPrompt.systemPrompt.includes("FULLSTACK_INSTRUCTION"));
+check("Next.js agentic prompt does not assume Hono on port 3001",
+  !nextJsPrompt.systemPrompt.includes("preview always runs the backend on :3001") &&
+  nextJsPrompt.systemPrompt.includes("one Node process on port 3000"));
+check("Next.js build prompt does not request a database when none was selected",
+  !nextJsPrompt.systemPrompt.includes("DATABASE: Supabase") &&
+  !nextJsPrompt.systemPrompt.includes("NEXT.JS + SUPABASE SSR"));
+
 
 const prompt = await builder.build(
   "frontend",
