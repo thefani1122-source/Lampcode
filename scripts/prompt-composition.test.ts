@@ -153,6 +153,9 @@ check("Hono with no selected database does not receive Supabase schema instructi
   !noDatabaseHonoPrompt.systemPrompt.includes("DATABASE: Supabase") &&
   !noDatabaseHonoPrompt.systemPrompt.includes("Generate ALL of: src/db/types.ts") &&
   !noDatabaseHonoPrompt.systemPrompt.includes("CREATE TABLE + RLS"));
+check("a database-free Hono build does not receive database security skills",
+  !noDatabaseHonoPrompt.systemPrompt.includes("## Skill: database-rls") &&
+  !noDatabaseHonoPrompt.systemPrompt.includes("## Skill: supabase-rls"));
 
 const inferredSupabasePrompt = await builder.build(
   "frontend",
@@ -173,6 +176,9 @@ const inferredSupabasePrompt = await builder.build(
 );
 check("the build pipeline's selected database provider reaches the generator",
   inferredSupabasePrompt.systemPrompt.includes("DATABASE: Supabase (PostgreSQL)"));
+check("a pipeline-selected Supabase build receives database and RLS security skills",
+  inferredSupabasePrompt.systemPrompt.includes("## Skill: database-rls") &&
+  inferredSupabasePrompt.systemPrompt.includes("## Skill: supabase-rls"));
 
 const nextPlanningPrompt = await builder.build(
   "planning",
