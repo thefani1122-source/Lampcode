@@ -60,8 +60,9 @@ const buildRouteSource = readFileSync("src/server/routes/build.ts", "utf8");
 check(
   "full-stack build prompts reuse the same first-run data contract",
   buildRouteSource.includes("expandUserPrompt(prompt)") &&
-    buildRouteSource.includes("LAMPCode_SELECTED_DATABASE: ${selectedDatabase}") &&
-    buildRouteSource.includes("LAMPCode_SELECTED_FRAMEWORK: ${selectedFramework}"),
+    buildRouteSource.includes("LAMPCode_SELECTED_DATABASE: ${decision.database}") &&
+    buildRouteSource.includes("LAMPCode_SELECTED_FRAMEWORK: ${decision.framework}") &&
+    buildRouteSource.includes("LAMPCode_SELECTED_BACKEND_RUNTIME: ${decision.backendRuntime}"),
 );
 check(
   "the generic seed policy still respects explicitly empty first launches",
