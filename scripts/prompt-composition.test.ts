@@ -252,7 +252,7 @@ const fastApiAuthPrompt = await builder.build(
       "LAMPCode_SELECTED_DATABASE: supabase",
       "LAMPCode_SELECTED_AUTH: required",
       "LAMPCode_SELECTED_PERSISTENCE: supabase",
-    ].join("\\n"),
+    ].join("\n"),
     outputFormat: "prose",
     toolsEnabled: true,
     agenticBuild: true,
