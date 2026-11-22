@@ -1269,19 +1269,15 @@ export async function runFastBuild(
       return;
     }
 
-    // Start classifier concurrently with follow-up file selection below —
-    // only needed for fresh builds; edits keep their existing detection path.
-    // The dispatcher is passed so the AMBIGUOUS middle gets read rather than
-    // guessed. Explicit prompts ("store it in Supabase", "in localStorage")
-    // never reach the model and cost nothing; only a request that names neither
-    // pays for one small call, concurrently with the file selection below.
-    //
-    // That call needs a REAL token budget. Measured 2026-10-21: minimax-m2.5
-    // puts its reasoning in its own field and leaves `content` null until that
-    // is finished — at 400 tokens it returned `finish_reason: "length"` and no
-    // JSON at all, nine times out of nine. At the dispatcher's budget it was
-    // right on nine of nine. Anyone "optimising" this pass with a small budget
-    // will silently turn every ambiguous build back into a browser app.
+    // Every fresh build sends the complete original request to the planning model.
+    // It decides build scope, supported framework, backend runtime, database,
+    // persistence, auth requirement and the tool capabilities likely to help.
+    // No prompt-word regex preselects frontend/full-stack, Vite/Next.js or a DB.
+    // Existing projects use their proven source architecture instead: we do not
+    // silently migrate an existing app just because the user mentions a stack.
+    // Run the small architecture pass concurrently with project context selection.
+    // Its token budget is bounded, and an invalid/model-unavailable decision fails
+    // closed rather than guessing React, Vite, Supabase or browser-local storage.
     const classificationPromise = !hasExistingCode
       ? classifyBuild(prompt, {
           dispatcher: getDispatcher(),
