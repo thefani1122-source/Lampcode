@@ -1,6 +1,6 @@
 name: E2B Ubuntu 24.04 Template
 
-run-name: E2B Ubuntu 24.04 — ${{ inputs.template_id }} from ${{ inputs.source_ref }}
+run-name: E2B Ubuntu 24.04 — ${{ inputs.template_id || 'lampcode-nextjs-ubuntu24' }} from ${{ inputs.source_ref || github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -18,12 +18,21 @@ on:
         options:
           - lampcode-vite-ubuntu24
           - lampcode-nextjs-ubuntu24
+  # Temporary candidate proof: pushes that touch template code on this
+  # review branch build + verify the latest Next.js Ubuntu image automatically.
+  # Production/main remains unchanged; the normal manual dispatch stays available.
+  push:
+    branches:
+      - fix/nextjs-runtime-prompt-consistency
+    paths:
+      - e2b-template/**
+      - .github/workflows/e2b-ubuntu-template.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2b-ubuntu-template-${{ github.ref }}-${{ inputs.template_id }}
+  group: e2b-ubuntu-template-${{ github.ref }}-${{ inputs.template_id || 'lampcode-nextjs-ubuntu24' }}
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -60,14 +69,14 @@ jobs:
         working-directory: e2b-template
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          E2B_UBUNTU_TEMPLATE_ID: ${{ inputs.template_id }}
+          E2B_UBUNTU_TEMPLATE_ID: ${{ inputs.template_id || 'lampcode-nextjs-ubuntu24' }}
         run: npm run build:ubuntu24
 
       - name: Start a real sandbox and verify capabilities
         working-directory: e2b-template
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          E2B_VERIFY_TEMPLATE_ID: ${{ inputs.template_id }}
+          E2B_VERIFY_TEMPLATE_ID: ${{ inputs.template_id || 'lampcode-nextjs-ubuntu24' }}
           E2B_EXPECT_UBUNTU: 'true'
-          E2B_EXPECT_FRAMEWORK: ${{ contains(inputs.template_id, 'nextjs') && 'nextjs' || 'vite' }}
+          E2B_EXPECT_FRAMEWORK: ${{ contains(inputs.template_id || 'lampcode-nextjs-ubuntu24', 'nextjs') && 'nextjs' || 'vite' }}
         run: npx tsx verify-template.ts
