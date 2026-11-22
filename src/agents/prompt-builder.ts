@@ -1393,6 +1393,21 @@ token so auth.uid() works inside RLS. Use this defensive shape:
             client.postgrest.auth(token)
         return client
 
+    @app.get("/api/riders")
+    def list_riders(req: Request):
+        try:
+            return (db_for(req).table("riders").select("*").execute()).data or []
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="Unable to load riders") from exc
+
+    @app.post("/api/riders")
+    async def create_rider(req: Request):
+        body = await req.json()
+        try:
+            return (db_for(req).table("riders").insert(body).execute()).data
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="Unable to create rider") from exc
+
 For every endpoint: validate inputs, use db_for(request), scope reads/writes to
 the authenticated user's identity where required, return truthful 401/400/500
 responses, and never turn a failed query into a successful empty list.
