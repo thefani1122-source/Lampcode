@@ -64,6 +64,8 @@ OS packages are allowed only through the root-owned `/usr/local/bin/lampcode-apt
 3. `createPreviewSandbox(sessionId, projectId, framework, files)` acquires the sandbox for that project, writes files, installs any detected npm extras, then checks/restarts the selected dev server.
 4. The active sandbox lifetime is one hour by default (`SANDBOX_RUN_TIMEOUT_MS`, refreshed each build turn).
 5. When the build socket disconnects, the pause grace is 15 minutes by default (`SANDBOX_GRACE_MS`); a reconnect cancels the pending pause. It is not paused immediately.
+
+**Multi-replica limitation:** `warmingSandboxes` and `pendingPauseTimers` are in-process maps, not distributed leases. They prevent duplicate acquisition within one backend process only. Before running multiple API workers/replicas, add Redis token-owned create/resume locks (TTL + heartbeat + compare-token release) and a shared project activity lease so one replica cannot pause another replica's active preview. Test the race with two independent backend instances. Cross-project IDs/storage remain isolated regardless; this caveat is same-project concurrency reliability.
 6. `pauseSandbox(projectId)` snapshots the same project's E2B sandbox and drops the process reference while retaining its Redis ID.
 7. Redis metadata expires after 25 days; E2B paused snapshots have a 30-day provider lifetime. If Redis metadata or the snapshot is unavailable, restore from the private Supabase project-files prefix into a new sandbox. This is same-project source recovery, not cross-project reuse.
 
