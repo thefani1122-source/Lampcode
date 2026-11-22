@@ -241,6 +241,37 @@ check("a pipeline-selected Supabase build receives database and RLS security ski
   inferredSupabasePrompt.systemPrompt.includes("## Skill: database-rls") &&
   inferredSupabasePrompt.systemPrompt.includes("## Skill: supabase-rls"));
 
+const fastApiAuthPrompt = await builder.build(
+  "frontend",
+  {
+    description: [
+      "FULLSTACK AUTH BUILD: Build a React frontend with a Python FastAPI backend and Supabase authentication.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: python",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+      "LAMPCode_SELECTED_AUTH: required",
+      "LAMPCode_SELECTED_PERSISTENCE: supabase",
+    ].join("\\n"),
+    outputFormat: "prose",
+    toolsEnabled: true,
+    agenticBuild: true,
+  },
+  {
+    projectId: "prompt-composition-fastapi-supabase-auth",
+    userId: "prompt-composition-fastapi-supabase-auth",
+    mode: "fast",
+    prompt: "Build a React frontend with a Python FastAPI backend and Supabase authentication.",
+  },
+);
+check("FastAPI/Supabase auth gets its dedicated runtime and token hand-off contract",
+  fastApiAuthPrompt.systemPrompt.includes("REACT/VITE FRONTEND + PYTHON FASTAPI + SUPABASE") &&
+  fastApiAuthPrompt.systemPrompt.includes("AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE") &&
+  fastApiAuthPrompt.systemPrompt.includes("Authorization: Bearer <access_token>"));
+check("FastAPI/Supabase auth does not also receive the Node/Hono backend scaffold",
+  !fastApiAuthPrompt.systemPrompt.includes("ARCHITECTURE — REAL BACKEND (Hono on Node) + REACT FRONTEND") &&
+  !fastApiAuthPrompt.systemPrompt.includes("src/server/routes/api.ts — ALL API routes on a Hono router"));
+
 const nextPlanningPrompt = await builder.build(
   "planning",
   {
