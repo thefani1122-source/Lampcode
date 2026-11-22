@@ -555,7 +555,11 @@ export function findMissingFullstackFiles(
   // Backend runtime is selected by the build pipeline. Do not infer Python
   // from the presence of main.py: the point of this gate is to catch it missing.
   const required = backendRuntime === "python"
-    ? (database === "none" ? ["src/server/main.py"] : ["src/db/types.ts", "src/server/main.py"])
+    ? (database === "none"
+        ? ["src/server/main.py"]
+        : database === "supabase"
+          ? ["src/db/types.ts", "src/db/schema.sql", "src/server/main.py"]
+          : ["src/db/types.ts", "src/server/main.py"])
     : framework === "nextjs"
       ? [
           "app/page.tsx",
