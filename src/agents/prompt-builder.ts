@@ -2543,6 +2543,7 @@ export class PromptBuilder {
                   : "- Existing database provider is unknown. Inspect and preserve the project's data layer; never guess a replacement.",
             ...(wantsPython && db === "supabase"
               ? [
+                  "- REACT/VITE FRONTEND + PYTHON FASTAPI + SUPABASE is the selected architecture.",
                   "- FASTAPI/SUPABASE ARCHITECTURE: React/Vite frontend + Python FastAPI backend; no Node/Hono server. FastAPI uses db_for(req) per request.",
                   selectedAuth === "required"
                     ? "- AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE: the frontend sends Authorization: Bearer <access_token>; FastAPI forwards it to Supabase PostgREST and relies on RLS."
