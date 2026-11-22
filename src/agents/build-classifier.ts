@@ -79,7 +79,7 @@ CONSISTENCY RULES:
 - react -> backendRuntime "none" for frontend-only, or "node"/"python" for fullstack.
 - database "supabase" -> persistence "supabase".
 - database "mongodb" -> persistence "mongodb".
-- database "none" -> persistence "none" or "browser-local".
+- database "none" -> persistence "none" or "browser-local" only for frontend-only builds; full-stack builds with no application database must use persistence "none".
 - needsAuth true cannot be frontend-only.
 - If choices are genuinely ambiguous, choose the least-complex architecture that still satisfies every explicit user requirement, and explain the assumption in "reason". Do not ask follow-up questions.
 `;
@@ -149,6 +149,7 @@ export function parseClassification(raw: string): BuildClassification | null {
       (backendRuntime !== "none" || database !== "none" ||
        (persistence !== "none" && persistence !== "browser-local") || needsAuth)) return null;
   if (buildType === "fullstack" && backendRuntime === "none") return null;
+  if (buildType === "fullstack" && database === "none" && persistence === "browser-local") return null;
   if (framework === "nextjs" && backendRuntime === "python") return null;
   if (backendRuntime === "python" && database === "mongodb") return null;
   if (database === "supabase" && persistence !== "supabase") return null;
