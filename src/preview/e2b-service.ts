@@ -834,6 +834,10 @@ async function installExtraDependencies(
   }
 }
 
+// NOTE: no runtime `npm install` follows this optional dependency installer.
+// This bounded installer is the only post-generation npm install path; it does
+// not replace template-owned manifests. Python requirements remain approval-gated.
+
 /**
  * Runs inside the reference page. Kept as a source string because it is
  * serialised into a script that executes in the sandbox, not here.
