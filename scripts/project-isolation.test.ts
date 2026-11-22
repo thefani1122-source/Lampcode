@@ -23,52 +23,53 @@ function check(name: string, ok: boolean): void {
 // New identity and owner boundary.
 check(
   "every newly created project receives a fresh UUID and authenticated owner",
-  /id:\\s*randomUUID\\(\\)/.test(projects) && /userId:\\s*authUser\\.id/.test(projects),
+  projects.includes("id: randomUUID(),") && projects.includes("userId: authUser.id,"),
 );
 check(
   "project lookups are scoped by both project ID and authenticated user ID",
-  /and\\(eq\\(projects\\.id,\\s*projectId\\),\\s*eq\\(projects\\.userId,\\s*userId\\)\\)/.test(projects),
+  projects.includes("where(and(eq(projects.id, projectId), eq(projects.userId, userId)))"),
 );
 
 // Persistent source is namespaced by project ID, never the display name/session.
 check(
   "uploaded project files use a private project-ID prefix",
-  /const storagePath = \`${projectId}\\/\${relPath}\`/.test(storage),
+  storage.includes("const storagePath = `${projectId}/${relPath}`;"),
 );
 check(
   "file recovery lists only the requested project's storage prefix",
-  /listAllStorageFiles\\(sb,\\s*projectId\\)/.test(storage),
+  storage.includes("listAllStorageFiles(sb, projectId)"),
 );
 check(
   "a restored relative path strips only the same project-ID prefix",
-  /storagePath\\.slice\\(projectId\\.length \\+ 1\\)/.test(storage),
+  storage.includes("storagePath.slice(projectId.length + 1)"),
 );
 
 // Sandbox identity, framework guard and concurrent warm lock are project-scoped.
 check(
   "Redis sandbox and framework keys include the exact project ID",
-  /e2b:sandbox:\\${projectId}/.test(preview) && /e2b:framework:\\${projectId}/.test(preview),
+  preview.includes("return `e2b:sandbox:${projectId}`;") &&
+    preview.includes("return `e2b:framework:${projectId}`;"),
 );
 check(
   "live sandboxes and in-flight acquisition locks are keyed by project ID",
-  /new Map<string, Sandbox>\\(\\)/.test(preview) &&
-    /warmingSandboxes = new Map<string, Promise<Sandbox>>\\(\\)/.test(preview) &&
-    /sandboxes\\.get\\(projectId\\)/.test(preview),
+  preview.includes("const sandboxes = new Map<string, Sandbox>();") &&
+    preview.includes("const warmingSandboxes = new Map<string, Promise<Sandbox>>();") &&
+    preview.includes("sandboxes.get(projectId)"),
 );
 check(
   "a sandbox is reused only when its saved framework matches the requested framework",
-  /canReuseSandboxForFramework\\(savedFramework, framework\\)/.test(preview),
+  preview.includes("canReuseSandboxForFramework(savedFramework, framework)"),
 );
 
 // A later build session may recover only this project's source.
 check(
   "build recovery queries the current project ID and current owner",
-  /eq\\(buildSessions\\.projectId,\\s*projectId\\)/.test(build) &&
-    /eq\\(buildSessions\\.userId,\\s*userId\\)/.test(build),
+  build.includes("eq(buildSessions.projectId, projectId)") &&
+    build.includes("eq(buildSessions.userId, userId)"),
 );
 check(
   "persistent file restore is passed the current project ID",
-  /downloadProjectFiles\\(projectId\\)/.test(build),
+  build.includes("downloadProjectFiles(projectId)"),
 );
 
-console.log(`\\n${checks} project-isolation checks passed`);
+console.log(`\n${checks} project-isolation checks passed`);
