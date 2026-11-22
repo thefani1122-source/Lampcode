@@ -81,7 +81,14 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
   );
   ok(
     "Next.js full-stack builds require the internal App Router health endpoint",
-    findMissingFullstackFiles(nextNoDb, "nextjs", "none").includes("app/api/health/route.ts"),
+    findMissingFullstackFiles({
+      "app/page.tsx": nextNoDb["app/page.tsx"],
+      "app/layout.tsx": nextNoDb["app/layout.tsx"],
+    }, "nextjs", "none").includes("app/api/health/route.ts"),
+  );
+  ok(
+    "a Next.js full-stack project passes once its health endpoint exists",
+    findMissingFullstackFiles(nextNoDb, "nextjs", "none").length === 0,
   );
   ok(
     "Next.js MongoDB builds require lib/db.ts, not Vite-era src/lib/db.ts or an invented SQL schema",
