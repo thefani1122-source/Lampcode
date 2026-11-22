@@ -1411,6 +1411,66 @@ Keep package/configuration files template-owned.
 {{NPM_MANIFEST}}
 `;
 
+export const FASTAPI_SUPABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT/VITE FRONTEND + PYTHON FASTAPI + SUPABASE
+
+This model-selected project uses React/Vite for the browser and Python/FastAPI
+for its backend. Do NOT generate a Node/Hono backend, and do not combine two
+server runtimes. The preview uses Vite on :5173 and FastAPI on :3001; Vite
+proxies same-origin /api requests to FastAPI. Browser code must not hardcode
+localhost or call Supabase with a service-role key.
+
+GENERATE THESE FILES:
+- src/App.tsx and src/index.tsx — React/Vite application and entry point.
+- src/server/main.py — FastAPI ASGI app named exactly app, with the requested
+  routes under /api and a small /api/health readiness route.
+- src/lib/api.ts — typed same-origin API client; include the current signed-in
+  Supabase access token as Authorization: Bearer <token> for authenticated calls.
+- src/db/types.ts — TypeScript types for application entities.
+- src/db/schema.sql — the actual PostgreSQL tables, constraints, indexes and
+  row-level security policies required by this product.
+- requirements.txt — fastapi, uvicorn and supabase (the preview runtime has them).
+- Add focused tests for the data-access and API behaviour.
+
+FASTAPI DATA ACCESS:
+Use supabase-py and one Supabase client per request, carrying the user's bearer
+token so auth.uid() works inside RLS. Use this defensive shape:
+
+    import os
+    from fastapi import FastAPI, Request, HTTPException
+    from supabase import create_client
+
+    app = FastAPI()
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+    def db_for(req: Request):
+        if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+            raise HTTPException(status_code=503, detail="Database is not configured")
+        client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        token = (req.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if token:
+            client.postgrest.auth(token)
+        return client
+
+For every endpoint: validate inputs, use db_for(request), scope reads/writes to
+the authenticated user's identity where required, return truthful 401/400/500
+responses, and never turn a failed query into a successful empty list.
+
+SECURITY:
+- Supabase RLS is the authorization boundary. Do not use the service-role key
+  in the app, bypass RLS, or trust userId/tenantId/role fields from request bodies.
+- Missing credentials must produce an honest unconfigured state (503), not fake
+  data or a module-level anonymous client.
+- Keep server secrets in the server environment only. VITE_ variables are public.
+- Do not generate src/server/app.ts, src/server/index.ts,
+  src/server/routes/api.ts, Hono imports, or a second Node server.
+
+{{NPM_MANIFEST}}
+{{PIP_MANIFEST}}
+`
+
 export const FASTAPI_NO_DATABASE_INSTRUCTION = `
 
 ## ARCHITECTURE — REACT + VITE FRONTEND WITH PYTHON FASTAPI, NO DATABASE
@@ -2133,9 +2193,9 @@ export class PromptBuilder {
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
             ? TANSTACK_INSTRUCTION
-            : db === "none"
-              ? (wantsPython ? FASTAPI_NO_DATABASE_INSTRUCTION : FULLSTACK_NO_DATABASE_INSTRUCTION)
-              : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
+            : wantsPython
+              ? db === "none" ? FASTAPI_NO_DATABASE_INSTRUCTION : FASTAPI_SUPABASE_INSTRUCTION
+              : db === "none" ? FULLSTACK_NO_DATABASE_INSTRUCTION : FULLSTACK_INSTRUCTION)
       : "";
 
     if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "nextjs") {
