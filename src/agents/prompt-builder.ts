@@ -1101,6 +1101,195 @@ DESIGN SYSTEM — Follow the FRAMEWORK_RULES design system exactly: Tailwind CSS
 // (GPU wheels multi-GB), and deep-learning workloads assume GPU or long training
 // runs — mismatched to an ephemeral preview sandbox that shares one cold-start
 // image across every build, not just Python ones. Not installed in template.ts.
+export const FULLSTACK_AUTH_INSTRUCTION = `
+
+AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
+
+ADDITIONAL FILES — generate these AFTER the base files:
+8. \`\`\`filename:src/lib/supabase.ts
+    Use this EXACT content:
+    \`\`\`
+    import { createClient } from '@supabase/supabase-js'
+
+    const url = import.meta.env.VITE_SUPABASE_URL
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+    export const isSupabaseConfigured = Boolean(url && anonKey)
+
+    // createClient() throws synchronously when the URL or key is missing or
+    // malformed. This runs at module scope, so that throw would kill the app
+    // before React ever mounts — a blank page with no error boundary able to
+    // catch it. The placeholder keeps the module loadable when env vars are
+    // absent; isSupabaseConfigured drives a visible warning instead.
+    export const supabase = createClient(
+      url || 'https://placeholder.supabase.co',
+      anonKey || 'placeholder-anon-key'
+    )
+    \`\`\`
+    NEVER remove the placeholder fallback or the isSupabaseConfigured export.
+
+9. \`\`\`filename:src/hooks/useAuth.ts
+    - Import supabase from '../lib/supabase'
+    - Export default function useAuth()
+    - Returns: { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
+    - On mount: call supabase.auth.getSession(), set user + session, then set loading=false
+    - Subscribe: supabase.auth.onAuthStateChange((_, session) => { setSession(session); setUser(session?.user ?? null); })
+    - signIn(email, password): return supabase.auth.signInWithPassword({ email, password })
+    - signUp(email, password): return supabase.auth.signUp({ email, password })
+    - signOut(): return supabase.auth.signOut()
+    - signInWithGoogle(): return supabase.auth.signInWithOAuth({ provider: 'google' })
+    - signInWithGithub(): return supabase.auth.signInWithOAuth({ provider: 'github' })
+
+10. \`\`\`filename:src/components/AuthProvider.tsx
+    - Create AuthContext with { user, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithGithub }
+    - AuthProvider component: uses useAuth() internally, provides context to children
+    - AuthProvider loading state — pure Tailwind, NO inline styles:
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    - Import { isSupabaseConfigured } from '../lib/supabase'. When it is false,
+      render this banner ABOVE {children} (app stays visible — do NOT replace it,
+      and do NOT make this dismissable; it must stay until env vars are set):
+      <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-3 text-sm text-amber-200">
+        <p className="font-semibold">Supabase is not configured</p>
+        <p className="mt-0.5 text-amber-200/80">
+          Sign-in and saved data will not work until you set VITE_SUPABASE_URL and
+          VITE_SUPABASE_ANON_KEY. See README.md for setup steps.
+        </p>
+      </div>
+    - Export useAuthContext() hook: returns useContext(AuthContext)
+    - Export default AuthProvider
+
+11. \`\`\`filename:src/components/Login.tsx
+    - Rendered as a MODAL/OVERLAY (dimmed full-screen backdrop + centered card),
+      NOT a full-page route. Props: { onClose?: () => void }.
+    - A close (×) button in the card corner calls onClose; clicking the backdrop
+      also closes. Auto-close when login succeeds (useAuthContext().user != null
+      → call onClose in a useEffect).
+    - Two tabs: "Sign In" | "Sign Up" — switching changes the form
+    - Email + password fields (controlled inputs) — EMAIL/PASSWORD IS THE PRIMARY
+      path and works in the preview.
+    - "Continue with Google" (#DB4437) and "Continue with GitHub" (#24292e)
+      buttons calling the matching useAuthContext() method. Show a small note:
+      "Social login works on the deployed site" (OAuth can't redirect inside the
+      preview iframe). Keep them, just don't rely on them for the preview.
+    - Error message display (red text, below the form)
+    - Loading state: disable buttons and show "Loading..." during async calls
+    - Export default Login (accepting the optional onClose prop)
+
+12. \`\`\`filename:README.md
+    Use this EXACT content (fill in the app name at the top):
+    \`\`\`
+    # [App Name]
+
+    ## Auth Setup
+
+    1. Create a Supabase project at https://supabase.com
+    2. Enable Google and/or GitHub in **Supabase Dashboard → Authentication → Providers**
+    3. Copy your Project URL and anon key from **Project Settings → API**
+    4. Create a \`.env\` file from \`.env.example\` and fill in the values:
+       \`\`\`
+       VITE_SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
+       VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+       \`\`\`
+    5. Add your OAuth redirect URL in the Supabase dashboard:
+       **Authentication → URL Configuration → Redirect URLs**
+       \`\`\`
+       https://your-project.supabase.co/auth/v1/callback
+       \`\`\`
+
+    > ⚠️ **OAuth (Google/GitHub) does NOT work in the iframe preview.**
+    > Test on the published URL after deploying.
+    \`\`\`
+
+(@supabase/supabase-js is already installed in the preview — no package.json entry needed for it.)
+
+APP.TSX — integrate auth using the requested entry flow:
+- Import AuthProvider + useAuthContext from './components/AuthProvider' and the real Login/Register views when authentication is requested.
+- The root wraps the app in <AuthProvider>.
+- PRODUCT-FIRST DEFAULT: when the user did not ask for a login wall, render the primary app experience for logged-out visitors and open sign-in only after an explicit action.
+- AUTH-FIRST WHEN EXPLICITLY REQUESTED: when the user requires authentication before dashboard access, implement dedicated /login and /register routes and protect the private routes. Do not expose sample records or private dashboard content to logged-out users; after successful sign-in, load the user's real data.
+- Never describe a demo modal as real authentication. If no auth service is connected, explain that limitation and do not pretend passwords are verified.
+- In product-first mode, keep one clear Sign In action in the header. Actions requiring a user may open the same auth dialog without multiplying sign-in buttons.
+- Logged-in state must show the signed-in user's identity and a real sign-out action.
+- Example skeleton:
+    function AppContent() {
+      const { user, loading } = useAuthContext();
+      const [showLogin, setShowLogin] = useState(false);
+      if (loading) return <div>Loading...</div>;
+      return (
+        <div>
+          <header>
+            <span>MyApp</span>
+            {user ? (
+              <SignOutButton />
+            ) : (
+              <button onClick={() => setShowLogin(true)}>Sign In</button>
+            )}
+          </header>
+          <MainUI onRequireAuth={() => setShowLogin(true)} />
+          {showLogin && !user && (
+            <Login onClose={() => setShowLogin(false)} />
+          )}
+        </div>
+      );
+    }
+    export default function App() {
+      return (
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      );
+    }
+- <MainUI> renders the app for everyone; when logged out, calls onRequireAuth()
+  for actions that need a signed-in user. Login should auto-close once user != null.`;
+
+// ── MongoDB auth (custom JWT — MongoDB has no built-in auth like Supabase) ─────
+const MONGODB_AUTH_INSTRUCTION = `
+
+AUTH MODE (MongoDB) — MongoDB has NO built-in auth service, so build a real
+custom JWT auth in the Hono backend. Generate:
+
+1. \`\`\`filename:src/server/routes/auth.ts — Hono router with register + login,
+   using bcryptjs (hash) + jsonwebtoken (sign with process.env.JWT_SECRET), and a
+   User mongoose model (email unique + passwordHash). EXACT shape:
+     import { Hono } from 'hono'
+     import bcrypt from 'bcryptjs'
+     import jwt from 'jsonwebtoken'
+     import mongoose from 'mongoose'
+     import { connectDB } from '../../lib/db.js'
+     const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
+       { email: { type: String, unique: true, required: true }, passwordHash: String },
+       { timestamps: true }))
+     const SECRET = process.env.JWT_SECRET || 'dev'
+     export const auth = new Hono()
+     auth.post('/register', async (c) => {
+       await connectDB(); const { email, password } = await c.req.json()
+       if (!email || !password) return c.json({ error: 'email & password required' }, 400)
+       if (await User.findOne({ email })) return c.json({ error: 'email taken' }, 409)
+       const u = await User.create({ email, passwordHash: await bcrypt.hash(password, 10) })
+       return c.json({ token: jwt.sign({ sub: u.id, email }, SECRET, { expiresIn: '7d' }), user: { id: u.id, email } }, 201)
+     })
+     auth.post('/login', async (c) => {
+       await connectDB(); const { email, password } = await c.req.json()
+       const u = await User.findOne({ email })
+       if (!u || !(await bcrypt.compare(password, u.passwordHash))) return c.json({ error: 'invalid credentials' }, 401)
+       return c.json({ token: jwt.sign({ sub: u.id, email }, SECRET, { expiresIn: '7d' }), user: { id: u.id, email } })
+     })
+   Mount it in src/server/app.ts (where the app is built, NOT index.ts, which only
+   starts it):  app.route('/api/auth', auth)
+
+2. A requireAuth helper (verify the Bearer token with jwt.verify) used by routes
+   that need a logged-in user; read user id from the token, scope data by it.
+
+3. FRONTEND: src/lib/api.ts stores the JWT in localStorage after register/login
+   and sends it as 'Authorization: Bearer <token>' on every /api call. The
+   useAuth hook tracks { user, token }. Same app-first UI as the Supabase flow:
+   main UI renders for everyone, ONE 'Sign In' button opens a Login modal
+   (email/password → POST /api/auth/login|register), modal auto-closes on success.
+   No social/OAuth (custom auth is email/password).`;
+
+
 // ── FastAPI + Supabase auth hand-off ─────────────────────────────────────────
 export const FASTAPI_AUTH_INSTRUCTION = `
 
