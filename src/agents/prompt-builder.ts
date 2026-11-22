@@ -2550,7 +2550,7 @@ export class PromptBuilder {
                 ]
               : []),
             "- Tool capabilities identified during architecture planning are recommendations, not permission grants. Only call tools actually supplied by LampCode's registry and allowed by its security/approval policy.",
-          ].join("\\n")
+          ].join("\n")
         : "";
     // The live sandbox/tool contract and the compact architecture decision are
     // last so framework/runtime selection survives prompt compaction.
