@@ -52,11 +52,13 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
   };
   const pythonNoDatabase = {
     "src/App.tsx": "export default function App() { return null; }",
+    "src/index.tsx": "import App from './App';",
+    "src/lib/api.ts": "export async function getRiders() { return fetch('/api/riders'); }",
     "src/server/main.py": "from fastapi import FastAPI\\napp = FastAPI()",
+    "requirements.txt": "fastapi\\nuvicorn\\nsupabase",
   };
   const pythonSupabase = {
-    "src/App.tsx": "export default function App() { return null; }",
-    "src/server/main.py": "from fastapi import FastAPI\\napp = FastAPI()",
+    ...pythonNoDatabase,
     "src/db/types.ts": "export interface Rider { id: string; name: string }",
     "src/db/schema.sql": "create table public.riders (id uuid primary key);",
   };
@@ -66,7 +68,12 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
   );
   ok(
     "a missing FastAPI entrypoint asks for main.py, not Hono app.ts/index.ts",
-    findMissingFullstackFiles({ "src/App.tsx": "export default function App(){return null}" }, "react", "none", "python").join(",") === "src/server/main.py",
+    findMissingFullstackFiles({
+      "src/App.tsx": pythonNoDatabase["src/App.tsx"],
+      "src/index.tsx": pythonNoDatabase["src/index.tsx"],
+      "src/lib/api.ts": pythonNoDatabase["src/lib/api.ts"],
+      "requirements.txt": pythonNoDatabase["requirements.txt"],
+    }, "react", "none", "python").join(",") === "src/server/main.py",
   );
   ok(
     "FastAPI + Supabase builds require TypeScript types, SQL schema and main.py",
