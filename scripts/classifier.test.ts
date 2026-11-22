@@ -128,6 +128,12 @@ expectValue("full-stack with no backend runtime is rejected", parseClassificatio
   persistence: "none",
   reason: "A full-stack build needs a server runtime.",
 }))), null);
+expectValue("full-stack without a database cannot silently select browser-local persistence", parseClassification(JSON.stringify(decision({
+  buildType: "fullstack",
+  backendRuntime: "node",
+  persistence: "browser-local",
+  reason: "The full-stack no-database runtime cannot use browser-local storage as its data layer.",
+}))), null);
 expectValue("Supabase cannot be paired with browser-local persistence", parseClassification(JSON.stringify(decision({
   buildType: "fullstack",
   backendRuntime: "node",
