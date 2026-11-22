@@ -1972,7 +1972,7 @@ export class PromptBuilder {
         if (fullstackFramework === "nextjs") {
           dbInstruction = NEXTJS_DATABASE_INSTRUCTIONS[db];
         } else if (!wantsPython) {
-          // FASTAPI_OVERRIDE contains the Python/Supabase request-scoped client contract.
+          // The dedicated FastAPI instruction already owns Python/Supabase data access.
           dbInstruction = DB_INSTRUCTIONS[db];
         }
       }
