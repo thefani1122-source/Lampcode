@@ -1675,8 +1675,8 @@ export async function runFastBuild(
                   "Generate app/page.tsx, app/layout.tsx, app/globals.css, app/api/health/route.ts, one app/api/<resource>/route.ts per requested resource, src/db/types.ts and src/db/schema.sql.",
                   "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                   "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
-                  "app/api/*/route.ts: build a Supabase client PER REQUEST with SUPABASE_ANON_KEY and the caller's Authorization header forwarded in global.headers — that header is what makes auth.uid() resolve inside RLS. Never a service key, never a module-level client, and NEVER import supabase-js in 'use client' components.",
-                  "app/page.tsx is a Server Component — it can query Supabase directly (import supabase-js with the service key). Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "app/api/*/route.ts: use the session-aware server helper from lib/supabase/server.ts (createServerClient with request cookies/caller session) so auth.uid() resolves inside RLS. If you construct a request client manually, use the anon key and forward the caller's Authorization header. Never a service-role client, never a module-level privileged client, and NEVER import server credentials in 'use client' components.",
+                  "app/page.tsx is a Server Component — query Supabase through the session-aware lib/supabase/server.ts helper so the current user's identity and RLS apply. Never use a service-role key for end-user page reads. Mark interactive sub-components 'use client' only when needed.",
                   "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
                   "Do NOT generate package.json or .env — the environment provides them.",
                 ]
