@@ -1722,16 +1722,16 @@ export async function runFastBuild(
                   ? fullstackDb === "none"
                     ? [
                         "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                        "Generate src/server/main.py, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "Generate src/server/main.py, requirements.txt, src/lib/api.ts, src/App.tsx and src/index.tsx.",
                         "Backend: Python FastAPI from the provided Ubuntu Python runtime. No database was selected; do not generate schema, database clients or migrations.",
                         "Do NOT claim API data survives server restarts; use only the server behavior the user actually requested.",
                         "Do NOT generate package.json or .env — the preview environment provides them.",
                       ]
                     : [
                         "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                        "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
+                        "Generate ALL of: src/server/main.py, requirements.txt, src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx and src/index.tsx.",
                         "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-                        "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
+                        "Backend: Python FastAPI + Supabase — follow the dedicated FASTAPI_SUPABASE_INSTRUCTION and FASTAPI_AUTH_INSTRUCTION when authentication is required; do not generate Hono/Node backend files.",
                         "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
                         "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
                       ]
