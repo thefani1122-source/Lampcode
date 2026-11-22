@@ -23,7 +23,7 @@ import { ContextOrchestrator } from "../../context/orchestrator.js";
 import { ProjectIndex } from "../../context/project-index.js";
 import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
+import { detectDatabase, detectFullstackFramework, expandUserPrompt, type FullstackFramework } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
