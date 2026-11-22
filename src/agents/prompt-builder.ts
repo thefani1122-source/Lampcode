@@ -2541,6 +2541,14 @@ export class PromptBuilder {
                 : db === "mongodb"
                   ? "- MongoDB is the selected database. Keep Mongoose/database connections server-side and scope protected reads/writes to the verified user."
                   : "- Existing database provider is unknown. Inspect and preserve the project's data layer; never guess a replacement.",
+            ...(wantsPython && db === "supabase"
+              ? [
+                  "- FASTAPI/SUPABASE ARCHITECTURE: React/Vite frontend + Python FastAPI backend; no Node/Hono server. FastAPI uses db_for(req) per request.",
+                  selectedAuth === "required"
+                    ? "- AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE: the frontend sends Authorization: Bearer <access_token>; FastAPI forwards it to Supabase PostgREST and relies on RLS."
+                    : "- Forward the current Supabase access token for authenticated API calls; use request-scoped db_for(req) and enforce RLS.",
+                ]
+              : []),
             "- Tool capabilities identified during architecture planning are recommendations, not permission grants. Only call tools actually supplied by LampCode's registry and allowed by its security/approval policy.",
           ].join("\\n")
         : "";
