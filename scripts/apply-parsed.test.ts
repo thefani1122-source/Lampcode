@@ -54,6 +54,12 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
     "src/App.tsx": "export default function App() { return null; }",
     "src/server/main.py": "from fastapi import FastAPI\\napp = FastAPI()",
   };
+  const pythonSupabase = {
+    "src/App.tsx": "export default function App() { return null; }",
+    "src/server/main.py": "from fastapi import FastAPI\\napp = FastAPI()",
+    "src/db/types.ts": "export interface Rider { id: string; name: string }",
+    "src/db/schema.sql": "create table public.riders (id uuid primary key);",
+  };
   ok(
     "FastAPI database-free builds require main.py and do not request Hono entrypoints",
     findMissingFullstackFiles(pythonNoDatabase, "react", "none", "python").length === 0,
@@ -61,6 +67,17 @@ const f = (path: string, code: string): ParsedFile => ({ path, code });
   ok(
     "a missing FastAPI entrypoint asks for main.py, not Hono app.ts/index.ts",
     findMissingFullstackFiles({ "src/App.tsx": "export default function App(){return null}" }, "react", "none", "python").join(",") === "src/server/main.py",
+  );
+  ok(
+    "FastAPI + Supabase builds require TypeScript types, SQL schema and main.py",
+    findMissingFullstackFiles(pythonSupabase, "react", "supabase", "python").length === 0,
+  );
+  ok(
+    "FastAPI + Supabase reports the SQL schema when it is missing",
+    findMissingFullstackFiles({
+      "src/server/main.py": pythonSupabase["src/server/main.py"],
+      "src/db/types.ts": pythonSupabase["src/db/types.ts"],
+    }, "react", "supabase", "python").includes("src/db/schema.sql"),
   );
   ok(
     "React/Hono database-free builds still require the real app, server and API routes",
