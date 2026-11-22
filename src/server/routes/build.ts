@@ -23,7 +23,7 @@ import { ContextOrchestrator } from "../../context/orchestrator.js";
 import { ProjectIndex } from "../../context/project-index.js";
 import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
-import { detectDatabase, detectFullstackFramework, expandUserPrompt, PYTHON_BACKEND_RE, type FullstackFramework } from "../../agents/prompt-builder.js";
+import { expandUserPrompt, type FullstackFramework } from "../../agents/prompt-builder.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -64,7 +64,7 @@ import { generateFileManifest, findOrphanExports, type OrphanExport } from "../.
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
-import { classifyBuild } from "../../agents/build-classifier.js";
+import { classifyBuild, type BuildClassification } from "../../agents/build-classifier.js";
 import { shouldPlan, planBuild, formatPlanForPrompt, formatBuildShapeForPrompt, inferExistingDatabase, shouldUseFullstackEdit, type PlanningBuildShape } from "../../agents/build-planner.js";
 import { findDeadCode, formatDeadCode, tallyDeadCode, type DeadCodeKind } from "../../verify/dead-code.js";
 import { findBrokenImports, formatBrokenImports } from "../../verify/import-graph.js";
@@ -603,10 +603,54 @@ function needsAuth(prompt: string): boolean {
   );
 }
 
-/** Prefix a new-build prompt so PromptBuilder switches into FULLSTACK or FULLSTACK AUTH MODE. */
-function buildFullstackPrompt(prompt: string, authWanted?: boolean): string {
-  const prefix = authWanted ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:";
-  return `${prefix}\n${expandUserPrompt(prompt)}`;
+/** The model has already chosen the architecture; append trusted metadata after user text. */
+function buildNewBuildPrompt(prompt: string, decision: BuildClassification): string {
+  const prefix = decision.buildType === "fullstack"
+    ? decision.needsAuth ? "FULLSTACK AUTH BUILD:" : "FULLSTACK BUILD:"
+    : "FRONTEND BUILD:";
+  const tools = decision.requiredTools.length > 0 ? decision.requiredTools.join(", ") : "none identified";
+  return [
+    `${prefix}\n${expandUserPrompt(prompt)}`,
+    "",
+    "LAMPCode MODEL-SELECTED ARCHITECTURE (trusted build context):",
+    `- Project scope: ${decision.buildType}.`,
+    `- Framework: ${decision.framework}.`,
+    `- Backend runtime: ${decision.backendRuntime}.`,
+    `- Database: ${decision.database}.`,
+    `- Persistence: ${decision.persistence}.`,
+    `- Real authentication: ${decision.needsAuth ? "required" : "not required"}.`,
+    `- Tool capabilities identified during planning: ${tools}.`,
+    "- The tool-capability list is a recommendation, not an authorization grant. Choose actual available tools as needed; the tool registry, user connections and security policy remain authoritative.",
+    "- Preserve this selected architecture unless the user's explicit request changes. Do not silently swap framework, runtime, database or persistence.",
+    "",
+    `LAMPCode_SELECTED_BUILD_TYPE: ${decision.buildType}`,
+    `LAMPCode_SELECTED_FRAMEWORK: ${decision.framework}`,
+    `LAMPCode_SELECTED_DATABASE: ${decision.database}`,
+    `LAMPCode_SELECTED_BACKEND_RUNTIME: ${decision.backendRuntime}`,
+    `LAMPCode_SELECTED_AUTH: ${decision.needsAuth ? "required" : "not-required"}`,
+    `LAMPCode_SELECTED_PERSISTENCE: ${decision.persistence}`,
+    `LAMPCode_REQUIRED_TOOLS: ${decision.requiredTools.join(",") || "none"}`,
+  ].join("\n");
+}
+
+/** Existing projects keep their proven runtime/provider; only metadata is appended. */
+function appendExistingBuildMetadata(
+  description: string,
+  options: {
+    buildType: "frontend" | "fullstack";
+    framework: FullstackFramework;
+    backendRuntime: "none" | "node" | "python";
+    database: "supabase" | "mongodb" | "none" | "unknown";
+  },
+): string {
+  const lines = [
+    "",
+    "LAMPCode_SELECTED_BUILD_TYPE: " + options.buildType,
+    "LAMPCode_SELECTED_FRAMEWORK: " + options.framework,
+    "LAMPCode_SELECTED_BACKEND_RUNTIME: " + options.backendRuntime,
+  ];
+    lines.push("LAMPCode_SELECTED_DATABASE: " + options.database);
+  return description + "\n" + lines.join("\n");
 }
 
 // ── Smart follow-up file selection ────────────────────────────────────────────
@@ -807,12 +851,15 @@ function buildFullstackEditPrompt(
   const writeInstruction = agenticBuild
     ? "Use the agentic sandbox tools to make the change. Prefer edit_file for existing files and write_files for new files; do not print fenced code in the reply."
     : "Output complete updated files using filename fences for every changed file.";
+  const existingDatabase = inferExistingDatabase(files);
   return (
     `${prefix}\n${framework}\n\n` +
     `EXISTING PROJECT FILES:\n${fileBlocks}\n\n` +
     `USER REQUEST: ${userRequest}\n\n` +
     `INSTRUCTION: Edit the existing files above to fulfill the user request. ` +
-    `Keep everything that does not need to change. ${writeInstruction}`
+    `Keep everything that does not need to change. ${writeInstruction}\n\n` +
+    `LAMPCode_SELECTED_FRAMEWORK: ${framework}` +
+    (existingDatabase === "unknown" ? "" : `\nLAMPCode_SELECTED_DATABASE: ${existingDatabase}`)
   );
 }
 
@@ -1222,19 +1269,15 @@ export async function runFastBuild(
       return;
     }
 
-    // Start classifier concurrently with follow-up file selection below —
-    // only needed for fresh builds; edits keep their existing detection path.
-    // The dispatcher is passed so the AMBIGUOUS middle gets read rather than
-    // guessed. Explicit prompts ("store it in Supabase", "in localStorage")
-    // never reach the model and cost nothing; only a request that names neither
-    // pays for one small call, concurrently with the file selection below.
-    //
-    // That call needs a REAL token budget. Measured 2026-10-21: minimax-m2.5
-    // puts its reasoning in its own field and leaves `content` null until that
-    // is finished — at 400 tokens it returned `finish_reason: "length"` and no
-    // JSON at all, nine times out of nine. At the dispatcher's budget it was
-    // right on nine of nine. Anyone "optimising" this pass with a small budget
-    // will silently turn every ambiguous build back into a browser app.
+    // Every fresh build sends the complete original request to the planning model.
+    // It decides build scope, supported framework, backend runtime, database,
+    // persistence, auth requirement and the tool capabilities likely to help.
+    // No prompt-word regex preselects frontend/full-stack, Vite/Next.js or a DB.
+    // Existing projects use their proven source architecture instead: we do not
+    // silently migrate an existing app just because the user mentions a stack.
+    // Run the small architecture pass concurrently with project context selection.
+    // Its token budget is bounded, and an invalid/model-unavailable decision fails
+    // closed rather than guessing React, Vite, Supabase or browser-local storage.
     const classificationPromise = !hasExistingCode
       ? classifyBuild(prompt, {
           dispatcher: getDispatcher(),
@@ -1252,7 +1295,15 @@ export async function runFastBuild(
     const promptWordCount = prompt.trim().split(/\s+/).length;
     const isShortFollowUp = hasExistingCode && promptWordCount <= 20;
 
-    const existingBackendPaths = Object.keys(existingFiles).filter(isBackendFile);
+    const existingBackendPaths = Object.keys(existingFiles).filter((path) => {
+      const code = existingFiles[path] ?? "";
+      return (
+        isBackendFile(path) ||
+        /^app\/api\/.+\/route\.[cm]?[jt]sx?$/.test(path) ||
+        /(^|\n)\s*["']use server["']/.test(code) ||
+        /from\s+["']server-only["']/.test(code)
+      );
+    });
     const existingHasPython = Object.keys(existingFiles).some(
       (path) => path.endsWith(".py") || path === "requirements.txt",
     );
@@ -1321,31 +1372,33 @@ export async function runFastBuild(
       );
     }
 
-    // ── Full-stack detection (new builds only) ────────────────────────────
-    // Edits and follow-ups keep their existing flows untouched; only a fresh
-    // build with no prior code can be promoted to a full-stack generation.
-    // classifier was started concurrently above — await result here.
+    // The model decides build scope, framework, backend runtime, persistence and auth.
+    // Existing projects do not get reclassified: their proven source structure wins.
     const classification = await classificationPromise;
-    // Logged on every fresh build, including the frontend ones. This one
-    // decision silently governs whether a backend is written at all, whether
-    // the database gate fires, and what the prompt tells the model — and when
-    // it is wrong nothing downstream can recover. `source` says whether a word
-    // decided it, a model read it, or it was a lean.
+    if (!hasExistingCode && !classification) {
+      throw new Error("The build architecture was not decided by the planning model; refusing to guess a framework or database.");
+    }
     if (classification) {
       console.log(
-        `[build] classified session=${sessionId} type=${classification.buildType} ` +
-        `source=${classification.source} auth=${classification.needsAuth} ` +
-        `db=${classification.database} reason="${classification.reason}"`,
+        `[build] model-selected session=${sessionId} scope=${classification.buildType} ` +
+        `framework=${classification.framework} runtime=${classification.backendRuntime} ` +
+        `database=${classification.database} persistence=${classification.persistence} ` +
+        `auth=${classification.needsAuth} tools=[${classification.requiredTools.join(",")}]`,
       );
     }
     const isFullstackBuild = !hasExistingCode && classification?.buildType === "fullstack";
-    const fullstackDb = (isFullstackBuild ? classification?.database : null) ?? "supabase";
-    // On the edit path, detect framework from existing files so E2B gets the right
-    // template and the AI gets the right instruction (NEXTJS_INSTRUCTION etc.).
-    // Falls back to "react" for new builds (hasExistingCode = false).
-    const editDetectedFramework: FullstackFramework = hasExistingCode ? detectFrameworkFromFiles(existingFiles) : "react";
-    const fullstackFramework: FullstackFramework = ((isFullstackBuild ? classification?.framework : null) as FullstackFramework | null) ?? editDetectedFramework;
-    const wantsPython = isFullstackBuild && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(prompt);
+    const editDetectedFramework: FullstackFramework = hasExistingCode
+      ? detectFrameworkFromFiles(existingFiles)
+      : classification!.framework;
+    // Runtime selection follows the model decision for new projects and the
+    // existing project's source artifacts for edits.
+    const fullstackFramework: FullstackFramework = editDetectedFramework;
+    const fullstackDb: "supabase" | "mongodb" | "none" | "unknown" = hasExistingCode
+      ? inferExistingDatabase(existingFiles)
+      : classification!.database;
+    const wantsPython = hasExistingCode
+      ? existingHasPython && existingBackendPaths.some((path) => path === "src/server/main.py")
+      : classification!.backendRuntime === "python";
     // Whether the generated schema has anywhere to land. Hoisted out of the
     // block below because the data-layer check at the end of the build needs
     // it: applying `schema.sql` only ever happens against a Supabase the user
@@ -1359,11 +1412,15 @@ export async function runFastBuild(
       // If the user has connected their OWN Supabase (via MCP or integration), point this
       // project's preview at THEIR project; else fall back to the shared
       // preview project. Must be set BEFORE prewarm writes the sandbox .env.
-      let isConnected = await isUserSupabaseConnected(userId).catch(() => false);
-      let userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
-      databaseSetupState = fullstackDb === "supabase"
-        ? (isConnected || userSupa ? "user-connected" : "not-confirmed")
-        : "unknown";
+      let isConnected = false;
+      let userSupa: Awaited<ReturnType<typeof getUserSupabasePreviewCreds>> = null;
+      if (fullstackDb === "supabase") {
+        isConnected = await isUserSupabaseConnected(userId).catch(() => false);
+        userSupa = await getUserSupabasePreviewCreds(userId).catch(() => null);
+        databaseSetupState = isConnected || userSupa ? "user-connected" : "not-confirmed";
+      } else {
+        databaseSetupState = fullstackDb === "none" ? "not-applicable" : "unknown";
+      }
 
       // No database of their own, and a full-stack app is about to be built on
       // top of nothing. Ask now, because the sandbox .env is written during
@@ -1443,8 +1500,8 @@ export async function runFastBuild(
         }
       }
 
-      setProjectPreviewEnv(projectId, userSupa);
-      ownSupabaseConnected = isConnected || userSupa !== null;
+      setProjectPreviewEnv(projectId, fullstackDb === "supabase" ? userSupa : null);
+      ownSupabaseConnected = fullstackDb === "supabase" && (isConnected || userSupa !== null);
       if (fullstackDb === "supabase") {
         databaseSetupState = ownSupabaseConnected
           ? "user-connected"
@@ -1500,7 +1557,7 @@ export async function runFastBuild(
       ? extractRootBlock(existingFiles["src/styles.css"] ?? "")
       : null;
 
-    const taskDescription = rootBlock
+    const rawTaskDescription = rootBlock
       ? buildTokenEditPrompt(rootBlock, prompt)
       : isFeatureAddition
         ? buildAdditionEditPrompt(existingFiles["src/App.tsx"] ?? "", prompt)
@@ -1508,9 +1565,19 @@ export async function runFastBuild(
           ? fullstackEditMode
             ? buildFullstackEditPrompt(contextFiles, prompt, editDetectedFramework, agenticBuild)
             : buildEditPrompt(contextFiles, prompt)
-          : isFullstackBuild
-            ? buildFullstackPrompt(prompt, classification?.needsAuth)
-            : expandUserPrompt(prompt);
+          : buildNewBuildPrompt(prompt, classification!);
+    const taskDescription = hasExistingCode
+      ? appendExistingBuildMetadata(rawTaskDescription, {
+          buildType: existingBackendPaths.length > 0 || fullstackDb === "supabase" || fullstackDb === "mongodb"
+            ? "fullstack"
+            : "frontend",
+          framework: editDetectedFramework,
+          backendRuntime: existingHasPython && existingBackendPaths.some((path) => path === "src/server/main.py")
+            ? "python"
+            : existingBackendPaths.length > 0 ? "node" : "none",
+          database: fullstackDb,
+        })
+      : rawTaskDescription;
 
     const requirements = isTokenOnlyEdit
       ? [
@@ -1586,21 +1653,30 @@ export async function runFastBuild(
             ? fullstackDb === "mongodb"
               ? [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/schema.ts, src/lib/db.ts.",
-                  "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
-                  "src/db/schema.ts must export Mongoose schemas/models; src/lib/db.ts must export connectDB() per the DATABASE section.",
-                  "app/api/*/route.ts: call connectDB() then use Mongoose models — server-side only.",
-                  "app/page.tsx is a Server Component — it can call connectDB() + Mongoose directly. Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "Generate app/page.tsx, app/layout.tsx, app/globals.css, app/api/health/route.ts, one app/api/<resource>/route.ts per requested resource, lib/db.ts and lib/models/<resource>.ts.",
+                  "Do NOT generate src/db/schema.ts, src/lib/db.ts, src/index.tsx, src/App.tsx, next.config.ts or next.config.js — use the Next.js root-level lib/ and app/ conventions.",
+                  "lib/db.ts must export a server-only connectDB() helper; lib/models/<resource>.ts must export each Mongoose model described by the DATABASE section.",
+                  "app/api/*/route.ts: call connectDB() then use the matching Mongoose model — server-side only.",
+                  "app/page.tsx is a Server Component — it may read through the server-only lib/db.ts and lib/models layer directly. Mark sub-components 'use client' only when they need browser interactions.",
                   "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
                   "Do NOT generate package.json or .env — the environment provides them.",
                 ]
-              : [
+              : fullstackDb === "none"
+                ? [
+                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                    "Generate app/page.tsx, app/layout.tsx, app/globals.css and app/api/health/route.ts, plus only the additional Route Handlers required by the user's explicit API requirements.",
+                    "No application database was requested. Do NOT generate src/db/*, database clients, Supabase/MongoDB schemas, migrations, or a database connection gate.",
+                    "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
+                    "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
+                    "Do NOT generate package.json or .env — the environment provides them.",
+                  ]
+                : [
                   "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                  "Generate ALL of: app/api/[resource]/route.ts (one per resource), app/page.tsx, app/layout.tsx, app/globals.css, src/db/types.ts, src/db/schema.sql.",
+                  "Generate app/page.tsx, app/layout.tsx, app/globals.css, app/api/health/route.ts, one app/api/<resource>/route.ts per requested resource, src/db/types.ts and src/db/schema.sql.",
                   "Do NOT generate next.config.ts, next.config.js, src/index.tsx, or src/App.tsx — the environment provides config files and this is NOT a React/Vite project.",
                   "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
-                  "app/api/*/route.ts: build a Supabase client PER REQUEST with SUPABASE_ANON_KEY and the caller's Authorization header forwarded in global.headers — that header is what makes auth.uid() resolve inside RLS. Never a service key, never a module-level client, and NEVER import supabase-js in 'use client' components.",
-                  "app/page.tsx is a Server Component — it can query Supabase directly (import supabase-js with the service key). Mark sub-components 'use client' only when they need useState/useEffect.",
+                  "app/api/*/route.ts: use the session-aware server helper from lib/supabase/server.ts (createServerClient with request cookies/caller session) so auth.uid() resolves inside RLS. If you construct a request client manually, use the anon key and forward the caller's Authorization header. Never a service-role client, never a module-level privileged client, and NEVER import server credentials in 'use client' components.",
+                  "app/page.tsx is a Server Component — query Supabase through the session-aware lib/supabase/server.ts helper so the current user's identity and RLS apply. Never use a service-role key for end-user page reads. Mark interactive sub-components 'use client' only when needed.",
                   "Do NOT generate a separate src/server/ directory or Hono server — Next.js Route Handlers ARE the backend.",
                   "Do NOT generate package.json or .env — the environment provides them.",
                 ]
@@ -1615,15 +1691,23 @@ export async function runFastBuild(
                     "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
                     "Do NOT generate package.json or .env — the environment provides them.",
                   ]
-                : [
-                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
-                    "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
-                    "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
-                    "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
-                    "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
-                    "Do NOT generate package.json or .env — the environment provides them.",
-                  ]
+                : fullstackDb === "none"
+                  ? [
+                      "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                      "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css and app.config.ts.",
+                      "No application database is selected. Do NOT generate src/db/*, schemas, migrations or database clients.",
+                      "Use TanStack Start server functions only for the actual server behavior the user requested; do not invent persistent data storage.",
+                      "Do NOT generate package.json or .env — the environment provides them.",
+                    ]
+                  : [
+                      "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                      "Generate ALL of: app/routes/__root.tsx, app/routes/index.tsx, app/client.tsx, app/router.tsx, app/globals.css, app.config.ts, src/db/types.ts, src/db/schema.sql.",
+                      "src/db/types.ts must export TypeScript interfaces per table; src/db/schema.sql must have CREATE TABLE + RLS.",
+                      "Data fetching: use createServerFn (server-side) — the loader calls the server fn, the component reads Route.useLoaderData(). Never call Supabase from client components directly.",
+                      "For mutations: use createServerFn({ method: 'POST' }) called from event handlers.",
+                      "Do NOT generate a separate src/server/ directory or Hono server — TanStack Start server functions ARE the backend.",
+                      "Do NOT generate package.json or .env — the environment provides them.",
+                    ]
               : fullstackDb === "mongodb"
                 ? [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
@@ -1635,15 +1719,32 @@ export async function runFastBuild(
                     "Do NOT generate package.json or .env — the preview environment provides them with MONGODB_URI wired in.",
                   ]
                 : wantsPython
-                ? [
-                    "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
-                    "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx, src/index.tsx.",
-                    "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
-                    "Backend: Python FastAPI — see PYTHON BACKEND OVERRIDE section in system prompt for exact files to generate.",
-                    "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
-                    "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
-                  ]
-                : [
+                  ? fullstackDb === "none"
+                    ? [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate src/server/main.py, requirements.txt, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "Backend: Python FastAPI from the provided Ubuntu Python runtime. No database was selected; do not generate schema, database clients or migrations.",
+                        "Do NOT claim API data survives server restarts; use only the server behavior the user actually requested.",
+                        "Do NOT generate package.json or .env — the preview environment provides them.",
+                      ]
+                    : [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate ALL of: src/server/main.py, requirements.txt, src/db/types.ts, src/db/schema.sql, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
+                        "Backend: Python FastAPI + Supabase — follow the dedicated FASTAPI_SUPABASE_INSTRUCTION and FASTAPI_AUTH_INSTRUCTION when authentication is required; do not generate Hono/Node backend files.",
+                        "src/db/types.ts must export TypeScript interfaces for every table; src/db/schema.sql must have CREATE TABLE statements for every table.",
+                        "Do NOT generate package.json or .env — the preview environment provides them with the Supabase keys wired in.",
+                      ]
+                  : fullstackDb === "none"
+                    ? [
+                        "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
+                        "Generate src/server/app.ts, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx and src/index.tsx.",
+                        "Backend: Hono.js on Node.js with Zod validation. There is no application database.",
+                        "Do NOT generate src/db/*, database clients, Supabase/Mongo schemas, migrations or fake persistent storage.",
+                        "The Vite frontend runs on :5173 and proxies /api to the Hono server on :3001. Use same-origin /api calls.",
+                        "Do NOT generate package.json or .env — the preview environment provides them.",
+                      ]
+                    : [
                     "Output EVERY file using the exact format: ```filename:<path> (path in the fence opening).",
                     "Generate ALL of: src/db/types.ts, src/db/schema.sql, src/server/index.ts, src/server/routes/api.ts, src/lib/api.ts, src/App.tsx, src/index.tsx.",
                     "src/App.tsx must have `export default function App()` and fetch data via src/lib/api.ts.",
@@ -1722,7 +1823,7 @@ export async function runFastBuild(
         ? {
             projectMode: "new-fullstack",
             framework: fullstackFramework,
-            database: fullstackDb === "none" ? "unknown" : fullstackDb,
+            database: fullstackDb,
             backendRuntime: wantsPython ? "python" : "node",
             databaseAccess: databaseSetupState,
             auth: classification?.needsAuth ? "required" : "not-required",
@@ -1730,8 +1831,8 @@ export async function runFastBuild(
           }
         : {
             projectMode: "new-frontend",
-            framework: "react",
-            database: "browser",
+            framework: fullstackFramework,
+            database: classification?.persistence === "browser-local" ? "browser" : "none",
             backendRuntime: "none",
             databaseAccess: "not-applicable",
             auth: "not-applicable",
@@ -1831,7 +1932,8 @@ export async function runFastBuild(
     // Only for builds that store or guard something. A landing page has no
     // threat model worth a dispatch, and asking for one produces exactly the
     // boilerplate the filter exists to throw away.
-    const wantsThreatModel = shouldAudit() && (isFullstackBuild || needsAuth(prompt));
+    const authIntentForReview = hasExistingCode ? needsAuth(prompt) : classification?.needsAuth === true;
+    const wantsThreatModel = shouldAudit() && (isFullstackBuild || authIntentForReview);
     const threatsPromise: Promise<ThreatExtractResult> = wantsThreatModel
       ? extractThreats({ dispatcher, prompt, sessionId, userId, projectId, provider })
           .catch(() => ({ threats: [], costUsd: 0, reason: "extraction threw" }))
@@ -2307,7 +2409,7 @@ export async function runFastBuild(
       const fileRecord: Record<string, string> = Object.fromEntries(
         filesToWrite.map((f) => [f.path, f.code]),
       );
-      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework);
+      const missing = findMissingFullstackFiles(fileRecord, fullstackFramework, fullstackDb === "unknown" ? "none" : fullstackDb, wantsPython ? "python" : "node");
       if (missing.length > 0) {
         logger.warn({ sessionId, missing }, "Fullstack build missing required files — attempting focused retry");
         server?.thinking(sessionId, {
@@ -2316,21 +2418,30 @@ export async function runFastBuild(
         });
 
         try {
+          const isNextJsRetry = fullstackFramework === "nextjs";
           const dbLabel = fullstackDb === "mongodb"
             ? "MongoDB (Mongoose — use mongoose models, connectDB() from src/lib/db.ts)"
-            : "Supabase PostgreSQL (@supabase/supabase-js — use createClient with env vars)";
+            : fullstackDb === "supabase"
+              ? "Supabase PostgreSQL with caller-session/RLS semantics"
+              : "No application database was requested; do not add one.";
 
-          const retryDescription =
-            `The following backend/db files were empty or missing from the first build pass and must be generated now:\n` +
-            missing.map((f) => `- ${f}`).join("\n") + "\n\n" +
-            `App description: ${prompt}\n` +
-            `Backend framework: Hono.js on Node.js, port 3001\n` +
-            `Database: ${dbLabel}\n\n` +
-            `Per-file requirements:\n` +
-            (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\n" : "") +
-            (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\n" : "") +
-            (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\n" : "") +
-            (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\n" : "");
+          const retryDescription = isNextJsRetry
+            ? `FULLSTACK BUILD: Next.js App Router. Repair only the missing Next.js files listed below.\\n` +
+              `App description: ${prompt}\\n` +
+              `Runtime: Next.js App Router on Ubuntu, one Node process on port 3000.\\n` +
+              `Database: ${dbLabel}\\n` +
+              `Missing files:\\n` + missing.map((f) => `- ${f}`).join("\\n") + "\\n\\n" +
+              "Use Next.js App Router conventions only. Do not generate Vite entry points, src/App.tsx, src/index.tsx, a Hono server, or a Vite proxy."
+            : `The following backend/db files were empty or missing from the first build pass and must be generated now:\\n` +
+              missing.map((f) => `- ${f}`).join("\\n") + "\\n\\n" +
+              `App description: ${prompt}\\n` +
+              `Backend framework: Hono.js on Node.js, port 3001\\n` +
+              `Database: ${dbLabel}\\n\\n` +
+              `Per-file requirements:\\n` +
+              (missing.includes("src/db/types.ts") ? "- src/db/types.ts: TypeScript interfaces for every DB table/collection.\\n" : "") +
+              (missing.includes("src/db/schema.sql") ? "- src/db/schema.sql: CREATE TABLE statements + RLS policies for every table.\\n" : "") +
+              (missing.includes("src/server/index.ts") ? "- src/server/index.ts: Hono entry point with CORS, mounts api router on /api, serves on port 3001.\\n" : "") +
+              (missing.includes("src/server/routes/api.ts") ? "- src/server/routes/api.ts: ALL API routes the frontend needs — Zod validation, try/catch on every route.\\n" : "");
 
           if (cumulativeCostUsd >= MAX_BUILD_COST_USD) {
             logger.warn(
@@ -2356,17 +2467,24 @@ export async function runFastBuild(
           }
 
           const retryResult = await dispatcher.dispatch({
-            agentType: "backend",
+            agentType: isNextJsRetry ? "frontend" : "backend",
             usageCategory: "missing_files_retry",
             provider,
             task: {
               description: retryDescription,
-              requirements: [
-                `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
-                "Each file must be complete, non-empty, and production-ready.",
-                "Use the exact format: \`\`\`filename:<path> for each file.",
-                "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
-              ],
+              requirements: isNextJsRetry
+                ? [
+                    `Output ONLY these missing Next.js files: ${missing.join(", ")} — nothing else.`,
+                    "Each file must be complete, non-empty, and production-ready.",
+                    "Use the exact format: ```filename:<path> for each file.",
+                    "Use Next.js App Router conventions; no Vite, src/App.tsx, src/index.tsx or Hono.",
+                  ]
+                : [
+                    `Output ONLY these files: ${missing.join(", ")} — nothing else.`,
+                    "Each file must be complete, non-empty, and production-ready.",
+                    "Use the exact format: ```filename:<path> for each file.",
+                    "Do NOT output src/App.tsx, src/index.tsx, or any frontend file.",
+                  ],
               outputFormat: "code",
             },
             sessionId,
@@ -2391,6 +2509,8 @@ export async function runFastBuild(
           const stillMissing = findMissingFullstackFiles(
             Object.fromEntries(filesToWrite.map((f) => [f.path, f.code])),
             fullstackFramework,
+            fullstackDb === "unknown" ? "none" : fullstackDb,
+            wantsPython ? "python" : "node",
           );
           if (stillMissing.length > 0) {
             logger.warn({ sessionId, stillMissing }, "Fullstack retry: files still missing after retry");
@@ -5293,11 +5413,11 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     // (A follow-up edit is also never classified "fullstack" — that flag is
     // new-builds-only by design — so an edit to an app that HAS a backend has
     // always needed the second clause.)
-    const fullstackRequested = isFullstackBuild || backendFileCount > 0 || needsAuth(prompt);
+    const authWanted = hasExistingCode ? needsAuth(prompt) : classification?.needsAuth === true;
+    const fullstackRequested = isFullstackBuild || backendFileCount > 0 || authWanted;
     const fakeFiles = fullstackRequested ? fakePersistence(allFiles).map((f) => f.path) : [];
     const declared = fullstackRequested ? declaredTables(allFiles) : new Set<string>();
-    const queried = fullstackRequested ? queriedTables(allFiles) : [];
-    const authWanted = needsAuth(prompt);
+    const queried = fullstackRequested ? queriedTables(allFiles) : new Set<string>();
     // A real auth call, not a mocked one: the shapes the prompt actually tells
     // the model to use, and never counted from a file the fake detector flagged.
     const authReal = Object.entries(allFiles).some(
@@ -5329,7 +5449,7 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
           // the flag captured minutes earlier.
           databaseConnected: ownSupabaseConnected || schemaApply?.ok === true,
           tablesDeclared: declared.size,
-          tablesQueried: new Set(queried.map((q) => q.table)).size,
+          tablesQueried: queried instanceof Set ? queried.size : new Set(queried.map((q) => q.table)).size,
           fakePersistenceFiles: fakeFiles.length,
           authRequested: authWanted,
           authReal: authWanted ? authReal : false,

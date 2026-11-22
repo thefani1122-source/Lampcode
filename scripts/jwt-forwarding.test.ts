@@ -42,6 +42,11 @@ const buildRoute = readFileSync(new URL("../src/server/routes/build.ts", import.
 // every RLS policy in the generated schema into decoration.
 ok("the prompt never names a Supabase service key", !/SUPABASE_SERVICE_KEY/.test(prompt));
 ok("neither does the Next.js instruction", !/SUPABASE_SERVICE_KEY/.test(buildRoute));
+ok(
+  "Next.js Supabase requirements use caller-session SSR/RLS rather than a service-key page client",
+  !/import supabase-js with the service key/i.test(buildRoute) &&
+    /session-aware.*lib\/supabase\/server/i.test(buildRoute),
+);
 ok("nor a service-role key under any spelling", !/SERVICE_ROLE/i.test(prompt));
 
 // ── the backend builds a client per request ──────────────────────────────────
@@ -109,7 +114,7 @@ ok(
     "it tells the model to CHECK the backend claim, not assume it",
     /read_logs/.test(agentic) && /check_page/.test(agentic),
   );
-  ok("it names the hardcoded-host trap", /localhost:3001/.test(agentic));
+  ok("it warns against hardcoded localhost browser calls", /Never hardcode localhost in browser code/i.test(agentic));
   ok("and says an honest failure is a result", /is a result/i.test(agentic));
 }
 

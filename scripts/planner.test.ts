@@ -356,11 +356,20 @@ check(
   false,
 );
 check(
-  "existing Next.js/TanStack projects keep the full-stack edit route",
+  "a frontend-only Next.js App Router project keeps the frontend edit route",
   shouldUseFullstackEdit({
     hasExistingCode: true,
     framework: "nextjs",
     existingBackendArtifacts: false,
+  }),
+  false,
+);
+check(
+  "a Next.js project with Route Handlers uses the full-stack edit route",
+  shouldUseFullstackEdit({
+    hasExistingCode: true,
+    framework: "nextjs",
+    existingBackendArtifacts: true,
   }),
   true,
 );
@@ -444,6 +453,28 @@ const unconfirmedShape: PlanningBuildShape = {
   databaseAccess: "not-confirmed",
 };
 const unconfirmedContext = formatBuildShapeForPrompt(unconfirmedShape);
+const nextNoDatabaseShape: PlanningBuildShape = {
+  projectMode: "new-fullstack",
+  framework: "nextjs",
+  database: "none",
+  backendRuntime: "node",
+  databaseAccess: "not-applicable",
+  auth: "not-required",
+  existingBackendArtifacts: false,
+};
+const nextNoDatabaseContext = formatBuildShapeForPrompt(nextNoDatabaseShape);
+check(
+  "Next.js planner context names the App Router as its framework",
+  nextNoDatabaseContext.includes("Framework: nextjs"),
+  true,
+);
+check(
+  "Next.js server runtime without a database does not invent a Supabase setup",
+  nextNoDatabaseContext.includes("No application database is required") &&
+    nextNoDatabaseContext.includes("without inventing a Supabase/MongoDB schema"),
+  true,
+);
+
 check(
   "an unconfirmed database connection is not falsely reported as declined",
   unconfirmedContext.includes("not confirmed") &&
@@ -463,7 +494,7 @@ const frontendShape: PlanningBuildShape = {
 const frontendContext = formatBuildShapeForPrompt(frontendShape);
 check(
   "new frontend-only builds receive an explicit no-backend shape",
-  frontendContext.includes("new frontend-only application") &&
+  frontendContext.includes("model-selected frontend-only application") &&
     frontendContext.includes("No application server or database"),
   true,
 );
@@ -565,7 +596,12 @@ check(
 async function runPromptModeChecks(): Promise<void> {
   const builder = new PromptBuilder();
   const mongoSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to this MongoDB app.",
+    [
+      "Add login and row-level protection to this MongoDB app.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: mongodb",
+    ].join("\n"),
     "fullstack-mongodb",
   );
   check(
@@ -587,7 +623,12 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const supabaseSkills = await loadRelevantSkillsForPrompt(
-    "Build a Supabase-backed task app.",
+    [
+      "Build a Supabase-backed task app.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\n"),
     "fullstack",
   );
   check(
@@ -597,7 +638,12 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const nextSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
+    [
+      "FULLSTACK BUILD: Build a Next.js app with Supabase and protected API routes.",
+      "LAMPCode_SELECTED_FRAMEWORK: nextjs",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\n"),
     "fullstack",
   );
   check(
@@ -606,7 +652,12 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const tanstackSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
+    [
+      "FULLSTACK BUILD: Build a TanStack Start app with Supabase server functions.",
+      "LAMPCode_SELECTED_FRAMEWORK: tanstack",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\n"),
     "fullstack",
   );
   check(
@@ -615,7 +666,12 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const pythonSkills = await loadRelevantSkillsForPrompt(
-    "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
+    [
+      "FULLSTACK BUILD: Build a React frontend with a Python FastAPI backend and Supabase.",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: python",
+      "LAMPCode_SELECTED_DATABASE: supabase",
+    ].join("\n"),
     "fullstack",
   );
   check(
@@ -624,7 +680,14 @@ async function runPromptModeChecks(): Promise<void> {
     true,
   );
   const frontendSkills = await loadRelevantSkillsForPrompt(
-    "Build a single-user task tracker.",
+    [
+      "Build a single-user task tracker.",
+      "LAMPCode_SELECTED_BUILD_TYPE: frontend",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: none",
+      "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_PERSISTENCE: browser-local",
+    ].join("\n"),
     "frontend",
   );
   check(
@@ -643,7 +706,13 @@ async function runPromptModeChecks(): Promise<void> {
   const newSupabaseBuild = await builder.build(
     "frontend",
     {
-      description: "FULLSTACK BUILD:\\nBuild a Supabase-backed task app with real API routes.",
+      description: [
+        "FULLSTACK BUILD: Build a Supabase-backed task app with real API routes.",
+        "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+        "LAMPCode_SELECTED_FRAMEWORK: react",
+        "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+        "LAMPCode_SELECTED_DATABASE: supabase",
+      ].join("\n"),
       outputFormat: "code",
     },
     {
@@ -665,8 +734,8 @@ async function runPromptModeChecks(): Promise<void> {
     "frontend",
     {
       description:
-        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
-        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "EXISTING FULLSTACK EDIT:\nreact\n\nEXISTING PROJECT FILES:\n" +
+        "```filename:src/server/index.ts\nexport const server = true;\n```\n" +
         "USER REQUEST: Add a reporting endpoint.",
       outputFormat: "code",
       agenticBuild: true,
@@ -694,8 +763,8 @@ async function runPromptModeChecks(): Promise<void> {
     "frontend",
     {
       description:
-        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
-        "```filename:src/server/index.ts\\nexport const server = true;\\n```\\n" +
+        "EXISTING FULLSTACK EDIT:\nreact\n\nEXISTING PROJECT FILES:\n" +
+        "```filename:src/server/index.ts\nexport const server = true;\n```\n" +
         "USER REQUEST: Add a reporting endpoint.",
       outputFormat: "code",
       agenticBuild: false,
@@ -733,7 +802,13 @@ async function runPromptModeChecks(): Promise<void> {
   );
 
   const unknownProviderSkills = await loadRelevantSkillsForPrompt(
-    "Add login and row-level protection to the existing app.",
+    [
+      "Add login and row-level protection to the existing app.",
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+      "LAMPCode_SELECTED_DATABASE: unknown",
+    ].join("\n"),
     "fullstack-existing",
   );
   check(
@@ -751,9 +826,13 @@ async function runPromptModeChecks(): Promise<void> {
     "frontend",
     {
       description:
-        "EXISTING FULLSTACK EDIT:\\nreact\\n\\nEXISTING PROJECT FILES:\\n" +
-        "USER REQUEST: Add an API field.\\n" +
-        "AUTHORITATIVE BUILD CONTEXT\\n- Project mode: edit an existing application.\\n" +
+        "EXISTING FULLSTACK EDIT:\nreact\n\nEXISTING PROJECT FILES:\n" +
+        "USER REQUEST: Add an API field.\n" +
+        "LAMPCode_SELECTED_BUILD_TYPE: fullstack\n" +
+        "LAMPCode_SELECTED_FRAMEWORK: react\n" +
+        "LAMPCode_SELECTED_BACKEND_RUNTIME: node\n" +
+        "LAMPCode_SELECTED_DATABASE: unknown\n" +
+        "AUTHORITATIVE BUILD CONTEXT\n- Project mode: edit an existing application.\n" +
         "- Existing data provider: unknown.",
       outputFormat: "code",
       agenticBuild: true,
@@ -775,5 +854,5 @@ async function runPromptModeChecks(): Promise<void> {
 
 await runPromptModeChecks();
 
-console.log(failures === 0 ? "\\nall cases passed" : `\\n${failures} case(s) failed`);
+console.log(failures === 0 ? "\nall cases passed" : `\n${failures} case(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

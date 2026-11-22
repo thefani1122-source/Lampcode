@@ -21,12 +21,12 @@ import type { RenderReport } from "../verify/render.js";
 /**
  * E2B cloud sandbox preview for fullstack builds.
  *
- * Unlike the in-browser WebContainer/Sandpack preview (JS/TS only), E2B runs a
- * real Linux VM, so it can host backends in any language the LLM generates
- * (Node, Python, Go, etc). Sandboxes are kept alive per project (not per build
- * session) and reused across follow-up builds via E2B's pause/resume — the
- * Lovable pattern — so we avoid paying the npm-install + cold-start cost on
- * every single prompt.
+ * E2B runs a real Linux VM, separate from the LampCode platform and from
+ * every other project. One authenticated projectId owns one sandbox lifecycle;
+ * build sessions within that project reuse its files/sandbox, while a newly
+ * created project receives a new ID and cannot inherit another project's VM.
+ * Paused snapshots can be resumed for that same project, or rebuilt from that
+ * project's private persisted file prefix if the snapshot has expired.
  */
 
 export type PreviewLogCallback = (line: string) => void;
@@ -219,6 +219,8 @@ export function setProjectPreviewEnv(
 // preview-write path awaits this so it never races into creating a second
 // sandbox for the same project.
 const warmingSandboxes = new Map<string, Promise<Sandbox>>();
+/** Framework each in-flight warm will produce; used to serialize runtime switches. */
+const warmingFrameworks = new Map<string, FullstackFramework>();
 
 /**
  * Polls the preview URL until it responds or the timeout elapses. The dev
@@ -391,8 +393,11 @@ const BAKED_FILES = new Set([
   "vitest.config.ts",
   "vitest.config.js",
   "vitest.setup.ts",
-  // Next.js template config
+  // Next.js template config and shadcn CLI contract
   "next.config.ts",
+  "postcss.config.mjs",
+  "components.json",
+  "app/providers.tsx",
   "next.config.js",
   "next.config.mjs",
   // TanStack Start / Vinxi config (controls server port — must stay as baked)
@@ -410,6 +415,28 @@ const BAKED_FILES = new Set([
   // Next.js equivalent (root-level lib, no src/ prefix)
   "lib/utils.ts",
   "lib/queryClient.ts",
+  // shadcn-style primitives are template-owned; add new ones with the shadcn CLI.
+  "components/ui/avatar.tsx",
+  "components/ui/badge.tsx",
+  "components/ui/button.tsx",
+  "components/ui/card.tsx",
+  "components/ui/dialog.tsx",
+  "components/ui/input.tsx",
+  "components/ui/separator.tsx",
+  "components/ui/table.tsx",
+  "components/ui/tabs.tsx",
+  "src/components/ui/avatar.tsx",
+  "src/components/ui/badge.tsx",
+  "src/components/ui/button.tsx",
+  "src/components/ui/card.tsx",
+  "src/components/ui/dialog.tsx",
+  "src/components/ui/input.tsx",
+  "src/components/ui/separator.tsx",
+  "src/components/ui/table.tsx",
+  "src/components/ui/tabs.tsx",
+  // The Next.js root stylesheet owns Tailwind v4 imports and design tokens.
+  "app/globals.css",
+  "src/app/globals.css",
 ]);
 
 /**
@@ -807,6 +834,10 @@ async function installExtraDependencies(
   }
 }
 
+// NOTE: no runtime `npm install` follows this optional dependency installer.
+// This bounded installer is the only post-generation npm install path; it does
+// not replace template-owned manifests. Python requirements remain approval-gated.
+
 /**
  * Runs inside the reference page. Kept as a source string because it is
  * serialised into a script that executes in the sandbox, not here.
@@ -906,6 +937,7 @@ export async function fetchReferenceDesign(
   projectId: string,
   url: string,
 ): Promise<Record<string, unknown>> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
 
@@ -960,6 +992,7 @@ export async function checkRender(
   requireInitialContent = true,
   requireCollectionSurface = false,
 ): Promise<{ report: RenderReport | null; ran: boolean }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { report: null, ran: false };
   try {
@@ -1000,6 +1033,7 @@ export async function checkInteractions(
   projectId: string,
   routes: string[] = ["/"],
 ): Promise<{ findings: InteractionFinding[]; ran: boolean; storage: StorageSnapshot }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { findings: [], ran: false, storage: EMPTY_STORAGE };
   try {
@@ -1048,6 +1082,7 @@ export function splitInteractionStdout(stdout: string): { report: string; storag
  * the same fact. Never throws, never fails a build.
  */
 export async function captureStorage(projectId: string, route = "/"): Promise<StorageSnapshot> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return EMPTY_STORAGE;
   try {
@@ -1078,6 +1113,7 @@ export async function runJourney(
   projectId: string,
   steps: JourneyStep[],
 ): Promise<JourneyReport> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return { ran: false, steps: [], consoleErrors: [], finalUrl: "", reason: "there is no live preview" };
   try {
@@ -1109,6 +1145,7 @@ export async function runShellCommand(
   command: string,
   timeoutMs = 60_000,
 ): Promise<{ ran: boolean; exitCode: number | null; stdout: string; stderr: string; secrets: string[] }> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   const secrets = [...(sandboxSecrets.get(projectId) ?? [])];
   if (!sandbox) {
@@ -1240,9 +1277,13 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   }
 }
 
-// NOTE: no runtime `npm install` anywhere in this service — deps are baked
-// into the template (skill rule: template owns package.json/node_modules).
-// Runtime installs were a root cause of dev-server crashes mid-session.
+// Runtime npm installs are deliberately narrow: installExtraDependencies()
+      // runs after generated files are written and before the preview health check,
+      // using validated declared/static-import package names (max MAX_EXTRA_DEPS).
+      // The template still owns package.json, lockfiles and node_modules layout;
+      // generated manifests are never written over the baked runtime manifest.
+      // Python requirements are not auto-installed: their shell install path is
+      // approval-gated because pip packages execute third-party code.
 
 /**
  * Wraps a PreviewLogCallback so each line is also captured in a rolling
@@ -1518,6 +1559,7 @@ function skippedGate(projectId: string, gate: string): GateResult {
  * the model to fix src/server and try again. No-op for frontend-only apps.
  */
 export async function verifyPreview(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyPreview");
 
@@ -1642,6 +1684,7 @@ function summarizeFailure(raw: string): string {
  * appear and the file would end up in the user's project.
  */
 export async function runTests(projectId: string): Promise<TestRunResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) {
     logger.warn({ projectId, gate: "runTests" }, "[e2b] gate skipped — no live sandbox");
@@ -1762,6 +1805,7 @@ const TSC_DIAGNOSTIC_RE = /^(.+?)\((\d+),(\d+)\):\s*error\s+(TS\d+):\s*(.+)$/gm;
  * same silent-skip behavior as verifyPreview.
  */
 export async function runTypeCheck(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "runTypeCheck");
 
@@ -1810,6 +1854,7 @@ export async function runTypeCheck(projectId: string): Promise<GateResult> {
  * in-process sandbox exists, same silent-skip behavior as the other checks.
  */
 export async function verifyBrowserRender(projectId: string): Promise<GateResult> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return skippedGate(projectId, "verifyBrowserRender");
 
@@ -1911,6 +1956,7 @@ function safeProjectPath(raw: unknown): string | null {
 
 /** Read one project file out of the live sandbox. Throws with a readable reason. */
 export async function readProjectFile(projectId: string, path: string): Promise<string> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
   const safe = safeProjectPath(path);
@@ -1932,6 +1978,7 @@ export async function deleteProjectFileFromSandbox(projectId: string, path: stri
 
 /** List the project's source files (excludes deps, build output and env files). */
 export async function listProjectFiles(projectId: string): Promise<string[]> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) throw new Error("no live sandbox for this project");
   const r = await sandbox.commands.run(
@@ -1947,7 +1994,8 @@ export async function listProjectFiles(projectId: string): Promise<string[]> {
  * Recent dev-server and app-backend output for this project's sandbox.
  * Both are ring buffers captured as the processes run — nothing is re-executed.
  */
-export function readSandboxLogs(projectId: string): { dev: string[]; backend: string[] } | null {
+export async function readSandboxLogs(projectId: string): Promise<{ dev: string[]; backend: string[] } | null> {
+  await awaitWarming(projectId);
   const sandbox = sandboxes.get(projectId);
   if (!sandbox) return null;
   return {
@@ -2057,40 +2105,109 @@ async function acquireRunningSandbox(
  */
 export function prewarmSandbox(projectId: string, framework: FullstackFramework = "react", onLog?: PreviewLogCallback): void {
   if (!config.E2B_API_KEY) return;
-  if (sandboxes.has(projectId) || warmingSandboxes.has(projectId)) return;
 
   const log = (line: string): void => {
     onLog?.(line);
     logger.debug({ projectId, line }, "[e2b:prewarm]");
   };
 
-  const promise = acquireRunningSandbox(projectId, log, framework)
+  const live = sandboxes.get(projectId);
+  const liveFramework = live ? sandboxFrameworks.get(projectId) ?? "react" : null;
+  const activeWarm = warmingSandboxes.get(projectId);
+  if (activeWarm && warmingFrameworks.get(projectId) === framework) return;
+  if (!activeWarm && live && liveFramework === framework) return;
+
+  // Validate the target before killing or replacing a healthy preview. A
+  // missing candidate template must fail the build immediately; silently
+  // returning here could leave tools attached to an old, incompatible runtime.
+  if (activeWarm || !live || liveFramework !== framework) {
+    const templateId = selectTemplate(framework);
+    log(`Selected ${framework} runtime template: ${templateId}`);
+  }
+
+  if (activeWarm) {
+
+    // A different framework is already warming. Queue this runtime switch
+    // behind it, rather than returning and letting the agent use the wrong VM.
+    let queued!: Promise<Sandbox>;
+    queued = activeWarm
+      .then(() => undefined, (err: unknown) => {
+        logger.warn({ projectId, err }, "[e2b] previous prewarm failed before runtime switch");
+        return undefined;
+      })
+      .then(async () => {
+        const current = sandboxes.get(projectId);
+        const currentFramework = current ? sandboxFrameworks.get(projectId) ?? "react" : null;
+        if (current && currentFramework === framework) return current;
+        if (current) {
+          log(`Replacing warmed ${currentFramework} sandbox with ${framework} runtime`);
+          await killSandbox(projectId);
+        }
+        return acquireRunningSandbox(projectId, log, framework);
+      })
+      .catch((err) => {
+        logger.warn({ projectId, framework, err }, "[e2b] queued prewarm failed (completion will retry)");
+        throw err;
+      })
+      .finally(() => {
+        // An earlier warm must not delete a newer queued replacement.
+        if (warmingSandboxes.get(projectId) === queued) {
+          warmingSandboxes.delete(projectId);
+          warmingFrameworks.delete(projectId);
+        }
+      });
+
+    warmingSandboxes.set(projectId, queued);
+    warmingFrameworks.set(projectId, framework);
+    void queued.catch(() => {});
+    return;
+  }
+
+  let promise!: Promise<Sandbox>;
+  promise = (async () => {
+    const current = sandboxes.get(projectId);
+    const currentFramework = current ? sandboxFrameworks.get(projectId) ?? "react" : null;
+    if (current && currentFramework !== framework) {
+      log(`Replacing live ${currentFramework} sandbox with ${framework} runtime`);
+      await killSandbox(projectId);
+    }
+    return acquireRunningSandbox(projectId, log, framework);
+  })()
     .catch((err) => {
       // Don't let a prewarm failure kill anything — the complete path will
       // fall back to a full create. Just surface it and clear the entry.
-      logger.warn({ projectId, err }, "[e2b] prewarm failed (will cold-start on complete)");
+      logger.warn({ projectId, framework, err }, "[e2b] prewarm failed (will cold-start on complete)");
       throw err;
     })
     .finally(() => {
-      warmingSandboxes.delete(projectId);
+      if (warmingSandboxes.get(projectId) === promise) {
+        warmingSandboxes.delete(projectId);
+        warmingFrameworks.delete(projectId);
+      }
     });
 
   warmingSandboxes.set(projectId, promise);
+  warmingFrameworks.set(projectId, framework);
   void promise.catch(() => {});
 }
 
 /** Awaits an in-flight prewarm (if any) so we never race into a 2nd sandbox. */
 async function awaitWarming(projectId: string): Promise<void> {
-  const warming = warmingSandboxes.get(projectId);
-  if (warming) {
+  // A framework switch can replace an in-flight warm with a queued promise.
+  // Keep waiting until the promise currently registered for this project is
+  // the one that just settled; otherwise callers may resume the stale runtime.
+  while (true) {
+    const warming = warmingSandboxes.get(projectId);
+    if (!warming) return;
     try {
       await warming;
     } catch (err) {
       // prewarm failed — fall through; caller's own create path handles it.
-      // Logged (was previously silent) so a stuck/failed prewarm is visible
+      // Logged (was previously silent) so a stuck/failed warm is visible
       // in Railway logs instead of looking like an unexplained hang.
       logger.warn({ projectId, err }, "[e2b] awaited prewarm failed");
     }
+    if (warmingSandboxes.get(projectId) === warming) return;
   }
 }
 
@@ -2242,8 +2359,14 @@ export async function ensurePreviewForProject(
       sandboxFrameworks.set(projectId, framework);
       await ensureDevServer(resumed, log, framework);
       return resumed;
-    })().finally(() => warmingSandboxes.delete(projectId));
+    })().finally(() => {
+      if (warmingSandboxes.get(projectId) === warm) {
+        warmingSandboxes.delete(projectId);
+        warmingFrameworks.delete(projectId);
+      }
+    });
     warmingSandboxes.set(projectId, warm);
+    warmingFrameworks.set(projectId, persistedFramework ?? "react");
   }
 
   try {
@@ -2323,9 +2446,13 @@ export async function createPreviewSandbox(
           }
           return acquireRunningSandbox(projectId, log, framework);
         })().finally(() => {
-          warmingSandboxes.delete(projectId);
+          if (warmingSandboxes.get(projectId) === warm) {
+            warmingSandboxes.delete(projectId);
+            warmingFrameworks.delete(projectId);
+          }
         });
         warmingSandboxes.set(projectId, warm);
+        warmingFrameworks.set(projectId, framework);
       }
     }
     if (!sandbox) {

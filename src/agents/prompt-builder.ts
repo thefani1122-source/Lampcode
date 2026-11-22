@@ -4,8 +4,7 @@ import { join } from "path";
 import { z } from "zod";
 import { type AgentTaskType } from "./model-gateway.js";
 import { matchProviderRules } from "../mcp/providers/index.js";
-import { hasPositiveDatabaseRequirement, hasPositiveMongoRequirement, readSignals } from "./build-classifier.js";
-import { detectFullstackFramework as detectFullstackRuntime } from "./framework-selection.js";
+import { DEFAULT_BUILD_FRAMEWORK } from "./framework-selection.js";
 type BusinessContext = {
   appDescription?: string | undefined;
   userType?: string | undefined;
@@ -162,6 +161,15 @@ const SYSTEM_PROMPTS: Record<AgentTaskType, string> = {
   // the build and is wrong by the second file.
   planning: `You are a senior engineer deciding how one web app will actually work, before any code is written.
 
+## MODE ROUTING — READ THIS BEFORE THE REST
+If the task description begins with the exact marker LAMPCode_BUILD_INTENT_DECISION_V1, this is BUILD-INTENT DECISION MODE:
+- The task contains the authoritative output schema and rules for choosing build scope, framework, backend runtime, database, persistence, authentication and required tool capabilities.
+- Return exactly the JSON object requested by that task. Do NOT return the file-plan JSON below, do not emit summary/approach/files, and do not add prose.
+- Read the complete enclosed original user request semantically. Do not use keyword matching or fixed framework/database assumptions.
+- Your output is a decision proposal that LampCode validates against supported runtime/security constraints; it does not grant tools or credentials.
+
+For all other planning tasks, use PRODUCT / FILE PLAN MODE and follow the file-planning instructions below.
+
 A file list is NOT a plan. Work out the thing first, then the files.
 
 ## WORK OUT WHAT IT IS — before you list a single file
@@ -189,13 +197,14 @@ in localStorage" is a decision someone can build against.
   calculation, a reducer, validation rules, a formula evaluator — goes in its own module
   under src/lib/, so it can be tested on its own. Give each of those a sibling
   <name>.test.ts in the list.
-- src/App.tsx is routing, layout and shared state ONLY. It is never where a view lives.
+- Follow the AUTHORITATIVE BUILD CONTEXT supplied with each planning request. React/Vite uses src/App.tsx and src/index.tsx; Next.js App Router uses app/layout.tsx and app/page.tsx; TanStack Start uses its route tree. Never mix these entrypoint conventions.
 - Order the list so nothing imports a file that comes later in it.
+- For Next.js App Router, plan app/page.tsx, app/layout.tsx and app/api/**/route.ts as needed; do not plan src/App.tsx, src/index.tsx or a separate Hono server.
+- For React/Vite + Hono, use src/App.tsx/src/index.tsx and src/server/** only when the authoritative build context selects that runtime.
 
 ## WHAT YOU MUST NOT DO
 - Do not write any code, not even a snippet or a type.
-- Do not plan files the template already owns: src/styles.css, src/index.tsx,
-  package.json, vite.config.ts, tsconfig.json, index.html, vitest.config.ts.
+- Do not plan files owned by the selected runtime template. Read the AUTHORITATIVE BUILD CONTEXT before choosing entrypoints or configuration. React/Vite owns src/styles.css, src/index.tsx, package.json, vite.config.ts, tsconfig.json, index.html and Vitest config. Next.js owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs, Vitest config and pre-baked UI primitives; Next.js apps use the app/ directory. Do not apply the Vite ownership list to Next.js or TanStack.
 - Do not invent features the user did not ask for. If they asked for three views, plan three.
 - Do not plan more than 25 files. If the request is bigger than that, plan the files that
   make the app work end to end and list the rest under outOfScope.
@@ -578,21 +587,26 @@ export type Database = "supabase" | "mongodb";
  * Detect which frontend framework the user is requesting.
  * React is the default when no specific framework keyword is found.
  */
-export function detectFramework(prompt: string, fallback: Framework = "react"): Framework {
-  if (/\bpreact\b/i.test(prompt)) return "preact";
-  if (/\bvue\b/i.test(prompt)) return "vue";
-  if (/\btanstack[- ]?start\b|\btanstack\b|\btss\b/i.test(prompt)) return "tanstack";
-  if (/\bnext\.?js\b|\bnextjs\b|\bnext\s+js\b/i.test(prompt)) return "nextjs";
-  if (/\bsvelte\b/i.test(prompt)) return "svelte";
-  if (/\bsolid\.?js\b|\bsolidjs\b|\bsolid[- ]?js\b/i.test(prompt)) return "solid";
-  // React/Vite, and Python/FastAPI/Django prompts (which pair a React+Vite
-  // frontend with a non-Node backend) all use the React frontend template.
-  if (/\breact\b|\bvite\b|\bpython\b|\bfastapi\b|\bdjango\b/i.test(prompt)) return "react";
-  return fallback;
+/**
+ * Backward-compatible framework accessor. It reads trusted server metadata or
+ * a caller-supplied fallback only; user wording is never regex-classified.
+ */
+export function detectFramework(
+  description: string,
+  fallback: Framework = DEFAULT_BUILD_FRAMEWORK,
+): Framework {
+  return selectedBuildMarker(
+    description,
+    "FRAMEWORK",
+    ["react", "nextjs", "tanstack"] as const,
+  ) ?? fallback;
 }
 
 export type FullstackFramework = "react" | "nextjs" | "tanstack";
-export const detectFullstackFramework = detectFullstackRuntime;
+/** Backward-compatible helper: reads trusted metadata/default only, never prompt keywords. */
+export function detectFullstackFramework(description: string): FullstackFramework {
+  return selectedFullstackFramework(description);
+}
 
 const FRAMEWORK_RULES: Record<Framework, string> = {
   react: `
@@ -664,12 +678,45 @@ TOUCH TARGETS:
 // ── Database detection + per-database rules ───────────────────────────────────
 
 /**
- * Detect which cloud database the user is requesting.
- * Supabase is the default when no specific DB keyword is found.
+ * Resolve the database selected by the build pipeline, or infer it when this
+ * helper is used outside a full-stack build. Server runtime alone is not a DB.
  */
-export function detectDatabase(prompt: string): Database {
-  if (/\bmongo(db)?\b/i.test(prompt)) return "mongodb";
-  return "supabase";
+export type DatabaseChoice = Database | "none" | "unknown";
+
+/**
+ * The build route appends trusted runtime/database markers after the raw user
+ * request. Read the LAST marker so user-authored text cannot override the
+ * authoritative decision made by classification and the runtime selector.
+ */
+function selectedBuildMarker<T extends string>(
+  description: string,
+  marker: "FRAMEWORK" | "DATABASE" | "BUILD_TYPE" | "BACKEND_RUNTIME" | "AUTH" | "PERSISTENCE" | "REQUIRED_TOOLS",
+  allowed: readonly T[],
+): T | undefined {
+  const prefix = `LAMPCode_SELECTED_${marker}:`;
+  let selected: string | undefined;
+  for (const line of description.split(/\r?\n/)) {
+    const at = line.lastIndexOf(prefix);
+    if (at < 0) continue;
+    selected = line.slice(at + prefix.length).trim().toLowerCase().split(/\s+/)[0];
+  }
+  return selected !== undefined && (allowed as readonly string[]).includes(selected)
+    ? selected as T
+    : undefined;
+}
+
+export function selectedFullstackFramework(description: string): FullstackFramework {
+  return selectedBuildMarker(description, "FRAMEWORK", ["react", "nextjs", "tanstack"] as const)
+    ?? DEFAULT_BUILD_FRAMEWORK;
+}
+
+export function selectedBackendRuntime(description: string): "none" | "node" | "python" {
+  return selectedBuildMarker(description, "BACKEND_RUNTIME", ["none", "node", "python"] as const) ?? "none";
+}
+
+export function detectDatabase(description: string): DatabaseChoice {
+  // Parse the server-appended model decision only; never infer a provider from user text.
+  return selectedBuildMarker(description, "DATABASE", ["supabase", "mongodb", "none", "unknown"] as const) ?? "none";
 }
 
 export const DB_INSTRUCTIONS: Record<Database, string> = {
@@ -1054,68 +1101,6 @@ DESIGN SYSTEM — Follow the FRAMEWORK_RULES design system exactly: Tailwind CSS
 // (GPU wheels multi-GB), and deep-learning workloads assume GPU or long training
 // runs — mismatched to an ephemeral preview sandbox that shares one cold-start
 // image across every build, not just Python ones. Not installed in template.ts.
-export const PYTHON_BACKEND_RE = /\b(python|fastapi|flask|django|pandas|numpy|scikit|data\s*science|machine\s*learning)\b/i;
-
-export const FASTAPI_OVERRIDE = `
-
-## PYTHON BACKEND OVERRIDE — use FastAPI instead of Hono/Node
-
-The user wants a Python backend. REPLACE the Node/Hono backend with FastAPI.
-Do NOT generate src/server/index.ts, src/server/routes/api.ts, or any .ts
-backend file. Everything else (the React frontend + src/lib/api.ts calling
-API_BASE + '/api/...') stays exactly the same — in the preview API_BASE is '' and
-Vite proxies /api to this server on :3001.
-
-{{PIP_MANIFEST}}
-
-Generate INSTEAD:
-
-1. \`\`\`filename:src/server/main.py — a FastAPI app. The ASGI app MUST be named
-   exactly \`app\`. All routes under /api. Use the supabase Python client; handle
-   errors so the server never crashes on startup. EXACT shape:
-     import os
-      from fastapi import FastAPI, Request, HTTPException
-     from supabase import create_client
-     app = FastAPI()
-     # E2B preview uses a same-origin Vite /api proxy; do not add wildcard CORS.
-     # ONE CLIENT PER REQUEST, carrying the caller's token. A module-level
-     # client is anonymous: auth.uid() is NULL inside every RLS policy, so
-     # owner-scoped reads return nothing and the app looks empty forever.
-     _URL = os.environ.get("SUPABASE_URL", "")
-     _ANON = os.environ.get("SUPABASE_ANON_KEY", "")
-     def db_for(req: Request):
-         client = create_client(_URL, _ANON)
-         token = (req.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-         if token:
-             client.postgrest.auth(token)
-         return client
-
-     @app.get("/api/riders")
-     def list_riders(req: Request):          # req is REQUIRED — it carries the token
-         try:
-             return (db_for(req).table("riders").select("*").order("created_at", desc=True).execute()).data or []
-         except Exception as exc:
-             raise HTTPException(status_code=500, detail="Unable to load riders") from exc
-
-     @app.post("/api/riders")
-     async def create_rider(req: Request):
-         body = await req.json()
-         try:
-             res = db_for(req).table("riders").insert(body).execute()
-             return (res.data or [None])[0]
-         except Exception as exc:
-             raise HTTPException(status_code=500, detail="Unable to create rider") from exc
-   Add every route the app needs in this same defensive style.
-
-2. \`\`\`filename:requirements.txt — list: fastapi, uvicorn, supabase
-   (these are pre-installed in the environment; list them for completeness).
-
-The server is started for you as: uvicorn main:app --port 3001 (from src/server).
-Do NOT write your own __main__ / uvicorn.run() block.`;
-
-// ── Auth sub-mode instruction ─────────────────────────────────────────────────
-// Appended after FULLSTACK_INSTRUCTION when the task prefix is "FULLSTACK AUTH BUILD:".
-
 export const FULLSTACK_AUTH_INSTRUCTION = `
 
 AUTH MODE — This app requires user authentication. Generate the full Supabase auth setup in addition to all base fullstack files.
@@ -1304,17 +1289,234 @@ custom JWT auth in the Hono backend. Generate:
    (email/password → POST /api/auth/login|register), modal auto-closes on success.
    No social/OAuth (custom auth is email/password).`;
 
+
+// ── FastAPI + Supabase auth hand-off ─────────────────────────────────────────
+export const FASTAPI_AUTH_INSTRUCTION = `
+
+## AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE
+
+The selected backend is Python/FastAPI, not Hono. Keep Supabase Auth in the
+React frontend, and forward the authenticated user's access token to FastAPI.
+
+FRONTEND:
+- Use the browser Supabase auth flow described above (AuthProvider, useAuth,
+  Login, sign-in, sign-up and sign-out). Keep VITE_SUPABASE_URL and
+  VITE_SUPABASE_ANON_KEY in the frontend environment.
+- src/lib/api.ts must obtain the current access token from
+  supabase.auth.getSession() before every authenticated /api request and send
+  Authorization: Bearer <access_token>. Do not cache a stale token indefinitely.
+- Handle missing session with a clear unauthenticated response; never send a
+  service-role key or a secret to the browser.
+
+FASTAPI:
+- Use the request-scoped db_for(request) helper from FASTAPI_SUPABASE_INSTRUCTION. It must
+  create the Supabase client with the anon key and attach the incoming bearer
+  token to PostgREST for each request.
+- Supabase RLS policies remain the authorization boundary. Do not bypass RLS
+  with the service-role key, trust client-supplied user IDs, or use a global
+  anonymous client for user-owned data.
+- Protect private routes by requiring a verified Supabase user session; return
+  401 for missing/invalid identity and scope every user-owned query through
+  the request-scoped client.
+- Do NOT create Hono route files, custom JWT auth, or a second password store.
+`
+
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
+export const FULLSTACK_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH A REAL HONO API, NO DATABASE
+
+This build requires a real Node/Hono server, but the selected build context says
+there is NO application database. Do not invent Supabase, MongoDB, schema files,
+migrations, credentials, or fake persistent writes.
+
+Generate these files:
+- src/server/app.ts — Hono app, mounts the route module at /api, does not listen.
+- src/server/index.ts — starts the Hono app on port 3001.
+- src/server/routes/api.ts — the requested real API routes with Zod validation.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+
+The preview uses Vite on :5173 and Hono on :3001; Vite proxies same-origin /api
+requests to Hono. Do not hardcode localhost in browser code.
+
+No database means the server cannot promise durable or shared records. Implement
+the requested server behavior that does not require persistence. If the request
+requires durable records, be explicit that a database connection is needed;
+never create a pretend database with module-level in-memory arrays or localStorage.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, or .env.
+Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+`;
+
+export const FASTAPI_SUPABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT/VITE FRONTEND + PYTHON FASTAPI + SUPABASE
+
+This model-selected project uses React/Vite for the browser and Python/FastAPI
+for its backend. Do NOT generate a Node/Hono backend, and do not combine two
+server runtimes. The preview uses Vite on :5173 and FastAPI on :3001; Vite
+proxies same-origin /api requests to FastAPI. Browser code must not hardcode
+localhost or call Supabase with a service-role key.
+
+GENERATE THESE FILES:
+- src/App.tsx and src/index.tsx — React/Vite application and entry point.
+- src/server/main.py — FastAPI ASGI app named exactly app, with the requested
+  routes under /api and a small /api/health readiness route.
+- src/lib/api.ts — typed same-origin API client; include the current signed-in
+  Supabase access token as Authorization: Bearer <token> for authenticated calls.
+- src/db/types.ts — TypeScript types for application entities.
+- src/db/schema.sql — the actual PostgreSQL tables, constraints, indexes and
+  row-level security policies required by this product.
+- requirements.txt — fastapi, uvicorn and supabase (the preview runtime has them).
+- Add focused tests for the data-access and API behaviour.
+
+FASTAPI DATA ACCESS:
+Use supabase-py and one Supabase client per request, carrying the user's bearer
+token so auth.uid() works inside RLS. Use this defensive shape:
+
+    import os
+    from fastapi import FastAPI, Request, HTTPException
+    from supabase import create_client
+
+    app = FastAPI()
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+    def db_for(req: Request):
+        if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+            raise HTTPException(status_code=503, detail="Database is not configured")
+        client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        token = (req.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if token:
+            client.postgrest.auth(token)
+        return client
+
+    @app.get("/api/riders")
+    def list_riders(req: Request):
+        try:
+            return (db_for(req).table("riders").select("*").execute()).data or []
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="Unable to load riders") from exc
+
+    @app.post("/api/riders")
+    async def create_rider(req: Request):
+        body = await req.json()
+        try:
+            return (db_for(req).table("riders").insert(body).execute()).data
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="Unable to create rider") from exc
+
+For every endpoint: validate inputs, use db_for(request), scope reads/writes to
+the authenticated user's identity where required, return truthful 401/400/500
+responses, and never turn a failed query into a successful empty list.
+
+SECURITY:
+- Supabase RLS is the authorization boundary. Do not use the service-role key
+  in the app, bypass RLS, or trust userId/tenantId/role fields from request bodies.
+- Missing credentials must produce an honest unconfigured state (503), not fake
+  data or a module-level anonymous client.
+- Keep server secrets in the server environment only. VITE_ variables are public.
+- Do not generate src/server/app.ts, src/server/index.ts,
+  src/server/routes/api.ts, Hono imports, or a second Node server.
+
+{{NPM_MANIFEST}}
+{{PIP_MANIFEST}}
+`
+
+export const FASTAPI_NO_DATABASE_INSTRUCTION = `
+
+## ARCHITECTURE — REACT + VITE FRONTEND WITH PYTHON FASTAPI, NO DATABASE
+
+This build uses the Ubuntu Python runtime and a real FastAPI server, but no
+application database was selected. Do not invent Supabase/MongoDB, schema files,
+migrations or credentials.
+
+Generate:
+- src/server/main.py — FastAPI application and the requested real HTTP routes.
+- src/lib/api.ts — same-origin API client.
+- src/App.tsx and src/index.tsx — React/Vite UI and entry point.
+- requirements.txt — the required FastAPI/Python packages already available in the runtime.
+
+The preview runs Vite on :5173 and FastAPI on :3001; Vite proxies /api to FastAPI.
+Use the provided Python virtual environment and start command from the runtime.
+Validate request bodies and return truthful errors. Do not claim durable storage
+or replace a requested server API with a browser-only mock.
+
+Do not generate src/db/types.ts, src/db/schema.sql, database clients, migrations
+or .env. Keep package/configuration files template-owned.
+
+{{NPM_MANIFEST}}
+{{PIP_MANIFEST}}
+`;
+
+const NEXTJS_FRONTEND_BASE = `You are LampCode, a senior full-stack Next.js engineer and product designer.
+Build a complete, polished, production-usable application from the user's request. Treat the model-selected architecture markers and the user's explicit requirements as authoritative.
+
+PRODUCT AND VISUAL QUALITY:
+- Understand the product, actors, data, requested routes, user journeys and success criteria before coding.
+- Establish a product-specific design system: accessible palette, typography, spacing, surface hierarchy and responsive layout.
+- Build the actual working product surface, not a heading with generic cards. Use domain-appropriate content and functional primary actions.
+- Distinguish loading, real-empty, error and populated states. Do not fabricate live database records.
+- Inspect the rendered browser at desktop and mobile sizes. A successful compile is not visual verification.
+
+NEXT.JS APP ROUTER CONVENTIONS:
+- The selected runtime is Next.js App Router on Ubuntu, served by the Next.js Node server on port 3000.
+- Use app/layout.tsx, app/page.tsx and app/globals.css. Generate app/api/**/route.ts only when the trusted model-selected scope is full-stack and the request needs HTTP APIs.
+- Do not create src/App.tsx, src/index.tsx, Vite config or a separate Hono server in a Next.js project.
+- Keep Server Components by default. Use small 'use client' components only for browser state, event handlers or browser-only APIs.
+- Keep database clients, secrets and privileged logic server-only. Keep any Route Handlers typed, validated and secure.
+- Use the initialized shadcn CLI config in components.json. For a missing primitive, run the pinned local command npx shadcn add component; never run init.
+- Keep template-owned package/config files and pre-baked providers/primitives intact.
+- Do not replace requested backend/API behavior with localStorage or mock data.
+`;
+
+export const NEXTJS_FRONTEND_INSTRUCTION = `
+
+## NEXT.JS APP ROUTER — FRONTEND-ONLY BUILD
+
+This project uses the Next.js App Router template on port 3000. It is a frontend-only
+product scope unless the trusted build context explicitly selects a full-stack backend.
+Do not add Hono, Express, FastAPI, database clients, authentication or Route Handlers by default.
+
+PROJECT FILES:
+- app/layout.tsx: root HTML layout, metadata and shared providers.
+- app/page.tsx: home route.
+- app/<route>/page.tsx: additional route pages.
+- app/globals.css: Tailwind CSS v4 design tokens and global styles; keep its import in app/layout.tsx.
+- components/**: reusable app and UI components.
+- lib/**: utilities and client-safe shared logic.
+- public/**: static assets.
+
+IMPLEMENTATION:
+- Prefer React Server Components. Use small 'use client' components only for interactive state,
+  event handlers, browser APIs, charts, animations or WebGL.
+- Use the initialized shadcn CLI config in components.json. When a required primitive is missing,
+  run the pinned local CLI: npx shadcn add <component>. Do not run shadcn init or overwrite components.json.
+- The template provides accessible primitives in @/components/ui and cn() from @/lib/utils.
+- Use Tailwind CSS v4 utilities, the existing CSS variables and tw-animate-css. Do not add Tailwind v3 directives,
+  a second CSS framework, or rewrite template-owned package/config files.
+- Keep the existing @import "tailwindcss" and @import "tw-animate-css" lines in app/globals.css.
+- Use localStorage/IndexedDB only when the trusted model decision selects browser-local persistence.
+  Be explicit that browser storage does not sync across devices or users.
+- Do not invent APIs, databases, external services or fake persistence.
+- Keep routes responsive and verify the rendered app at desktop and mobile widths.
+`
+
 export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
 
 This is a full-stack Next.js App Router application. Use Route Handlers in app/api/**/route.ts
-for HTTP APIs. There is no separate Hono process; the preview runs one Node.js process on port 3000.
-The same app remains a standard Next.js project for Vercel, Node self-hosting or Docker.
+for HTTP APIs. Always include app/api/health/route.ts as the internal readiness endpoint, returning
+a small truthful JSON response such as { ok: true, runtime: "nextjs" }. Do not put credentials or
+private diagnostics in this endpoint. There is no separate Hono process; the preview runs one
+Node.js process on port 3000. The same app remains a standard Next.js project for Vercel,
+Node self-hosting or Docker.
 
 IMPLEMENT IN THIS ORDER:
-1. Server-only data access, shared types/models and app/api/<resource>/route.ts handlers.
+1. If a database is selected, implement server-only data access and shared types/models before app/api/<resource>/route.ts handlers. Otherwise, implement only the API routes the user actually requested; do not invent database models or persistence.
 2. app/layout.tsx, app/globals.css and shared providers.
 3. app/page.tsx and all requested route pages.
 4. Small Client Components only where browser state, event handlers, animations or WebGL are required.
@@ -1336,16 +1538,19 @@ SERVER/CLIENT BOUNDARIES:
   own Route Handler over HTTP. Client Components may use same-origin fetch('/api/...') or Server Actions.
 - Mark browser-only animation, Canvas and window/document code with 'use client'. Lazy-load WebGL and
   give it a usable fallback.
-- Use session-aware Supabase SSR and RLS, or server-only Mongo connections with per-request ownership
-  checks. Never use a service-role key as a shortcut around user permissions.
+- When the selected build context includes Supabase, use session-aware Supabase SSR and RLS;
+  when it includes MongoDB, use server-only Mongo connections with per-request ownership checks.
+  When no database is selected, do not add a database client, schema, migration or persistence claim.
+  Never use a service-role key as a shortcut around user permissions.
 - Treat caching deliberately: personalised data must not be shared between users. Opt out of caching
   for user-specific and rapidly-changing reads; revalidate only when the product permits it.
 
 FILES AND DEPLOYABILITY:
-- Generate app/layout.tsx, app/page.tsx, app/globals.css and app/api/**/route.ts as required.
+- Generate app/layout.tsx, app/page.tsx, app/globals.css, app/api/health/route.ts and the requested app/api/**/route.ts endpoints.
 - The environment owns package.json, next.config.ts, tsconfig.json, postcss.config.mjs,
-  vitest.config.ts and vitest.setup.ts. Do not replace those files.
-- lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Use the existing accessible
+  components.json, app/providers.tsx, vitest.config.ts and vitest.setup.ts. Do not replace those files.
+- lib/utils.ts, lib/queryClient.ts and components/ui/** are pre-baked. Add extra components with
+  npx shadcn add <component>; do not regenerate or overwrite template-owned primitives. Use the existing accessible
   Radix/shadcn-style primitives, cn() helper, Tailwind CSS v4 tokens and lucide-react.
 - Do not use Tailwind v3 directives or add a second CSS framework.
 - Do not generate src/App.tsx, src/index.tsx, src/styles.css, Vite config or a Hono server.
@@ -1704,26 +1909,25 @@ async function buildPipManifest(): Promise<string> {
 
 export type PromptBuildType = "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing";
 
-/**
- * The build task prefix determines whether the frontend agent is doing a new
- * browser build, a new Hono build, or an edit to an existing full-stack app.
- * MongoDB is detected from the same negation-aware signals as classification,
- * so a sentence such as "do not use MongoDB" cannot switch providers.
- */
+/** Resolve build scope only from server-appended metadata, never prompt keywords. */
 export function inferPromptBuildType(
   agentType: AgentTaskType,
   description: string,
 ): PromptBuildType | undefined {
-  const isFullstackBuildDescription =
-    description.startsWith("FULLSTACK BUILD:") ||
-    description.startsWith("FULLSTACK AUTH BUILD:");
-  const isExistingFullstackEdit = description.startsWith("EXISTING FULLSTACK EDIT:");
-  const isMongoBuildDescription = hasPositiveMongoRequirement(description);
-
   if (agentType !== "frontend") return undefined;
-  if (isExistingFullstackEdit) return "fullstack-existing";
-  if (!isFullstackBuildDescription) return "frontend";
-  return isMongoBuildDescription ? "fullstack-mongodb" : "fullstack";
+  const selected = selectedBuildMarker(description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+  // Server-appended metadata outranks even a legacy task prefix.
+  if (selected === "frontend") return "frontend";
+  // The source project has already established its framework/data contract.
+  // Keep it in edit mode even when the route appends its trusted fullstack scope.
+  if (description.startsWith("EXISTING FULLSTACK EDIT:")) return "fullstack-existing";
+  if (selected === "fullstack") {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  if (description.startsWith("FULLSTACK BUILD:") || description.startsWith("FULLSTACK AUTH BUILD:")) {
+    return detectDatabase(description) === "mongodb" ? "fullstack-mongodb" : "fullstack";
+  }
+  return "frontend";
 }
 
 /** Module-level skill loader — shared by PromptBuilder and stream path. */
@@ -1739,45 +1943,55 @@ async function loadSkillsForPrompt(
   const skillsToLoad = new Set<string>();
   const skillsDir = join(process.cwd(), "src", "skills");
 
-  // BUILD-TYPE SKILLS — these must match the runtime that build.ts/E2B will
-  // actually start. "fullstack" is not synonymous with Hono: Next.js and
-  // TanStack use their own server runtimes, while FastAPI replaces Hono.
-  const selectedFramework = detectFullstackFramework(prompt);
-  if (opts?.buildType === "fullstack" && selectedFramework === "react" && !PYTHON_BACKEND_RE.test(prompt)) {
-    skillsToLoad.add("fullstack-hono");
-  } else if (opts?.buildType === "frontend") {
-    skillsToLoad.add("frontend-sandbox");
-  }
-  if (opts?.buildType === "fullstack" && selectedFramework === "nextjs") skillsToLoad.add("nextjs-production");
-  // Optional specialist guidance is deliberately NOT injected by keyword
-  // matching. The metadata-only catalogue is always available to tool-enabled
-  // builds; the model decides semantically whether to call load_skill. This
-  // avoids carrying large CrewAI/LangGraph/animation references through every
-  // prompt merely because a provider name appears in the request.
+  const selectedDatabase = detectDatabase(prompt);
+  const backendRuntime = selectedBackendRuntime(prompt);
+  const isFullstack = opts?.buildType === "fullstack" || opts?.buildType === "fullstack-mongodb";
+  const isExistingFullstack = opts?.buildType === "fullstack-existing";
+  const explicitlySelectedFramework = selectedBuildMarker(
+    prompt,
+    "FRAMEWORK",
+    ["react", "nextjs", "tanstack"] as const,
+  );
+  // New projects default to Next.js. Existing projects with unknown source
+  // framework stay provider/framework-neutral until their files are inspected.
+  const selectedFramework = explicitlySelectedFramework
+    ?? (isExistingFullstack ? "unknown" : DEFAULT_BUILD_FRAMEWORK);
 
-  // Core implementation AND product-design skills — always for any frontend/fullstack build.
-  // Design is a generation contract, not an optional skill triggered by lucky prompt keywords.
+  // Architecture-decision planning has no implementation framework yet.
+  // Do not inject the Next.js default skill into the model that is choosing the
+  // framework; that would bias the decision back toward the default.
+  if (opts?.buildType && selectedFramework === "nextjs") {
+    skillsToLoad.add("nextjs-production");
+  } else if (opts?.buildType && selectedFramework === "react") {
+    // Hono rules belong only to the selected React/Vite + Node/Hono path.
+    // Mongo uses its own server/data-access contract; Python uses FastAPI.
+    if (isFullstack && backendRuntime === "node" && selectedDatabase !== "mongodb") {
+      skillsToLoad.add("fullstack-hono");
+    } else if (
+      opts?.buildType === "frontend" ||
+      (isFullstack && backendRuntime === "python") ||
+      (isFullstack && selectedDatabase === "mongodb")
+    ) {
+      skillsToLoad.add("frontend-sandbox");
+    }
+  }
+
   if (opts?.buildType) {
     skillsToLoad.add("react-production");
     skillsToLoad.add("typescript-strict");
     skillsToLoad.add("product-ui-design");
   }
 
-  // Database security is useful across providers, but the generic skill must
-  // stay provider-neutral. Supabase policy syntax is a separate skill and may
-  // only be injected when this build is actually using the Supabase path.
-  // Raw excluded terms ("without Supabase") and browser-local persistence must
-  // never cause either database skill to leak into a frontend-only build.
-  const requestSignals = readSignals(prompt);
   const hasDatabaseSecurityIntent =
-    Boolean(opts?.buildType && opts.buildType !== "frontend") &&
-    (hasPositiveDatabaseRequirement(prompt) || requestSignals.authSystem);
-  if (hasDatabaseSecurityIntent) {
-    skillsToLoad.add("database-rls");
-  }
-  const needsSupabaseRls =
-    opts?.buildType === "fullstack" && hasDatabaseSecurityIntent;
-  if (needsSupabaseRls) {
+    Boolean(isFullstack || isExistingFullstack) &&
+    selectedDatabase !== "none";
+  // "unknown" is used only for existing projects: retain generic database
+  // security guidance without guessing Supabase/MongoDB-specific instructions.
+  if (hasDatabaseSecurityIntent) skillsToLoad.add("database-rls");
+  if (
+    (isFullstack && selectedDatabase === "supabase") ||
+    (isExistingFullstack && selectedDatabase === "supabase")
+  ) {
     skillsToLoad.add("supabase-rls");
   }
 
@@ -1789,7 +2003,7 @@ async function loadSkillsForPrompt(
       const { body } = parseSkillFrontmatter(raw, skill);
       skillContents.push(`\n\n---\n## Skill: ${skill}\n${body}`);
     } catch {
-      // skill file not found — skip silently
+      // Missing optional skills never stop a build.
     }
   }
 
@@ -1797,11 +2011,6 @@ async function loadSkillsForPrompt(
   return [projectSkillIndex, skillContents.join("")].filter(Boolean).join("\n");
 }
 
-/**
- * Exported for use in the stream path (ai-stream.ts). Defaults to "frontend"
-because follow-up edits are usually frontend React/Vite apps in the E2B runtime —
- * this ensures the frontend-sandbox skill is injected on the stream path.
- */
 export async function loadRelevantSkillsForPrompt(
   prompt: string,
   buildType: "frontend" | "fullstack" | "fullstack-mongodb" | "fullstack-existing" = "frontend",
@@ -1827,9 +2036,7 @@ export class PromptBuilder {
     projectFiles?: Record<string, string> | undefined,
     projectSkillDir?: string | undefined,
   ): Promise<BuiltPrompt> {
-    // Detect the build mode using the same negation-aware signals as the
-    // architecture classifier. A negative MongoDB mention must not select its
-    // provider-specific generation path.
+    // Scope/provider comes only from trusted model-decision markers.
     const buildType = inferPromptBuildType(agentType, task.description);
 
     const [baseSystemPrompt, skillsBlock, contextBlock, builtinSkillIndex] = await Promise.all([
@@ -1837,7 +2044,13 @@ export class PromptBuilder {
       // Query chat never loads code-generation skills.
       agentType === "query"
         ? Promise.resolve("")
-        : this.loadRelevantSkills(context.prompt, buildType, workspaceDir, projectFiles, projectSkillDir),
+        : this.loadRelevantSkills(
+            task.description,
+            buildType,
+            workspaceDir,
+            projectFiles,
+            projectSkillDir,
+          ),
       this.buildContextBlock(agentType, workspaceDir, contextFiles),
       // Show the skill catalogue only when the load_skill tool is available.
       agentType !== "query" && task.toolsEnabled === true ? buildSkillIndex() : Promise.resolve(""),
@@ -1899,38 +2112,48 @@ export class PromptBuilder {
     if (agentType === "query") {
       return SYSTEM_PROMPTS[agentType];
     }
-    const base = SYSTEM_PROMPTS[agentType];
-
-    const isExistingFullstackEdit =
-      task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const selectedBuildType = selectedBuildMarker(task.description, "BUILD_TYPE", ["frontend", "fullstack"] as const);
+    const hasExistingFullstackEditPrefix = task.description.startsWith("EXISTING FULLSTACK EDIT:");
+    const hasExistingProjectContext = task.description.includes("EXISTING PROJECT FILES:");
+    const isExistingFullstackEdit = hasExistingFullstackEditPrefix && selectedBuildType !== "frontend";
+    const explicitlySelectedFramework = selectedBuildMarker(
+      task.description,
+      "FRAMEWORK",
+      ["react", "nextjs", "tanstack"] as const,
+    );
+    const hasTrustedFramework = explicitlySelectedFramework !== undefined;
+    const selectedFramework = explicitlySelectedFramework
+      ?? (hasExistingProjectContext ? "react" : DEFAULT_BUILD_FRAMEWORK);
     const isFullstackMode =
       agentType === "frontend" &&
-      (task.description.startsWith("FULLSTACK BUILD:") ||
-       task.description.startsWith("FULLSTACK AUTH BUILD:") ||
-       isExistingFullstackEdit);
-    // Detect the JS framework for fullstack builds (react/nextjs/tanstack only —
-    // vue/svelte/solid/preact are Sandpack-only and stay out of E2B).
-    const fullstackFramework: FullstackFramework = isFullstackMode
-      ? detectFullstackFramework(task.description)
-      : "react";
+      (selectedBuildType === "fullstack" ||
+        (!selectedBuildType && (
+          task.description.startsWith("FULLSTACK BUILD:") ||
+          task.description.startsWith("FULLSTACK AUTH BUILD:") ||
+          hasExistingFullstackEditPrefix
+        )));
+    const fullstackFramework: FullstackFramework = selectedFramework;
+    const db = isFullstackMode ? detectDatabase(task.description) : "none";
+    const backendRuntime = selectedBackendRuntime(task.description);
+    const wantsPython =
+      isFullstackMode && fullstackFramework === "react" && backendRuntime === "python";
 
-    // FASTAPI_OVERRIDE only applies to react fullstack (Hono → FastAPI swap).
-    // Next.js and TanStack have their own backend model (API routes / server functions).
-    const wantsPython = isFullstackMode && fullstackFramework === "react" && PYTHON_BACKEND_RE.test(task.description);
+    const nextFrameworkPrompt =
+      agentType === "frontend" &&
+      fullstackFramework === "nextjs" &&
+      (!hasExistingProjectContext || hasTrustedFramework);
+    const base = nextFrameworkPrompt ? NEXTJS_FRONTEND_BASE : SYSTEM_PROMPTS[agentType];
 
-    // Existing-project edits need the correct runtime/DB context, but
-    // must not receive new-app scaffolding instructions that demand rewriting
-    // the project's file layout and backend from scratch.
     let fullstackInstruction = isFullstackMode && !isExistingFullstackEdit
       ? (fullstackFramework === "nextjs"
           ? NEXTJS_INSTRUCTION
           : fullstackFramework === "tanstack"
             ? TANSTACK_INSTRUCTION
-            : FULLSTACK_INSTRUCTION + (wantsPython ? FASTAPI_OVERRIDE : ""))
+            : wantsPython
+              ? db === "none" ? FASTAPI_NO_DATABASE_INSTRUCTION : FASTAPI_SUPABASE_INSTRUCTION
+              : db === "none" ? FULLSTACK_NO_DATABASE_INSTRUCTION : FULLSTACK_INSTRUCTION)
       : "";
 
-    // Only the react/hono path maps to e2b-template/template.ts — Next.js and
-    // TanStack route to their own separate templates (out of scope this session).
     if (isFullstackMode && !isExistingFullstackEdit && fullstackFramework === "nextjs") {
       fullstackInstruction = fullstackInstruction.replace("{{NPM_MANIFEST}}", await buildNextNpmManifest());
     }
@@ -1939,37 +2162,39 @@ export class PromptBuilder {
       if (wantsPython) fullstackInstruction = fullstackInstruction.replace("{{PIP_MANIFEST}}", await buildPipManifest());
     }
 
-    // framework detection for frameworkInstruction (Sandpack rules):
-    // - For fullstack nextjs/tanstack: skip FRAMEWORK_RULES (their instruction covers everything).
-    // - For fullstack react: use FRAMEWORK_RULES.react (gives sandbox restrictions + fetch exception).
-    // - For Sandpack builds: detect from prompt, can be any framework.
-    const framework = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react"
-          ? fullstackFramework  // nextjs or tanstack — frameworkInstruction will be "" below
-          : detectFramework(task.description, "react"))
-      : "react";
-    const frameworkInstruction = agentType === "frontend"
-      ? (isFullstackMode && fullstackFramework !== "react" ? "" : FRAMEWORK_RULES[framework])
-      : "";
+    const frameworkInstruction = agentType !== "frontend" || (hasExistingProjectContext && !hasTrustedFramework)
+      ? ""
+      : fullstackFramework === "nextjs"
+        ? (isFullstackMode ? "" : NEXTJS_FRONTEND_INSTRUCTION)
+        : fullstackFramework === "react"
+          ? FRAMEWORK_RULES.react
+          : TANSTACK_INSTRUCTION;
 
-    const db = isFullstackMode ? detectDatabase(task.description) : "supabase";
-    // Provider-specific database instructions describe a new scaffold and
-    // fixed file layout. Existing projects must follow their own code/schema
-    // conventions instead of being migrated to the current template.
-    const dbInstruction =
-      isFullstackMode && !isExistingFullstackEdit
-        ? (fullstackFramework === "nextjs" ? NEXTJS_DATABASE_INSTRUCTIONS[db] : DB_INSTRUCTIONS[db])
-        : "";
+    let dbInstruction = "";
+    if (isFullstackMode && !isExistingFullstackEdit) {
+      if (db === "supabase" || db === "mongodb") {
+        if (fullstackFramework === "nextjs") {
+          dbInstruction = NEXTJS_DATABASE_INSTRUCTIONS[db];
+        } else if (!wantsPython) {
+          // The dedicated FastAPI instruction already owns Python/Supabase data access.
+          dbInstruction = DB_INSTRUCTIONS[db];
+        }
+      }
+    }
 
     const isFullstackAuthMode =
       agentType === "frontend" &&
-      task.description.startsWith("FULLSTACK AUTH BUILD:");
-    // Next uses SSR-safe cookies/HttpOnly sessions; Vite uses its existing auth contract.
+      (selectedBuildMarker(task.description, "AUTH", ["required", "not-required"] as const) === "required" ||
+        (!selectedBuildType && task.description.startsWith("FULLSTACK AUTH BUILD:")));
     const authInstruction = isFullstackAuthMode
       ? fullstackFramework === "nextjs"
-        ? NEXTJS_AUTH_INSTRUCTIONS[db]
+        ? (db === "supabase" || db === "mongodb" ? NEXTJS_AUTH_INSTRUCTIONS[db] : "")
         : (fullstackFramework === "react" || fullstackFramework === "tanstack")
-          ? (db === "mongodb" ? MONGODB_AUTH_INSTRUCTION : FULLSTACK_AUTH_INSTRUCTION)
+          ? db === "mongodb"
+            ? MONGODB_AUTH_INSTRUCTION
+            : db === "supabase"
+              ? FULLSTACK_AUTH_INSTRUCTION + (wantsPython ? FASTAPI_AUTH_INSTRUCTION : "")
+              : ""
           : ""
       : "";
 
@@ -2080,12 +2305,9 @@ export class PromptBuilder {
         "- FIRST-RUN CONTENT CONTRACT: Unless the user explicitly requests an empty first launch, a new frontend/mock-data app must render with 5–8 realistic records and meaningful populated metrics. For localStorage, use a versioned first-run marker: if the marker is absent, seed when the saved collection is missing OR empty, persist the records, then set the marker; once marked, preserve a user's deliberately empty [] after they delete everything. Never reseed on every reload. Do not rely only on saved ?? SAMPLE because [] is not null.\n" +
         "- REAL BACKEND DATA IS DIFFERENT: never insert fake sample rows into the user's real database or silently replace a failing API with localStorage/demo mode. Use the real API as source of truth; report a real empty/error state honestly when the backend has no records or is unavailable.\n" +
         "- DO NOT FAKE BROKEN BACKEND ROUTES DURING REPAIRS: If an existing backend API call is failing during a bug fix or follow-up turn, do NOT silently fall back to an in-memory or localStorage stand-in to pretend the server route works. Find and fix the real backend route.\n" +
-        "- 'The backend isn't running' is a claim you must CHECK, not assume: read_logs shows " +
-        "the backend's own output and check_page shows the browser's. The preview always runs " +
-        "the backend on :3001 with /api proxied to it. The usual real cause is a hardcoded " +
-        "http://localhost:3001 in frontend code — the preview is served from a different " +
-        "origin, so that address resolves to nothing and every call fails exactly as if no " +
-        "backend existed. Calls must go through API_BASE + '/api/...'.\n" +
+        (fullstackFramework === "nextjs"
+          ? "- A runtime failure is a claim you must CHECK, not assume: the Next.js app runs as one Node process on port 3000; inspect its logs and Route Handler responses. Do not expect a Vite proxy or separate Hono process.\\n"
+          : "- A runtime failure is a claim you must CHECK, not assume: React/Vite runs on :5173 and its selected Hono/FastAPI backend runs on :3001; only those projects use the Vite /api proxy. Never hardcode localhost in browser code.\\n") +
         "- If you truly cannot fix it, say so plainly and leave the real code in place. " +
         "'Sign-up is not working because X' is a result. A working-looking fake is not.\n" +
         "- write_files(files): writes whole files into the running project — use it for files " +
@@ -2170,11 +2392,13 @@ export class PromptBuilder {
         "wrong, and the file grows every time anyone touches it. Replacing is a deletion plus " +
         "an insertion, not an insertion.\n" +
         "   Split the app across files the way you would in a real project. Anything with " +
-        "more than one screen gets a file per screen under src/components/ or src/views/, " +
-        "with shared types and seed data in their own modules, and src/App.tsx left as " +
-        "routing and layout. A single file holding every screen still renders, but every " +
-        "later edit then has to rewrite the whole app, and one bad line takes all of it " +
-        "down. Keep a file you would be willing to open again.\n" +
+        "more than one screen gets a file per screen under the selected framework's normal " +
+        "component/view directories, with shared types and domain logic in their own modules. " +
+        (fullstackFramework === "nextjs"
+          ? "Keep app/layout.tsx and app/page.tsx as the App Router shell and route; do not create src/App.tsx or src/index.tsx. "
+          : "For React/Vite, keep src/App.tsx as routing/layout and src/index.tsx as the entry point. ") +
+        "A single file holding every screen still renders, but every later edit then has to rewrite " +
+        "the whole app, and one bad line takes all of it down. Keep a file you would be willing to open again.\\n" +
         "3. Call check_page. A blank page or a console error means it is broken, even " +
         "if the code looked correct when you wrote it.\n" +
         "4. Fix what it reports and check again. Repeat until it genuinely renders. If " +
@@ -2185,10 +2409,8 @@ export class PromptBuilder {
         "is available. Inspect hierarchy, spacing, contrast, alignment, clipping and visual " +
         "consistency; fix visible issues and re-run the relevant checks. If the tool refuses " +
         "because the model cannot accept images, do not retry it.\n" +
-        "5. Call check_types. The dev server does NOT type-check — Vite strips types and " +
-        "serves the file, so a type error renders a perfectly normal-looking page and ships " +
-        "broken. check_page cannot see it. It costs one round; run it before you finish, " +
-        "every time, and fix what it reports.\n" +
+        "5. Call check_types. A dev-server render is not a TypeScript check. Run " +
+        "the project's real type-check before finishing, every time, and fix all errors it reports.\\n" +
         "6. If the app has logic whose correctness you cannot see by reading it — a " +
         "reducer, a running total, a date or currency calculation, validation rules, a " +
         "formula evaluator, sorting or filtering with edge cases — put that logic in its " +
@@ -2281,7 +2503,59 @@ export class PromptBuilder {
       ? `${SECURE_GENERATION_CONTRACT}\n\n`
       : "";
     // Keep the live sandbox/tool contract last so it overrides earlier legacy output-format guidance.
-    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
+    // New-build architecture is a model decision, not a prompt-keyword guess.
+    // Repeat its compact, validated result at the very end: prompt compaction
+    // preserves the tail, so framework/runtime/provider cannot disappear when
+    // long design/security instructions exceed the system-prompt budget.
+    const selectedPersistence = selectedBuildMarker(
+      task.description,
+      "PERSISTENCE",
+      ["none", "browser-local", "supabase", "mongodb"] as const,
+    ) ?? "none";
+    const selectedAuth = selectedBuildMarker(
+      task.description,
+      "AUTH",
+      ["required", "not-required"] as const,
+    ) ?? "not-required";
+    const selectedArchitectureContract =
+      agentType === "frontend" && selectedBuildType
+        ? [
+            "",
+            "=== TRUSTED MODEL-SELECTED BUILD CONTRACT — PRESERVE THIS ARCHITECTURE ===",
+            `- Scope: ${selectedBuildType}; framework: ${fullstackFramework}; backend runtime: ${backendRuntime}; database: ${db}; persistence: ${selectedPersistence}; real auth: ${selectedAuth}.`,
+            isExistingFullstackEdit
+              ? "- This is an existing-project edit. Preserve its proven server, database, API, auth and RLS implementation. Do not scaffold a new app or migrate frameworks."
+              : selectedBuildType === "frontend"
+                ? "- Frontend-only: do not create a backend or database. Use browser-local storage only when selected persistence is browser-local; it does not sync across users/devices."
+                : fullstackFramework === "nextjs"
+                  ? "- Next.js App Router is both frontend and selected server runtime. Use app/ pages and Route Handlers; do not create Vite files or a separate Hono/FastAPI server."
+                  : fullstackFramework === "react" && wantsPython
+                    ? "- React/Vite frontend + Python/FastAPI backend. Generate src/server/main.py and requirements.txt; do not create Hono/Node backend files. For Supabase, use request-scoped db_for(req), forward the user's bearer token, and enforce RLS."
+                    : fullstackFramework === "react"
+                      ? "- React/Vite frontend + selected Node/Hono backend. Use src/server/app.ts, src/server/index.ts and src/server/routes/api.ts; do not use Next.js App Router conventions."
+                      : "- Use the selected TanStack Start server-function architecture; do not add a separate Hono server.",
+            db === "none"
+              ? "- No application database was selected. Do not invent Supabase/MongoDB clients, schemas, migrations, credentials or fake durable persistence."
+              : db === "supabase"
+                ? "- Supabase is the selected database. Keep credentials server-side, forward the caller session where required, and rely on database RLS; never use a service-role key in generated application code."
+                : db === "mongodb"
+                  ? "- MongoDB is the selected database. Keep Mongoose/database connections server-side and scope protected reads/writes to the verified user."
+                  : "- Existing database provider is unknown. Inspect and preserve the project's data layer; never guess a replacement.",
+            ...(wantsPython && db === "supabase"
+              ? [
+                  "- REACT/VITE FRONTEND + PYTHON FASTAPI + SUPABASE is the selected architecture.",
+                  "- FASTAPI/SUPABASE ARCHITECTURE: React/Vite frontend + Python FastAPI backend; no Node/Hono server. FastAPI uses db_for(req) per request.",
+                  selectedAuth === "required"
+                    ? "- AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE: the frontend sends Authorization: Bearer <access_token>; FastAPI forwards it to Supabase PostgREST and relies on RLS."
+                    : "- Forward the current Supabase access token for authenticated API calls; use request-scoped db_for(req) and enforce RLS.",
+                ]
+              : []),
+            "- Tool capabilities identified during architecture planning are recommendations, not permission grants. Only call tools actually supplied by LampCode's registry and allowed by its security/approval policy.",
+          ].join("\n")
+        : "";
+    // The live sandbox/tool contract and the compact architecture decision are
+    // last so framework/runtime selection survives prompt compaction.
+    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction + selectedArchitectureContract;
   }
 
   private async buildContextBlock(

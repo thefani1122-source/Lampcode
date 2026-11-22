@@ -10,8 +10,16 @@ const TEMPLATE = process.env['E2B_VERIFY_TEMPLATE_ID'] ?? process.env['E2B_TEMPL
 const CANDIDATE_RE = /^lampcode-(?:vite|nextjs)-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/
 const PORT = FRAMEWORK === 'nextjs' ? 3000 : 5173
 const ENTRY_CHECK = FRAMEWORK === 'nextjs'
-  ? 'test -f app/layout.tsx && test -f app/page.tsx && test -f postcss.config.mjs && grep -q \"next\" package.json'
-  : 'test -f src/App.tsx && test -f vite.config.ts && test -f index.html && grep -q \"vite\" package.json'
+  ? [
+      'test -f app/layout.tsx',
+      'test -f app/page.tsx',
+      'test -f app/globals.css',
+      'test -f postcss.config.mjs',
+      'test -f components.json',
+      'grep -q "next" package.json',
+      'grep -q "shadcn" package.json',
+    ].join(' && ')
+  : 'test -f src/App.tsx && test -f vite.config.ts && test -f index.html && grep -q "vite" package.json'
 
 let failures = 0
 function report(name: string, ok: boolean, detail = ''): void {
@@ -102,6 +110,14 @@ async function main(): Promise<void> {
     const launch = await run(`${TOOLS_ENV} node -e "import('playwright').then(async (p) => { const b = await p.chromium.launch(); await b.close(); console.log('CHROMIUM OK') }).catch((e) => { console.error(e); process.exit(1) })"`, TOOLS_DIR)
     report('Playwright Chromium launches as sandbox user', launch.code === 0 && launch.out.includes('CHROMIUM OK'), launch.out.trim())
 
+    if (FRAMEWORK === 'nextjs') {
+      const shadcnVersion = await run('npx shadcn --version', PROJECT_DIR, 60_000)
+      report('pinned shadcn CLI is available in the Next.js project', shadcnVersion.code === 0 && shadcnVersion.out.includes('4.23.0'), shadcnVersion.out.trim())
+      const shadcnAdd = await run('npx shadcn add accordion --yes', PROJECT_DIR, 180_000)
+      const accordionFile = await run('test -s components/ui/accordion.tsx', PROJECT_DIR)
+      report('shadcn CLI adds a real Tailwind v4/Radix component from components.json', shadcnAdd.code === 0 && accordionFile.code === 0, shadcnAdd.out.slice(-1200).trim())
+    }
+
     // Exercise a real framework API handler, not just the frontend page.
     // Vite's backend is provided by Hono on :3001 and reached through its
     // configured /api proxy. Next.js owns its Route Handler on :3000.
@@ -152,6 +168,9 @@ async function main(): Promise<void> {
 
     const types = await run('npx tsc --noEmit --pretty false', PROJECT_DIR, 90_000)
     report('TypeScript typecheck passes for application and tests', types.code === 0, types.out.slice(0, 1000).trim())
+
+    const productionBuild = await run('npm run build', PROJECT_DIR, 240_000)
+    report(`${FRAMEWORK} production build passes`, productionBuild.code === 0, productionBuild.out.slice(-1800).trim())
 
     // Prove the Python venv can serve a real HTTP API request. This runs beside
     // the selected frontend framework so both candidates cover FastAPI too.

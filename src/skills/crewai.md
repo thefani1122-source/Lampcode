@@ -9,7 +9,15 @@ Use CrewAI when the product genuinely needs several specialised agents collabora
 
 ## Install only for this project
 
-Add crewai (and crewai-tools only if used) to requirements.txt. LampCode installs requirements into the isolated Python project virtual environment; these packages are not part of the shared Ubuntu image. Ubuntu 24.04 provides Python 3.12, within CrewAI's supported Python range.
+CrewAI is intentionally **not baked into every Ubuntu image**. The shared runtime includes Python 3.12 and the base FastAPI/Uvicorn/Supabase packages; each `projectId` has its own isolated E2B sandbox.
+
+When the generated app actually needs CrewAI, add `crewai` (and `crewai-tools` only when used) with pinned, reviewed PyPI versions in `requirements.txt`. The current runtime does **not** auto-install Python requirements. Install them in this project's sandbox using the `shell` tool and the explicit approval flow:
+
+```bash
+/opt/lampcode-python/bin/python3 -m pip install -r requirements.txt
+```
+
+Do not use system `pip`, `sudo pip`, remote/VCS URLs, editable installs, local paths or extra package indexes. Keep the dependency list minimal. The shell approval is intentional: Python packages execute third-party code. The same sandbox venv is used when LampCode starts the project's FastAPI backend. Ubuntu 24.04 provides Python 3.12.
 
 ## Design
 

@@ -1,21 +1,32 @@
-export type FullstackFramework = "react" | "nextjs" | "tanstack"
+export type FullstackFramework = "react" | "nextjs" | "tanstack";
 
-const NEXT_REQUEST = /\bnext\.?\s*js\b|\bnextjs\b/i
-const TANSTACK_REQUEST = /\btanstack(?:[- ]?start)?\b|\btss\b/i
-const EXPLICIT_VITE_OR_SEPARATE_API =
-  /\bvite\b|\bhono\b|\bexpress\b|\bfastapi\b|\bdjango\b|\bpython\s+(?:backend|api|server)\b|\breact\s*(?:\+|and)\s*(?:hono|express)\b/i
+export const DEFAULT_BUILD_FRAMEWORK: FullstackFramework = "nextjs";
 
 /**
- * Select the framework only for full-stack builds. Next becomes the default
- * once the current Ubuntu candidate is explicitly configured; explicit Next
- * requests still choose Next so a missing/stale image fails visibly rather
- * than silently generating a Vite app with a Next.js prompt.
+ * Read only the server-appended framework marker. User prompt vocabulary is
+ * never inspected to choose a framework. The marker is appended after the
+ * original request by the build route, so the final occurrence is authoritative.
  */
-export function detectFullstackFramework(prompt: string): FullstackFramework {
-  if (TANSTACK_REQUEST.test(prompt)) return "tanstack"
-  if (NEXT_REQUEST.test(prompt)) return "nextjs"
-  if (EXPLICIT_VITE_OR_SEPARATE_API.test(prompt)) return "react"
-  const configuredNext = process.env["NEXTJS_TEMPLATE_ID"] ?? ""
-  if (/^lampcode-nextjs-ubuntu24(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/.test(configuredNext)) return "nextjs"
-  return "react"
+export function selectedBuildFramework(description: string): FullstackFramework | null {
+  const marker = "LAMPCode_SELECTED_FRAMEWORK:";
+  let selected: string | null = null;
+
+  for (const line of description.split(/\r?\n/)) {
+    const at = line.lastIndexOf(marker);
+    if (at < 0) continue;
+    selected = line.slice(at + marker.length).trim().toLowerCase().split(/\s+/)[0] ?? null;
+  }
+
+  if (selected === "react" || selected === "nextjs" || selected === "tanstack") {
+    return selected;
+  }
+  return null;
+}
+
+/**
+ * Compatibility helper for prompt composition. It does not classify prompts:
+ * it reads trusted build metadata, or returns LampCode's static Next.js default.
+ */
+export function detectFullstackFramework(description: string): FullstackFramework {
+  return selectedBuildFramework(description) ?? DEFAULT_BUILD_FRAMEWORK;
 }

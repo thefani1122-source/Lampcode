@@ -1,175 +1,94 @@
 ---
 name: sandbox-lifecycle
-description: Exact step-by-step E2B sandbox setup, lifecycle, and preview pipeline for the Lampcode backend. Use whenever sandbox creation, pause/resume, file writes, Vite HMR, iframe preview, or "preview not loading" debugging comes up. Complements vibe-coder-architecture (full product); this skill is sandbox-only and opinionated about race conditions and self-heal.
+description: Project-scoped E2B lifecycle, Ubuntu Vite/Next.js candidates, source recovery, dependencies and preview health.
 ---
 
-# Sandbox Lifecycle — Exact Setup (E2B + Vite + HMR + iframe)
+# Sandbox lifecycle — project isolation is the invariant
 
-Single source of truth for the sandbox layer in this repo. Every rule here has
-caused a real preview-blank bug when violated. Implementation lives in
-`src/preview/e2b-service.ts` + `e2b-template/template.ts`.
+Implementation: `src/preview/e2b-service.ts`, `src/storage/project-files.ts`, `src/server/routes/projects.ts`, `src/server/routes/build.ts`, and `src/websocket/handlers/build-handler.ts`.
 
-> **This repo's stack (differs from generic guides):** Node + `npx vite` (not
-> Bun), E2B **v2 SDK** template (`e2b-template/template.ts` built with
-> `npx tsx build.ts` — NOT v1 `e2b.toml`/`e2b template build`, which is
-> deprecated), Redis-only state (`e2b:sandbox:{projectId}`, no sandboxes DB
-> table), Socket.IO for chat.
+## 1. Identity: project, build session and sandbox are different things
 
-## 0. Mental model (one paragraph)
+- `projectId` is the durable app identity. One project owns its file-storage prefix, Redis sandbox key, in-process sandbox reference and in-flight warm lock.
+- `sessionId` identifies one build conversation/turn. Several build sessions can belong to one project; they intentionally edit the same app and may reuse its sandbox.
+- A fresh project is created by `POST /api/projects`, which allocates a new UUID for the authenticated user. The dashboard's new-build composer creates that project before calling `POST /api/build/fast`.
+- Opening an existing project from the Projects list is the explicit resume path: the frontend uses that selected project's ID and loads its last session.
+- Do not infer project identity from the app name, prompt similarity, latest session, last-used sandbox or user ID. Never attach a newly created project to another project's sandbox/files.
 
-The backend never proxies preview traffic. The browser loads the preview
-directly from E2B's public URL (`https://5173-{sandboxId}.e2b.app`, via
-`sandbox.getHost(5173)` — never hardcode the domain). Vite's HMR WebSocket runs
-inside the sandbox and talks to the browser over wss:443. The backend's only
-jobs: (a) ensure a sandbox exists for `projectId`, (b) write files into it via
-the E2B SDK, (c) pause/resume it.
+**Important UX boundary:** prompts sent inside an already-open workspace are scoped to that selected project. They are edits to that app, even if the product name is repeated. To start a genuinely new app, use the dashboard's New Build/New Project flow so it allocates a new `projectId`. To continue an old app, select that project in the Projects list. Never silently switch project IDs based on a keyword or a guessed intent.
 
-```
-Browser ──chat WS (Socket.IO)──▶ Backend ──E2B SDK──▶ Sandbox (Vite :5173)
-   │                                                       │
-   └────────iframe (HTTPS) + HMR (wss:443)─────────────────┘
-```
+## 2. File and sandbox isolation
 
-**Two WebSockets. They never interact.** LLM code does NOT travel over any
-WebSocket into the sandbox — it goes backend → `sandbox.files.write()`.
+- `src/server/routes/projects.ts` creates `id: randomUUID()` and binds `userId: authUser.id`; `ownerProject` checks both project ID and owner.
+- `src/storage/project-files.ts` stores files in the private `project-files` bucket under `${projectId}/${relativePath}` and downloads only the requested project's prefix.
+- `src/preview/e2b-service.ts` stores E2B IDs at `e2b:sandbox:${projectId}` and framework metadata at `e2b:framework:${projectId}`. Live sandboxes and `warmingSandboxes` are Maps keyed by `projectId`.
+- `src/server/routes/build.ts` recovers build sessions and stored files using the current `projectId` and `userId`; never change this to a global/latest-project lookup.
+- A paused sandbox can be resumed only from the Redis record for that same project. If the snapshot is gone, LampCode creates a fresh sandbox and restores only that project's persisted files.
+- Framework compatibility is checked before reuse. A Vite sandbox is not reused for Next.js, and Next.js fails closed if its Ubuntu candidate ID is not configured.
 
-## 1. Custom template (`e2b-template/`, v2 SDK)
+Regression coverage: `scripts/project-isolation.test.ts` guards the UUID/owner, storage prefix, Redis key, warm-lock, framework compatibility and build-recovery boundaries.
 
-Baked into `lampcode-vite`: node_modules (react, react-dom,
-@supabase/supabase-js, vite, plugin-react, typescript) + the full baseline
-scaffold (package.json, vite.config.ts, tsconfig, index.html, src stub).
-Cold start ≈ 2s, zero install per prompt.
+## 3. Template families — do not confuse the old image with the Ubuntu candidates
 
-The baked `vite.config.ts` — every line is load-bearing:
+The legacy Node 20 Vite image remains in source: `e2b-template/template.ts` still exports the legacy Dockerfile and `e2b-template/build.ts` still builds `lampcode-vite`. It was not overwritten or deleted.
 
-```ts
-server: {
-  host: true,                                  // bind all ifaces — E2B port-forward needs it
-  port: 5173,
-  strictPort: true,                            // crash loudly, never drift to 5174
-  allowedHosts: true,                          // Vite 5+ blocks the dynamic *.e2b.app host otherwise
-  hmr: { clientPort: 443, protocol: 'wss' },   // browser is on HTTPS; without this HMR dials ws://localhost
-  watch: { usePolling: true, interval: 300 },  // files.write() doesn't fire reliable FS events
-}
-```
+The Ubuntu 24.04 candidates are separate:
 
-Failure modes if any line is missing: no `host` → port unreachable; no
-`allowedHosts` → "Blocked request"; no `hmr.clientPort` → edits never reflect;
-no `usePolling` → preview goes stale after writes.
+- Vite/React: `createUbuntuBaseTemplate()` + `ubuntuTemplate` in `e2b-template/template.ts`, built by `e2b-template/build-ubuntu.ts` as `lampcode-vite-ubuntu24`.
+- Next.js App Router: `ubuntuNextTemplate` in `e2b-template/template-nextjs-ubuntu.ts`, built by the same builder as `lampcode-nextjs-ubuntu24`.
+- The old Node 20 Next.js scaffold source also remains at `e2b-template/template-nextjs.ts`; the Ubuntu builder selects the Ubuntu Next template.
 
-**No `start_cmd` / CMD in the template — deliberate deviation.** The backend
-must write `.env` (preview Supabase creds) BEFORE Vite boots, because Vite only
-reads `VITE_*` at startup. A template start_cmd would boot Vite before the env
-exists. So the backend owns the start: write env → `npx vite` (background,
-`timeoutMs: 0`) → poll ready.
+Backend selectors:
 
-Rebuild (only when template.ts changes): `cd e2b-template && npx tsx build.ts`
-(needs `.env` with `E2B_API_KEY`). Backend env: `E2B_TEMPLATE_ID=lampcode-vite`.
+- React/Vite: `E2B_TEMPLATE_ID`; absent this variable, the compatibility fallback remains `lampcode-vite` (legacy Node 20). Set it to `lampcode-vite-ubuntu24` only after the candidate image is built and verified.
+- Next.js: `NEXTJS_TEMPLATE_ID` must be an exact verified `lampcode-nextjs-ubuntu24` candidate. There is no silent fallback to Vite or the legacy Next image.
 
-## 2. Backend rules (all in `src/preview/e2b-service.ts`)
+Do not change production selectors just because a template ID has been added to an IDE `.env`. The named image must exist in the E2B account used by the live backend.
 
-### 2.1 Timeouts — the three killers (all hit us in production)
-1. **Command timeout:** `commands.run()` default is **60s and applies to
-   background commands** — it killed Vite a minute after boot. Dev server runs
-   with `timeoutMs: 0`.
-2. **Create lifetime:** sandbox default lifetime is **5 minutes**. We create
-   with `timeoutMs: SANDBOX_TIMEOUT_MS` (30 min).
-3. **Resume lifetime:** `Sandbox.connect()` ALSO defaults to 5 minutes — pass
-   `timeoutMs` there too, or every resumed sandbox dies 5 min later.
+## 4. Ubuntu runtime and dependencies
 
-Heartbeat: every build turn / follow-up write calls
-`sandbox.setTimeout(SANDBOX_TIMEOUT_MS)` so active sessions never expire.
+Both Ubuntu candidates use the E2B native image builder. They provide Ubuntu 24.04, pinned Node 22.23.5, Python 3.12, build utilities, a dedicated Python venv at `/opt/lampcode-python`, Playwright/Chromium tooling and framework-specific scaffolds.
 
-### 2.2 Race condition — promise-cache
-`prewarmSandbox()` fires at build start (parallel with generation). ALL
-acquisition funnels through the `warmingSandboxes: Map<projectId, Promise>` —
-concurrent callers (prewarm vs completion, double builds) share ONE in-flight
-acquire, so a second sandbox can never be created/leaked for the same project.
+The base Python venv contains FastAPI, Uvicorn, Supabase and python-dotenv. CrewAI, LangGraph, LangChain integrations, APScheduler, Exa and data-science packages are intentionally not baked into every Ubuntu image. For Python apps, add a minimal pinned `requirements.txt` and use the `shell` tool to run `/opt/lampcode-python/bin/python3 -m pip install -r requirements.txt`; the shell approval gate must be shown and approved. The current runtime does not auto-install Python requirements. Never use system pip, `sudo pip`, VCS/URL dependencies or untrusted indexes.
 
-### 2.3 File writes
-- Only the LLM's app files are written. **Blocked:** `package.json`, lockfiles,
-  `vite.config.*`, `tsconfig*`, `index.html`, `.env*` (BAKED_FILES — template
-  owns them; overwriting them is what used to crash Vite), plus any path with
-  `..` or a leading `/` (traversal).
-- **No runtime `npm install`, ever.** Deps are baked. Runtime installs
-  disrupted the running dev server ("no service on port 5173").
-- Writes happen once per completed build (full parse), never mid-stream — so
-  partial-file syntax errors can't hit the sandbox.
+For React/Vite and Next.js, `installExtraDependencies()` detects validated package names from generated dependency declarations and static JS/TS imports, then installs up to 12 missing npm packages with `npm install --no-save` before the preview health check. Do not overwrite the baked `package.json`, lockfiles or framework config. Dynamic imports/computed `require()` calls may not be detected, so verify those cases.
 
-### 2.4 Self-heal (`ensureDevServer`)
-Before every URL handoff: HEAD-probe the preview URL (3s). If dead →
-`pkill -f vite || true` → restart Vite (background, timeoutMs 0) → poll up to
-30s → only then return the URL. Never hand out an unverified URL.
+Optional 3D/motion packages (Three.js, React Three Fiber, Drei, Motion, GSAP, Lenis and Spline) are deliberately project-scoped, not preinstalled in every image. The `animation-expert` skill says when to add them; only install what the requested experience uses.
 
-### 2.5 Env injection
-`writePreviewEnv()` writes `.env` (VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY
-from `PREVIEW_SUPABASE_URL`/`PREVIEW_SUPABASE_ANON_KEY` config) BEFORE Vite
-starts. Anon key only — never the service key.
+OS packages are allowed only through the root-owned `/usr/local/bin/lampcode-apt` wrapper. The shell policy requires explicit user approval for those operations and refuses general root/sudo commands.
 
-## 3. Lifecycle state machine
+## 5. Create, resume, pause and recover
 
-```
-idle ──first prompt──▶ creating(prewarm, ~2s) ──▶ running
-paused ──new prompt──▶ resuming(connect, ~150ms) ─▶ running
-running ──WS close + 5min grace──▶ paused (snapshot, ≈free)
-running ──every turn──▶ setTimeout refresh (heartbeat)
-any ──project delete──▶ killed (sandbox + Redis record)
-```
+1. A new project is created first; its UUID becomes the only key for sandbox creation and source storage.
+2. `prewarmSandbox(projectId, framework)` warms in parallel with generation. Concurrent callers for the same project share the `warmingSandboxes` promise.
+3. `createPreviewSandbox(sessionId, projectId, framework, files)` acquires the sandbox for that project, writes files, installs any detected npm extras, then checks/restarts the selected dev server.
+4. The active sandbox lifetime is one hour by default (`SANDBOX_RUN_TIMEOUT_MS`, refreshed each build turn).
+5. When the build socket disconnects, the pause grace is 15 minutes by default (`SANDBOX_GRACE_MS`); a reconnect cancels the pending pause. It is not paused immediately.
 
-- One project = one sandbox. Redis `e2b:sandbox:{projectId}` → sandboxId
-  (TTL 25 days; E2B snapshots expire at 30).
-- Grace rule: never pause immediately on disconnect — users refresh tabs.
-  `schedulePause` waits PAUSE_GRACE_MS; reconnect cancels it.
-- Backstop: if the process dies and timers are lost, the sandbox's own
-  lifetime timeout (30 min) prevents leaks.
+**Multi-replica limitation:** `warmingSandboxes` and `pendingPauseTimers` are in-process maps, not distributed leases. They prevent duplicate acquisition within one backend process only. Before running multiple API workers/replicas, add Redis token-owned create/resume locks (TTL + heartbeat + compare-token release) and a shared project activity lease so one replica cannot pause another replica's active preview. Test the race with two independent backend instances. Cross-project IDs/storage remain isolated regardless; this caveat is same-project concurrency reliability.
+6. `pauseSandbox(projectId)` snapshots the same project's E2B sandbox and drops the process reference while retaining its Redis ID.
+7. Redis metadata expires after 25 days; E2B paused snapshots have a 30-day provider lifetime. If Redis metadata or the snapshot is unavailable, restore from the private Supabase project-files prefix into a new sandbox. This is same-project source recovery, not cross-project reuse.
 
-## 4. What lives where
+## 6. Runtime ports and health
 
-| Thing | Lives in |
-|---|---|
-| Frontend code (src/**) | Sandbox FS (Vite serves it) |
-| package.json / vite.config / node_modules | Baked in template — LLM never touches |
-| Database schema + data | Supabase Cloud (NOT the sandbox) |
-| schema.sql | Artifact in sandbox FS; run manually in Supabase SQL editor |
-| projectId → sandboxId | Redis |
-| LLM token stream | Chat WS (browser↔backend) — never the sandbox |
-| HMR updates | Sandbox Vite WS (browser↔sandbox) — never the backend |
+- React/Vite: Vite on :5173; an optional Node/Hono or Python/FastAPI backend on :3001, proxied by Vite.
+- Next.js: Next dev server and App Router Route Handlers on :3000; no second Hono/FastAPI process is started for Next.js.
+- A URL is not handed out just because E2B accepted a background command. Wait for framework readiness, check/restart the dev server, and surface backend startup errors.
+- Use `sandbox.getHost(port)` for the preview host. Never hardcode an E2B hostname.
+- Preview `.env` is injected by the backend before the relevant server boots. Never let the model read `.env`; shell output is redacted and sensitive reads are refused.
 
-**Supabase-direct rule:** generated apps call `supabase.from(...)` straight
-from the frontend (RLS-secured). No `src/server/` is generated; the sandbox
-runs a pure frontend app. That's why the preview works end to end.
+## 7. Debug checklist
 
-## 5. "Preview not loading" — debug order
+1. Confirm the request's `projectId` and owner before looking at Redis or storage.
+2. Check `e2b:sandbox:${projectId}` and `e2b:framework:${projectId}`; never inspect a user-global/last-used sandbox as a substitute.
+3. Compare saved and requested framework before resuming.
+4. Check whether the `warmingSandboxes` entry is still active; concurrent callers should await the same promise.
+5. Check template selector variables and confirm the exact candidate image was actually built and verified in E2B.
+6. Check dependency-install output, dev-server logs, backend logs and readiness probe separately.
+7. If snapshot recovery fails, restore `downloadProjectFiles(projectId)` and only that project's persisted files.
 
-1. Sandbox running? Redis `GET e2b:sandbox:{projectId}`; Railway logs `[E2B]`.
-2. Vite up? `curl -I https://5173-{id}.e2b.app` → expect 200/304. Timeout →
-   self-heal should fire; check "Dev server not responding" log line.
-3. Died at exactly 5 min? → a `connect/create` path is missing `timeoutMs`.
-4. Died at exactly 60s? → a background command is missing `timeoutMs: 0`.
-5. "Blocked request"? → baked vite.config got overwritten — check BAKED_FILES.
-6. Edits not reflecting? → DevTools Network: HMR must dial `wss://5173-…:443`,
-   not `ws://localhost`; and usePolling must be in the baked config.
-7. Blank page, app loaded? → browser console; usually `createClient(undefined)`
-   = PREVIEW_SUPABASE_* not set in Railway.
-8. Two sandboxes for one project? → acquisition bypassed `warmingSandboxes`.
+## 8. Do / don't
 
-## 6. Env vars (backend)
+DO: allocate a new project UUID for every new app · scope files/Redis/maps/recovery to that ID · resume only when a user opens the selected saved project · verify framework compatibility · keep dependency installs project-local and approval-gated where required · run real preview/browser checks.
 
-```
-E2B_API_KEY=
-E2B_TEMPLATE_ID=lampcode-vite
-PREVIEW_SUPABASE_URL=          # preview Supabase project URL
-PREVIEW_SUPABASE_ANON_KEY=     # anon key only (RLS-protected, safe for preview)
-REDIS_URL=
-```
-
-## 7. Do / Don't
-
-DO: funnel all acquisition through the promise-cache · pass lifetime
-`timeoutMs` on EVERY create AND connect · refresh lifetime every turn ·
-probe-then-hand-out URLs (self-heal) · write env before Vite boots.
-
-DON'T: proxy preview through the backend · let the LLM touch
-package.json/vite.config · run `npm install` at runtime · pause instantly on
-disconnect · run background commands without `timeoutMs: 0` · trust E2B's 5-min
-defaults · hardcode `.e2b.dev`/`.e2b.app` hosts (use `getHost()`).
+DON'T: key sandboxes by project title/prompt/user ID · reuse the previous app because the new prompt sounds similar · reuse Vite for Next.js · auto-install arbitrary Python requirements · rewrite template-owned manifests/config · expose secrets to shell output · treat an E2B image ID as proof that the image was rebuilt.

@@ -34,7 +34,13 @@ The baked `src/styles.css` contains Tailwind v4 and neutral design tokens. For a
 
 ## Dependencies
 
-Use packages already listed in the runtime manifest supplied in the system prompt. Do not invent package names or import libraries that are not available. If a truly necessary package is not pre-installed, declare it only through the supported generated dependency-manifest path; never overwrite the running template's package/config files with a guessed full manifest.
+Use packages already listed in the runtime manifest supplied in the system prompt. Do not invent package names or import libraries that are not available.
+
+For React/Vite projects, LampCode detects missing npm packages from the generated `package.json` dependency declarations and static imports in the generated JS/TS files. It installs up to 12 validated missing packages into that project's sandbox with `npm install --no-save` before the preview health check. This does not rewrite the baked `package.json` or lockfile. Dynamic imports, computed `require()` calls and build-time-only tools may not be detected; verify the package is actually available instead of assuming installation succeeded.
+
+For Python projects, `requirements.txt` is not automatically installed by the current runtime. Use the shell tool with explicit user approval to install reviewed PyPI requirements into `/opt/lampcode-python/bin/python3` for this project's isolated sandbox. Never use system `pip`, privileged installs, VCS/URL dependencies or untrusted package indexes.
+
+Never overwrite the running template's package/config files with a guessed full manifest.
 
 ## Product behavior
 
