@@ -140,8 +140,10 @@ check("and told to the user", build.includes("The preview checks ran out of time
 // message said "now complete and fully functional". Two defects, both here:
 
 check(
-  "the honest status fires on what was ASKED, not only on what was built",
-  build.includes("|| needsAuth(prompt);") && build.includes("the case that most needs an honest"),
+  "new-build auth intent comes from the model; existing edits retain the compatibility intent check",
+  build.includes("classification?.needsAuth === true") &&
+    build.includes("hasExistingCode ? needsAuth(prompt)") &&
+    build.includes("the case that most needs an honest"),
 );
 check(
   "browser-only persistence is measured from the delivered code",
