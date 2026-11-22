@@ -34,6 +34,10 @@ The Projects list is the explicit resume path: selecting a saved project opens i
 
 The framework compatibility guard also prevents a saved Vite runtime from being reused as a Next.js runtime. The warmingSandboxes promise map serializes simultaneous acquisition for one project so concurrent callers do not create duplicate sandboxes for the same ID.
 
+## Horizontal-scaling caveat
+
+The current `warmingSandboxes` map and `pendingPauseTimers` map are process-local. They serialize concurrent creation and schedule pause grace periods inside one backend process, but they are **not** a distributed lock or shared active-client lease across multiple AWS replicas. If the backend runs more than one worker/replica, simultaneous cold acquisition for the same project could create more than one sandbox ID, and one replica's disconnect timer could pause a sandbox another replica is actively serving. Neither behavior should cross project IDs or transfer another project's files, but both can affect same-project preview reliability. Before horizontal scaling is enabled, add a Redis token-owned lock with TTL/heartbeat around create/resume/replace and a Redis-backed project activity lease for pause decisions; release/refresh must be compare-token operations, and acquisition must re-check the canonical sandbox record after obtaining the lock. Add race tests with two independent service instances.
+
 ## Pause/resume is not project reuse
 
 When a project socket disconnects, LampCode waits 15 minutes by default before pausing its sandbox. A reconnect cancels the timer. The active sandbox lifetime is one hour by default and is refreshed on build turns. Redis sandbox metadata has a 25-day TTL; E2B snapshots have a 30-day provider lifetime.
