@@ -2503,7 +2503,50 @@ export class PromptBuilder {
       ? `${SECURE_GENERATION_CONTRACT}\n\n`
       : "";
     // Keep the live sandbox/tool contract last so it overrides earlier legacy output-format guidance.
-    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction;
+    // New-build architecture is a model decision, not a prompt-keyword guess.
+    // Repeat its compact, validated result at the very end: prompt compaction
+    // preserves the tail, so framework/runtime/provider cannot disappear when
+    // long design/security instructions exceed the system-prompt budget.
+    const selectedPersistence = selectedBuildMarker(
+      task.description,
+      "PERSISTENCE",
+      ["none", "browser-local", "supabase", "mongodb"] as const,
+    ) ?? "none";
+    const selectedAuth = selectedBuildMarker(
+      task.description,
+      "AUTH",
+      ["required", "not-required"] as const,
+    ) ?? "not-required";
+    const selectedArchitectureContract =
+      agentType === "frontend" && selectedBuildType
+        ? [
+            "",
+            "=== TRUSTED MODEL-SELECTED BUILD CONTRACT — PRESERVE THIS ARCHITECTURE ===",
+            `- Scope: ${selectedBuildType}; framework: ${fullstackFramework}; backend runtime: ${backendRuntime}; database: ${db}; persistence: ${selectedPersistence}; real auth: ${selectedAuth}.`,
+            isExistingFullstackEdit
+              ? "- This is an existing-project edit. Preserve its proven server, database, API, auth and RLS implementation. Do not scaffold a new app or migrate frameworks."
+              : selectedBuildType === "frontend"
+                ? "- Frontend-only: do not create a backend or database. Use browser-local storage only when selected persistence is browser-local; it does not sync across users/devices."
+                : fullstackFramework === "nextjs"
+                  ? "- Next.js App Router is both frontend and selected server runtime. Use app/ pages and Route Handlers; do not create Vite files or a separate Hono/FastAPI server."
+                  : fullstackFramework === "react" && wantsPython
+                    ? "- React/Vite frontend + Python/FastAPI backend. Generate src/server/main.py and requirements.txt; do not create Hono/Node backend files. For Supabase, use request-scoped db_for(req), forward the user's bearer token, and enforce RLS."
+                    : fullstackFramework === "react"
+                      ? "- React/Vite frontend + selected Node/Hono backend. Use src/server/app.ts, src/server/index.ts and src/server/routes/api.ts; do not use Next.js App Router conventions."
+                      : "- Use the selected TanStack Start server-function architecture; do not add a separate Hono server.",
+            db === "none"
+              ? "- No application database was selected. Do not invent Supabase/MongoDB clients, schemas, migrations, credentials or fake durable persistence."
+              : db === "supabase"
+                ? "- Supabase is the selected database. Keep credentials server-side, forward the caller session where required, and rely on database RLS; never use a service-role key in generated application code."
+                : db === "mongodb"
+                  ? "- MongoDB is the selected database. Keep Mongoose/database connections server-side and scope protected reads/writes to the verified user."
+                  : "- Existing database provider is unknown. Inspect and preserve the project's data layer; never guess a replacement.",
+            "- Tool capabilities identified during architecture planning are recommendations, not permission grants. Only call tools actually supplied by LampCode's registry and allowed by its security/approval policy.",
+          ].join("\\n")
+        : "";
+    // The live sandbox/tool contract and the compact architecture decision are
+    // last so framework/runtime selection survives prompt compaction.
+    return securityContract + projectMemoryBlock + base + frameworkInstruction + fullstackInstruction + dbInstruction + authInstruction + editModeInstruction + providerRules + screenshotInstruction + agentBuildInstruction + animationInstruction + jsonInstruction + toolsInstruction + narrationInstruction + agenticInstruction + selectedArchitectureContract;
   }
 
   private async buildContextBlock(
