@@ -21,12 +21,12 @@ import type { RenderReport } from "../verify/render.js";
 /**
  * E2B cloud sandbox preview for fullstack builds.
  *
- * Unlike the in-browser WebContainer/Sandpack preview (JS/TS only), E2B runs a
- * real Linux VM, so it can host backends in any language the LLM generates
- * (Node, Python, Go, etc). Sandboxes are kept alive per project (not per build
- * session) and reused across follow-up builds via E2B's pause/resume — the
- * Lovable pattern — so we avoid paying the npm-install + cold-start cost on
- * every single prompt.
+ * E2B runs a real Linux VM, separate from the LampCode platform and from
+ * every other project. One authenticated projectId owns one sandbox lifecycle;
+ * build sessions within that project reuse its files/sandbox, while a newly
+ * created project receives a new ID and cannot inherit another project's VM.
+ * Paused snapshots can be resumed for that same project, or rebuilt from that
+ * project's private persisted file prefix if the snapshot has expired.
  */
 
 export type PreviewLogCallback = (line: string) => void;
