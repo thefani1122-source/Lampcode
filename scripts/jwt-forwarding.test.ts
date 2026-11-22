@@ -45,7 +45,7 @@ ok("neither does the Next.js instruction", !/SUPABASE_SERVICE_KEY/.test(buildRou
 ok(
   "Next.js Supabase requirements use caller-session SSR/RLS rather than a service-key page client",
   !/import supabase-js with the service key/i.test(buildRoute) &&
-    /session-aware.*lib\\/supabase\\/server/i.test(buildRoute),
+    /session-aware.*lib\/supabase\/server/i.test(buildRoute),
 );
 ok("nor a service-role key under any spelling", !/SERVICE_ROLE/i.test(prompt));
 
