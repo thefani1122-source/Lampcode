@@ -556,10 +556,10 @@ export function findMissingFullstackFiles(
   // from the presence of main.py: the point of this gate is to catch it missing.
   const required = backendRuntime === "python"
     ? (database === "none"
-        ? ["src/server/main.py"]
+        ? ["src/server/main.py", "requirements.txt", "src/lib/api.ts", "src/App.tsx", "src/index.tsx"]
         : database === "supabase"
-          ? ["src/db/types.ts", "src/db/schema.sql", "src/server/main.py"]
-          : ["src/db/types.ts", "src/server/main.py"])
+          ? ["src/server/main.py", "requirements.txt", "src/db/types.ts", "src/db/schema.sql", "src/lib/api.ts", "src/App.tsx", "src/index.tsx"]
+          : ["src/server/main.py", "requirements.txt", "src/db/types.ts", "src/lib/api.ts", "src/App.tsx", "src/index.tsx"])
     : framework === "nextjs"
       ? [
           "app/page.tsx",
