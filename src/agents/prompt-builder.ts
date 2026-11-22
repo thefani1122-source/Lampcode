@@ -1309,7 +1309,7 @@ FRONTEND:
   service-role key or a secret to the browser.
 
 FASTAPI:
-- Use the request-scoped db_for(request) helper from FASTAPI_OVERRIDE. It must
+- Use the request-scoped db_for(request) helper from FASTAPI_SUPABASE_INSTRUCTION. It must
   create the Supabase client with the anon key and attach the incoming bearer
   token to PostgREST for each request.
 - Supabase RLS policies remain the authorization boundary. Do not bypass RLS
