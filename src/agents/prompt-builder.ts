@@ -1351,6 +1351,37 @@ custom JWT auth in the Hono backend. Generate:
    (email/password → POST /api/auth/login|register), modal auto-closes on success.
    No social/OAuth (custom auth is email/password).`;
 
+// ── FastAPI + Supabase auth hand-off ─────────────────────────────────────────
+export const FASTAPI_AUTH_INSTRUCTION = `
+
+## AUTH HAND-OFF — REACT/VITE + FASTAPI + SUPABASE
+
+The selected backend is Python/FastAPI, not Hono. Keep Supabase Auth in the
+React frontend, and forward the authenticated user's access token to FastAPI.
+
+FRONTEND:
+- Use the browser Supabase auth flow described above (AuthProvider, useAuth,
+  Login, sign-in, sign-up and sign-out). Keep VITE_SUPABASE_URL and
+  VITE_SUPABASE_ANON_KEY in the frontend environment.
+- src/lib/api.ts must obtain the current access token from
+  supabase.auth.getSession() before every authenticated /api request and send
+  Authorization: Bearer <access_token>. Do not cache a stale token indefinitely.
+- Handle missing session with a clear unauthenticated response; never send a
+  service-role key or a secret to the browser.
+
+FASTAPI:
+- Use the request-scoped db_for(request) helper from FASTAPI_OVERRIDE. It must
+  create the Supabase client with the anon key and attach the incoming bearer
+  token to PostgREST for each request.
+- Supabase RLS policies remain the authorization boundary. Do not bypass RLS
+  with the service-role key, trust client-supplied user IDs, or use a global
+  anonymous client for user-owned data.
+- Protect private routes by requiring a verified Supabase user session; return
+  401 for missing/invalid identity and scope every user-owned query through
+  the request-scoped client.
+- Do NOT create Hono route files, custom JWT auth, or a second password store.
+`
+
 // ── Next.js fullstack instruction ─────────────────────────────────────────────
 export const FULLSTACK_NO_DATABASE_INSTRUCTION = `
 
@@ -2146,7 +2177,7 @@ export class PromptBuilder {
           ? db === "mongodb"
             ? MONGODB_AUTH_INSTRUCTION
             : db === "supabase"
-              ? FULLSTACK_AUTH_INSTRUCTION
+              ? FULLSTACK_AUTH_INSTRUCTION + (wantsPython ? FASTAPI_AUTH_INSTRUCTION : "")
               : ""
           : ""
       : "";
