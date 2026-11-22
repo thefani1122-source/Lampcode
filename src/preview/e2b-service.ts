@@ -1273,9 +1273,13 @@ async function tryResumeSandbox(projectId: string, sandboxId: string): Promise<S
   }
 }
 
-// NOTE: no runtime `npm install` anywhere in this service — deps are baked
-// into the template (skill rule: template owns package.json/node_modules).
-// Runtime installs were a root cause of dev-server crashes mid-session.
+// Runtime npm installs are deliberately narrow: installExtraDependencies()
+      // runs after generated files are written and before the preview health check,
+      // using validated declared/static-import package names (max MAX_EXTRA_DEPS).
+      // The template still owns package.json, lockfiles and node_modules layout;
+      // generated manifests are never written over the baked runtime manifest.
+      // Python requirements are not auto-installed: their shell install path is
+      // approval-gated because pip packages execute third-party code.
 
 /**
  * Wraps a PreviewLogCallback so each line is also captured in a rolling
