@@ -27,26 +27,64 @@ import { ContextOrchestrator } from "../context/orchestrator.js";
 // ── Token budget ──────────────────────────────────────────────────────────────
 
 const MAX_INPUT_TOKENS = Number(process.env.MAX_INPUT_TOKENS) || 150_000;
-// MEASURED 2026-11-24. The compiled contract alone (security contract, base
-// prompt, framework/fullstack/db/auth blocks, tool contract, architecture
-// contract) is 30,031 chars for Next.js+auth, 55,982 for React+Node fullstack
-// and 63,355 for React+Node fullstack WITH auth — its largest shape. At the old
-// 20,000-token (62,000-char) ceiling that last shape did not fit, so every
-// fullstack+auth build silently lost the middle of its own contract: the
-// FULLSTACK HARD RULES (the src/lib/api.ts contract, "never hardcode
-// localhost/:3001", the PORT rule, the only supported way to add a dependency),
-// the pre-installed package manifest and the DESIGN SYSTEM line. 24,000 tokens
-// fits every measured shape with headroom; the input budget below is 150,000,
-// so the room was always there.
-const MAX_SYSTEM_PROMPT_TOKENS = Number(process.env.MAX_SYSTEM_PROMPT_TOKENS) || 24_000;
+// MEASURED 2026-11-24, per build shape, with the markers build.ts appends:
+//
+//   shape                        total  precedence  reference  contract
+//   frontend only               53,078       1,076     16,886    35,116
+//   fullstack react+node        81,051       1,076     23,993    55,982
+//   fullstack react+node+auth   88,424       1,076     23,993    63,355
+//   fullstack react+python+auth 73,371       1,076     23,399    48,896
+//   nextjs+auth                 51,953       1,076     20,846    30,031
+//
+// At the old 20,000-token (62,000-char) ceiling the largest shape did not fit,
+// and the overflow path discarded the MIDDLE — so a fullstack+auth build lost
+// its security contract, its base prompt and the whole FULLSTACK_INSTRUCTION
+// (the src/lib/api.ts + API_BASE contract, "never hardcode localhost/:3001",
+// the PORT rule, the dependency rule, the package manifest) while keeping the
+// block that calls itself guidance only. See assembleSystemPrompt below.
+//
+// 30,000 tokens (93,000 chars) clears the largest measured shape by ~4,500, so
+// NOTHING is shed or cut on a normal build. That headroom is the point: the
+// reference section carries the database-rls and supabase-rls skill bodies, so
+// shedding it on a routine fullstack+auth build would drop this product's RLS
+// guidance to save room the input budget already had. The budget below is
+// 150,000 tokens.
+const MAX_SYSTEM_PROMPT_TOKENS = Number(process.env.MAX_SYSTEM_PROMPT_TOKENS) || 30_000;
 // ~30% more tokens on Sonnet 5's tokenizer vs the old 4.0 approximation
 // (Anthropic: "approximately 30% more tokens for the same text" vs Sonnet 4.6).
 // Still an approximation — count_tokens() is the exact source, not available here.
 const CHARS_PER_TOKEN = 3.1;
 const MAX_INPUT_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
-const MAX_SYSTEM_PROMPT_CHARS = MAX_SYSTEM_PROMPT_TOKENS * CHARS_PER_TOKEN;
+/** Exported so a test asserts against the ceiling that is actually in force,
+ *  rather than a number copied out of this file that then drifts from it. */
+export const MAX_SYSTEM_PROMPT_CHARS = MAX_SYSTEM_PROMPT_TOKENS * CHARS_PER_TOKEN;
 /** Floor for the user message so a large system prompt can never starve it. */
 const MIN_USER_MESSAGE_CHARS = 4_000;
+
+/**
+ * Budgets for the two generated, regenerable blocks inside the system prompt.
+ *
+ * Both are produced by this repo (memory-generator.ts, manifest-generator.ts)
+ * and both grow with the project: the manifest carries a line per file, and
+ * memory accumulates the user's prompts. Uncapped, either one can push the
+ * compiled prompt past its ceiling on its own — and then the overflow path
+ * starts dropping things that are NOT regenerable, which is the wrong trade in
+ * every direction: the security contract and the RLS skill bodies cannot be
+ * recovered by the model, while both of these can (memory is rewritten after
+ * every build, and the file structure is readable with list_files/read_file).
+ *
+ * The head is kept in both cases. memory-generator puts the user's own prompts
+ * first — "their words beat any summary of their words" — and that heading is
+ * also the anchor the next build parses its own history back from.
+ */
+const MAX_PROJECT_MEMORY_CHARS = 8_000;
+const MAX_PROJECT_MANIFEST_CHARS = 12_000;
+
+/** Keep the head, and say what was left out and how to get it. */
+function capGeneratedBlock(text: string, maxChars: number, recoverWith: string): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n[… ${text.length - maxChars} characters left out of this block; ${recoverWith}]`;
+}
 
 /**
  * Stands in for the house-style reference section when the compiled prompt is
@@ -2055,6 +2093,88 @@ export async function loadRelevantSkillsForPrompt(
 
 // ── PromptBuilder ─────────────────────────────────────────────────────────────
 
+// ── Fitting the compiled prompt under its ceiling ────────────────────────────
+// Module level, not methods: these two decide what the model is and is not told
+// when the prompt is too long, and a decision that cannot be reached by a test
+// is a decision nobody will change later with any confidence.
+
+/**
+ * Fit the compiled prompt under its ceiling by shedding the LOWEST-authority
+ * section first, instead of slicing the middle out of all of it.
+ *
+ * WHY THIS EXISTS — measured 2026-11-24. The prompt is assembled as
+ * `precedence + reference + contract`, and the old path handed that whole
+ * string to compactSystemPrompt(), which keeps a head slice and a tail slice
+ * of raw CHARACTERS. On a React/Vite fullstack build with auth (88,424 chars
+ * against a 62,000 ceiling) the head slice was spent on the precedence
+ * contract and the reference section, and the tail slice on the tool and
+ * architecture contracts — so what fell in the discarded middle was the
+ * security contract, the base system prompt and the whole FULLSTACK
+ * INSTRUCTION block. The model was told the skill catalogue and denied the
+ * api.ts contract, the "never hardcode localhost/:3001" rule and the list of
+ * packages its own sandbox has installed. wiring.ts has a `hardcoded-dev-host`
+ * rule for the bug this produced.
+ *
+ * The order here is the one the prompt already states about itself: the
+ * reference section is guidance that cannot override anything and is
+ * retrievable with load_skill, so it goes first and whole. Cutting the
+ * contract stays possible only as a last resort, and says so in the log.
+ */
+export function assembleSystemPrompt(
+  precedence: string,
+  referenceSection: string,
+  contract: string,
+  maxChars: number,
+  toolsEnabled: boolean,
+): { prompt: string; shedReference: boolean; cutContract: boolean } {
+  const join = (...parts: string[]): string => parts.filter(Boolean).join("\n\n");
+
+  const whole = join(precedence, referenceSection, contract);
+  if (whole.length <= maxChars) {
+    return { prompt: whole, shedReference: false, cutContract: false };
+  }
+
+  // Replaced rather than removed: a model that is told the catalogue is gone
+  // can go and fetch it, while a silent gap reads as "there are no
+  // conventions here" — the one reading that makes it invent its own.
+  const note = referenceSection ? referenceMaterialOmittedNote(toolsEnabled) : "";
+  const withoutReference = join(precedence, note, contract);
+  if (withoutReference.length <= maxChars) {
+    return { prompt: withoutReference, shedReference: referenceSection.length > 0, cutContract: false };
+  }
+
+  // Nothing low-authority is left. Cut the contract, but cut ONLY the
+  // contract, so precedence and the omission note still arrive intact and the
+  // head/tail slices are spent on the contract's own two load-bearing ends
+  // (security contract first, tool + architecture contract last).
+  const fixed = join(precedence, note);
+  const headroom = maxChars - fixed.length - 2;
+  return {
+    prompt: join(fixed, compactSystemPrompt(contract, Math.max(0, headroom))),
+    shedReference: referenceSection.length > 0,
+    cutContract: true,
+  };
+}
+
+function compactSystemPrompt(text: string, maxChars: number): string {
+  if (maxChars <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
+  if (text.length <= maxChars) return text;
+
+  const marker = "\n\n[Middle reference/guidance material compacted to preserve security and final agent contract]\n\n";
+  const available = maxChars - marker.length;
+  if (available <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
+
+  const headChars = Math.floor(available * 0.55);
+  const tailChars = available - headChars;
+  const head = text.slice(0, headChars);
+  const tail = text.slice(text.length - tailChars);
+  const headCut = head.lastIndexOf("\n");
+  const safeHead = headCut > headChars * 0.8 ? head.slice(0, headCut) : head;
+  const tailCut = tail.indexOf("\n");
+  const safeTail = tailCut >= 0 && tailCut < tailChars * 0.2 ? tail.slice(tailCut + 1) : tail;
+  return safeHead + marker + safeTail;
+}
+
 export class PromptBuilder {
   private readonly contractsDir: string;
 
@@ -2100,7 +2220,7 @@ export class PromptBuilder {
     const referenceSection = referenceMaterial
       ? `${referenceBoundary}\n\n${referenceMaterial}\n\n=== END REFERENCE MATERIAL ===`
       : "";
-    const assembled = this.assembleSystemPrompt(
+    const assembled = assembleSystemPrompt(
       precedenceContract,
       referenceSection,
       baseSystemPrompt,
@@ -2545,11 +2665,11 @@ export class PromptBuilder {
       : "";
 
     const manifestBlock = task.projectManifest
-      ? `\n## Current File Structure\n${task.projectManifest}\n`
+      ? `\n## Current File Structure\n${capGeneratedBlock(task.projectManifest, MAX_PROJECT_MANIFEST_CHARS, "read the rest with list_files and read_file")}\n`
       : "";
 
     const projectMemoryBlock = task.projectMemory
-      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${task.projectMemory}${manifestBlock}\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
+      ? `🚨 CRITICAL: This is an EDIT to an existing app. DO NOT rebuild or rewrite the entire application. DO NOT change the app name, design, or structure. ONLY add/modify what the user specifically asked for. Make SURGICAL changes only.\n\n## Current Project State\n${capGeneratedBlock(task.projectMemory, MAX_PROJECT_MEMORY_CHARS, "it is older history, not current state")}${manifestBlock}\nEDIT RULES:\n- Preserve all existing design decisions unless user explicitly changes them\n- Keep the same color palette, fonts, and component patterns\n- Only modify what the user asked to change\n- Do not rename existing components or restructure working code\n- Read existing file structure before writing any changes\n\n`
       : "";
 
     const securityContract = SECURITY_AWARE_CODE_AGENTS.has(agentType)
@@ -2818,82 +2938,6 @@ export class PromptBuilder {
    * Reference material is placed before the base prompt so it cannot become the
    * final instruction block and is the first material lost to compaction.
    */
-  /**
-   * Fit the compiled prompt under its ceiling by shedding the LOWEST-authority
-   * section first, instead of slicing the middle out of all of it.
-   *
-   * WHY THIS EXISTS — measured 2026-11-24. The prompt is assembled as
-   * `precedence + reference + contract`, and the old path handed that whole
-   * string to compactSystemPrompt(), which keeps a head slice and a tail slice
-   * of raw CHARACTERS. On a React/Vite fullstack build with auth (88,424 chars
-   * against a 62,000 ceiling) the head slice was spent on the precedence
-   * contract and the reference section, and the tail slice on the tool and
-   * architecture contracts — so what fell in the discarded middle was the
-   * security contract, the base system prompt and the whole FULLSTACK
-   * INSTRUCTION block. The model was told the skill catalogue and denied the
-   * api.ts contract, the "never hardcode localhost/:3001" rule and the list of
-   * packages its own sandbox has installed. wiring.ts has a `hardcoded-dev-host`
-   * rule for the bug this produced.
-   *
-   * The order here is the one the prompt already states about itself: the
-   * reference section is guidance that cannot override anything and is
-   * retrievable with load_skill, so it goes first and whole. Cutting the
-   * contract stays possible only as a last resort, and says so in the log.
-   */
-  private assembleSystemPrompt(
-    precedence: string,
-    referenceSection: string,
-    contract: string,
-    maxChars: number,
-    toolsEnabled: boolean,
-  ): { prompt: string; shedReference: boolean; cutContract: boolean } {
-    const join = (...parts: string[]): string => parts.filter(Boolean).join("\n\n");
-
-    const whole = join(precedence, referenceSection, contract);
-    if (whole.length <= maxChars) {
-      return { prompt: whole, shedReference: false, cutContract: false };
-    }
-
-    // Replaced rather than removed: a model that is told the catalogue is gone
-    // can go and fetch it, while a silent gap reads as "there are no
-    // conventions here" — the one reading that makes it invent its own.
-    const note = referenceSection ? referenceMaterialOmittedNote(toolsEnabled) : "";
-    const withoutReference = join(precedence, note, contract);
-    if (withoutReference.length <= maxChars) {
-      return { prompt: withoutReference, shedReference: referenceSection.length > 0, cutContract: false };
-    }
-
-    // Nothing low-authority is left. Cut the contract, but cut ONLY the
-    // contract, so precedence and the omission note still arrive intact and the
-    // head/tail slices are spent on the contract's own two load-bearing ends
-    // (security contract first, tool + architecture contract last).
-    const fixed = join(precedence, note);
-    const headroom = maxChars - fixed.length - 2;
-    return {
-      prompt: join(fixed, this.compactSystemPrompt(contract, Math.max(0, headroom))),
-      shedReference: referenceSection.length > 0,
-      cutContract: true,
-    };
-  }
-
-  private compactSystemPrompt(text: string, maxChars: number): string {
-    if (maxChars <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
-    if (text.length <= maxChars) return text;
-
-    const marker = "\n\n[Middle reference/guidance material compacted to preserve security and final agent contract]\n\n";
-    const available = maxChars - marker.length;
-    if (available <= 0) return HEAD_TRUNCATION_MARKER.trimEnd();
-
-    const headChars = Math.floor(available * 0.55);
-    const tailChars = available - headChars;
-    const head = text.slice(0, headChars);
-    const tail = text.slice(text.length - tailChars);
-    const headCut = head.lastIndexOf("\n");
-    const safeHead = headCut > headChars * 0.8 ? head.slice(0, headCut) : head;
-    const tailCut = tail.indexOf("\n");
-    const safeTail = tailCut >= 0 && tailCut < tailChars * 0.2 ? tail.slice(tailCut + 1) : tail;
-    return safeHead + marker + safeTail;
-  }
 
   /**
    * Truncate keeping the TAIL. Used when the end of the text is load-bearing —

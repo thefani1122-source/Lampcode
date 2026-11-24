@@ -193,12 +193,16 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
     without it.
 
 12. **The system prompt has a hard ceiling and the biggest build shape sits near it.**
-    `MAX_SYSTEM_PROMPT_TOKENS` is 24,000 (74,400 chars); the compiled contract alone is
-    63,355 chars for a React/Vite fullstack build with auth. Over the ceiling,
-    `assembleSystemPrompt` drops the house-style reference section WHOLE and keeps the
+    `MAX_SYSTEM_PROMPT_TOKENS` is 30,000 (93,000 chars); the largest measured shape
+    (React/Vite fullstack + auth) is 88,424. Nothing is shed or cut on a normal build, and
+    it must stay that way: the reference section carries the `database-rls` and
+    `supabase-rls` skill bodies, so shedding it routinely costs RLS guidance. Over the
+    ceiling, `assembleSystemPrompt` drops the reference section WHOLE and keeps the
     contract — never the other way round, which is what it used to do (HISTORY, 2026-11-24).
+    `projectMemory` and `projectManifest` are budgeted (8,000 / 12,000 chars) because both
+    are generated here, grow with the project, and are recoverable — unlike the contract.
     If you add prompt text, run `npm test`: `scripts/prompt-ceiling.test.ts` fails when the
-    contract itself starts getting cut.
+    contract is cut OR when an ordinary build starts shedding its reference section.
 
 ## What makes this product different — and why it is currently invisible
 

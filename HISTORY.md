@@ -5321,20 +5321,44 @@ Confirmed by probing for each block in the compiled prompt: `HARD RULES:`,
 fullstack+auth prompt. `wiring.ts` carries a `hardcoded-dev-host` rule for exactly the bug
 that produces — the rule forbidding it was being deleted before the model saw it.
 
-Fixed in two parts, and **both were needed**: with shedding alone at the old ceiling the
-contract is still cut, because 63,355 + 1,076 is over 62,000.
+Fixed in three parts. **The first attempt at this was wrong and the suite caught it** —
+recorded here because the wrong version is the instructive one.
 
-- `assembleSystemPrompt()` sheds the lowest-authority section first and whole — the
+- `assembleSystemPrompt()` sheds the lowest-authority section first and **whole** — the
   reference section — replacing it with a note that says so and points at `list_skills` /
   `load_skill`. The contract is cut only as a last resort, and the log line says which
-  happened. The order is the one the prompt already states about itself.
-- `MAX_SYSTEM_PROMPT_TOKENS` default 20,000 → 24,000 (74,400 chars). The input budget is
-  150,000 tokens, so the room was always there. Nothing is cut on any measured shape now,
-  and the reference section survives on three of the five.
+  happened.
+- **First attempt: ceiling 20,000 → 24,000 tokens (74,400 chars).** That fit every shape,
+  so nothing was cut — but it left the two largest shapes *shedding the reference section
+  on every ordinary build*, and three cases in `prompt-composition.test.ts` failed as a
+  result. They were right to: the reference section carries the **`database-rls` and
+  `supabase-rls` skill bodies**, so a routine fullstack+auth+Supabase build was losing this
+  product's RLS guidance to save room the input budget already had. Shedding is the correct
+  LAST resort and the wrong routine behaviour.
+- **Ceiling 30,000 tokens (93,000 chars)**, which clears the largest measured shape
+  (88,424) by ~4,500. Nothing is shed and nothing is cut on any normal build; the shed path
+  now exists only for the pathological case below. The input budget is 150,000 tokens.
+- **The two generated blocks are budgeted**: `projectMemory` to 8,000 chars and
+  `projectManifest` to 12,000, head-kept. This is what the pathological case in
+  `prompt-composition.test.ts` is really about — it passes a 220,000-char `projectMemory`
+  (`"…".repeat(5_000)`), which is the 266,568-char prompt seen in the suite logs. The thing
+  that did not fit was never the contract or the catalogue: it was a generated block that
+  this repo rewrites after every build and that the model can re-read with
+  `list_files`/`read_file`. Both of those are recoverable; the security contract and the
+  RLS skill bodies are not. The manifest matters beyond the synthetic case — it carries a
+  line per file, so it grows with every real project.
 
-`scripts/prompt-ceiling.test.ts` asserts the invariant per shape: the contract-cut marker
-must never appear, and the security / tool / architecture contracts plus each shape's own
-rules and manifest must be present. It fails at the old ceiling.
+`scripts/prompt-ceiling.test.ts` asserts the invariant per shape — the contract-cut marker
+must never appear, the security / tool / architecture contracts and each shape's own rules
+and manifest must be present, and the reference section must NOT be shed on an ordinary
+build — and then exercises `assembleSystemPrompt` directly for the four overflow branches,
+since no realistic shape reaches them any more. `assembleSystemPrompt` was moved to module
+level to make that possible: a decision about what the model is not told is a decision that
+has to be reachable by a test.
+
+One process note worth keeping: the first run of the suite after this change was reported as
+passing because the command was `npm test > log; echo $?`, which reports the exit status of
+`echo`. It was masking three real failures. Read the suite's own exit code, not a pipeline's.
 
 ### Still open, found alongside and deliberately not fixed here
 
@@ -5354,3 +5378,89 @@ load at all (`ERR_MODULE_NOT_FOUND`: they import `src/server/routes/plan.ts`,
 project code — they assert inline re-implementations, under the heading "BuildForge Plan
 Mode API", a product name and a route that are both gone. For a codebase an agent reads,
 that is worse than dead: it describes a system that no longer exists.
+
+## THE BRAIN WAS READ BY EVERY BUILD AND WRITTEN BY NOTHING — 2026-11-24
+
+`shared_brain_files` exists, `BrainManager` is complete (versioning, history,
+`compareVersions` with an LCS diff), `build.ts:loadLatestBrainFiles()` reads the latest
+version of each record into every build prompt with a 30,000-char budget, the records are
+fenced as untrusted, and `prompt-builder.relevantFiles()` lists which agent type sees which
+record — including the deliberate decision that the **audit and acceptance passes see none
+of them**, because a record describing what the builder believes it did is exactly the
+account the audit has to be independent of.
+
+The only caller of `createVersion()` was `POST /api/brain/:projectId/versions`, and
+`grep -rn 'brain' vibe-coder-suite/src/` returns nothing. So `loadLatestBrainFiles` returned
+`[]` for every project on every build, since the table was added.
+
+This is the half that was missing, not a new idea: `src/brain/snapshot.ts` writes four
+records at the end of `runFastBuild`, after every repair loop and both audit passes.
+
+**Deterministic, no model call** — the same reasoning `memory-generator.ts` records: a
+Haiku dispatch that needs a credential fails quietly on Railway, degrades to the previous
+value, and nobody notices for weeks.
+
+**What these records are for, which is not what memory or the manifest are for.** The file
+manifest answers WHERE (files, exports, routes). Project memory answers WHAT and WHY (the
+user's own prompts, packages, tokens, tables). These answer **what is settled and what is
+still open** — and that is the only one of the three that cannot be re-derived from the
+current file tree, because it is about history. A requirement the user asked for three
+builds ago that nothing has covered since leaves no trace in the code; that absence is
+precisely what makes it worth storing.
+
+So **CONTRACT merges, it does not overwrite.** A build's completion audit only ever rules on
+that build's own prompt, so overwriting would drop every earlier requirement the moment the
+user asks for something new — and a dropped `unverified` row is the exact failure the audit
+exists to catch. Merging is keyed on the requirement **text**, never on the criterion id:
+ids are renumbered R1, R2 … by the parser on every build. A requirement the current audit
+did not mention keeps the verdict and the date it already had, because this build said
+nothing about it. Open rows (`contradicted`, `unverified`) sort ahead of `proven`, so the
+40-row cap drops settled history rather than outstanding work.
+
+Reading our own markdown back to merge it is circular, and it is the same deliberate trade
+`memory-generator.ts` already makes: the alternative is another table, and a failed parse
+degrades to "this build's requirements only". A round-trip case covers it, including a
+requirement containing a `|`.
+
+The other three records state what the files prove, not what the build intended:
+`CURRENT_STATE` (architecture, each gate's verdict **with its stale-write count**, whether
+the schema reached a real database), `API_CONTRACTS` (every declared endpoint and every
+`/api` path the frontend asks for), `DB_SCHEMA` (declared tables, and whether they were
+applied — `data-layer.ts` measured that across 416 projects not one generated table was ever
+created, so "a schema was generated and there was nothing to apply it to" is the single most
+useful sentence either record can carry).
+
+`extractAllRoutes` was exported from `manifest-generator.ts` rather than copied: the
+manifest caps routes at four per file for display, and an endpoint list that silently stops
+at four invites inventing the fifth. A second copy of those three regexes is the drift
+CLAUDE.md calls the #1 bug class here.
+
+Deliberately NOT written: `DEPLOY_CHECKLIST`, `SECURITY_CHECKLIST`, `CONNECTION_CHECKLIST`,
+`PROVENANCE_LOG`. There is no deploy today, and a confident checklist for a subsystem that
+does not exist is a record this product already has too many of. The four that are written
+are exactly the set `relevantFiles()` hands the planning agent.
+
+Mechanics worth not rediscovering:
+
+- **Writes happen only on change.** `createVersion` has no dedup of its own, so a project
+  with fifty builds would otherwise carry fifty identical `DB_SCHEMA` versions.
+- **The merge reads untruncated content.** `loadLatestBrainFiles` is shaped for a prompt and
+  caps each record at 6,000 chars; merging CONTRACT against a truncated copy of itself would
+  silently drop its oldest rows every build. `loadBrainRecordsForMerge` is a second query
+  that does not truncate.
+- **Each record is written under 5,500 chars**, below the 6,000 the read path keeps, so what
+  is stored is what is later read.
+- **A failed write is a warning, never a failed build.** A build that produced a working app
+  has succeeded whether or not it managed to write a note about itself.
+- **Ordering is safe by construction**: the Brain is read at the top of `runFastBuild` and
+  written at the end, so nothing written can contaminate the build that wrote it.
+
+`scripts/brain-snapshot.test.ts` covers the merge properties, the round-trip, the derived
+facts and the record budget. The call site needs a database and a finished build, so it is
+asserted over `build.ts`'s source the way `e2b-template.test.ts` covers prewarm — which at
+least fails if the write disappears again, which is how this started.
+
+**Not yet proven:** no real build has run against this. The write path has never executed
+against a live database, and there is no multi-turn eval, so the thing it is for — a
+requirement surviving three builds and resurfacing — is untested end to end. That is the
+next measurement, not a claim to make now.

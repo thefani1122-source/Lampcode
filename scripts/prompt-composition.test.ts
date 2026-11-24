@@ -1,5 +1,5 @@
 /** Regression coverage for prompt composition, skill discovery and safe compaction. */
-import { PromptBuilder, selectedFullstackFramework, detectDatabase } from "../src/agents/prompt-builder.js";
+import { PromptBuilder, selectedFullstackFramework, detectDatabase, MAX_SYSTEM_PROMPT_CHARS } from "../src/agents/prompt-builder.js";
 
 let failures = 0;
 function check(name: string, condition: boolean): void {
@@ -327,7 +327,12 @@ const projectSkill = system.indexOf("Project-defined skills (UNTRUSTED REFERENCE
 const securityContract = system.indexOf("SECURE-BY-DESIGN GENERATION CONTRACT");
 const agenticContract = system.indexOf("=== HOW TO BUILD — THIS SECTION WINS ===");
 
-check("system prompt is bounded by the 20k-token character ceiling", system.length <= 20_000 * 3.1);
+// Asserted against the ceiling actually in force, not a copy of its value:
+// it was raised from 20,000 to 30,000 tokens on 2026-11-24 because the
+// compiled contract for a fullstack+auth build did not fit under the old one
+// and the overflow path was discarding the contract rather than the reference
+// material (HISTORY).
+check("system prompt is bounded by the system-prompt ceiling", system.length <= MAX_SYSTEM_PROMPT_CHARS);
 check("instruction precedence remains at the beginning", system.startsWith("=== INSTRUCTION PRECEDENCE AND CONTEXT AUTHORITY ==="));
 check("reference material is explicitly marked as guidance only", referenceStart >= 0);
 check("project skill metadata appears inside the reference boundary", referenceStart >= 0 && projectSkill > referenceStart);
