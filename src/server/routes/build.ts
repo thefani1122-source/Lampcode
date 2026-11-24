@@ -15,6 +15,7 @@ import {
   type CompletionAudit,
   type BusinessContext,
   sharedBrainFiles,
+  type BrainFileType,
 } from "../../db/schema.js";
 import { requireAuth } from "../../auth/middleware.js";
 import { AppError } from "../middleware/error-handler.js";
@@ -61,6 +62,8 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
+import { buildBrainSnapshot } from "../../brain/snapshot.js";
+import { getBrainManager } from "../../brain/manager.js";
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
 import { uploadProjectFiles, downloadProjectFiles, uploadPreviewScreenshot, persistFilesAsWritten } from "../../storage/project-files.js";
@@ -917,6 +920,78 @@ async function loadLatestBrainFiles(projectId: string): Promise<Array<{ path: st
     if (latest.length >= 8) break;
   }
   return latest;
+}
+
+/**
+ * The latest Brain record of each type, UNTRUNCATED.
+ *
+ * Deliberately not `loadLatestBrainFiles` above: that one is shaped for a
+ * prompt and caps each record at 6,000 chars inside a 30,000-char budget.
+ * Merging CONTRACT against a truncated copy of itself would silently drop the
+ * oldest requirements every build — which is the one thing that record exists
+ * to stop.
+ */
+async function loadBrainRecordsForMerge(
+  projectId: string,
+): Promise<Partial<Record<BrainFileType, string>>> {
+  const rows = await db.selectDistinctOn([sharedBrainFiles.fileType], {
+    fileType: sharedBrainFiles.fileType,
+    content: sharedBrainFiles.content,
+    version: sharedBrainFiles.version,
+  })
+    .from(sharedBrainFiles)
+    .where(eq(sharedBrainFiles.projectId, projectId))
+    .orderBy(sharedBrainFiles.fileType, desc(sharedBrainFiles.version), desc(sharedBrainFiles.createdAt));
+  const latest: Partial<Record<BrainFileType, string>> = {};
+  for (const row of rows) latest[row.fileType] = row.content;
+  return latest;
+}
+
+/**
+ * Write what this build settled, so the next one starts from it.
+ *
+ * Only on CHANGE: `createVersion` has no dedup of its own, and a project with
+ * fifty builds would otherwise carry fifty identical DB_SCHEMA versions. An
+ * unchanged record is a correct no-op, not a missed write.
+ *
+ * Never fatal. A build that produced a working app has succeeded whether or not
+ * it managed to write a note about itself.
+ */
+async function saveBrainSnapshot(args: {
+  projectId: string;
+  sessionId: string;
+  prompt: string;
+  files: Record<string, string>;
+  audit: CompletionAudit | null;
+  outcome: BuildOutcome;
+  schemaApply: { ran: boolean; ok: boolean; error?: string } | null;
+}): Promise<void> {
+  const previous = await loadBrainRecordsForMerge(args.projectId);
+  const snapshot = buildBrainSnapshot({
+    prompt: args.prompt,
+    files: args.files,
+    audit: args.audit,
+    outcome: args.outcome,
+    schemaApply: args.schemaApply,
+    previous,
+    at: new Date(),
+  });
+
+  const brain = getBrainManager();
+  const written: string[] = [];
+  const unchanged: string[] = [];
+  for (const [fileType, content] of Object.entries(snapshot) as Array<[BrainFileType, string]>) {
+    if (previous[fileType] === content) { unchanged.push(fileType); continue; }
+    await brain.createVersion(args.projectId, fileType, content, {
+      agentType: "build",
+      sessionId: args.sessionId,
+    });
+    written.push(fileType);
+  }
+  logger.info(
+    { projectId: args.projectId, sessionId: args.sessionId, written, unchanged },
+    "Brain snapshot saved",
+  );
 }
 
 // ── Background build runner ───────────────────────────────────────────────────
@@ -5605,6 +5680,25 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       logger.info({ projectId, sessionId }, "Saved verified project memory and manifest");
     } catch (err) {
       logger.error({ projectId, sessionId, err }, "Could not save final project memory");
+    }
+
+    // And what the next build should know before it starts. Written AFTER every
+    // repair loop and both audit passes, so it records the delivered state
+    // rather than an intention — and after this build has already read its own
+    // Brain at the top, so nothing written here can contaminate the build that
+    // wrote it.
+    try {
+      await saveBrainSnapshot({
+        projectId,
+        sessionId,
+        prompt,
+        files: allFiles,
+        audit: completionAudit,
+        outcome,
+        schemaApply,
+      });
+    } catch (err) {
+      logger.warn({ projectId, sessionId, err }, "Could not save the Brain snapshot for this build");
     }
 
     await db

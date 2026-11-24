@@ -90,7 +90,15 @@ function extractExports(content: string): string[] {
   return names.slice(0, 6); // cap per-file to keep manifest compact
 }
 
-function extractRoutes(content: string): string[] {
+/**
+ * Every route a file declares, uncapped.
+ *
+ * Exported because the Brain's API_CONTRACTS record needs the whole endpoint
+ * surface, and a second copy of these three regexes somewhere else is the exact
+ * drift CLAUDE.md calls the #1 bug class here. The manifest's own four-per-file
+ * cap stays where it belongs — in the manifest.
+ */
+export function extractAllRoutes(content: string): string[] {
   const routes: string[] = [];
   let m: RegExpExecArray | null;
 
@@ -109,7 +117,11 @@ function extractRoutes(content: string): string[] {
     routes.push(`${(m[1] as string).toUpperCase()} ${m[2]}`);
   }
 
-  return routes.slice(0, 4);
+  return routes;
+}
+
+function extractRoutes(content: string): string[] {
+  return extractAllRoutes(content).slice(0, 4);
 }
 
 // ── Orphan-export detection ─────────────────────────────────────────────────────
