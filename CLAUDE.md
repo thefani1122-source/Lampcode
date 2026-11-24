@@ -158,8 +158,12 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
    (`BAKED_FILES`). A `dependencies` object in a generated `package.json` IS read and installed;
    everything else there is ignored.
 3. **No CMD in the template.** The backend starts Vite itself; a baked CMD causes a port race.
-4. **Prompt-vs-reality drift is the #1 bug class here.** The prompt hardcodes package lists that
-   drift from what `template.ts` installs. Touch one, check the other.
+4. **Prompt-vs-reality drift is the #1 bug class here.** The prompt's package lists are
+   DERIVED from `template.ts` / `template-nextjs-ubuntu.ts` at runtime, and asserted by
+   `scripts/npm-manifest.test.ts`. All three extractor regexes were silently broken until
+   2026-11-24 and served a generic fallback that omitted hono, zod, ws, react-router-dom and
+   every Radix primitive (HISTORY). Other prompt facts are still hand-written: touch one,
+   check the other.
 5. **The Python path is real** — FastAPI/uvicorn on :3001, detected from the generated files. Do
    not remove it.
 6. **After ANY template build, run `cd e2b-template && npx tsx verify-template.ts`.** A green
@@ -184,7 +188,17 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
     `API_BASE = import.meta.env.VITE_API_URL ?? ''` in the generated `src/lib/api.ts` (unset in
     the preview, so behaviour there is unchanged). If you touch either side, check the other:
     the prompt's `src/lib/api.ts` shape, this proxy, and `wiring.ts`'s `hardcoded-dev-host` rule
-    all describe the same contract.
+    all describe the same contract. The `API_BASE` rule is still stated ONLY in
+    `FULLSTACK_INSTRUCTION` — the FastAPI and no-database blocks name `src/lib/api.ts`
+    without it.
+
+12. **The system prompt has a hard ceiling and the biggest build shape sits near it.**
+    `MAX_SYSTEM_PROMPT_TOKENS` is 24,000 (74,400 chars); the compiled contract alone is
+    63,355 chars for a React/Vite fullstack build with auth. Over the ceiling,
+    `assembleSystemPrompt` drops the house-style reference section WHOLE and keeps the
+    contract — never the other way round, which is what it used to do (HISTORY, 2026-11-24).
+    If you add prompt text, run `npm test`: `scripts/prompt-ceiling.test.ts` fails when the
+    contract itself starts getting cut.
 
 ## What makes this product different — and why it is currently invisible
 

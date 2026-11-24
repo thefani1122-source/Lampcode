@@ -5255,3 +5255,102 @@ deterministic repair loops are forced. The rest the model chose.
 
 Worth knowing before anyone tries to make simple builds faster by capping rounds:
 the thing that would be cut is the part that fixes the errors.
+
+## THE MODEL WAS NEVER SENT ITS OWN CONTRACT — 2026-11-24
+
+Two separate bugs, found while reviewing the prompt path end to end. Both were silent,
+both had been live for an unknown time, and together they meant the model was routinely
+told less about its sandbox and its rules than the code believed it was.
+
+### 1. All three package manifests fell to their catch fallback on every build
+
+`buildNpmManifest`, `buildNextNpmManifest` and `buildPipManifest` parse
+`e2b-template/template.ts` and `template-nextjs-ubuntu.ts` at runtime so there is no
+second hand-maintained package list in the prompt. All three regexes could never match:
+
+- `/export const VITE_PKG_JSON = `([\\s\\S]*?)`\\n/` — in a regex **literal**, `\\s` is a
+  literal backslash followed by `s`, so `[\\s\\S]` is the class `{\, s, S}`, not "any
+  character". The trailing `` `\\n `` was backtick + backslash + `n`. Same in the Next.js one.
+- `/… = \[([^\]]+)\] as const/` — `[^\]]+` stops at the `]` inside `'uvicorn[standard]'`,
+  so it never reached `] as const`.
+
+Proved by running each shipped regex against the file it parses: all three `.test()` false,
+the corrected ones true. Each one logged a warning and served a short generic sentence
+instead, which omits **hono, @hono/node-server, zod, ws, react-router-dom and every Radix
+primitive** — all of which `template.ts` does install. So the model either reimplemented
+them or believed a pre-installed package was missing. This is CLAUDE.md's "prompt-vs-reality
+drift is the #1 bug class" — with the mechanism built to prevent it switched off.
+
+Fixing it exposed a contradiction it had been hiding: `FULLSTACK_INSTRUCTION` names
+`react-router-dom` as its example of a library that is **not** pre-installed, while
+`VITE_PKG_JSON` lists it and the template npm-installs it. The example now names classes of
+package that genuinely are absent.
+
+`scripts/npm-manifest.test.ts` asserts the real manifests through `PromptBuilder`, so a
+regex that breaks again fails the suite instead of degrading quietly.
+
+### 2. Over the ceiling, the prompt threw away its contract and kept its "guidance only" block
+
+Measured, per build shape, with the markers `build.ts` actually appends
+(`LAMPCode_SELECTED_*` — note that a wrong marker syntax silently falls back to the
+Next.js default, which is how an earlier measurement of "40–47k chars" was produced and
+is wrong):
+
+| shape | total | precedence | reference section | contract |
+|---|---|---|---|---|
+| frontend only | 53,078 | 1,076 | 16,886 | 35,116 |
+| fullstack react+node | 81,051 | 1,076 | 23,993 | 55,982 |
+| **fullstack react+node+auth** | **88,424** | 1,076 | 23,993 | **63,355** |
+| fullstack react+python+auth | 73,371 | 1,076 | 23,399 | 48,896 |
+| nextjs+auth | 51,953 | 1,076 | 20,846 | 30,031 |
+
+The ceiling was 20,000 tokens = 62,000 chars, and the overflow path handed the **whole**
+string to `compactSystemPrompt()`, which keeps a head slice and a tail slice of raw
+characters and discards the middle. The head was spent on the precedence contract and the
+reference section — the one block that says of itself "GUIDANCE ONLY" and cannot override
+anything — and the tail on the tool and architecture contracts. What fell in the middle:
+
+- `SECURE_GENERATION_CONTRACT`
+- `SYSTEM_PROMPTS.frontend`, including the DESIGN SYSTEM line
+- the **entire** `FULLSTACK_INSTRUCTION`: the HARD RULES, the `src/lib/api.ts` + `API_BASE`
+  contract, "never hardcode localhost/127.0.0.1/:3001", the PORT rule, the only supported
+  way to add a dependency — and the package manifest fixed above
+
+Confirmed by probing for each block in the compiled prompt: `HARD RULES:`,
+`PRE-INSTALLED IN THIS REACT/VITE SANDBOX` and `DESIGN SYSTEM` were all absent from a
+fullstack+auth prompt. `wiring.ts` carries a `hardcoded-dev-host` rule for exactly the bug
+that produces — the rule forbidding it was being deleted before the model saw it.
+
+Fixed in two parts, and **both were needed**: with shedding alone at the old ceiling the
+contract is still cut, because 63,355 + 1,076 is over 62,000.
+
+- `assembleSystemPrompt()` sheds the lowest-authority section first and whole — the
+  reference section — replacing it with a note that says so and points at `list_skills` /
+  `load_skill`. The contract is cut only as a last resort, and the log line says which
+  happened. The order is the one the prompt already states about itself.
+- `MAX_SYSTEM_PROMPT_TOKENS` default 20,000 → 24,000 (74,400 chars). The input budget is
+  150,000 tokens, so the room was always there. Nothing is cut on any measured shape now,
+  and the reference section survives on three of the five.
+
+`scripts/prompt-ceiling.test.ts` asserts the invariant per shape: the contract-cut marker
+must never appear, and the security / tool / architecture contracts plus each shape's own
+rules and manifest must be present. It fails at the old ceiling.
+
+### Still open, found alongside and deliberately not fixed here
+
+The `API_BASE` rule exists **only** in `FULLSTACK_INSTRUCTION`.
+`FASTAPI_SUPABASE_INSTRUCTION` and `FASTAPI_NO_DATABASE_INSTRUCTION` both tell the model to
+use `src/lib/api.ts` but never state the `API_BASE` rule, and
+`FULLSTACK_NO_DATABASE_INSTRUCTION` mentions neither. CLAUDE.md trap 11 says that rule,
+`template.ts`'s `/api` proxy and `wiring.ts`'s `hardcoded-dev-host` check are one contract;
+on the Python and no-database paths only two of the three state it.
+
+### Also removed
+
+`tests/` — 12 files, referenced by no script, no CI job and neither `tsconfig`. Ten cannot
+load at all (`ERR_MODULE_NOT_FOUND`: they import `src/server/routes/plan.ts`,
+`src/verify/fix.ts`, `src/deploy/pipeline.ts`, `src/server/middleware/auth.ts` and a
+`jsonwebtoken-secure` package, none of which exist). The two that do run import **no**
+project code — they assert inline re-implementations, under the heading "BuildForge Plan
+Mode API", a product name and a route that are both gone. For a codebase an agent reads,
+that is worse than dead: it describes a system that no longer exists.
