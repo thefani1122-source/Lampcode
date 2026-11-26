@@ -254,6 +254,22 @@ const CONTRACT = "SECURE-BY-DESIGN GENERATION CONTRACT\n" + "c".repeat(2_000) + 
 }
 
 {
+  // The function must never return more than the budget it was given. The
+  // last-resort branch used to: compactSystemPrompt answers a zero budget with
+  // its own marker rather than nothing, and the precedence + note part was
+  // never bounded, so a small ceiling overran (973 chars for a maxChars of
+  // 400). MAX_SYSTEM_PROMPT_TOKENS comes from the environment, so this is
+  // reachable by configuration, not only in theory.
+  for (const max of [100_000, 6_000, 2_000, 1_100, 1_000, 700, 400, 100, 1]) {
+    const r = assembleSystemPrompt(PRECEDENCE, REFERENCE, CONTRACT, max, true);
+    assert.ok(
+      r.prompt.length <= max,
+      `assembleSystemPrompt returned ${r.prompt.length} chars for a budget of ${max}`,
+    );
+  }
+}
+
+{
   // A dispatch with no reference material at all must not gain a note about
   // one that was never there.
   const none = assembleSystemPrompt(PRECEDENCE, "", CONTRACT, 2_600, true);

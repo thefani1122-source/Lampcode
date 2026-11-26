@@ -58,6 +58,27 @@ const MAX_RECORD_CHARS = 5_500;
 /** Requirements kept in CONTRACT. Open ones are kept first, so the cap drops
  *  settled history rather than outstanding work. */
 const MAX_CONTRACT_ROWS = 40;
+/**
+ * How much of one requirement's wording is stored.
+ *
+ * Applied on BOTH sides — to the audit's criteria here and therefore to what is
+ * written — so `requirementKey` derives the same key from a stored row and from
+ * the same criterion seen again in a later build. Capping only on the way out
+ * would change the key and the same requirement would come back as a second
+ * row every build.
+ */
+const MAX_REQUIREMENT_CHARS = 300;
+/** Budget for the table itself, leaving room for the prose around it inside
+ *  MAX_RECORD_CHARS. Rows are fitted to this rather than counted, because
+ *  `cap()` cutting the table mid-row loses those requirements for good: the
+ *  merge can only carry forward what `parseContractRows` can read back. */
+const MAX_CONTRACT_TABLE_CHARS = 4_200;
+
+/** Keep the opening words, which is where a requirement says what it is. */
+function capRequirementText(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= MAX_REQUIREMENT_CHARS ? flat : `${flat.slice(0, MAX_REQUIREMENT_CHARS)}…`;
+}
 
 export type SchemaApplyResult = { ran: boolean; ok: boolean; error?: string } | null;
 
@@ -146,12 +167,13 @@ export function mergeContractRows(
     const statusById = new Map<string, CriterionStatus>();
     for (const verdict of audit.verdicts) statusById.set(verdict.id, verdict.status);
     for (const criterion of audit.criteria) {
-      const key = requirementKey(criterion.text);
+      const text = capRequirementText(criterion.text);
+      const key = requirementKey(text);
       if (!key) continue;
       // A criterion the audit extracted but returned no verdict for is not
       // covered by anything that ran, which is what unverified means.
       byKey.set(key, {
-        text: criterion.text,
+        text,
         status: statusById.get(criterion.id) ?? "unverified",
         lastSeen: day,
       });
@@ -172,7 +194,19 @@ function escapeCell(text: string): string {
 
 function renderContract(rows: ContractRow[], audit: CompletionAudit | null): string {
   const open = rows.filter((r) => r.status !== "proven").length;
-  const kept = rows.slice(0, MAX_CONTRACT_ROWS);
+  // Take rows in the order they were sorted — open work first — until either
+  // cap is reached. Fitting by LENGTH is the point: a row that does not fit is
+  // dropped whole and counted, where a row cut in half by `cap()` below would
+  // be unreadable to the next build's merge and the requirement would vanish.
+  const kept: ContractRow[] = [];
+  let tableChars = 0;
+  for (const row of rows) {
+    if (kept.length >= MAX_CONTRACT_ROWS) break;
+    const line = `| ${row.status} | ${row.lastSeen} | ${escapeCell(row.text)} |`;
+    if (tableChars + line.length + 1 > MAX_CONTRACT_TABLE_CHARS) break;
+    kept.push(row);
+    tableChars += line.length + 1;
+  }
   const lines = [
     CONTRACT_HEADING,
     "",
@@ -188,7 +222,17 @@ function renderContract(rows: ContractRow[], audit: CompletionAudit | null): str
     ...kept.map((r) => `| ${r.status} | ${r.lastSeen} | ${escapeCell(r.text)} |`),
   ];
   if (rows.length > kept.length) {
-    lines.push("", `(${rows.length - kept.length} older settled requirement(s) dropped at the cap.)`);
+    const dropped = rows.length - kept.length;
+    const openDropped = rows.slice(kept.length).filter((r) => r.status !== "proven").length;
+    lines.push(
+      "",
+      `(${dropped} requirement(s) dropped at the record cap` +
+        (openDropped > 0
+          // Open work falling off the cap is a real loss, not housekeeping, and
+          // saying so is the only way anyone finds out.
+          ? `, and ${openDropped} of them were still open — this project has more outstanding requirements than one record can carry.)`
+          : ", all of them already proven.)"),
+    );
   }
   if (audit?.criteriaDropped) {
     lines.push(
@@ -404,6 +448,19 @@ function renderDbSchema(input: BrainSnapshotInput, shape: ProjectShape): string 
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * The record's content with its `Recorded <date>` line removed.
+ *
+ * The caller writes a new version only when content changed, and three of these
+ * records state the day they were written — so without this, an unchanged
+ * project still produced a new version of each one every calendar day. The date
+ * is kept in the record because it tells the model how stale the record is;
+ * it just must not count as a change.
+ */
+export function contentWithoutDate(content: string): string {
+  return content.replace(/^Recorded \d{4}-\d{2}-\d{2}[^\n]*$/gm, "Recorded <date>");
 }
 
 function cap(text: string): string {

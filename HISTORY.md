@@ -5520,3 +5520,70 @@ but that is ~4,400 of headroom, which is the number to watch before adding promp
 `scripts/prompt-ceiling.test.ts` now covers seven shapes and asserts, per shape, which side
 of the same-origin line it is on, plus that no shape asks for a "same-origin API client". It
 fails when the rule is removed from any one block.
+
+## REVIEWING THE BRAIN FOUND FOUR BUGS IN IT — 2026-11-26
+
+A review pass over `9abd79d..c11bcb4` — the five commits above — on the owner's instruction.
+Four real defects, two of them in the thing the whole exercise was for. Recorded because a
+feature that silently loses data is worse than no feature, and this one had shipped that way.
+
+### 1. CONTRACT capped rows by COUNT while leaving their text uncapped
+
+`MAX_CONTRACT_ROWS` was 40 and `MAX_RECORD_CHARS` 5,500, but nothing bounded a requirement's
+wording. So `cap()` cut the rendered table mid-row, and since the merge can only carry forward
+what `parseContractRows` reads back, every row below the cut was gone from the project for
+good. Measured against the shipped code:
+
+| requirements | each | record | readable back | lost silently |
+|---|---|---|---|---|
+| 20 | 300 chars | 5,536 | 14 | 6 |
+| 10 | 600 chars | 5,536 | 7 | 3 |
+| 40 | 400 chars | 5,536 | 11 | **29** |
+
+That is precisely the failure CONTRACT was written to prevent, caused by CONTRACT.
+
+Fixed by capping a requirement's text at 300 chars **on the way in as well as out** — the key
+is derived from the text, so capping only on output would change the key and the same
+requirement would return as a second row every build — and by fitting the table to a 4,200-char
+budget by LENGTH rather than by row count, so a row is either whole or dropped and counted.
+Open rows still sort first, and the drop note now says how many of the dropped ones were still
+open, because outstanding work falling off a cap is a loss and not housekeeping.
+
+A project with more long requirements than one record can carry still loses the overflow. That
+is now reported in the record instead of happening silently, which is the honest version of a
+6,000-char read budget.
+
+### 2. The Brain write sat ahead of the build's completion signal
+
+`saveBrainSnapshot` was awaited before the `buildSessions` status update and the completion
+events. It costs ~13 sequential queries — one `loadBrainRecordsForMerge`, then three per record
+inside `createVersion` (max, insert, select-back) for up to four records — so every build's
+"done" waited on a cross-network write whose own catch logs the failure and carries on. Nothing
+later in `runFastBuild` reads it. Moved to the very end of the success path, after
+`"Fast build complete"`.
+
+### 3. The date each record states defeated the write-on-change dedup
+
+CURRENT_STATE, API_CONTRACTS and DB_SCHEMA each carry a `Recorded <date>` line, and the dedup
+was a raw `previous === content`. So an untouched project wrote a new version of all three every
+calendar day — one per record per day, which is the accumulation the dedup was added to stop.
+The date stays (it tells the model how stale the record is) and the comparison now normalises
+that line away via `contentWithoutDate`.
+
+### 4. assembleSystemPrompt could return more than its own maxChars
+
+In the last-resort branch, `compactSystemPrompt` answers a zero budget with its own 46-char
+marker rather than nothing, and the precedence + omission-note part was never bounded. Measured:
+a budget of 400 returned 973 chars, and 700 also returned 973. Unreachable at the 30,000-token
+default, where that fixed part is ~1,500 chars against 93,000 — but `MAX_SYSTEM_PROMPT_TOKENS`
+is read from the environment, so lowering it to cut cost would have silently sent more than the
+configured ceiling. The bound is now enforced rather than assumed.
+
+### Tests
+
+`brain-snapshot.test.ts` is 26 cases now. The ones that matter here assert the property rather
+than a number: for five shapes of input, no record is cap-cut and `readable + reported == total`,
+so a requirement can never go missing unannounced. One earlier case asserted exactly 40 rows,
+which encoded the count-capped behaviour; it now asserts the ordering and the accounting,
+because how many rows fit depends on how long they are. `prompt-ceiling.test.ts` walks nine
+budgets down to 1 and asserts the returned prompt never exceeds any of them.

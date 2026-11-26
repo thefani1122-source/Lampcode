@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   buildBrainSnapshot,
+  contentWithoutDate,
   detectProjectShape,
   extractCalledPaths,
   extractDeclaredTables,
@@ -265,16 +266,99 @@ check("no record exceeds the 6,000 chars the read path will keep", () => {
     assert.ok(content.length <= 6_000, `${type} is ${content.length} chars — the read path would truncate it`);
   }
   // The cap must not spend itself on settled history. 200 requirements, every
-  // third one unverified (67 of them) — so a 40-row cap that sorts open work
-  // first has no room left for a single proven row.
+  // third one unverified (67 of them) — so a table that sorts open work first
+  // has no room left for a single proven row. The row count is deliberately NOT
+  // asserted: the table is fitted by LENGTH, so how many rows fit depends on how
+  // long their requirements are. What must hold is the ordering and the
+  // accounting.
   const kept = parseContractRows(snap.CONTRACT);
-  assert.equal(kept.length, 40, "the contract table is not being capped at MAX_CONTRACT_ROWS");
+  assert.ok(kept.length > 0 && kept.length <= 40, `kept ${kept.length} rows, outside both caps`);
   assert.deepEqual(
     [...new Set(kept.map((r) => r.status))],
     ["unverified"],
     "a settled requirement took a row that outstanding work needed",
   );
-  assert.match(snap.CONTRACT ?? "", /older settled requirement\(s\) dropped at the cap/);
+  const reported = Number(/\((\d+) requirement\(s\) dropped/.exec(snap.CONTRACT ?? "")?.[1] ?? 0);
+  assert.equal(kept.length + reported, manyRows.length, "requirements went missing without being reported");
+});
+
+// ── The record must always round-trip ────────────────────────────────────────
+// Found reviewing this file's first version: rows were capped by COUNT while
+// requirement texts were uncapped, so `cap()` cut the rendered table mid-row at
+// MAX_RECORD_CHARS. The merge can only carry forward what parseContractRows can
+// read back, so every row lost that way was lost from the project for good —
+// the exact failure this record exists to prevent. Measured then: 40
+// requirements of ~400 chars came back as 11, with 29 gone and nothing saying so.
+
+check("no requirement is ever half-written: every one is readable or counted", () => {
+  for (const [count, len] of [[10, 60], [20, 300], [10, 600], [40, 400], [200, 500]] as Array<[number, number]>) {
+    const criteria = Array.from({ length: count }, (_, i) => ({ id: `R${i}`, text: `Requirement ${i}: ${"x".repeat(len)}` }));
+    const snap = buildBrainSnapshot({
+      prompt: "p", files: {},
+      audit: audit(criteria, criteria.map((c) => ({ id: c.id, status: "unverified" as const }))),
+      outcome: OUTCOME, schemaApply: null, previous: {}, at: DAY_ONE,
+    });
+    const record = snap.CONTRACT ?? "";
+    const label = `${count} requirements of ${len} chars`;
+    assert.ok(
+      !record.includes("[record truncated at its write cap]"),
+      `${label}: the write cap cut the record, so its last row is unreadable to the next merge`,
+    );
+    const readable = parseContractRows(record).length;
+    const reported = Number(/\((\d+) requirement\(s\) dropped/.exec(record)?.[1] ?? 0);
+    assert.equal(
+      readable + reported, count,
+      `${label}: ${count - readable - reported} requirement(s) vanished without being reported`,
+    );
+  }
+});
+
+check("a long requirement seen again updates in place instead of duplicating", () => {
+  // The text is capped on the way IN as well as out, so requirementKey derives
+  // the same key both times. Capping only on the way out would change the key
+  // and the same requirement would come back as a second row every build.
+  const long = `Tasks persist across reloads ${"y".repeat(800)}`;
+  const first = buildBrainSnapshot({
+    prompt: "p", files: {},
+    audit: audit([{ id: "R7", text: long }], [{ id: "R7", status: "unverified" }]),
+    outcome: OUTCOME, schemaApply: null, previous: {}, at: DAY_ONE,
+  });
+  const merged = mergeContractRows(
+    parseContractRows(first.CONTRACT),
+    audit([{ id: "R1", text: long }], [{ id: "R1", status: "proven" }]),
+    DAY_TWO,
+  );
+  assert.equal(merged.length, 1, "the same long requirement became a second row");
+  assert.equal(merged[0]?.status, "proven");
+});
+
+check("open work dropped at the cap is reported as open, not as housekeeping", () => {
+  const criteria = Array.from({ length: 60 }, (_, i) => ({ id: `R${i}`, text: `Requirement ${i}: ${"x".repeat(300)}` }));
+  const snap = buildBrainSnapshot({
+    prompt: "p", files: {},
+    audit: audit(criteria, criteria.map((c) => ({ id: c.id, status: "unverified" as const }))),
+    outcome: OUTCOME, schemaApply: null, previous: {}, at: DAY_ONE,
+  });
+  assert.match(
+    snap.CONTRACT ?? "", /were still open/,
+    "outstanding requirements fell off the cap and the record called them already proven",
+  );
+});
+
+check("the same project on a different day is not a change", () => {
+  // Three records state the day they were written. The caller writes only on
+  // change, so without normalising that line an untouched project produced a
+  // new version of each record every calendar day.
+  const files = { "src/App.tsx": "x", "src/server/index.ts": "app.get('/api/a')" };
+  const common = { prompt: "p", files, audit: null, outcome: OUTCOME, schemaApply: null, previous: {} };
+  const dayOne = buildBrainSnapshot({ ...common, at: DAY_ONE });
+  const dayTwo = buildBrainSnapshot({ ...common, at: DAY_TWO });
+  for (const key of ["CURRENT_STATE", "API_CONTRACTS", "DB_SCHEMA"] as const) {
+    assert.equal(
+      contentWithoutDate(dayOne[key] ?? ""), contentWithoutDate(dayTwo[key] ?? ""),
+      `${key}: an unchanged project still counts as changed, so a version is written every day`,
+    );
+  }
 });
 
 // ── The wiring ───────────────────────────────────────────────────────────────
@@ -305,11 +389,20 @@ check("a failed Brain write cannot fail the build", () => {
   assert.match(after, /catch \(err\)[\s\S]*?logger\.warn/, "the write is not wrapped in a non-fatal catch");
 });
 
-check("records are written only when they change", () => {
-  assert.ok(
-    buildSource.includes("if (previous[fileType] === content)"),
-    "createVersion has no dedup of its own, so an unchanged record would add a version on every build",
+check("records are written only when they change, ignoring the date they state", () => {
+  assert.match(
+    buildSource,
+    /contentWithoutDate\(previous\[fileType\]\) === contentWithoutDate\(content\)/,
+    "createVersion has no dedup of its own, and a raw comparison is defeated by the Recorded <date> line",
   );
+});
+
+check("the snapshot is written after the build is reported complete", () => {
+  // It costs ~13 sequential queries; ahead of the completion events, every
+  // build's "done" waited on a write whose failure is logged and ignored.
+  const completeAt = buildSource.indexOf('"Fast build complete"');
+  const brainAt = buildSource.indexOf("await saveBrainSnapshot({");
+  assert.ok(completeAt > 0 && brainAt > completeAt, "the Brain write is back on the critical path");
 });
 
 check("the merge reads untruncated content, not the prompt-shaped copy", () => {

@@ -2189,8 +2189,18 @@ export function assembleSystemPrompt(
   // (security contract first, tool + architecture contract last).
   const fixed = join(precedence, note);
   const headroom = maxChars - fixed.length - 2;
+  // `compactSystemPrompt` returns its own marker rather than nothing when given
+  // no room, and `fixed` is not itself bounded — so with a ceiling small enough
+  // that precedence plus the note nearly fills it, the two together overran the
+  // budget this function exists to respect (measured: 973 chars returned for a
+  // maxChars of 400). Unreachable at the 30,000-token default, but
+  // MAX_SYSTEM_PROMPT_TOKENS comes from the environment, so the bound is
+  // enforced rather than assumed.
+  const assembled = headroom > 0
+    ? join(fixed, compactSystemPrompt(contract, headroom))
+    : fixed;
   return {
-    prompt: join(fixed, compactSystemPrompt(contract, Math.max(0, headroom))),
+    prompt: assembled.length <= maxChars ? assembled : assembled.slice(0, Math.max(0, maxChars)),
     shedReference: referenceSection.length > 0,
     cutContract: true,
   };

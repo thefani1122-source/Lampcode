@@ -62,7 +62,7 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { generateProjectMemory } from "../../agents/memory-generator.js";
 import { generateFileManifest, findOrphanExports, type OrphanExport } from "../../agents/manifest-generator.js";
-import { buildBrainSnapshot } from "../../brain/snapshot.js";
+import { buildBrainSnapshot, contentWithoutDate } from "../../brain/snapshot.js";
 import { getBrainManager } from "../../brain/manager.js";
 import { blockingSecurityFindings, runSecurityChecksSafely, type SecurityCheck, type FileTree } from "../../verify/security.js";
 import { RECOVERABLE_BUILD_STATUSES, hasRecoverableAppEntrypoint } from "../../verify/build-recovery.js";
@@ -981,7 +981,13 @@ async function saveBrainSnapshot(args: {
   const written: string[] = [];
   const unchanged: string[] = [];
   for (const [fileType, content] of Object.entries(snapshot) as Array<[BrainFileType, string]>) {
-    if (previous[fileType] === content) { unchanged.push(fileType); continue; }
+    // Compared with the `Recorded <date>` line normalised away: three of these
+    // records state the day they were written, so a raw comparison made an
+    // unchanged project write a new version of each one every calendar day.
+    if (
+      previous[fileType] !== undefined &&
+      contentWithoutDate(previous[fileType]) === contentWithoutDate(content)
+    ) { unchanged.push(fileType); continue; }
     await brain.createVersion(args.projectId, fileType, content, {
       agentType: "build",
       sessionId: args.sessionId,
@@ -5682,25 +5688,6 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
       logger.error({ projectId, sessionId, err }, "Could not save final project memory");
     }
 
-    // And what the next build should know before it starts. Written AFTER every
-    // repair loop and both audit passes, so it records the delivered state
-    // rather than an intention — and after this build has already read its own
-    // Brain at the top, so nothing written here can contaminate the build that
-    // wrote it.
-    try {
-      await saveBrainSnapshot({
-        projectId,
-        sessionId,
-        prompt,
-        files: allFiles,
-        audit: completionAudit,
-        outcome,
-        schemaApply,
-      });
-    } catch (err) {
-      logger.warn({ projectId, sessionId, err }, "Could not save the Brain snapshot for this build");
-    }
-
     await db
       .update(buildSessions)
       .set({
@@ -5977,6 +5964,30 @@ const fixDescription = descriptionParts.join("\n\n---\n\n");
     });
 
     logger.info({ sessionId, projectId, files: writtenPaths.length, creditsUsed }, "Fast build complete");
+
+    // What the NEXT build should know, written last.
+    //
+    // Deliberately after everything the person sees. It records the delivered
+    // state, so it has to run after every repair loop and both audit passes —
+    // but it costs ~13 sequential queries (one load, then three per record in
+    // createVersion), and until 2026-11-26 those sat ahead of the session-status
+    // update and the completion events, so every build's "done" waited on a
+    // write whose own failure is logged and ignored. Nothing below reads it,
+    // and this build already read its own Brain at the top, so nothing written
+    // here can contaminate the build that wrote it.
+    try {
+      await saveBrainSnapshot({
+        projectId,
+        sessionId,
+        prompt,
+        files: allFiles,
+        audit: completionAudit,
+        outcome,
+        schemaApply,
+      });
+    } catch (err) {
+      logger.warn({ projectId, sessionId, err }, "Could not save the Brain snapshot for this build");
+    }
   } catch (err) {
     if (cancelledSessions.has(sessionId)) {
       cancelledSessions.delete(sessionId);
