@@ -1,4 +1,8 @@
-# Moving the backend to AWS EC2
+# Moving the backend to a VM
+
+Two providers are written up: **[AZURE.md](AZURE.md)** for an Azure VM, and the
+AWS EC2 walk-through below. `bootstrap.sh`, `Caddyfile` and `lampcode.service`
+are shared and provider-neutral — only how the box is created differs.
 
 Everything here is written for one person with no budget, no domain, and a
 terminal. Follow it in order. Step 0 decides whether the rest should happen at
@@ -65,7 +69,7 @@ install and no credentials to paste anywhere.
 
 ```bash
 git clone https://github.com/thefani1122-source/Lampcode.git -b db-path
-bash Lampcode/deploy/aws/launch-ec2.sh
+bash Lampcode/deploy/vm/launch-ec2.sh
 ```
 
 It picks the current Ubuntu 24.04 arm64 image, makes the key pair, opens 22/80/443,
@@ -170,7 +174,7 @@ SOCKETIO_REDIS_ADAPTER=false
 ## 5. Run it
 
 ```bash
-sudo bash deploy/aws/bootstrap.sh
+sudo bash deploy/vm/bootstrap.sh
 ```
 
 It installs Node and Caddy, adds swap, builds, installs the service, gets a
@@ -206,7 +210,7 @@ not resolve from EC2 anyway.
 ## 8. Every deploy after this one
 
 ```bash
-cd ~/Lampcode && bash deploy/aws/deploy.sh
+cd ~/Lampcode && bash deploy/vm/deploy.sh
 ```
 
 Pull, build, and only then restart — a failed build leaves the running version

@@ -251,9 +251,12 @@ function parseEnv() {
 
   if (missing.length > 0) {
     const list = missing.map((k) => `  - ${k}`).join("\n");
+    // Not "your Railway dashboard": the backend has also run on EC2 and now on
+    // an Azure VM, where the variables live in the .env the systemd unit reads.
     const hint =
       NODE_ENV === "production"
-        ? "Set these in your Railway dashboard → Variables."
+        ? "Set these where this deployment gets its environment — the .env read by " +
+          "deploy/vm/lampcode.service on a VM, or the Variables tab on a PaaS."
         : "Add them to your .env file.";
 
     console.error(

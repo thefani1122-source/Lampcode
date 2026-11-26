@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
-# Turn a bare Ubuntu EC2 box into a Lampcode backend. Run ONCE, as the
-# default `ubuntu` user, from inside the cloned repo:
+# Turn a bare Ubuntu box into a Lampcode backend — EC2, an Azure VM, or any
+# other provider. Nothing below is provider-specific except how the public IP
+# is discovered, which tries AWS, then Azure, then LAMPCODE_HOST. Run ONCE, as
+# the box's default sudo user, from inside the cloned repo:
 #
-#   sudo bash deploy/aws/bootstrap.sh
+#   sudo bash deploy/vm/bootstrap.sh
 #
 # Idempotent: safe to run again after a failure. It installs Node, Caddy and a
 # systemd unit, and leaves the service running behind real HTTPS.
@@ -19,7 +21,7 @@ NODE_MAJOR=20
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31mSTOP: %s\033[0m\n' "$*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "run with sudo: sudo bash deploy/aws/bootstrap.sh"
+[[ $EUID -eq 0 ]] || die "run with sudo: sudo bash deploy/vm/bootstrap.sh"
 [[ -f "$REPO_DIR/package.json" ]] || die "run this from inside the cloned repo"
 
 # ── The public hostname ──────────────────────────────────────────────────────
@@ -31,17 +33,30 @@ die() { printf '\n\033[1;31mSTOP: %s\033[0m\n' "$*" >&2; exit 1; }
 # Encrypt will issue for it. That is a real certificate on a real hostname, for
 # free, with no domain to buy — which matters when the budget is zero. Set
 # LAMPCODE_HOST yourself once you own a domain.
+# AWS IMDSv1.
 PUBLIC_IP="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
 if [[ -z "$PUBLIC_IP" ]]; then
-  # IMDSv2 requires a token; the v1 call above fails silently on newer AMIs.
+  # AWS IMDSv2 requires a token; the v1 call above fails silently on newer AMIs.
   TOKEN="$(curl -fsS --max-time 5 -X PUT http://169.254.169.254/latest/api/token \
     -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' 2>/dev/null || true)"
   [[ -n "$TOKEN" ]] && PUBLIC_IP="$(curl -fsS --max-time 5 \
     -H "X-aws-ec2-metadata-token: $TOKEN" \
     http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)"
 fi
+if [[ -z "$PUBLIC_IP" ]]; then
+  # Azure IMDS. Same link-local address, different path, and it requires the
+  # Metadata header — so the AWS calls above just fail quietly on an Azure box
+  # rather than returning something wrong.
+  PUBLIC_IP="$(curl -fsS --max-time 5 -H 'Metadata: true' \
+    'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' \
+    2>/dev/null || true)"
+  # Azure returns an empty string rather than a 404 when the NIC has no public
+  # IP, which is a different problem from "not on Azure" and would otherwise
+  # look like success.
+  [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || PUBLIC_IP=""
+fi
 HOST="${LAMPCODE_HOST:-${PUBLIC_IP:+${PUBLIC_IP}.sslip.io}}"
-[[ -n "$HOST" ]] || die "could not read this box's public IP — set LAMPCODE_HOST=your.domain and re-run"
+[[ -n "$HOST" ]] || die "could not read this box's public IP from AWS or Azure metadata — set LAMPCODE_HOST=your.domain (or LAMPCODE_HOST=<ip>.sslip.io) and re-run"
 say "Public hostname: https://$HOST"
 
 # ── Node ─────────────────────────────────────────────────────────────────────
@@ -72,6 +87,32 @@ if ! command -v caddy >/dev/null 2>&1; then
   apt-get install -y -qq caddy
 fi
 
+# ── Redis, on this box ───────────────────────────────────────────────────────
+# REDIS_URL is in config.ts's REQUIRED_VARS, and it is load-bearing rather than
+# decorative: rate limiting is Redis-backed (CLAUDE.md records that it was
+# "entirely off" for the whole period Redis was dead), and the live sandbox for
+# a project is looked up by the key `e2b:sandbox:{projectId}`, so without it
+# every follow-up build pays a cold start instead of resuming.
+#
+# It runs HERE rather than as a managed service for two reasons: a managed
+# Redis is the single most expensive small piece of this stack, and the backend
+# is already pinned to one instance anyway — pending-approvals.ts and
+# pending-answers.ts are per-process Maps, so a second replica would silently
+# break every approval and every ask_user regardless of where Redis lives.
+#
+# Bound to loopback only. Nothing outside this box may reach it, so there is no
+# password to leak and no port to firewall.
+if ! command -v redis-server >/dev/null 2>&1; then
+  say "Installing Redis"
+  apt-get install -y -qq redis-server
+fi
+if ! grep -q '^bind 127.0.0.1 -::1' /etc/redis/redis.conf 2>/dev/null; then
+  sed -i 's/^bind .*/bind 127.0.0.1 -::1/' /etc/redis/redis.conf
+fi
+# Survive a reboot, and start now if it is not already up.
+systemctl enable --now redis-server >/dev/null 2>&1 || systemctl enable --now redis >/dev/null 2>&1 || true
+say "Redis $(redis-server --version | sed 's/ .*//;s/Redis//' | head -c 40) on 127.0.0.1:6379"
+
 # ── Swap, because the cheap instances are small ──────────────────────────────
 # A t4g.micro has 1 GB. `npm ci` on this repo peaks well above that and the
 # OOM killer takes the build with no useful message. 2 GB of swap costs a
@@ -87,7 +128,7 @@ fi
 
 # ── The .env ─────────────────────────────────────────────────────────────────
 if [[ ! -f "$REPO_DIR/.env" ]]; then
-  die "$REPO_DIR/.env is missing. Copy your variables from Railway into it first (see deploy/aws/README.md), then re-run."
+  die "$REPO_DIR/.env is missing. Copy your variables from Railway into it first (see deploy/vm/README.md), then re-run."
 fi
 chown "$APP_USER":"$APP_USER" "$REPO_DIR/.env"
 chmod 600 "$REPO_DIR/.env"
