@@ -188,9 +188,11 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
     `API_BASE = import.meta.env.VITE_API_URL ?? ''` in the generated `src/lib/api.ts` (unset in
     the preview, so behaviour there is unchanged). If you touch either side, check the other:
     the prompt's `src/lib/api.ts` shape, this proxy, and `wiring.ts`'s `hardcoded-dev-host` rule
-    all describe the same contract. The `API_BASE` rule is still stated ONLY in
-    `FULLSTACK_INSTRUCTION` — the FastAPI and no-database blocks name `src/lib/api.ts`
-    without it.
+    all describe the same contract. The rule itself lives in ONE place —
+    `API_BASE_CONTRACT` in `prompt-builder.ts` — and every block that serves a backend
+    on :3001 interpolates it. Next.js deliberately does not: its Route Handlers are
+    same-origin, so there is no base to point anywhere. `prompt-ceiling.test.ts` asserts
+    per shape which side of that line it is on.
 
 12. **The system prompt has a hard ceiling and the biggest build shape sits near it.**
     `MAX_SYSTEM_PROMPT_TOKENS` is 30,000 (93,000 chars); the largest measured shape

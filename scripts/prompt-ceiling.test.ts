@@ -36,7 +36,20 @@ type Shape = {
   markers: string[];
   /** Shape-specific blocks that must survive, on top of UNIVERSAL below. */
   mustContain: string[];
+  /**
+   * Whether this shape must carry the API_BASE contract.
+   *
+   * True wherever the app ships a backend on a SECOND origin (:3001) reached
+   * through Vite's /api proxy — a dev-server feature that a production build
+   * does not have. False for Next.js, whose Route Handlers are served by the
+   * same origin as the pages, so there is no base to point anywhere and
+   * same-origin fetch('/api/...') is correct rather than the trap.
+   */
+  apiBaseRule: boolean;
 };
+
+/** The sentence that makes the contract checkable rather than a vibe. */
+const API_BASE_RULE = "API_BASE = import.meta.env.VITE_API_URL ?? ''";
 
 /** Every shape carries these three, whatever the framework. */
 const UNIVERSAL = [
@@ -51,6 +64,8 @@ const shapes: Shape[] = [
     label: "frontend only",
     markers: ["LAMPCode_SELECTED_BUILD_TYPE: frontend", "LAMPCode_SELECTED_FRAMEWORK: react"],
     mustContain: [],
+    // No backend at all, so nothing to point a base at.
+    apiBaseRule: false,
   },
   {
     label: "fullstack react + node + supabase",
@@ -67,6 +82,7 @@ const shapes: Shape[] = [
       "Never put a hardcoded",
       "PRE-INSTALLED IN THIS REACT/VITE SANDBOX:",
     ],
+    apiBaseRule: true,
   },
   {
     label: "fullstack react + node + supabase + auth (the largest shape)",
@@ -82,6 +98,7 @@ const shapes: Shape[] = [
       "Never put a hardcoded",
       "PRE-INSTALLED IN THIS REACT/VITE SANDBOX:",
     ],
+    apiBaseRule: true,
   },
   {
     label: "fullstack react + python + supabase + auth",
@@ -96,6 +113,30 @@ const shapes: Shape[] = [
       "PRE-INSTALLED IN THIS REACT/VITE SANDBOX:",
       "PRE-INSTALLED PYTHON ESSENTIALS in /opt/lampcode-python:",
     ],
+    apiBaseRule: true,
+  },
+  {
+    label: "fullstack react + node, NO database",
+    markers: [
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: node",
+    ],
+    mustContain: ["PRE-INSTALLED IN THIS REACT/VITE SANDBOX:"],
+    // Still a real Hono server on :3001, so the rule applies.
+    apiBaseRule: true,
+  },
+  {
+    label: "fullstack react + python, NO database",
+    markers: [
+      "LAMPCode_SELECTED_BUILD_TYPE: fullstack",
+      "LAMPCode_SELECTED_FRAMEWORK: react",
+      "LAMPCode_SELECTED_DATABASE: none",
+      "LAMPCode_SELECTED_BACKEND_RUNTIME: python",
+    ],
+    mustContain: ["PRE-INSTALLED PYTHON ESSENTIALS in /opt/lampcode-python:"],
+    apiBaseRule: true,
   },
   {
     label: "nextjs + supabase + auth",
@@ -107,6 +148,7 @@ const shapes: Shape[] = [
       "LAMPCode_SELECTED_AUTH: required",
     ],
     mustContain: ["PRE-INSTALLED IN THIS NEXT.JS SANDBOX:"],
+    apiBaseRule: false,
   },
 ];
 
@@ -124,6 +166,24 @@ for (const shape of shapes) {
     !systemPrompt.includes(CONTRACT_WAS_CUT),
     `${shape.label}: the contract itself was cut — the ceiling is too low for this shape, or ` +
       `assembleSystemPrompt stopped shedding the reference section first`,
+  );
+
+  // CLAUDE.md trap 11: this rule, template.ts's /api proxy and wiring.ts's
+  // hardcoded-dev-host check are one contract. It used to be stated in
+  // FULLSTACK_INSTRUCTION only, so the Python and no-database paths were told to
+  // route everything through src/lib/api.ts and never told what goes inside it.
+  assert.equal(
+    systemPrompt.includes(API_BASE_RULE),
+    shape.apiBaseRule,
+    shape.apiBaseRule
+      ? `${shape.label}: this shape serves its backend on a second origin but was not given the API_BASE rule`
+      : `${shape.label}: this shape is same-origin, so an API_BASE rule here would describe a base that does not exist`,
+  );
+  // The proxy that makes /api same-origin is a dev-server feature. Asking for a
+  // "same-origin API client" names the broken pattern as the goal.
+  assert.ok(
+    !/same-origin API client/.test(systemPrompt),
+    `${shape.label}: the prompt asks for a "same-origin API client", which works in the preview and nowhere else`,
   );
 
   for (const marker of [...UNIVERSAL, ...shape.mustContain]) {

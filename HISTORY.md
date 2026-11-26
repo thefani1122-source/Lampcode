@@ -5464,3 +5464,59 @@ least fails if the write disappears again, which is how this started.
 against a live database, and there is no multi-turn eval, so the thing it is for — a
 requirement surviving three builds and resurfacing — is untested end to end. That is the
 next measurement, not a claim to make now.
+
+## THE RULE THAT KEEPS AN APP WORKING OUTSIDE THE PREVIEW WAS IN ONE BLOCK OF FIVE — 2026-11-26
+
+Found while fixing the prompt ceiling, deferred then as out of scope, and done now because
+the deferral was the wrong call: the owner had asked for all of it.
+
+`CLAUDE.md` trap 11 says the `API_BASE` rule, the `server.proxy['/api'] → localhost:3001`
+that `template.ts` bakes into `vite.config.ts`, and `wiring.ts`'s `hardcoded-dev-host` check
+are three descriptions of ONE contract. Measured across the five fullstack instruction
+blocks:
+
+| block | names `src/lib/api.ts` | states `API_BASE` | has the rule | runs a backend on :3001 |
+|---|---|---|---|---|
+| `FULLSTACK_INSTRUCTION` | yes | yes | yes | yes |
+| `FULLSTACK_NO_DATABASE_INSTRUCTION` | **no** | no | no | **yes** |
+| `FASTAPI_SUPABASE_INSTRUCTION` | yes | **no** | no | **yes** |
+| `FASTAPI_NO_DATABASE_INSTRUCTION` | yes | **no** | no | **yes** |
+| `NEXTJS_INSTRUCTION` | no | no | no | no — same-origin |
+
+So on three of the four paths that DO serve a backend on a second origin, the model was
+told to route every call through `src/lib/api.ts` and never told what had to be inside it.
+
+And it was worse than an omission. Both FastAPI blocks asked for, in those words, a
+**"same-origin API client"** — `- src/lib/api.ts — typed same-origin API client` and
+`- src/lib/api.ts — same-origin API client.` The proxy that makes `/api` same-origin is a
+DEV-SERVER feature. A production build has no dev server and nothing answering `/api`. The
+prompt was naming the broken pattern as the goal, and `FASTAPI_NO_DATABASE_INSTRUCTION` even
+states the ports and the proxy two lines further down without ever mentioning that the proxy
+does not exist in production.
+
+`FULLSTACK_NO_DATABASE_INSTRUCTION` had a weaker shape of the same gap: it does not list
+`src/lib/api.ts` among the files to generate at all, and its only guidance was "Do not
+hardcode localhost in browser code" — a prohibition with no alternative named.
+
+Fixed as one constant, `API_BASE_CONTRACT`, interpolated by the four blocks where it
+applies, because drift between these blocks is the bug and four copies drift again. The
+wording is the clearest version already in the repo — `MONGODB_AUTH_INSTRUCTION`'s, which
+alone bothered to say WHY (`API_BASE` is `''` in the preview, so it stays same-origin
+*there*) — plus the production half that none of them said. The phrase
+"Never put a hardcoded" is kept unwrapped on one line: it is what the existing tests and
+anyone grepping look for.
+
+`NEXTJS_INSTRUCTION` is deliberately exempt and now carries a source comment saying so, to
+stop the next person "fixing" it. App Router Route Handlers are served by the same origin as
+the pages, there is no dev-server proxy in the path, and that block already tells Client
+Components to use same-origin `fetch('/api/...')` — which for Next.js is correct, not the
+trap it is on the Vite paths.
+
+Verified on the compiled prompt rather than the source: the rule reaches all five applicable
+shapes, `same-origin API client` appears in none of them, and Next.js does not carry it.
+Largest shape is now 88,595 chars against the 93,000 ceiling, so nothing is shed or cut —
+but that is ~4,400 of headroom, which is the number to watch before adding prompt text.
+
+`scripts/prompt-ceiling.test.ts` now covers seven shapes and asserts, per shape, which side
+of the same-origin line it is on, plus that no shape asks for a "same-origin API client". It
+fails when the rule is removed from any one block.

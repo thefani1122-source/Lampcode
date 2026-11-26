@@ -987,6 +987,32 @@ the backend only through src/lib/api.ts, as API_BASE + '/api/...' (API_BASE is
 of every route (idempotent) so the lazy connection is established.`,
 };
 
+/**
+ * The one rule that decides whether a generated app works outside the preview.
+ *
+ * CLAUDE.md trap 11: this rule, the `server.proxy['/api'] -> localhost:3001`
+ * that `template.ts` bakes into vite.config.ts, and `wiring.ts`'s
+ * `hardcoded-dev-host` check are three descriptions of ONE contract. Until
+ * 2026-11-24 only `FULLSTACK_INSTRUCTION` stated it, so a Python or
+ * no-database build was told to route every call through `src/lib/api.ts` and
+ * never told what had to be inside it — and both FastAPI blocks asked for a
+ * "same-origin API client", which is the broken pattern named as the goal: the
+ * proxy that makes `/api` same-origin is a DEV-SERVER feature, and a production
+ * build has no dev server and nothing answering it.
+ *
+ * One constant rather than four copies, because drift between these blocks is
+ * the bug. `MONGODB_AUTH_INSTRUCTION` states the same contract inline, mid
+ * paragraph, and is left as it reads.
+ */
+export const API_BASE_CONTRACT = `- The frontend talks to the backend ONLY through src/lib/api.ts, and every call
+  there is API_BASE + '/api/...', where
+  API_BASE = import.meta.env.VITE_API_URL ?? ''.
+- VITE_API_URL is unset in the preview, so those calls stay same-origin THERE
+  and only there: Vite's /api proxy is a dev-server feature, and a production
+  build has no dev server and nothing answering it.
+- Never put a hardcoded http://localhost, 127.0.0.1 or :3001 anywhere in
+  frontend code. It works in the preview and breaks for every real user.`;
+
 // ── Fullstack mode instruction ────────────────────────────────────────────────
 // Appended to the frontend system prompt when the task is a full-stack build.
 // DB-specific rules are injected separately via DB_INSTRUCTIONS[db].
@@ -1140,10 +1166,7 @@ Do NOT generate src/styles.css — it is pre-baked with Tailwind v4 design token
    classes (bg-primary, text-muted-foreground, …) for everything else.
 
 HARD RULES:
-- The frontend talks to the backend ONLY through src/lib/api.ts, and every call
-  there is API_BASE + '/api/...'. Never put a hardcoded http://localhost,
-  127.0.0.1 or :3001 anywhere in frontend code — those work in the preview and
-  break for every real user.
+${API_BASE_CONTRACT}
 - The backend listens on Number(process.env.PORT) || 3001. Never hardcode another port.
 - Every file COMPLETE and non-empty. Backend routes must never throw uncaught.
 - Do NOT emit vite.config.ts, tsconfig.json, index.html, or .env — the environment
@@ -1407,10 +1430,13 @@ Generate these files:
 - src/server/app.ts — Hono app, mounts the route module at /api, does not listen.
 - src/server/index.ts — starts the Hono app on port 3001.
 - src/server/routes/api.ts — the requested real API routes with Zod validation.
+- src/lib/api.ts — typed fetch wrappers; every call goes through API_BASE.
 - src/App.tsx and src/index.tsx — React/Vite UI and entry point.
 
-The preview uses Vite on :5173 and Hono on :3001; Vite proxies same-origin /api
-requests to Hono. Do not hardcode localhost in browser code.
+The preview uses Vite on :5173 and Hono on :3001; Vite proxies /api to Hono.
+
+HARD RULES:
+${API_BASE_CONTRACT}
 
 No database means the server cannot promise durable or shared records. Implement
 the requested server behavior that does not require persistence. If the request
@@ -1437,8 +1463,9 @@ GENERATE THESE FILES:
 - src/App.tsx and src/index.tsx — React/Vite application and entry point.
 - src/server/main.py — FastAPI ASGI app named exactly app, with the requested
   routes under /api and a small /api/health readiness route.
-- src/lib/api.ts — typed same-origin API client; include the current signed-in
-  Supabase access token as Authorization: Bearer <token> for authenticated calls.
+- src/lib/api.ts — typed API client built on API_BASE (see HARD RULES below);
+  include the current signed-in Supabase access token as
+  Authorization: Bearer <token> for authenticated calls.
 - src/db/types.ts — TypeScript types for application entities.
 - src/db/schema.sql — the actual PostgreSQL tables, constraints, indexes and
   row-level security policies required by this product.
@@ -1494,6 +1521,9 @@ SECURITY:
 - Do not generate src/server/app.ts, src/server/index.ts,
   src/server/routes/api.ts, Hono imports, or a second Node server.
 
+HARD RULES:
+${API_BASE_CONTRACT}
+
 {{NPM_MANIFEST}}
 {{PIP_MANIFEST}}
 `
@@ -1508,7 +1538,7 @@ migrations or credentials.
 
 Generate:
 - src/server/main.py — FastAPI application and the requested real HTTP routes.
-- src/lib/api.ts — same-origin API client.
+- src/lib/api.ts — API client built on API_BASE (see HARD RULES below).
 - src/App.tsx and src/index.tsx — React/Vite UI and entry point.
 - requirements.txt — the required FastAPI/Python packages already available in the runtime.
 
@@ -1519,6 +1549,9 @@ or replace a requested server API with a browser-only mock.
 
 Do not generate src/db/types.ts, src/db/schema.sql, database clients, migrations
 or .env. Keep package/configuration files template-owned.
+
+HARD RULES:
+${API_BASE_CONTRACT}
 
 {{NPM_MANIFEST}}
 {{PIP_MANIFEST}}
@@ -1577,6 +1610,13 @@ IMPLEMENTATION:
 - Keep routes responsive and verify the rendered app at desktop and mobile widths.
 `
 
+/**
+ * No API_BASE rule here, deliberately. App Router Route Handlers are served by
+ * the same origin as the pages, so there is no second origin to point a base at
+ * and no dev-server proxy in the path. This block already tells Client
+ * Components to use same-origin fetch('/api/...'), which for Next.js is correct
+ * rather than the trap it is on the Vite paths. Do not add one.
+ */
 export const NEXTJS_INSTRUCTION = `
 
 ## ARCHITECTURE — NEXT.JS APP ROUTER + NODE RUNTIME
