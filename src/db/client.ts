@@ -12,7 +12,7 @@ function getDb() {
 
   if (!config.DATABASE_URL) {
     throw new Error(
-      "DATABASE_URL is not set. Configure it in Railway → Variables.",
+      "DATABASE_URL is not set. Configure it in the host's environment settings.",
     );
   }
 
@@ -41,7 +41,8 @@ function getDb() {
   if (!isPooler) {
     console.warn(
       "[db] WARNING: DATABASE_URL is pointing at the Supabase DIRECT connection.\n" +
-      "[db]   The direct host (db.*.supabase.co) resolves to IPv6 on Railway, causing\n" +
+      "[db]   The direct host (db.*.supabase.co) resolves to IPv6, which most container\n" +
+      "[db]   hosts cannot reach (no IPv6 outbound), causing\n" +
       "[db]   ENETUNREACH errors. Switch to the POOLER connection string:\n" +
       "[db]   postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres\n" +
       "[db]   Find it in: Supabase Dashboard → Settings → Database → Connection string → Transaction pooler",

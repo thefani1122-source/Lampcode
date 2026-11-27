@@ -1,5 +1,20 @@
 # Moving the backend to an Azure VM
 
+> **BLOCKED — do not follow steps 1-3 or 6. Read `deploy/RENDER.md` instead.**
+>
+> Measured 2026-11-27: this subscription's compute quota is **0** and Azure
+> refuses to raise it — `standardBsv2Family` is 0 in eastus, eastus2, westus2
+> and centralindia, App Service B1 and F1 are 0, and the quota request itself
+> returns *"not eligible for quota adjustment, consider upgrading your
+> subscription"*, which Microsoft documents as expected on free and trial
+> offers and also applies to Container Apps. It is an offer-level restriction,
+> so no region or SKU gets around it.
+>
+> **Sections 4 and 5 are still the reference** — the environment table and the
+> Foundry model setup. The Azure credit does work for AI Foundry, which runs on
+> Cognitive Services quota, separate from compute.
+
+
 Written for one person with a $200 Azure credit, no domain, and a browser.
 `bootstrap.sh`, `Caddyfile` and `lampcode.service` in this directory are shared
 with the EC2 path and are provider-neutral; only steps 1–2 below are Azure.
@@ -121,6 +136,7 @@ marked CHANGE. Copy the rest across unaltered.
 | `LLM_MODEL_NAME` | your deployment name, e.g. `Kimi-K3.1-Pro` | **CHANGE** |
 | `REDIS_URL` | `redis://127.0.0.1:6379` | **CHANGE** |
 | `FRONTEND_URL` | your Vercel URL, e.g. `https://lampcode.vercel.app` | **CHANGE** |
+| `FRONTEND_ORIGIN` | the same Vercel URL — a SEPARATE variable, both are read | **CHANGE** |
 | `LLM_PROVIDER_MODE` | `openai` | same |
 | `PORT` | `3000` | same — the Caddyfile proxies to it |
 | `DATABASE_URL` | Supabase pooler URL | same |

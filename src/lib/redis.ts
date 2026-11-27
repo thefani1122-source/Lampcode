@@ -41,14 +41,14 @@ const ERROR_LOG_INTERVAL_MS = 60_000;
  * in the background until the var is set and the service redeploys.
  */
 export function createRedis(overrides: Partial<RedisOptions> = {}): Redis {
-  // Accept REDIS_URL or REDIS_PUBLIC_URL — Railway may inject either name.
+  // Accept REDIS_URL or REDIS_PUBLIC_URL — some hosts inject the second name.
   const url = process.env["REDIS_URL"] ?? process.env["REDIS_PUBLIC_URL"];
 
   if (!url) {
     console.warn(
       "[redis] Neither REDIS_URL nor REDIS_PUBLIC_URL is set — " +
         "Redis-dependent features (BullMQ, interview sessions) will be unavailable " +
-        "until the variable is configured in Railway → Variables.",
+        "until one of them is set in the host's environment settings.",
     );
   }
 

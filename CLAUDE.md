@@ -23,8 +23,8 @@ live preview. Competitors: Lovable, Bolt, Replit. This repo is the **backend**; 
 | Runtime | **Node ≥20.18.1** — NOT Bun |
 | Framework | Hono (`src/server/index.ts`) |
 | Build | tsup → `dist/` |
-| Deploy | Railway (nixpacks) |
-| LLM | OpenAI-compatible gateway → **Amazon Bedrock**, see below |
+| Deploy | **Render free plan** (`render.yaml` blueprint), see below |
+| LLM | OpenAI-compatible gateway → **Azure AI Foundry**, see below |
 | Sandbox | E2B v2 SDK, template `lampcode-vite` (`e2b-template/template.ts` + `build.ts`) |
 | Sandbox state | Redis, key `e2b:sandbox:{projectId}` |
 | DB | Supabase Postgres + Drizzle |
@@ -62,67 +62,86 @@ on the build's shape, not on the flag. Nothing there is scheduled for deletion. 
 fence-parsing fallback protects the agentic path, not the old one; deleting it reintroduces a
 fixed bug. (HISTORY: "the repair loops are SHARED".)
 
-## Live provider config — Railway
+## Hosting and provider config — moved off AWS, 2026-11-27
+
+**The AWS account was suspended for security reasons.** That took BOTH the backend host and the
+Bedrock gateway with it, so every Bedrock fact below the fold in HISTORY is now history, not
+config. MiniMax M2.5 is **not reachable**.
+
+**Azure cannot host this.** The $200 Azure credit is real and usable, but the subscription's
+compute quota is **0** and cannot be raised:
+
+| quota | region(s) checked | limit |
+|---|---|---|
+| `standardBsv2Family` (VM cores) | eastus, eastus2, westus2, centralindia | 0 |
+| App Service B1 | eastus | 0 |
+
+Azure rejects the quota-increase request itself — *"not eligible for quota adjustment, consider
+upgrading your subscription"* — which Microsoft documents as expected on free/trial offers, and
+which it also applies to Container Apps. Do not spend another day on this; it is an offer-level
+restriction, not a region or SKU problem.
+
+**So: host on Render, spend the Azure credit on the model.** That split is better than it
+sounds — the whole $200 goes to inference and evals instead of burning on a box.
+
+### Host — Render free plan
+
+`render.yaml` at the repo root is a Blueprint: connect the repo once and it creates the service
+with the right build, start and health-check commands, then asks for each secret
+(`sync: false` keeps every value out of git).
+
+Limits that actually matter:
+
+- 512 MB RAM, fractional CPU, one instance, **no persistent disk, no shell**.
+- **Spins down after 15 idle minutes**; the next request wakes it in about a minute.
+- 750 instance-hours per workspace per month — roughly one always-on service.
+
+Verified 2026-11-27 in a clean container: `npm run build` succeeds in 164 ms (1.39 MB bundle),
+`node dist/index.js` boots with **no environment at all**, and `/health` answers 200. Missing
+required vars only warn (`REQUIRED_VARS` in `config.ts` does not throw), so the first deploy
+goes green before any secret is filled in. The disk being ephemeral is already handled — project
+files sync to Supabase Storage, which was built for exactly this.
+
+### Model — Azure AI Foundry, OpenAI-compatible route
 
 ```
-LLM_ENDPOINT_URL=https://bedrock-mantle.ap-southeast-2.api.aws
-LLM_API_KEY=<Bedrock API key, starts "ABSK", REGION-SPECIFIC>
-LLM_MODEL_NAME=minimax.minimax-m2.5
-LLM_MAX_OUTPUT_TOKENS=8000
 LLM_PROVIDER_MODE=openai
+LLM_ENDPOINT_URL=https://<resource>.services.ai.azure.com/openai   # ends at /openai
+LLM_API_KEY=<Foundry key, sent as Authorization: Bearer>
+LLM_MODEL_NAME=<the DEPLOYMENT name, not the catalogue name>
+LLM_MAX_OUTPUT_TOKENS=8000
 MODAL_REASONING_EFFORT=off
 ```
 
-Rules that cost days to learn:
+Bearer auth is what the gateway already sends, so the provider swap is **config only — no code
+change**. Cognitive Services quota is separate from compute quota, which is why Foundry works on
+this subscription when App Service does not.
 
-- **The gateway appends `/v1/chat/completions` itself.** `bedrock-mantle` serves `/v1/...` so
-  its URL ends at the host; `bedrock-runtime` serves `/openai/v1/...` so ITS url must end at
-  `/openai`. A wrong path returns AWS's Coral envelope **with HTTP 200**, which the SSE parser
-  reads as an empty reply and the logs blame on the model.
+**NOT YET VERIFIED:** no request has been made against the Foundry endpoint from this codebase.
+Probe it before trusting it — a wrong path is the failure that cost days on Bedrock.
+
+**`MODEL_PRICING` has no row for the new model, deliberately.** The owner deferred it: this is a
+testing run, not a billing one. The consequence is live and should not be forgotten — the model
+bills at `DEFAULT_PRICING` ($1/$4) and **`MAX_BUILD_COST_USD` is enforced against that wrong
+number**. Add the row before any eval whose cost figures are meant to mean something.
+
+### Rules that cost days to learn — still true, provider-independent
+
+- **The gateway ALWAYS appends `/v1/chat/completions`** — `modal-gateway.ts:365` interpolates it
+  unconditionally, so `LLM_ENDPOINT_URL` must stop one level short or the suffix doubles. Azure's
+  OpenAI-compatible route is `{endpoint}/openai/v1/chat/completions`, so the variable ends at
+  `/openai`, no trailing slash. A wrong path can return an envelope with **HTTP 200**, which the
+  SSE parser reads as an empty reply and the logs blame on the model.
 - **`[stream] loop done: totalChunks=2` means ZERO events parsed** — the generator always emits
   its own trailing `usage`/`done`. Read that number first on an empty reply.
-- **A route can be probed with no credential.** A wrong path gives the Coral envelope; the right
-  one gives a normal OpenAI-shaped 401.
-- **`MODEL_PRICING` is an exact lookup on `LLM_MODEL_NAME`.** A miss falls to
-  `DEFAULT_PRICING` ($1/$4) with only a warning, mispricing every build and the cost guard with
-  it. Add a row before switching models. Rates are region-specific.
-- **The two Bedrock endpoints have SEPARATE per-model quotas.** A quota of 0 on runtime says
-  nothing about mantle.
+- **A route can be probed with no credential.** A wrong path gives a malformed envelope; the
+  right one gives a normal OpenAI-shaped 401.
+- **`MODEL_PRICING` is an exact lookup on `LLM_MODEL_NAME`.** A miss falls to `DEFAULT_PRICING`
+  with only a warning, mispricing every build and the cost guard with it.
 - **`LLM_PROVIDER_MODE=openai` forces every build to this gateway.** Without it the provider is
   chosen PER PLAN, so an admin or paid account silently gets Anthropic.
-- `MODAL_REASONING_EFFORT=off` means "send no reasoning field". Measured 2026-10-10: setting it
-  to `low` changed no verdict, cost slightly more, and doubled one task's rounds. Leave it.
-
-### Model availability on this AWS account — settled 2026-10-10
-
-The account reaches **38 open-weight models** on mantle (Kimi, MiniMax, Qwen, DeepSeek, GLM,
-Mistral, Gemma, Nemotron, gpt-oss). Every one that was probed supports tool calling.
-
-**Every premium model returns `403 "not available for this account"`** — GPT-5.4/5.5/5.6,
-GPT-6.x, Grok 4.7, and **Claude Sonnet 5.5**. The model IDs are valid (a wrong one gives 400),
-so this is entitlement, not config.
-
-AWS's retirement notice names the actual remedies, and they are NOT support cases:
-- **Marketplace-served models (OpenAI, xAI): a user with Marketplace permissions must invoke the
-  model ONCE** — e.g. in the console playground — and it is then enabled account-wide.
-- **Anthropic models: submit use-case details** (a one-time form).
-- An IAM policy or SCP can also restrict access.
-
-So opening GPT 5.5 in the playground once should unblock it for the API too. Until the owner
-does that, M2.5 is the choice. **Anthropic at launch** either goes through that form, or through
-the Anthropic direct API, which `dispatcher.ts` already supports for the paid tier.
-
-### Measured model comparison (smoke tier, same 4 tasks)
-
-| model | all checks held | spend |
-|---|---|---|
-| Kimi K3 (Modal, no longer reachable) | 3/4 | $0.626 |
-| Kimi K2.5 (Bedrock) | 1/4 | $0.216 |
-| **MiniMax M2.5 (current)** | **2/4** | **$0.103** |
-| Devstral-2 123B | **0/4** (2 outright fails) | — |
-
-Every "11/11" and "20/20" number in HISTORY was measured on **K3**, which this account can no
-longer reach. Do not compare a change against those. Compare against the M2.5 baseline.
+- `MODAL_REASONING_EFFORT=off` means "send no reasoning field". Measured 2026-10-10: `low`
+  changed no verdict, cost slightly more, and doubled one task's rounds. Leave it.
 
 ## Current state
 
@@ -172,9 +191,10 @@ longer reach. Do not compare a change against those. Compare against the M2.5 ba
 7. **Node resolves a bare specifier relative to the IMPORTING FILE.** Sandbox-side scripts must
    live in `/home/user/.lampcode-tools`, and a scratch script outside the repo must import
    `undici` by absolute path.
-8. **`/health` returns 200 from the OLD container during a rolling deploy.** It is not a signal
-   that a change is live — poll Railway's deployment status to `SUCCESS` before verifying
-   anything or starting an eval.
+8. **`/health` can answer 200 from the OLD container during a deploy.** It is not a signal that
+   a change is live — wait for the host to report the deploy finished before verifying anything
+   or starting an eval. On Render the service also **spins down after 15 idle minutes**, so a
+   first slow request is a cold start, not a hang.
 9. **Importing `e2b-service.ts` outside the server process hangs** (it pulls config, Redis and
    the E2B SDK). `review-units.ts` copies its baked-file list instead, guarded by a case that
    reads the file as TEXT.

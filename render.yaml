@@ -1,0 +1,86 @@
+# Render Blueprint — one-click deploy for the Lampcode backend.
+#
+# Why Render and not Azure: the Azure subscription's compute quota is 0 for
+# both VM cores (standardBsv2Family) and App Service (B1 and F1), and Azure
+# rejects the quota-increase request itself with "not eligible for quota
+# adjustment" on free/trial offers. That leaves the $200 credit usable for
+# Azure AI Foundry (model inference, a separate quota) but not for hosting.
+# Render's free plan needs no card, so the whole credit goes to the model and
+# the evals instead of burning on a host.
+#
+# Free-plan limits that matter here:
+#   - 512 MB RAM, fractional CPU, one instance, no persistent disk, no shell.
+#   - Spins down after 15 minutes with no HTTP request or WebSocket message;
+#     the next request wakes it in roughly a minute.
+#   - 750 instance-hours per workspace per month — about one always-on service.
+# The agent loop is almost entirely waiting on the LLM API, so CPU is not the
+# constraint; sandboxes run in E2B and Postgres in Supabase, both off-box.
+
+services:
+  - type: web
+    name: lampcode-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.1
+      - key: NODE_ENV
+        value: production
+
+      # ── Model: Azure AI Foundry, OpenAI-compatible route ─────────────────
+      # LLM_ENDPOINT_URL ends at /openai with NO trailing slash: the gateway
+      # appends /v1/chat/completions itself, unconditionally
+      # (src/agents/modal-gateway.ts:365). A wrong path returns HTTP 200 with a
+      # body the SSE parser reads as an empty reply, and the logs blame the model.
+      #   https://<resource>.services.ai.azure.com/openai
+      # LLM_MODEL_NAME is the DEPLOYMENT name from Foundry, not the catalogue name.
+      - key: LLM_PROVIDER_MODE
+        value: openai
+      - key: LLM_ENDPOINT_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL_NAME
+        sync: false
+
+      # ── Carried over unchanged from the old host ─────────────────────────
+      # ENCRYPTION_KEY must be byte-identical to the previous value or every
+      # stored project_env_vars credential silently fails to decrypt.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: E2B_TEMPLATE_ID
+        sync: false
+      # Two different variables, both live: FRONTEND_ORIGIN is the CORS origin,
+      # FRONTEND_URL is what the integrations routes use for OAuth client_uri and
+      # the MCP callback. Both are added to the allowed-origins list
+      # (config.ts:295-296). Set both to the Vercel URL.
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+
+      # ── Optional; the app degrades cleanly when these are absent ─────────
+      # Without REDIS_URL the rate limiter fails open and E2B cold-starts.
+      - key: REDIS_URL
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false

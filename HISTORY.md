@@ -5587,3 +5587,95 @@ so a requirement can never go missing unannounced. One earlier case asserted exa
 which encoded the count-capped behaviour; it now asserts the ordering and the accounting,
 because how many rows fit depends on how long they are. `prompt-ceiling.test.ts` walks nine
 budgets down to 1 and asserts the returned prompt never exceeds any of them.
+
+---
+
+## The AWS suspension, and why Azure could not take the backend — 2026-11-27
+
+**What happened.** The AWS account was suspended for security reasons. That removed two things
+at once, not one: the backend's host **and** the Bedrock gateway. MiniMax M2.5 is no longer
+reachable, so the measured model comparison in this file is now a record of what was, not a
+menu. Railway was not a fallback — its credits were already spent.
+
+The owner had a **$200 Azure credit** and had already picked Kimi-K3.1-Pro in Azure AI Foundry.
+The plan was Azure for both. It took three days to find out that half of that plan is
+impossible.
+
+### Azure compute quota is 0, and the request to raise it is refused
+
+Measured in Cloud Shell, in this order:
+
+| attempt | result |
+|---|---|
+| `az vm create` `Standard_B1ms`, eastus | `SkuNotAvailable` — no capacity |
+| list available SKUs | all `*_v2` |
+| `az vm create` a v2 SKU | `QuotaExceeded` — `standardBsv2Family` **Current Limit: 0** |
+| `az vm list-usage` eastus2 / westus2 / centralindia | empty |
+| `az appservice plan create --sku B1` eastus | **Current Limit (B1 App Service instances): 0** |
+
+App Service was worth trying because its quota is separate from VM cores. It is also 0.
+
+The decisive evidence was not our own: an identical case was filed on Microsoft Q&A five days
+earlier (2026-11-22, question 6079260) — $200 credit, Owner role, **B1 and F1 both 0**, and the
+quota-increase request itself rejected with *"Azure subscription 1 is **not eligible** for quota
+adjustment. Consider upgrading your subscription."* The same restriction hit that reporter on
+Container Apps. Microsoft's answer confirms free, trial and restricted offers default to zero
+and may not support App Service increases at all, and that even after upgrading, requests "may
+be routed to Azure Support and are not automatically guaranteed".
+
+**So it is an offer-level restriction, not a region, SKU or capacity problem.** No further
+region sweep is worth running. Do not spend another day here. Container Apps and ACI are the
+same wall.
+
+### What was done instead
+
+Hosting moved to **Render's free plan** — no card, 512 MB, spins down after 15 idle minutes,
+750 instance-hours a month. `render.yaml` at the repo root is a Blueprint, so the service, build
+command, start command and health check are created from the repo and every secret is declared
+`sync: false` (prompted in the dashboard, never in git). Full guide: `deploy/RENDER.md`.
+
+This is a better split than the original plan, not a worse one. Azure AI Foundry runs on
+Cognitive Services quota, which is **separate from compute quota** and does work on this
+subscription. So the entire $200 goes to inference and evals — which is what the owner said it
+had to cover — instead of being burned by a box running 24/7.
+
+**Verified in a clean container before recommending any of it:**
+
+- `npm run build` → success in 164 ms, 1.39 MB bundle.
+- `node dist/index.js` with **no environment at all** → boots, logs the MISSING banner, and
+  `/health` answers **200**. `REQUIRED_VARS` only warns; it does not throw. So the first Render
+  deploy goes green before a single secret is filled in.
+- WebSocket server initialises; SIGTERM handling already exists, which is what a spin-down sends.
+- `npm run typecheck` → 0. `npm test` → 0, 2,409 assertions.
+
+The ephemeral disk needs no work: project files already sync to Supabase Storage.
+
+### Three documentation errors found while writing it down
+
+Worth recording because two of them were mine, written the same hour:
+
+1. **`LLM_ENDPOINT_URL` must end at `/openai`, not at `/v1/chat/completions`.** The first draft
+   of the CLAUDE.md rewrite said the gateway appends the suffix "when the configured URL does not
+   already end there". That conditional does not exist — `modal-gateway.ts:365` interpolates
+   `${endpointUrl}/v1/chat/completions` unconditionally, so the wrong value doubles the suffix.
+   And doubling it does not 404: it returns **200** with a body the SSE parser reads as empty,
+   which is the exact failure mode that cost days on Bedrock. Caught by reading the line instead
+   of trusting the sentence.
+2. **`FRONTEND_ORIGIN` and `FRONTEND_URL` are two different live variables.** `config.ts:295-296`
+   adds both to the allowed-origins list; `FRONTEND_ORIGIN` is the CORS origin and `FRONTEND_URL`
+   is what `integrations.ts` uses for OAuth `client_uri` and the MCP callback. `.env.example`
+   had the second commented out with nothing saying it is separately read, and `AZURE.md` listed
+   only the second. Both now say both are live and what each one does.
+3. Three runtime messages still told the operator to configure variables in "Railway →
+   Variables" — in `redis.ts` (printed on every boot) and twice in `db/client.ts`. Made
+   host-neutral. The Railway mentions in *comments* were left alone: they record why code is
+   shaped the way it is, and rewriting history is not cleanup.
+
+### Process note
+
+The earlier lesson about masked exit codes held. `npm test` was run as a plain command and its
+own `$?` read directly — not `npm test > log; echo $?`, which reports `echo`'s status and once
+produced a commit claiming green while three tests failed. A `grep -c fail` over the log is also
+not a failure count: it returned 133 here against a fully passing suite, because test names
+contain the word. The eight `Error:` lines in the log are expected fixtures inside passing tests,
+two of which assert the very message that changed.
