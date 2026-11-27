@@ -5679,3 +5679,63 @@ produced a commit claiming green while three tests failed. A `grep -c fail` over
 not a failure count: it returned 133 here against a fully passing suite, because test names
 contain the word. The eight `Error:` lines in the log are expected fixtures inside passing tests,
 two of which assert the very message that changed.
+
+
+---
+
+## Picking a host after Azure: what was checked and what survived — 2026-11-27
+
+The entry above settled that Azure cannot host this. Render was the first answer; the owner
+declined it and asked for alternatives. Seven were checked against the real requirement — run a
+long-lived Node process with WebSockets, started today, with no money.
+
+| host | verdict |
+|---|---|
+| **Northflank** Sandbox | **chosen.** 2 services + 2 jobs + 1 database, up to $20/mo of resources, *"always on, no sleeping"*. Card verified, not charged — their own FAQ says so. |
+| Render free | works, no card at all, but 512 MB and **sleeps after 15 idle minutes**. Kept as `render.yaml`, demoted to fallback. |
+| Zeabur | **shutting down 31 Dec 2026**, with services going offline from 1 Dec — four days out. Its pricing page carries the banner. Nearly recommended before reading it. |
+| Hugging Face Spaces | 2 vCPU / 16 GB free looked excellent, but Docker Spaces now **require a paid plan**; only static Spaces are free. |
+| Back4App Containers | no card, but 256 MB and since **15 Sep 2026 a free URL lives 60 minutes per deploy**. A demo host, not a host. |
+| Google Cloud | Always Free e2-micro still **requires a billing account** — Google's own docs. Same $30 wall. Also us-only regions, ~250 ms from Pakistan against Render Singapore's ~80 ms. |
+| Koyeb | free nano exists but **scales to zero**, and the card is needed anyway. |
+| Oracle | no ARM capacity, signup rejected. Already established. |
+
+The distinction that mattered and had been missed: **a verification hold is not a payment.** The
+owner's card had already processed Alibaba's $1, so "needs a card" and "needs $30" are different
+walls, and only the second one was real here. That reopened Northflank, which is strictly better
+than Render for this workload — double the RAM, never sleeps, and a free database addon that
+brings Redis back.
+
+### The Dockerfile is the actual deliverable
+
+Three hosts were lost in a week for three unrelated reasons. So rather than another
+host-specific config, the backend now has a plain two-stage `Dockerfile` at the repo root that
+runs on Northflank, Koyeb, Cloud Run, Fly or any VM. The next migration should be an afternoon.
+
+`.dockerignore` added alongside it. The runtime stage needs the production `node_modules`,
+**not** `dist/` alone: `tsup.config.ts` sets no `noExternal`, so `dist/index.js` imports bare
+specifiers (`hono`, `@hono/node-server`, …).
+
+**Verified by running the two stages by hand**, because this container has the Docker CLI but
+**no daemon**, so the image has never actually been built — the first `docker build` is still
+the first:
+
+- `npm ci --omit=dev` → 183 packages, 163 MB, exit 0.
+- `node dist/index.js` on those production-only deps, with **no environment at all** → boots,
+  `/health` **200**, and **no `MODULE_NOT_FOUND`**.
+
+### One regression found and fixed before it shipped
+
+`/health`'s `commit` field is how CLAUDE.md tells a live deploy from a stale container. It came
+from `execFileSync("git", ["rev-parse", "--short", "HEAD"])` — and a container image has no
+`.git`, so the first run in the simulated runtime printed `"commit":"unknown"`. Containerising
+the app would have silently removed a diagnostic that exists because an orphaned EC2 process on
+:3000 once served an old binary through green deploys.
+
+`src/server/index.ts` now reads `GIT_COMMIT` from the environment first, truncated to 7
+characters, and falls back to the git call for `npm run dev` and VM checkouts. The Dockerfile
+takes it as a build argument. Verified: `GIT_COMMIT=abc1234def5678` → `"commit":"abc1234"`.
+
+Worth noting as a pattern — the bug was not in anything that was being changed. It surfaced only
+because the runtime was simulated end to end instead of the Dockerfile being written and
+declared done.

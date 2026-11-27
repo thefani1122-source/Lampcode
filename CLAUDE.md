@@ -23,7 +23,7 @@ live preview. Competitors: Lovable, Bolt, Replit. This repo is the **backend**; 
 | Runtime | **Node ≥20.18.1** — NOT Bun |
 | Framework | Hono (`src/server/index.ts`) |
 | Build | tsup → `dist/` |
-| Deploy | **Render free plan** (`render.yaml` blueprint), see below |
+| Deploy | **Northflank free Sandbox**, from the root `Dockerfile`, see below |
 | LLM | OpenAI-compatible gateway → **Azure AI Foundry**, see below |
 | Sandbox | E2B v2 SDK, template `lampcode-vite` (`e2b-template/template.ts` + `build.ts`) |
 | Sandbox state | Redis, key `e2b:sandbox:{projectId}` |
@@ -81,26 +81,40 @@ upgrading your subscription"* — which Microsoft documents as expected on free/
 which it also applies to Container Apps. Do not spend another day on this; it is an offer-level
 restriction, not a region or SKU problem.
 
-**So: host on Render, spend the Azure credit on the model.** That split is better than it
+**So: host elsewhere, spend the Azure credit on the model.** That split is better than it
 sounds — the whole $200 goes to inference and evals instead of burning on a box.
 
-### Host — Render free plan
+### Host — Northflank free Sandbox
 
-`render.yaml` at the repo root is a Blueprint: connect the repo once and it creates the service
-with the right build, start and health-check commands, then asks for each secret
-(`sync: false` keeps every value out of git).
+Chosen 2026-11-27 after checking the alternatives. Free Sandbox gives **2 services, 2 jobs and
+1 database**, **up to $20/month of resources**, and — the part that decided it — **"always on,
+no sleeping"**. A card is entered once for **verification only**; Northflank's FAQ states it is
+not charged. The included database addon means **Redis can come back for free**.
 
-Limits that actually matter:
+Watch the **$20/month resource ceiling**: `nf-compute-50` (0.5 vCPU, 1 GB) is $12/mo and a small
+Redis addon another $3–6, so it fits with little room. Bring the API up first, add Redis after.
 
-- 512 MB RAM, fractional CPU, one instance, **no persistent disk, no shell**.
-- **Spins down after 15 idle minutes**; the next request wakes it in about a minute.
-- 750 instance-hours per workspace per month — roughly one always-on service.
+Deploys from the **root `Dockerfile`**, which is deliberately host-agnostic — the same image
+runs on Koyeb, Cloud Run, Fly or a VM. After losing AWS, Railway and Azure in one week, not
+being tied to one host's build system is worth more than the few megabytes. Full guide:
+`deploy/NORTHFLANK.md`.
 
-Verified 2026-11-27 in a clean container: `npm run build` succeeds in 164 ms (1.39 MB bundle),
-`node dist/index.js` boots with **no environment at all**, and `/health` answers 200. Missing
-required vars only warn (`REQUIRED_VARS` in `config.ts` does not throw), so the first deploy
-goes green before any secret is filled in. The disk being ephemeral is already handled — project
-files sync to Supabase Storage, which was built for exactly this.
+Rejected, with the reason, so nobody re-checks them: **Zeabur** shuts down 31 Dec 2026;
+**Hugging Face Spaces** now requires a paid plan for Docker Spaces; **Back4App** free URLs live
+60 minutes per deploy since 15 Sep 2026; **Google Cloud** Always Free still needs a billing
+account; **Koyeb** sleeps when idle. `render.yaml` is still in the repo as a fallback (no card,
+512 MB, sleeps after 15 idle minutes) but is not the chosen host.
+
+**Verified 2026-11-27 in a clean container:** `npm run build` succeeds (1.39 MB bundle, ~200 ms);
+`npm ci --omit=dev` installs 183 packages; `node dist/index.js` on **production dependencies
+only** and with **no environment at all** boots, answers `/health` **200**, and reports no
+missing module. `REQUIRED_VARS` only warns, so the first deploy goes green before any secret is
+filled in. The ephemeral disk needs no work — project files already sync to Supabase Storage.
+**The image itself has never been built**: this container has the Docker CLI but no daemon, so
+the two stages were run by hand.
+
+`/health`'s `commit` now reads `GIT_COMMIT` before falling back to `git rev-parse`, because an
+image has no `.git`. Pass it as a Docker build argument or that check reads `unknown`.
 
 ### Model — Azure AI Foundry, OpenAI-compatible route
 
@@ -169,9 +183,10 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
 
 ## Things that will bite you
 
-1. **Two orphan Dockerfiles.** `/e2b.Dockerfile` and `/e2b-template/e2b.Dockerfile` are legacy.
-   The live template is built from `e2b-template/template.ts` via `Template.build()`. Editing a
-   Dockerfile has no effect.
+1. **Three Dockerfiles, and only one of them is live for its job.** The root `/Dockerfile`
+   builds the BACKEND image for the container host — that one is real. `/e2b.Dockerfile` and
+   `/e2b-template/e2b.Dockerfile` are legacy and read by nothing: the sandbox template is built
+   from `e2b-template/template.ts` via `Template.build()`, so editing either has no effect.
 2. **Never generate `src/styles.css`, `vite.config.ts`, `tsconfig.json`, `index.html`,
    `package.json`, `vitest.config.ts`, `vitest.setup.ts`** — the template owns them
    (`BAKED_FILES`). A `dependencies` object in a generated `package.json` IS read and installed;
@@ -193,8 +208,8 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
    `undici` by absolute path.
 8. **`/health` can answer 200 from the OLD container during a deploy.** It is not a signal that
    a change is live — wait for the host to report the deploy finished before verifying anything
-   or starting an eval. On Render the service also **spins down after 15 idle minutes**, so a
-   first slow request is a cold start, not a hang.
+   or starting an eval. Its `commit` field is the real check, and in a container that field is
+   only populated if `GIT_COMMIT` was passed as a build argument.
 9. **Importing `e2b-service.ts` outside the server process hangs** (it pulls config, Redis and
    the E2B SDK). `review-units.ts` copies its baked-file list instead, guarded by a case that
    reads the file as TEXT.

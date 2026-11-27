@@ -1,4 +1,9 @@
-# Render Blueprint — one-click deploy for the Lampcode backend.
+# Render Blueprint — a FALLBACK, not the chosen host.
+#
+# The backend runs on Northflank's free Sandbox (deploy/NORTHFLANK.md), from the
+# root Dockerfile, because Northflank's free tier is always on while Render's
+# free plan sleeps after 15 idle minutes. This file is kept so a second host is
+# one connect away if Northflank ever goes the way of AWS, Railway and Azure.
 #
 # Why Render and not Azure: the Azure subscription's compute quota is 0 for
 # both VM cores (standardBsv2Family) and App Service (B1 and F1), and Azure

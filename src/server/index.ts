@@ -37,11 +37,19 @@ import { execFileSync } from "node:child_process";
 // /health reports the commit this running process was started from. EC2 deploys
 // kept succeeding while an orphaned process on :3000 kept serving an old binary,
 // so "did the fix reach production?" was unanswerable without guessing. Reading
-// the commit at startup (PM2's cwd is the repo) turns that into a one-line
-// check: `curl -s localhost:3000/health` must show the same short SHA as
+// the commit at startup turns that into a one-line check:
+// `curl -s localhost:3000/health` must show the same short SHA as
 // `git rev-parse --short HEAD`.
+//
+// Two ways to learn it, in order. GIT_COMMIT comes first because a container
+// image has no .git directory — the Dockerfile takes it as a build argument,
+// and several hosts expose their own commit variable that can be mapped onto
+// it. The git call is the fallback for running straight from a checkout
+// (`npm run dev`, or a VM where the process cwd IS the repo).
 const STARTED_AT = Date.now();
 const GIT_COMMIT = (() => {
+  const fromEnv = process.env["GIT_COMMIT"]?.trim();
+  if (fromEnv) return fromEnv.slice(0, 7);
   try {
     return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
       cwd: process.cwd(),
