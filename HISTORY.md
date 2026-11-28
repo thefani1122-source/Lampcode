@@ -5739,3 +5739,87 @@ takes it as a build argument. Verified: `GIT_COMMIT=abc1234def5678` → `"commit
 Worth noting as a pattern — the bug was not in anything that was being changed. It surfaced only
 because the runtime was simulated end to end instead of the Dockerfile being written and
 declared done.
+
+
+---
+
+## The Railway healthcheck failure was a Node patch version — 2026-11-28
+
+The owner opened a second Railway account ($5 credit, which he measures as lasting him over a
+month), connected the repo, and the first deploy failed. Railway's own summary:
+
+```
+Initialization  OK (00:03)
+Build           OK (00:16)
+Deploy          OK (00:03)
+Network > Healthcheck   FAILED (01:36)   "Healthcheck failure"
+```
+
+A healthcheck failure after a green build and deploy reads like a port, bind-address or
+healthcheck-path problem. It was none of those. The deploy logs show the process dying and being
+restarted five times in ninety seconds:
+
+```
+/app/node_modules/e2b/dist/index.js:41
+let chalk = require("chalk");
+Error [ERR_REQUIRE_ESM]: require() of ES Module /app/node_modules/chalk/source/index.js
+from /app/node_modules/e2b/dist/index.js not supported.
+Node.js v20.18.1
+```
+
+`e2b@2.55.0` is CommonJS and calls `require("chalk")`. `chalk@5.6.2` declares
+`"type": "module"`. `require()` of ESM was unflagged only in Node **20.19.0** and **22.12.0**.
+Railway was running **20.18.1** — one patch below the line.
+
+The same logs also print the MISSING REQUIRED ENVIRONMENT VARIABLES banner for six variables,
+which is a louder and more plausible-looking red herring. It is not the cause: `REQUIRED_VARS`
+warns and does not throw, exactly as designed, and the crash happens afterwards regardless.
+
+### Why this was not caught earlier, including here
+
+The container used to verify the Render and Northflank work runs **Node 22.23.5**, where
+`require(esm)` works. `node dist/index.js` booted and `/health` answered 200, so the runtime was
+reported as verified — and it was, on that Node. The grep used to check that log looked for
+`cannot find|MODULE_NOT_FOUND|ERR_MODULE`, and **`ERR_REQUIRE_ESM` matches none of those**. The
+check would not have caught it even if the crash had happened.
+
+Worse, the `Dockerfile` written the day before pinned `node:20.18.1-slim`, matching the
+`engines` floor. **It would have failed in exactly the same way on any host.** The bug was
+shipped and the host found it first.
+
+`npm test` cannot catch it either: no test loads e2b's CommonJS entry, so the suite is green on a
+Node that cannot boot the server. CI pinned 20.18.1 in `ci.yml` (twice) and `mcp-ci.yml`, so
+every green CI run was on the broken version.
+
+### Measured, not assumed
+
+Node 20.18.1 and 20.19.0 were both downloaded and run against the real `dist/` and the real
+`node_modules`:
+
+| Node | result |
+|---|---|
+| 20.18.1 | `ERR_REQUIRE_ESM`, **exit 1** |
+| 20.19.0 | `/health` **200**, zero occurrences |
+| 22.23.5 | `/health` **200**, zero occurrences |
+
+So 20.19.0 is the exact floor, and the documented release note holds for this dependency tree.
+
+### Fix
+
+The floor was declared in four places and all four were wrong or about to be:
+
+- `package.json` engines `>=20.18.1` → `>=20.19.0`
+- `Dockerfile` `node:20.18.1-slim` → `node:22-slim` (both stages)
+- `render.yaml` `NODE_VERSION: 20.18.1` → `22`
+- `.github/workflows/ci.yml` (×2) and `mcp-ci.yml` → `20.19.0`, so CI tests the declared floor
+  instead of a version below it
+
+and `NODE_VERSION=22` set on the Railway service.
+
+### The lesson worth keeping
+
+"It boots here" is not "it boots". The container's Node was two minor versions ahead of the
+target's, and that gap was invisible because nothing in the verification compared them. When a
+runtime is being verified for a host, **pin the check to the version that host will run**, and
+when grepping a log for failure, grep for the absence of success rather than for a list of
+remembered error codes.

@@ -20,10 +20,10 @@ live preview. Competitors: Lovable, Bolt, Replit. This repo is the **backend**; 
 
 | Layer | Reality |
 |---|---|
-| Runtime | **Node ≥20.18.1** — NOT Bun |
+| Runtime | **Node ≥20.19.0** — NOT Bun. The floor is a hard one, see bite #13 |
 | Framework | Hono (`src/server/index.ts`) |
 | Build | tsup → `dist/` |
-| Deploy | **Northflank free Sandbox**, from the root `Dockerfile`, see below |
+| Deploy | **Railway** again (new account, $5 credit), Railpack from `main`; `Dockerfile` and `render.yaml` are portable fallbacks |
 | LLM | OpenAI-compatible gateway → **Azure AI Foundry**, see below |
 | Sandbox | E2B v2 SDK, template `lampcode-vite` (`e2b-template/template.ts` + `build.ts`) |
 | Sandbox state | Redis, key `e2b:sandbox:{projectId}` |
@@ -84,37 +84,40 @@ restriction, not a region or SKU problem.
 **So: host elsewhere, spend the Azure credit on the model.** That split is better than it
 sounds — the whole $200 goes to inference and evals instead of burning on a box.
 
-### Host — Northflank free Sandbox
+### Host — Railway (again), on a new account
 
-Chosen 2026-11-27 after checking the alternatives. Free Sandbox gives **2 services, 2 jobs and
-1 database**, **up to $20/month of resources**, and — the part that decided it — **"always on,
-no sleeping"**. A card is entered once for **verification only**; Northflank's FAQ states it is
-not charged. The included database addon means **Redis can come back for free**.
+The owner opened a second Railway account with $5 of credit, which by his own measurement lasts
+him more than a month, and connected `thefani1122-source/Lampcode` to a service named
+`lampcode-api` in project `radiant-benevolence`. Builder is **Railpack**, not the Dockerfile:
+build `npm ci && npm run build`, start `npm start`, healthcheck `/health`.
 
-Watch the **$20/month resource ceiling**: `nf-compute-50` (0.5 vCPU, 1 GB) is $12/mo and a small
-Redis addon another $3–6, so it fits with little room. Bring the API up first, add Redis after.
+First deploy failed — see bite #13. Build and deploy both went green and the **healthcheck**
+failed, which looks like networking and was not: the process was dying at boot on Node 20.18.1.
 
-Deploys from the **root `Dockerfile`**, which is deliberately host-agnostic — the same image
-runs on Koyeb, Cloud Run, Fly or a VM. After losing AWS, Railway and Azure in one week, not
-being tied to one host's build system is worth more than the few megabytes. Full guide:
-`deploy/NORTHFLANK.md`.
+The other hosts were researched and the work is kept, because this is the fourth host in a week:
 
-Rejected, with the reason, so nobody re-checks them: **Zeabur** shuts down 31 Dec 2026;
-**Hugging Face Spaces** now requires a paid plan for Docker Spaces; **Back4App** free URLs live
-60 minutes per deploy since 15 Sep 2026; **Google Cloud** Always Free still needs a billing
-account; **Koyeb** sleeps when idle. `render.yaml` is still in the repo as a fallback (no card,
-512 MB, sleeps after 15 idle minutes) but is not the chosen host.
+- **`Dockerfile`** at the repo root — runs on Northflank, Koyeb, Cloud Run, Fly or any VM. This
+  is the real insurance; the next migration should be an afternoon.
+- **`deploy/NORTHFLANK.md`** — free Sandbox, 2 services + 1 database, $20/mo of resources,
+  always on, card verified not charged. The best free option if Railway's credit runs out.
+- **`render.yaml`** — no card at all, 512 MB, sleeps after 15 idle minutes.
+- `deploy/vm/` — the VM kit, provider-neutral.
 
-**Verified 2026-11-27 in a clean container:** `npm run build` succeeds (1.39 MB bundle, ~200 ms);
-`npm ci --omit=dev` installs 183 packages; `node dist/index.js` on **production dependencies
-only** and with **no environment at all** boots, answers `/health` **200**, and reports no
-missing module. `REQUIRED_VARS` only warns, so the first deploy goes green before any secret is
-filled in. The ephemeral disk needs no work — project files already sync to Supabase Storage.
-**The image itself has never been built**: this container has the Docker CLI but no daemon, so
-the two stages were run by hand.
+Rejected, with the reason, so nobody re-checks them: **Azure** compute quota 0 and unraisable;
+**Zeabur** shuts down 31 Dec 2026; **Hugging Face Spaces** now charges for Docker Spaces;
+**Back4App** free URLs live 60 minutes per deploy; **Google Cloud** Always Free still needs a
+billing account; **Koyeb** scales to zero; **Oracle** no capacity.
 
-`/health`'s `commit` now reads `GIT_COMMIT` before falling back to `git rev-parse`, because an
-image has no `.git`. Pass it as a Docker build argument or that check reads `unknown`.
+**Verified 2026-11-27/28 in a clean container:** `npm run build` succeeds (1.39 MB bundle,
+~200 ms); `npm ci --omit=dev` installs 183 packages; on production dependencies only and with
+**no environment at all**, the server boots and answers `/health` **200** under Node 20.19.0 and
+22. `REQUIRED_VARS` only warns, so a deploy goes green before any secret is filled in — which
+also means **a green deploy is not evidence the app is configured**. The ephemeral disk needs no
+work: project files already sync to Supabase Storage. **The Docker image has never been built** —
+this container has the Docker CLI but no daemon, so the two stages were run by hand.
+
+`/health`'s `commit` reads `GIT_COMMIT` before falling back to `git rev-parse`, because an image
+has no `.git`. On Railpack the git fallback works; in a container, pass the build argument.
 
 ### Model — Azure AI Foundry, OpenAI-compatible route
 
@@ -240,6 +243,17 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
     are generated here, grow with the project, and are recoverable — unlike the contract.
     If you add prompt text, run `npm test`: `scripts/prompt-ceiling.test.ts` fails when the
     contract is cut OR when an ordinary build starts shedding its reference section.
+
+13. **Node must be ≥20.19.0, and 20.18.1 specifically is fatal.** `e2b@2.55.0` is CommonJS and
+    does `require("chalk")`; `chalk@5.6.2` is ESM-only (`"type": "module"`). `require()` of ESM
+    was only unflagged in **20.19.0** and **22.12.0**, so on anything older the process dies at
+    boot with `ERR_REQUIRE_ESM` before it can listen, and the host reports a *healthcheck*
+    failure — which reads like a network problem and is not one. Measured 2026-11-28 against the
+    real `dist/` and `node_modules`: 20.18.1 exits 1; 20.19.0 and 22.23.5 both answer `/health`
+    200. This cost a Railway deploy. **CI cannot catch it** — `npm test` never loads e2b's CJS
+    entry, so the suite is green on a Node that cannot boot the server. The floor is now declared
+    in `package.json` engines, the `Dockerfile`, `render.yaml` and both CI workflows; keep them
+    in step.
 
 ## What makes this product different — and why it is currently invisible
 

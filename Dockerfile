@@ -9,8 +9,15 @@
 # for a different reason, not being tied to one host's build system is worth
 # more than a few megabytes.
 
+# Node 22, not 20.18.1. e2b@2.55.0 is CommonJS and does `require("chalk")`,
+# while chalk@5 is ESM-only, so the process dies at boot with ERR_REQUIRE_ESM on
+# any Node below 20.19.0 / 22.12.0 — the releases where require(esm) was
+# unflagged. Measured 2026-11-28: 20.18.1 exits 1, 20.19.0 and 22 answer
+# /health 200. An earlier version of this file pinned 20.18.1 and would have
+# failed exactly the way Railway did.
+
 # ── build ────────────────────────────────────────────────────────────────────
-FROM node:20.18.1-slim AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 # Install with the lockfile first so this layer is cached until deps change.
@@ -21,7 +28,7 @@ COPY . .
 RUN npm run build
 
 # ── runtime ──────────────────────────────────────────────────────────────────
-FROM node:20.18.1-slim AS runtime
+FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
