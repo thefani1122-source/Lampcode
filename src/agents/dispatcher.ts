@@ -44,7 +44,7 @@ import { getWebSocketServer } from "../websocket/server.js";
 import { logger } from "../server/logger.js";
 import { config } from "../server/config.js";
 import { deductUsage } from "../build/credits.js";
-import { isFallbackCode, fallbackDelayMs } from "./retry-policy.js";
+import { isFallbackCode, fallbackDelayMs, RATE_LIMIT_MAX_ATTEMPTS } from "./retry-policy.js";
 import type { UsageCategory } from "../db/schema.js";
 import type { ActiveMcpServer } from "../server/routes/integrations.js";
 import type { ConnectedServiceSummary } from "../server/routes/integrations.js";
@@ -279,7 +279,16 @@ export class AgentDispatcher {
 
     let lastError: Error | null = null;
 
-    for (let tier = 1; tier <= tiers.length; tier++) {
+    // A token-rate limit is not a reason to move tier: on the
+    // OpenAI-compatible path both tiers are the SAME deployment, so "falling
+    // back" just spends the one spare attempt on the endpoint that is already
+    // throttled. Budgeted separately, and shared across tiers so a throttled
+    // provider cannot be retried indefinitely.
+    let rateLimitAttemptsLeft = RATE_LIMIT_MAX_ATTEMPTS - 1;
+
+    // `tier` deliberately has no increment clause: it advances only where the
+    // catch below says so, so a rate-limit retry can re-enter the SAME tier.
+    for (let tier = 1; tier <= tiers.length; ) {
       const model = tierModel(parsed.agentType, tier as 1 | 2);
 
       try {
@@ -301,6 +310,28 @@ export class AgentDispatcher {
           task, model, tier as 1 | 2,
         );
       } catch (err) {
+        // Throttled: wait out the window and try the SAME endpoint again.
+        // Measured 2026-11-28 — the live logs showed `delay: 3000` then
+        // `build_failed` seven seconds later, because the tier loop gave this
+        // exactly one retry and took the provider's 3 s hint at face value.
+        if (
+          err instanceof GatewayError &&
+          err.code === "RATE_LIMIT" &&
+          rateLimitAttemptsLeft > 0
+        ) {
+          rateLimitAttemptsLeft--;
+          const delay = fallbackDelayMs(err.code, err.retryAfterMs);
+          logger.warn(
+            {
+              agentType: parsed.agentType, model, tier, delay,
+              attemptsLeft: rateLimitAttemptsLeft, code: err.code,
+            },
+            "Rate limited — waiting out the token window and retrying the same endpoint",
+          );
+          await sleep(delay);
+          lastError = err;
+          continue;
+        }
         if (
           err instanceof GatewayError &&
           isFallbackCode(err.code) &&
@@ -313,6 +344,7 @@ export class AgentDispatcher {
           );
           await sleep(delay);
           lastError = err;
+          tier++;
           continue;
         }
         throw err;

@@ -10,7 +10,11 @@
  * with build_outcome null, because the first dispatch never returned.
  */
 
-import { fallbackDelayMs } from "../src/agents/retry-policy.js";
+import {
+  fallbackDelayMs,
+  RATE_LIMIT_MAX_ATTEMPTS,
+  RATE_LIMIT_MIN_DELAY_MS,
+} from "../src/agents/retry-policy.js";
 import { parseRetryAfter, mapModalError } from "../src/agents/modal-gateway.js";
 
 let failures = 0;
@@ -27,13 +31,40 @@ function check(name: string, got: unknown, want: unknown): void {
 // The regression: a 429 asking for 60 s must get 60 s, not 10.
 check("a rate limit waits as long as the provider asked", fallbackDelayMs("RATE_LIMIT", 60_000), 60_000);
 check("a rate limit is still bounded", fallbackDelayMs("RATE_LIMIT", 10 * 60_000), 65_000);
-check("a rate limit with no hint falls back to the default", fallbackDelayMs("RATE_LIMIT", undefined), 2_000);
+
+// ── the provider's hint is a floor to raise, not a ceiling to trust ─────────
+// Measured 2026-11-28 on Azure AI Foundry. A TOKENS-per-minute budget refills
+// over a minute, but Azure answers a 429 with `Retry-After: 3`, which is
+// honest about a REQUEST-rate window and useless for a token one. The live
+// logs show `delay: 3000`, then the same 429, then `build_failed` — the whole
+// build dead seven seconds after the first throttle. A wait shorter than the
+// window cannot succeed, so short hints are raised rather than obeyed.
+check("a 3 s hint is raised to the token window", fallbackDelayMs("RATE_LIMIT", 3_000), RATE_LIMIT_MIN_DELAY_MS);
+check("a 16 s hint is raised too", fallbackDelayMs("RATE_LIMIT", 16_000), RATE_LIMIT_MIN_DELAY_MS);
+check("a hint longer than the floor is still honoured", fallbackDelayMs("RATE_LIMIT", 45_000), 45_000);
+check("no hint means the floor, not the old 2 s", fallbackDelayMs("RATE_LIMIT", undefined), RATE_LIMIT_MIN_DELAY_MS);
+ok("the floor is long enough to outlast a per-minute bucket", RATE_LIMIT_MIN_DELAY_MS >= 20_000);
+ok("but never longer than the upper bound", RATE_LIMIT_MIN_DELAY_MS <= 65_000);
+
+// The attempt budget exists because MODEL_TIERS has two entries and, on the
+// OpenAI-compatible path, both resolve to the SAME deployment — so the tier
+// loop alone offers exactly one retry against an endpoint that is already
+// throttled. More than one attempt, and enough of them to span a window.
+ok("a throttle gets more than the single retry the tier loop gave", RATE_LIMIT_MAX_ATTEMPTS > 2);
+ok(
+  "and the budget spans a token window at the floor delay",
+  (RATE_LIMIT_MAX_ATTEMPTS - 1) * RATE_LIMIT_MIN_DELAY_MS >= 60_000,
+);
 
 // The short cap is right for these: the next tier is a DIFFERENT model, so
 // trying it at once is the point and a long stall buys nothing.
 check("a down model keeps the short cap", fallbackDelayMs("MODEL_DOWN", 60_000), 10_000);
 check("an unknown error keeps the short cap", fallbackDelayMs("UNKNOWN", 60_000), 10_000);
 check("a short hint is honoured as given", fallbackDelayMs("MODEL_DOWN", 1_500), 1_500);
+// The floor is RATE_LIMIT-only: for these the next tier is a DIFFERENT model,
+// so stalling 20 s before trying it would be pure delay.
+check("the rate-limit floor does not leak into MODEL_DOWN", fallbackDelayMs("MODEL_DOWN", 3_000), 3_000);
+check("nor into UNKNOWN", fallbackDelayMs("UNKNOWN", 3_000), 3_000);
 
 // ── Retry-After ─────────────────────────────────────────────────────────────
 // The hardcoded 60 s guess is wrong in both directions: a per-second throttle

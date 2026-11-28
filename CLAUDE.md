@@ -216,9 +216,13 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
 9. **Importing `e2b-service.ts` outside the server process hangs** (it pulls config, Redis and
    the E2B SDK). `review-units.ts` copies its baked-file list instead, guarded by a case that
    reads the file as TEXT.
-10. **`selectTemplate` deliberately ignores `NEXTJS_TEMPLATE_ID` / `TANSTACK_TEMPLATE_ID`.**
-    Those templates exist and BOOT, but predate every October fix and carry no `check_page`,
-    `check_types` or `run_tests`. Re-enabling needs a rebuilt, verified image first.
+10. **`selectTemplate` is FAIL-CLOSED, and Next.js is the default build.**
+    `DEFAULT_BUILD_FRAMEWORK` is `nextjs`, so most builds ask for the Next.js template — and
+    `selectTemplate("nextjs")` **throws** unless `NEXTJS_TEMPLATE_ID` matches
+    `^lampcode-nextjs-ubuntu24(-…)?$`. A wrong or empty value fails every default build before a
+    sandbox is even created. `selectTemplate("tanstack")` throws unconditionally, so
+    `TANSTACK_TEMPLATE_ID` is dead weight wherever it is set. (This supersedes the old note that
+    both IDs were ignored.)
 11. **The `/api` proxy is a DEV-SERVER feature.** `template.ts` bakes
     `server.proxy['/api'] → localhost:3001` into `vite.config.ts`, so a generated app's
     relative `/api/...` calls work in the preview and **only** there — a production build has no
@@ -233,8 +237,16 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
     per shape which side of that line it is on.
 
 12. **The system prompt has a hard ceiling and the biggest build shape sits near it.**
-    `MAX_SYSTEM_PROMPT_TOKENS` is 30,000 (93,000 chars); the largest measured shape
-    (React/Vite fullstack + auth) is 88,424. Nothing is shed or cut on a normal build, and
+    `MAX_SYSTEM_PROMPT_TOKENS` is 30,000 (93,000 chars) — a CEILING, not the size. Measured
+    2026-11-28: Next.js fullstack + auth (the default) is **51,953 chars / ~16,800 tokens**;
+    React/Vite + Hono + Supabase + auth is **88,685 / ~28,600**; frontend-only is **53,078 /
+    ~17,100**. In every shape the two largest blocks are `REFERENCE MATERIAL — GUIDANCE ONLY`
+    (26–39%) and `HOW TO BUILD` (13,781 chars, identical across shapes). Frontend-only costs
+    almost as much as a fullstack Next.js build because it still carries the database, RLS and
+    tenant-isolation blocks it cannot use — unbilled waste, and the first place to look if
+    tokens per request need to come down.
+
+    Nothing is shed or cut on a normal build, and
     it must stay that way: the reference section carries the `database-rls` and
     `supabase-rls` skill bodies, so shedding it routinely costs RLS guidance. Over the
     ceiling, `assembleSystemPrompt` drops the reference section WHOLE and keeps the
@@ -254,6 +266,26 @@ number**. Add the row before any eval whose cost figures are meant to mean somet
     entry, so the suite is green on a Node that cannot boot the server. The floor is now declared
     in `package.json` engines, the `Dockerfile`, `render.yaml` and both CI workflows; keep them
     in step.
+
+14. **A throttled provider must be waited out, not failed over to.** `MODEL_TIERS` has two
+    entries per agent, but on the OpenAI-compatible path both resolve to the SAME deployment
+    (the model comes from `LLM_MODEL_NAME`), so the tier loop alone gives a 429 exactly one
+    retry. Worse, Azure answers a token-rate 429 with `Retry-After: 3` — honest for a
+    REQUEST-rate window, useless for a per-minute TOKEN budget. Measured 2026-11-28 from live
+    logs: `delay: 3000` → `build_failed` 7 s later, and `delay: 16000` → `build_failed` 21 s
+    later. `RATE_LIMIT` now retries the same endpoint up to `RATE_LIMIT_MAX_ATTEMPTS` times and
+    treats the provider's hint as a floor to raise (`RATE_LIMIT_MIN_DELAY_MS`), never a ceiling
+    to trust. **A 429 is a wait, not a failure** — if a build dies on one again, check those two
+    constants before blaming quota.
+
+15. **On a follow-up edit the framework comes from the FILES, not the classifier.**
+    `detectFrameworkFromFiles` (in `framework-selection.ts`, kept out of the build route so its
+    cases run without the server graph) decides which contract the next prompt carries: React/
+    Vite gets the `API_BASE` rule because its backend is a second origin, Next.js deliberately
+    does not. It used to test `app/layout.tsx || next.config.js`, and **the second half was
+    dead** — the Ubuntu template writes `next.config.ts`. One missing `app/layout.tsx` and a
+    Next.js project silently became "react" on its next edit. It now reads the config file in
+    any extension, route-group layouts and pages, a Route Handler, and the `next` dependency.
 
 ## What makes this product different — and why it is currently invisible
 

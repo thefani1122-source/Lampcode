@@ -25,6 +25,7 @@ import { ProjectIndex } from "../../context/project-index.js";
 import { currentProjectFiles } from "../../agents/file-deletion.js";
 import { tierModel } from "../../agents/model-gateway.js";
 import { expandUserPrompt, type FullstackFramework } from "../../agents/prompt-builder.js";
+import { detectFrameworkFromFiles } from "../../agents/framework-selection.js";
 import { validateSyntax } from "../../agents/syntax-check.js";
 import {
   parseFilesFromContent,
@@ -826,11 +827,6 @@ function buildEditPrompt(files: Record<string, string>, userRequest: string): st
 }
 
 /** Detect framework from files already on disk (edit path only). */
-function detectFrameworkFromFiles(files: Record<string, string>): FullstackFramework {
-  if ("app/routes/__root.tsx" in files) return "tanstack";
-  if ("app/layout.tsx" in files || "next.config.js" in files) return "nextjs";
-  return "react";
-}
 
 /**
  * Existing backend edit variant of buildEditPrompt. Its dedicated prefix tells

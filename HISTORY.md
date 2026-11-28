@@ -5823,3 +5823,104 @@ target's, and that gap was invisible because nothing in the verification compare
 runtime is being verified for a host, **pin the check to the version that host will run**, and
 when grepping a log for failure, grep for the absence of success rather than for a list of
 remembered error codes.
+
+
+---
+
+## The 429 that killed builds in seven seconds — 2026-11-28
+
+Azure AI Foundry was wired up and **worked**: the model answered, tool calls ran, files were
+edited. Then every build died with `RateLimitReached`, including a plain follow-up prompt. The
+first guess — "the TPM quota is too small" — was wrong, or at least not the cause.
+
+The live Railway logs settle it:
+
+```
+Model fallback triggered   delay: 3000    code: RATE_LIMIT   tier 1 → 2
+   7 s later → build_failed  RateLimitReached
+Model fallback triggered   delay: 16000   code: RATE_LIMIT   tier 1 → 2
+   21 s later → build_failed
+```
+
+`delay: 3000`, not 60,000. Two things compounded:
+
+1. **`Retry-After` was taken at face value.** Azure answered the 429 with 3 s, then 16 s.
+   `Retry-After` is designed for a REQUEST-rate window, where seconds really do clear it. This
+   is a TOKENS-per-minute budget, which refills over a minute — so a 3 s retry cannot succeed,
+   and burns the only attempt there was.
+2. **There was only one attempt.** Retrying was tied to moving tier, and `MODEL_TIERS` has two
+   entries — but on the OpenAI-compatible path both resolve to the SAME deployment, because the
+   model name comes from `LLM_MODEL_NAME`. So the "fallback" was a retry against the endpoint
+   that was already throttled, and when it failed there was no tier 3 and the dispatch threw.
+
+Net effect: a build died **7–21 seconds** after the first throttle, with quota left on the
+clock. This is the same shape as the 2026-10-07 entry (builds dying at 25 s and 27 s against a
+10 s cap) — the cap was fixed then, and the provider's own too-short hint reintroduced it.
+
+### Fix
+
+`RATE_LIMIT` is now budgeted separately from tier fallback:
+
+- `RATE_LIMIT_MAX_ATTEMPTS = 4` — retries the SAME endpoint, shared across tiers so a throttled
+  provider still cannot be retried forever.
+- `RATE_LIMIT_MIN_DELAY_MS = 20_000` — the provider's hint is a floor to raise, never a ceiling
+  to trust. `(4-1) × 20 s ≥ 60 s`, so the budget spans a per-minute window; the 65 s upper bound
+  is unchanged.
+- The tier loop lost its increment clause: `tier` advances only on a true tier fallback, so a
+  rate-limit retry re-enters the same tier instead of spending one.
+
+`scripts/dispatch-retry.test.ts` gained cases for the floor, for the hint being honoured when it
+is already long enough, and for the floor NOT leaking into `MODEL_DOWN`/`UNKNOWN`, where the next
+tier is a genuinely different model and stalling buys nothing.
+
+### What was actually measured about the prompt
+
+The "our system prompt is 30k tokens" worry was half right. 30,000 is the CEILING
+(`MAX_SYSTEM_PROMPT_TOKENS`), not the size. Built with the real `PromptBuilder`:
+
+| shape | chars | ~tokens |
+|---|---|---|
+| Next.js fullstack + auth (**the default**) | 51,953 | 16,759 |
+| React/Vite + Hono + Supabase + auth | 88,685 | 28,608 |
+| frontend only | 53,078 | 17,122 |
+
+Where it goes, every shape: `REFERENCE MATERIAL — GUIDANCE ONLY` is 26–39% (20,102 chars on the
+default path) and `HOW TO BUILD` is 13,781 chars, identical in all three. The Vite path adds
+`SECURITY DEFINER TRIGGER FUNCTIONS` (9,916), `BACKEND FILES MUST BE FULLY GENERATED` (9,383),
+`PRODUCTION CODE STANDARDS` (7,518) and `VISUAL SELF-REVIEW` (6,424).
+
+**The finding worth acting on:** a frontend-only build costs 53,078 chars — within a rounding
+error of a fullstack Next.js build — because it still carries `POLICY ROLES AND INTERNAL
+DATABASE FUNCTIONS`, `IDENTITY, AUTHORIZATION AND TENANT ISOLATION` and `SECURITY TESTING` for a
+project with no database and no server. That is the cheapest tokens-per-request win available,
+and it is not yet done.
+
+### A dead branch found while reviewing the framework path
+
+Reviewing how an existing project keeps its framework on a follow-up edit, which is sound —
+`detectFrameworkFromFiles` reads the files rather than re-running the classifier, so an edit
+cannot flip react↔nextjs — the detector itself turned out to be half dead:
+
+```ts
+if ("app/layout.tsx" in files || "next.config.js" in files) return "nextjs";
+```
+
+`e2b-template/template-nextjs-ubuntu.ts` writes **`next.config.ts`**. So the second test never
+matched, and `app/layout.tsx` was the only thing standing between a Next.js project and being
+relabelled "react" on its next edit — which would hand it the `API_BASE` contract for a second
+origin it does not have, the exact bug `wiring.ts` carries a `hardcoded-dev-host` rule for.
+
+Now reads the config file in any extension, route-group layouts and pages
+(`app/(group)/layout.tsx`), a Route Handler, and the `next` dependency in package.json. Moved
+out of `build.ts` into `framework-selection.ts` so its 15 cases run without loading the server's
+graph — the same reason `retry-policy.ts` is its own file, and the first version of the test did
+pull config and Redis in before it was moved.
+
+### Also corrected
+
+CLAUDE.md said `selectTemplate` "deliberately ignores `NEXTJS_TEMPLATE_ID` / `TANSTACK_TEMPLATE_ID`".
+That is no longer true and the truth matters more: `DEFAULT_BUILD_FRAMEWORK` is `nextjs`, and
+`selectTemplate("nextjs")` **throws** unless `NEXTJS_TEMPLATE_ID` matches
+`^lampcode-nextjs-ubuntu24(-…)?$`. A wrong value fails every default build before a sandbox
+exists. `selectTemplate("tanstack")` still throws unconditionally, so `TANSTACK_TEMPLATE_ID` is
+dead weight wherever it is set.

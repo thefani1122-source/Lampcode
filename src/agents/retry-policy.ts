@@ -34,7 +34,32 @@ export function isFallbackCode(code: string): code is FallbackCode {
  * MODEL_DOWN and UNKNOWN keep the short cap: there the next tier is a different
  * model, so trying it at once is the point and a long stall buys nothing.
  */
+/**
+ * How many times a RATE_LIMIT may be retried against the SAME tier.
+ *
+ * Measured 2026-11-28 against Azure AI Foundry. The tier loop alone gives one
+ * retry, because `MODEL_TIERS` has two entries and on the OpenAI-compatible
+ * path both resolve to the same deployment. That was enough to kill a build in
+ * seconds: the live logs show `delay: 3000` then `delay: 16000`, each followed
+ * by `build_failed` 7 s and 21 s later. Four attempts spans a token window even
+ * when the provider keeps asking for a short wait.
+ */
+export const RATE_LIMIT_MAX_ATTEMPTS = 4;
+
+/**
+ * The shortest wait worth making after a TOKEN-rate limit.
+ *
+ * `Retry-After` is designed for REQUEST-rate limits, where a few seconds really
+ * does clear the window. A tokens-per-minute budget is different: the bucket
+ * refills over a minute, so Azure answering `Retry-After: 3` is honest about
+ * its own clock and useless for ours — measured 2026-11-28, the 3 s retry hit
+ * the same 429 and the build died. Waiting less than this cannot succeed, so
+ * the provider's hint is treated as a floor to raise, never a ceiling to trust.
+ */
+export const RATE_LIMIT_MIN_DELAY_MS = 20_000;
+
 export function fallbackDelayMs(code: FallbackCode, retryAfterMs: number | undefined): number {
   const asked = retryAfterMs ?? 2_000;
-  return code === "RATE_LIMIT" ? Math.min(asked, 65_000) : Math.min(asked, 10_000);
+  if (code !== "RATE_LIMIT") return Math.min(asked, 10_000);
+  return Math.min(Math.max(asked, RATE_LIMIT_MIN_DELAY_MS), 65_000);
 }
